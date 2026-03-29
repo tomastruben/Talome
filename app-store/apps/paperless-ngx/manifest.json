@@ -1,0 +1,23 @@
+{
+  "id": "paperless-ngx",
+  "name": "Paperless-ngx",
+  "description": "Document management system for digitizing and organizing paperwork",
+  "icon": "📄",
+  "category": "productivity",
+  "version": "latest",
+  "website": "https://paperless-ngx.com",
+  "image": "ghcr.io/paperless-ngx/paperless-ngx:latest",
+  "ports": [{"host": 8000, "container": 8000}],
+  "volumes": [
+    {"name": "data", "containerPath": "/usr/src/paperless/data", "description": "Paperless data and database"},
+    {"name": "media", "containerPath": "/usr/src/paperless/media", "description": "Media files"},
+    {"name": "consume", "containerPath": "/usr/src/paperless/consume", "description": "Document consumption directory"}
+  ],
+  "env": [
+    {"key": "PAPERLESS_SECRET_KEY", "label": "Secret Key", "required": true, "secret": true},
+    {"key": "PAPERLESS_URL", "label": "Paperless URL", "required": false},
+    {"key": "TZ", "label": "Timezone", "required": false, "default": "UTC"}
+  ],
+  "minResources": {"cpuCores": 2, "memoryMb": 2048, "diskMb": 5120},
+  "arm64": true
+}

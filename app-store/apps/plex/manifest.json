@@ -1,0 +1,21 @@
+{
+  "id": "plex",
+  "name": "Plex",
+  "description": "Media server for organizing and streaming your personal media",
+  "icon": "🎬",
+  "category": "media",
+  "version": "latest",
+  "website": "https://www.plex.tv",
+  "image": "plexinc/pms-docker:latest",
+  "ports": [{"host": 32400, "container": 32400}],
+  "volumes": [
+    {"name": "config", "containerPath": "/config", "description": "Plex configuration and metadata"},
+    {"name": "media", "containerPath": "/media", "description": "Media files library", "mediaVolume": true}
+  ],
+  "env": [
+    {"key": "PLEX_CLAIM", "label": "Plex Claim Token", "required": false, "secret": true},
+    {"key": "TZ", "label": "Timezone", "required": false, "default": "UTC"}
+  ],
+  "minResources": {"cpuCores": 2, "memoryMb": 2048, "diskMb": 5120},
+  "arm64": true
+}

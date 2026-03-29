@@ -1,0 +1,190 @@
+---
+title: Migrating from Umbrel
+description: Move from Umbrel to Talome — keep your apps, gain AI superpowers.
+---
+
+Talome runs Umbrel apps natively. The Umbrel app store is one of Talome's built-in sources, and your existing Docker containers can be detected and managed without reinstallation. Your data stays in place.
+
+## What You Keep vs What You Gain
+
+| What You Keep | What You Gain |
+|-------------|-------------|
+| All running Docker containers | AI assistant with 230+ tools |
+| Volume data and configurations | Natural language app management |
+| Umbrel app store access | Multi-source app store (Talome + CasaOS + Umbrel + custom) |
+| Port mappings and networks | Automatic app wiring and configuration |
+| | Self-improvement — the platform evolves its own code |
+| | Media optimization and transcoding |
+| | Automation engine with cron scheduling |
+| | Built-in reverse proxy, mDNS, and Tailscale |
+| | Dashboard with 25+ customizable widgets |
+| | MCP server for Claude Code and Cursor |
+| | Per-app backups with scheduled automation |
+| | App creation from natural language descriptions |
+
+## Step-by-Step Migration
+
+### 1. Install Talome Alongside Umbrel
+
+Talome and Umbrel use different ports. Install Talome without affecting your Umbrel setup:
+
+```bash
+curl -fsSL https://get.talome.dev | bash
+```
+
+Talome runs on ports 3000 (dashboard) and 4000 (API). Umbrel stays on port 80. No conflicts.
+
+### 2. Discover Existing Containers
+
+Open the Talome dashboard at `http://your-server:3000` and ask:
+
+```
+"Show me all running Docker containers"
+```
+
+Talome displays every running container, including your Umbrel apps, with their names, images, ports, and health status.
+
+### 3. Import Apps into Talome Management
+
+```
+"Import my running Jellyfin container"
+"Import all my Umbrel containers"
+```
+
+Talome reads the container's configuration, generates a compose file, and adds it to the management database. The container keeps running — zero downtime.
+
+### 4. Handle Umbrel-Specific Configuration
+
+Umbrel apps often include platform-specific components that aren't needed under Talome:
+
+**app_proxy removal** — Umbrel wraps each app in an `app_proxy` sidecar container for its authentication layer. Talome has its own auth, so the proxy can be removed:
+
+```
+"Remove the app_proxy sidecar from my Umbrel apps"
+```
+
+**Platform environment variables** — Umbrel injects `UMBREL_*` environment variables. Most apps don't depend on these, but check:
+
+```
+"Show me the environment variables for Jellyfin"
+"Does Jellyfin depend on any UMBREL_ variables?"
+```
+
+If an app uses Umbrel-specific variables for paths or configuration, the AI will identify them and suggest replacements.
+
+**Network configuration** — Umbrel creates its own Docker networks. Once imported, Talome connects your apps to the `talome` bridge network for container-to-container communication:
+
+```
+"Connect all imported apps to the talome network"
+```
+
+### 5. Configure Integrations
+
+For apps with deep AI integration, add their connection details:
+
+```
+"Configure Sonarr — it's running at http://localhost:8989"
+"Configure Jellyfin at http://localhost:8096"
+```
+
+The AI auto-discovers API keys when possible. Once configured, you unlock domain-specific tools — 27 arr tools for Sonarr/Radarr, 6 Jellyfin tools, 6 qBittorrent tools, and so on.
+
+### 6. Verify Everything Works
+
+```
+"Check the health of all my apps"
+"Diagnose all apps"
+```
+
+The AI runs healthchecks, verifies network connectivity between apps, and reports any issues.
+
+### 7. Optional: Remove Umbrel
+
+Once everything is managed by Talome:
+
+```bash
+# Stop the Umbrel management layer (keeps containers running)
+sudo ~/umbrel/scripts/stop
+```
+
+Your containers continue running. Talome has taken over management. The Umbrel app store remains accessible through Talome's built-in Umbrel adapter.
+
+<Callout type="warn">
+Before removing Umbrel, verify all apps are imported and healthy in Talome. Pay special attention to apps that relied on Umbrel's `app_proxy` for authentication — make sure Talome's reverse proxy or the app's own auth covers them.
+</Callout>
+
+## Umbrel vs Talome
+
+| Feature | Umbrel | Talome |
+|---------|--------|--------|
+| App installation | Click install in web UI | Click install **or** one message to the AI |
+| App store | Umbrel store only | Talome + CasaOS + Umbrel + custom sources |
+| Multi-app setup | Install each one, configure connections manually | `"Set up a media stack"` — AI installs and wires everything |
+| Diagnostics | Check container logs in terminal | `"Why is Sonarr broken?"` — AI reads logs, checks configs, diagnoses |
+| Backups | Manual | Built-in per-app backups with scheduling |
+| Updates | One-click per app | `"Update all apps"` with automatic pre-update backup and rollback |
+| Reverse proxy | Built-in (limited configuration) | Built-in Caddy with automatic TLS and full control |
+| Remote access | Umbrel Connect (Tor-based) | Tailscale — faster, more reliable, one message setup |
+| Monitoring | Basic resource display | 25+ widgets + AI diagnostics + SMART monitoring + GPU tracking |
+| Automation | None | Cron-based automations with any tool |
+| App creation | Not available | Create new Docker apps from descriptions |
+| Self-improvement | Not available | Platform rewrites its own code |
+| Developer tools | None | MCP server, built-in terminal, Claude Code integration |
+
+## The Umbrel Adapter
+
+Talome's `umbrel-adapter` syncs the full Umbrel app store into Talome's catalog:
+
+1. Clones the [Umbrel App Store repository](https://github.com/getumbrel/umbrel-apps)
+2. Parses each app's `umbrel-app.yml` manifest and `docker-compose.yml`
+3. Strips Umbrel-specific fields (`app_proxy` definitions, `UMBREL_*` environment variable references, platform hooks)
+4. Normalizes into Talome's manifest format (name, description, icon, category, ports, volumes, environment)
+5. Makes apps available in the Talome store with an "Umbrel" source badge
+
+The adapter handles Umbrel's unique patterns:
+
+- **`app_proxy`** — Umbrel uses a reverse proxy sidecar per app. The adapter strips this from the compose file since Talome has its own Caddy-based proxy.
+- **`UMBREL_DATA_DIR`** — Umbrel uses platform environment variables for paths. The adapter maps these to Talome's data directory structure.
+- **Tor integration** — Umbrel's Tor-based remote access is not imported. Talome uses Tailscale instead.
+
+## Troubleshooting
+
+**Imported container not showing in app list**
+- Verify the container is running: `"Is the Jellyfin container running?"`
+- Check Talome's managed app list: `"List all managed apps"`
+- The container might need manual import if it has an unusual name
+
+**App errors after removing app_proxy**
+- Some Umbrel apps expect the proxy for path-based routing
+- Check the app's logs: `"Show me Jellyfin's logs"`
+- You may need to add a reverse proxy route: `"Add a proxy route for Jellyfin"`
+
+**Authentication issues**
+- Umbrel uses `app_proxy` for app-level auth. Without it, apps use their own authentication
+- Make sure each app has its own credentials configured
+- For apps without built-in auth, use Talome's reverse proxy with basic auth
+
+**UMBREL_ environment variables missing**
+- Check which variables the app needs: `"Show me the environment variables for this app"`
+- Replace with Talome equivalents or hardcode the values
+- Most apps work fine without Umbrel-specific variables
+
+**Network connectivity between apps**
+- Make sure apps are on the `talome` network: `"List networks for Jellyfin"`
+- Connect if missing: `"Connect Jellyfin to the talome network"`
+- Verify connectivity: `"Test connectivity between Sonarr and qBittorrent"`
+
+<Cards>
+  <Card title="Installation" href="/docs/getting-started/installation">
+    Install Talome.
+  </Card>
+  <Card title="First Conversation" href="/docs/getting-started/first-conversation">
+    Start using the AI assistant.
+  </Card>
+  <Card title="App Store" href="/docs/guides/app-store">
+    How the multi-source store works.
+  </Card>
+  <Card title="Networking" href="/docs/guides/networking">
+    Replace Umbrel Connect with Tailscale.
+  </Card>
+</Cards>

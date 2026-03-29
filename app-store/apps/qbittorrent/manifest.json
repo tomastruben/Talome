@@ -1,0 +1,23 @@
+{
+  "id": "qbittorrent",
+  "name": "qBittorrent",
+  "description": "BitTorrent client with web UI",
+  "icon": "⚡",
+  "category": "media",
+  "version": "latest",
+  "website": "https://www.qbittorrent.org",
+  "image": "lscr.io/linuxserver/qbittorrent:latest",
+  "ports": [{"host": 8080, "container": 8080}],
+  "volumes": [
+    {"name": "config", "containerPath": "/config", "description": "qBittorrent configuration"},
+    {"name": "downloads", "containerPath": "/downloads", "description": "Download directory", "mediaVolume": true}
+  ],
+  "env": [
+    {"key": "TZ", "label": "Timezone", "required": false, "default": "UTC"},
+    {"key": "PUID", "label": "User ID", "required": false, "default": "1000"},
+    {"key": "PGID", "label": "Group ID", "required": false, "default": "1000"},
+    {"key": "WEBUI_PORT", "label": "Web UI Port", "required": false, "default": "8080"}
+  ],
+  "minResources": {"cpuCores": 1, "memoryMb": 512, "diskMb": 1024},
+  "arm64": true
+}

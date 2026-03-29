@@ -1,0 +1,395 @@
+---
+title: Configuration
+description: Configure AI providers, integrations, security modes, notifications, and system settings. Two paths — environment variables for initial setup, Settings UI for everything after.
+---
+
+Talome has two configuration paths that serve different purposes. Understanding when to use each one saves time and avoids confusion.
+
+**Environment variables** (`.env` file or Docker Compose `environment` block) — used for initial bootstrap. These are read once at container startup. Change them by editing the file and restarting the container.
+
+**Settings UI** (dashboard sidebar > Settings) — used for everything after first boot. These are persisted in SQLite and take effect immediately, no restart needed. The AI can also modify settings through the `set_setting` tool.
+
+Most users set 2-3 environment variables at install time, then manage everything else through the Settings UI.
+
+---
+
+## AI Provider Setup
+
+The AI provider is the most important configuration choice. It determines the quality, speed, cost, and privacy characteristics of every conversation.
+
+### Anthropic (Recommended)
+
+Anthropic's Claude is Talome's default provider. All 230+ tools are tested primarily against Claude models.
+
+**Setup:**
+1. Create an account at [console.anthropic.com](https://console.anthropic.com)
+2. Generate an API key (starts with `sk-ant-`)
+3. In Talome, go to **Settings > AI Provider** and paste the key
+4. Select your default model
+
+**Model recommendations:**
+
+| Model | Best for | Speed | Cost |
+|-------|----------|-------|------|
+| Claude Haiku | Routine tasks (install, status, list) | Fast (~1-2s) | ~$0.01/conversation |
+| Claude Sonnet | Complex reasoning (diagnostics, multi-step) | Medium (~3-5s) | ~$0.03/conversation |
+
+A typical session with 5-10 messages costs $0.01-0.05. Even heavy daily use rarely exceeds $1/month.
+
+**Privacy:** Your messages and tool results are sent to Anthropic's API for processing. No data is stored by Anthropic after processing (per their API terms). Talome stores conversations locally in SQLite.
+
+### OpenAI
+
+**Setup:**
+1. Create an API key at [platform.openai.com](https://platform.openai.com)
+2. Paste it into **Settings > AI Provider > OpenAI API Key**
+3. Set `DEFAULT_LLM_PROVIDER` to `openai` in your environment, or select OpenAI in Settings
+
+GPT-5.3 is the recommended model for a good balance of capability and cost. GPT-5.4 is available for heavier reasoning tasks. All Talome tools are compatible.
+
+<Callout type="warn">
+The codebase default for OpenAI is `gpt-4o-mini`, which was retired. After selecting OpenAI as your provider, go to **Settings > AI Provider** and set the model to `gpt-5.3` or another current model.
+</Callout>
+
+### Ollama (Local, Free, Private)
+
+For fully local AI with zero cloud dependency:
+
+**Setup:**
+1. Install Ollama: `curl -fsSL https://ollama.ai/install.sh | sh`
+2. Pull a model: `ollama pull llama3.1` (8B parameters, ~4.7GB)
+3. In Talome Settings, set **Ollama URL** to `http://host.docker.internal:11434`
+4. Select Ollama as the default provider
+
+**Important:** Use `host.docker.internal` (not `localhost`) because Talome runs inside a Docker container and needs to reach Ollama on the host machine.
+
+**Model recommendations:**
+
+| Model | RAM Required | Quality |
+|-------|-------------|---------|
+| `llama3.1:8b` | 8 GB | Good for basic tasks |
+| `llama3.1:70b` | 48 GB | Comparable to cloud providers |
+| `mistral:7b` | 8 GB | Fast, good for simple tasks |
+
+<Callout type="info">
+Local models handle single-tool tasks well (install an app, check status, read logs). Multi-step operations that require chaining 5+ tools may produce inconsistent results compared to Claude or GPT-5.3. Start with Anthropic if you want the best experience, then try Ollama once you are familiar with the system.
+</Callout>
+
+### Cost Comparison
+
+| Provider | Monthly cost (moderate use) | Privacy | Quality |
+|----------|---------------------------|---------|---------|
+| Anthropic | $1-5 | API-processed, not stored | Best |
+| OpenAI | $1-5 | API-processed, not stored | Very good |
+| Ollama | $0 (electricity only) | Fully local | Good (depends on model) |
+
+---
+
+## Security Modes
+
+Talome classifies every tool into one of three tiers based on its impact:
+
+| Tier | What it means | Examples |
+|------|--------------|---------|
+| **Read** | Only reads data, no side effects | `list_containers`, `get_system_stats`, `recall` |
+| **Modify** | Creates or changes resources | `install_app`, `start_container`, `wire_apps`, `remember` |
+| **Destructive** | Deletes or irreversibly changes resources | `uninstall_app`, `prune_resources`, `apply_change` |
+
+The security mode determines how the gateway handles each tier:
+
+### Permissive
+
+All tools execute freely. No confirmations, no restrictions. The AI has full access.
+
+**Best for:** Power users who trust the AI and want maximum speed. Every action happens immediately.
+
+### Cautious (Default)
+
+Read and modify tools execute normally. Destructive tools require the AI to explicitly confirm by calling the tool a second time with `confirmed: true`.
+
+In practice, this means:
+- Installing an app? Happens immediately.
+- Uninstalling an app? The AI tells you what will happen and waits for your approval.
+- Deleting Docker volumes? Blocked until you say yes.
+
+**Best for:** Most users. You get the speed of AI-first management with a safety net for irreversible actions.
+
+### Locked
+
+Only read-tier tools work. All modify and destructive tools return an error. The AI can look at everything but change nothing.
+
+**Best for:** Shared environments where you want monitoring without risk, or when you want to explore Talome without accidentally modifying anything.
+
+**Changing the mode:**
+
+Go to **Settings > Security** and select the mode. Or ask the AI:
+
+```
+"Switch to permissive mode"
+```
+
+The AI calls `set_setting` with `security_mode: "permissive"`. The change takes effect on the next tool call.
+
+---
+
+## Custom System Prompt
+
+You can append custom instructions to the AI's system prompt. This lets you shape its behavior without modifying source code.
+
+**Settings > AI Provider > Custom System Prompt**
+
+Examples:
+
+```
+Always respond in Spanish.
+```
+
+```
+When installing apps, always set timezone to Europe/London.
+Never use ports in the 9000 range — they conflict with my other services.
+```
+
+```
+You are managing a home lab for a family of four. Prioritize stability
+over cutting-edge features. Always suggest backups before making changes.
+```
+
+Custom instructions are injected after Talome's core prompt and are clearly marked as user-supplied. They cannot override safety rules (security modes, audit logging, destructive confirmation).
+
+---
+
+## Notification Channels
+
+Talome can send notifications through multiple channels. Automations, health alerts, and download completions can all trigger notifications.
+
+### Telegram
+
+1. Create a bot via [@BotFather](https://t.me/botfather) and copy the token
+2. Get your chat ID by messaging [@userinfobot](https://t.me/userinfobot)
+3. In **Settings > Notifications**, add a Telegram channel with the bot token and chat ID
+4. Click **Test** to send a test message
+
+### Discord
+
+1. Create a webhook in your Discord server (Server Settings > Integrations > Webhooks)
+2. Copy the webhook URL
+3. Add a Discord channel in Settings with the webhook URL
+4. Click **Test**
+
+### Webhook (Generic)
+
+Send notifications to any HTTP endpoint. Configure the URL, method (POST/PUT), headers, and body template. Useful for connecting to Slack, Ntfy, Gotify, Matrix, or custom services.
+
+### Browser Push
+
+Enable browser push notifications in Settings. The dashboard will request notification permission from your browser. Works without any external service.
+
+### Testing Channels
+
+Every channel has a **Test** button that sends a sample notification immediately. If it does not arrive, the Settings page shows the error response from the target service.
+
+---
+
+## Integration Configuration
+
+Each external app integration follows the same pattern:
+
+1. Install the app (via the app store or Docker Compose)
+2. Get the app's URL and API key
+3. Enter them in **Settings > Integrations**
+4. Talome instantly activates the corresponding tools — no restart needed
+
+### Finding API Keys
+
+| App | Where to find the API key |
+|-----|--------------------------|
+| Sonarr | Settings > General > API Key |
+| Radarr | Settings > General > API Key |
+| Prowlarr | Settings > General > API Key |
+| Jellyfin | Dashboard > API Keys > Create |
+| Plex | Account > Authorized Devices (or use X-Plex-Token) |
+| qBittorrent | No API key — uses username/password authentication |
+| Overseerr | Settings > General > API Key |
+| Home Assistant | Profile > Long-Lived Access Tokens > Create |
+| Pi-hole | Settings > API > Show API token |
+| Audiobookshelf | Settings > Users > click user > Token |
+| Vaultwarden | Admin panel > General Settings > Admin Token |
+
+### Auto-Activation
+
+When you save an integration URL and API key, the tool registry detects the new settings and activates the domain's tools. The AI's next message will have access to those tools without any restart or reload.
+
+For example, saving `sonarr_url` and `sonarr_api_key` activates 27 arr tools + 5 media tools + 9 optimization tools — 41 new capabilities from two settings.
+
+### Verifying an Integration
+
+After saving, ask the AI:
+
+```
+"Check if Sonarr is connected"
+```
+
+It will call `arr_get_status` and report the connection status, version, and any issues.
+
+---
+
+## Data Storage
+
+All Talome state lives in a single SQLite database. By default it is stored at `/app/data/talome.db` inside the container, which maps to the `talome-data` Docker volume.
+
+### What is stored in SQLite
+
+| Table | Contents |
+|-------|----------|
+| `users` | Admin account and password hash |
+| `conversations` | Chat history with the AI |
+| `memories` | User preferences, facts, corrections, context |
+| `automations` | Automation definitions and schedules |
+| `automation_runs` | Execution history for automations |
+| `widgets` | Dashboard widget layout and configuration |
+| `settings` | All runtime settings (API keys, integration URLs, preferences) |
+| `audit` | Audit trail of every tool execution |
+| `apps` | Installation records for managed apps |
+| `changes` | Self-improvement change history |
+| `issues` | Tracked issues and feature requests |
+| `notifications` | Notification history |
+| `notification_channels` | Configured notification channels |
+
+### Backup
+
+The simplest backup is copying the database file:
+
+```bash
+docker cp talome:/app/data/talome.db ./talome-backup.db
+```
+
+Or ask the AI:
+
+```
+"Back up the database"
+```
+
+For automated backups, create an automation:
+
+```
+"Create an automation that backs up the database every night at 2am
+ and keeps the last 7 copies"
+```
+
+---
+
+## Environment Variable Reference
+
+These variables are read at container startup. Most are optional — the installer sets sensible defaults.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TALOME_SECRET` | *(required)* | 64-char hex string for session encryption |
+| `NODE_ENV` | `production` | Runtime environment |
+| `CORE_PORT` | `4000` | Hono API server port |
+| `CORE_HOST` | `0.0.0.0` | API server bind address |
+| `DOCKER_SOCKET` | `/var/run/docker.sock` | Path to Docker socket |
+| `DATABASE_PATH` | `./data/talome.db` | SQLite database location |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (can also set in UI) |
+| `OPENAI_API_KEY` | — | OpenAI API key (can also set in UI) |
+| `OLLAMA_BASE_URL` | — | Ollama server URL (can also set in UI) |
+| `DEFAULT_LLM_PROVIDER` | `anthropic` | AI provider: `anthropic`, `openai`, `ollama` |
+| `DEFAULT_MODEL` | `claude-sonnet-4-20250514` | Default model identifier |
+| `NEXT_PUBLIC_CORE_URL` | `http://localhost:4000` | API URL for the dashboard |
+| `NEXT_PUBLIC_APP_NAME` | `Talome` | Display name in the dashboard header |
+| `LOG_LEVEL` | `info` | Backend log level: `debug`, `info`, `warn`, `error` |
+
+<Callout type="warn">
+API keys set via environment variables are used as fallbacks. Keys set in the Settings UI take precedence. If you set both, the UI value wins.
+</Callout>
+
+---
+
+## Network Configuration
+
+### Binding Address
+
+By default, Talome binds to `0.0.0.0`, making it accessible from any device on your network. To restrict to localhost only:
+
+```yaml
+environment:
+  - CORE_HOST=127.0.0.1
+```
+
+### Running Behind a Reverse Proxy
+
+If you run Talome behind nginx, Caddy, or Traefik, set the public URL so the dashboard knows where to find the API:
+
+```yaml
+environment:
+  - NEXT_PUBLIC_CORE_URL=https://talome.example.com/api
+```
+
+Example nginx configuration:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name talome.example.com;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /api/ {
+        proxy_pass http://localhost:4000/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+}
+```
+
+<Callout type="info">
+The WebSocket `Upgrade` headers are required for real-time streaming of AI responses and container stats. Without them, the chat will fall back to polling, which is slower.
+</Callout>
+
+### Talome's Built-In Reverse Proxy
+
+Talome includes a Caddy-based reverse proxy that can expose your apps with automatic TLS. No external proxy needed:
+
+```
+"Set up a reverse proxy route for Jellyfin at media.example.com"
+```
+
+The AI calls `proxy_add_route` and `proxy_configure_tls` to set up the route with Let's Encrypt certificates. See the [Networking guide](/docs/guides/networking) for details.
+
+### Local DNS with mDNS
+
+For LAN access without a domain, Talome can set up local DNS via CoreDNS:
+
+```
+"Enable mDNS so I can access apps at *.talome.local"
+```
+
+Apps become reachable at `jellyfin.talome.local`, `sonarr.talome.local`, etc., with self-signed HTTPS certificates. No public domain or port forwarding needed.
+
+---
+
+## Next Steps
+
+<Cards>
+  <Card title="AI Assistant Guide" href="/docs/guides/ai-assistant">
+    Deep dive into the 230+ tools, memory system, conversation patterns, and how dynamic tool loading works.
+  </Card>
+  <Card title="Integrations" href="/docs/integrations">
+    Per-app setup guides for all 12 supported integrations — Sonarr, Radarr, Jellyfin, and more.
+  </Card>
+  <Card title="Environment Variables Reference" href="/docs/reference/environment-variables">
+    Complete list of every environment variable with descriptions and defaults.
+  </Card>
+  <Card title="Networking Guide" href="/docs/guides/networking">
+    Reverse proxy, mDNS, Tailscale remote access, and TLS configuration.
+  </Card>
+</Cards>

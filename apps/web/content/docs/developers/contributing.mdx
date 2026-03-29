@@ -1,0 +1,339 @@
+---
+title: Contributing
+description: Set up your development environment, understand the coding conventions, and learn how to contribute to Talome.
+---
+
+This guide covers everything you need to start contributing to Talome -- from initial setup through submitting a pull request.
+
+## Development Setup
+
+### Prerequisites
+
+| Requirement | Version | How to Install |
+|-------------|---------|---------------|
+| Node.js | 22+ | [nvm](https://github.com/nvm-sh/nvm): `nvm install 22` |
+| pnpm | 10+ | `corepack enable && corepack prepare pnpm@latest --activate` |
+| Docker | 24+ | [Docker Engine](https://docs.docker.com/engine/install/) or Docker Desktop |
+| Git | 2.30+ | System package manager |
+
+### Clone and Install
+
+```bash
+git clone https://github.com/talomehq/talome.git
+cd talome
+pnpm install
+```
+
+### Configure Environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set at minimum:
+
+- `TALOME_SECRET` -- generate with `openssl rand -hex 32`
+- `ANTHROPIC_API_KEY` -- from [console.anthropic.com](https://console.anthropic.com)
+
+### Start Development Servers
+
+```bash
+pnpm dev
+```
+
+This starts all three apps via Turborepo in parallel:
+
+| Service | URL | Hot Reload |
+|---------|-----|-----------|
+| Dashboard | `http://localhost:3000` | Yes (Next.js fast refresh) |
+| Backend | `http://localhost:4000` | Yes (tsx watch) |
+| Docs site | `http://localhost:3100` | Yes (Fumadocs) |
+
+The first login creates the admin account. Choose any username and a password of at least 8 characters.
+
+---
+
+## Coding Conventions
+
+### TypeScript
+
+Talome uses TypeScript in strict mode across all packages. Every change must pass the type checker:
+
+```bash
+# Check all packages
+pnpm exec tsc --noEmit
+
+# Check a specific package
+cd apps/core && pnpm exec tsc --noEmit
+cd apps/dashboard && pnpm exec tsc --noEmit
+```
+
+**Rules:**
+- Strict mode everywhere -- no `any` types without explicit justification
+- Named exports only -- no `export default` except for Next.js page components (which require it)
+- Zod for all schemas -- API route inputs, tool parameters, structured AI outputs
+- No `eval()` -- never, under any circumstances
+
+### File Naming
+
+| Type | Convention | Example |
+|------|-----------|---------|
+| Files | kebab-case | `media-tools.ts`, `app-manifest.ts` |
+| React components | PascalCase | `ContainerTable.tsx`, `StackCard.tsx` |
+| Functions | camelCase | `getSystemStats`, `installApp` |
+| Constants | UPPER_SNAKE_CASE | `SETTINGS_CACHE_TTL_MS` |
+| Types/Interfaces | PascalCase | `ToolDomain`, `SecurityMode` |
+
+### Import Order
+
+Follow the existing pattern in each file. Generally:
+
+1. Node.js built-ins (`node:crypto`, `node:path`)
+2. External packages (`hono`, `zod`, `drizzle-orm`)
+3. Internal absolute imports (`../db/index.js`, `../../middleware/session.js`)
+4. Relative imports (`./tools/docker-tools.js`)
+
+### Error Handling
+
+- Use Result types where possible -- return `{ error: "..." }` instead of throwing
+- In tool execute functions, always handle the "not configured" case gracefully
+- Never throw in library code that could be called from multiple contexts
+- Log errors with enough context to debug without reproducing
+
+### Style Rules
+
+- Match the style of the file you are editing -- do not introduce new patterns
+- No alternative icon libraries -- only HugeIcons via `@/components/icons`
+- No alternative UI component libraries -- only shadcn/ui
+- Prefer composition over inheritance
+- Keep functions small and focused
+
+---
+
+## Adding a Tool
+
+The most common contribution is adding a new tool to an existing domain or creating a new domain. Here is the full workflow.
+
+### 1. Create or Edit the Tool File
+
+Tool files live in `apps/core/src/ai/tools/`. Each file exports a set of tool definitions using the Vercel AI SDK `tool()` function.
+
+```typescript
+// apps/core/src/ai/tools/example-tools.ts
+import { z } from "zod";
+import { tool } from "ai";
+
+export const exampleGetStatusTool = tool({
+  description: "Get the current status of the Example service",
+  parameters: z.object({}),
+  execute: async () => {
+    // Implementation
+    return { status: "running", version: "1.0.0" };
+  },
+});
+
+export const exampleListItemsTool = tool({
+  description: "List items from the Example service",
+  parameters: z.object({
+    limit: z.number().default(25).describe("Maximum number of items to return"),
+    offset: z.number().default(0).describe("Number of items to skip"),
+  }),
+  execute: async ({ limit, offset }) => {
+    // Implementation
+    return { items: [], total: 0 };
+  },
+});
+```
+
+**Requirements:**
+- Every parameter must have a `.describe()` annotation -- the AI uses these to understand what to pass
+- The `description` must be one clear sentence explaining what the tool does
+- Return structured data, not formatted strings
+- Handle the "app not configured" case: `if (!url) return { error: "Example not configured" }`
+
+### 2. Register in agent.ts
+
+Import the tools in `apps/core/src/ai/agent.ts` and add them to an existing domain or create a new one:
+
+```typescript
+import { exampleGetStatusTool, exampleListItemsTool } from "./tools/example-tools.js";
+
+registerDomain({
+  name: "example",
+  settingsKeys: ["example_url"],
+  tools: {
+    example_get_status: exampleGetStatusTool,
+    example_list_items: exampleListItemsTool,
+  },
+  tiers: {
+    example_get_status: "read",
+    example_list_items: "read",
+  },
+});
+```
+
+**Tool naming convention:** `<domain>_<action>` -- e.g., `jellyfin_get_status`, `arr_list_indexers`.
+
+**Tier assignment:**
+- `read` -- retrieves data without side effects
+- `modify` -- changes state (start, stop, configure, install)
+- `destructive` -- irreversible operations (delete, uninstall, prune)
+
+### 3. MCP Auto-Sync
+
+No additional changes needed. The MCP server calls `getAllRegisteredTools()` which automatically includes your new domain. Claude Code users get the tools immediately.
+
+### 4. Add Keywords (Optional)
+
+If you created a new domain, add keyword entries in the `DOMAIN_KEYWORDS` map in `tool-registry.ts`:
+
+```typescript
+const DOMAIN_KEYWORDS: Record<string, string[]> = {
+  // ... existing entries
+  example: ["example", "example-app", "my-service"],
+};
+```
+
+This improves tool routing -- the system loads your domain's tools only when the user's message matches these keywords.
+
+---
+
+## Adding an API Route
+
+API routes follow the Hono pattern. Each route file exports a Hono router.
+
+### 1. Create the Route File
+
+```typescript
+// apps/core/src/routes/example.ts
+import { Hono } from "hono";
+import { z } from "zod";
+import { db, schema } from "../db/index.js";
+
+const example = new Hono();
+
+example.get("/", async (c) => {
+  // List all examples
+  return c.json({ items: [] });
+});
+
+example.post("/", async (c) => {
+  const body = z.object({
+    name: z.string().min(1),
+  }).safeParse(await c.req.json().catch(() => null));
+
+  if (!body.success) return c.json({ error: "Invalid request" }, 400);
+
+  // Create example
+  return c.json({ id: "new-id", name: body.data.name }, 201);
+});
+
+export { example };
+```
+
+### 2. Mount the Route
+
+In the main server file, import and mount the route:
+
+```typescript
+import { example } from "./routes/example.js";
+app.route("/api/example", example);
+```
+
+**Rules:**
+- Validate all input with Zod
+- Return consistent error format: `{ error: "message" }`
+- Use proper HTTP status codes
+- Auth middleware is applied globally -- routes are protected by default
+
+---
+
+## Adding a Dashboard Widget
+
+Widgets live in `apps/dashboard/src/components/widgets/`. Each widget is a React component that renders inside the bento grid.
+
+### 1. Create the Widget Component
+
+```tsx
+// apps/dashboard/src/components/widgets/example.tsx
+"use client";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { HugeiconsIcon } from "@/components/icons";
+import { Cpu01Icon } from "@/components/icons";
+
+export function ExampleWidget() {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center gap-2 pb-2">
+        <HugeiconsIcon icon={Cpu01Icon} size={16} className="text-muted-foreground" />
+        <CardTitle className="text-sm font-medium">Example</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-2xl font-medium">42</p>
+        <p className="text-sm text-muted-foreground">Some metric</p>
+      </CardContent>
+    </Card>
+  );
+}
+```
+
+### 2. Register in the Widget Registry
+
+Add the widget to the widget registry so it can be placed on the dashboard via the `create_widget_manifest` tool or the UI.
+
+---
+
+## Running Tests
+
+Tests use Vitest and live in `apps/core/src/__tests__/`.
+
+```bash
+# Run all tests
+pnpm test
+
+# Run tests in watch mode
+pnpm --filter core test -- --watch
+
+# Run a specific test file
+pnpm --filter core test -- example-tools.test.ts
+```
+
+When adding a new tool, create a test file covering:
+- The happy path (tool returns expected data)
+- The "not configured" error case (settings not set)
+- Edge cases (empty inputs, invalid data)
+
+---
+
+## Pull Request Process
+
+1. **Fork** the repository and create a feature branch from `main`
+2. **Make your changes** following the conventions above
+3. **Type check**: `pnpm exec tsc --noEmit` must pass with zero errors
+4. **Test**: `pnpm test` must pass
+5. **Commit**: write a clear commit message describing the change and its purpose
+6. **Submit a PR** with:
+   - A descriptive title (under 70 characters)
+   - A summary of what changed and why
+   - Screenshots if the change affects the UI
+
+### PR Checklist
+
+- TypeScript strict mode passes (`pnpm exec tsc --noEmit`)
+- Tests pass (`pnpm test`)
+- No new dependencies unless justified (prefer what's already installed)
+- No default exports (except Next.js pages)
+- Zod validation on all new inputs
+- Tool descriptions are clear single sentences
+- All tool parameters have `.describe()` annotations
+- No `eval()`, no inline styles, no alternative icon/UI libraries
+
+---
+
+## Getting Help
+
+- Open a GitHub issue for bugs or feature requests
+- Use the `/self-improve` Claude Code skill for AI-assisted codebase changes
+- Read the [Architecture](/docs/developers/architecture) page for system overview
+- Check the [Tools Reference](/docs/reference/tools) for existing tool patterns

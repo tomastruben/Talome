@@ -1,0 +1,20 @@
+{
+  "id": "immich",
+  "name": "Immich",
+  "description": "Self-hosted photo and video backup solution",
+  "icon": "📸",
+  "category": "media",
+  "version": "latest",
+  "website": "https://immich.app",
+  "image": "ghcr.io/immich-app/immich-server:latest",
+  "ports": [{"host": 2283, "container": 2283}],
+  "volumes": [
+    {"name": "upload", "containerPath": "/usr/src/app/upload", "description": "Photo and video upload storage", "mediaVolume": true}
+  ],
+  "env": [
+    {"key": "DB_PASSWORD", "label": "Database Password", "required": true, "secret": true},
+    {"key": "UPLOAD_LOCATION", "label": "Upload Location", "required": false}
+  ],
+  "minResources": {"cpuCores": 2, "memoryMb": 4096, "diskMb": 10240},
+  "arm64": true
+}

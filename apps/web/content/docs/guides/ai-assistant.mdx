@@ -1,0 +1,451 @@
+---
+title: AI Assistant
+description: How Talome's agentic AI works — architecture, tools, memory, security, and conversation patterns.
+---
+
+This is not a chatbot. Talome's AI assistant is an autonomous agent with 230+ purpose-built tools that plans multi-step operations, selects the right tools for each step, executes against your real infrastructure, and reasons about failures to recover. When you say "set up a media stack," it doesn't hand you a checklist — it installs five apps, wires their APIs together, syncs indexers, verifies health, and reports back with URLs.
+
+The difference between a chatbot and an agent: a chatbot answers questions. An agent does work.
+
+<VideoPlaceholder description="Watch: The AI diagnosing and fixing a container issue in real-time" />
+
+## Architecture
+
+Every message you send passes through a precise pipeline before a single tool executes.
+
+<Mermaid chart={`graph TD
+    A[User sends message] --> B[Build system prompt]
+    B --> C[Inject memories - top 10]
+    C --> D[Add page context + stack status]
+    D --> E[Select tools via keyword routing]
+    E --> F[Security gateway wraps tools]
+    F --> G[Stream to AI model]
+    G --> H{Tool calls?}
+    H -->|Yes| I[Execute tools - max 10]
+    I --> J[Audit log entry]
+    J --> G
+    H -->|No| K[Stream text response]
+`} />
+
+### 1. System Prompt (Cached)
+
+The system prompt is approximately 5,000 tokens and is cached using Anthropic's prompt caching. It contains the AI's identity, every behavioral rule, response formatting patterns, app-specific instructions (media volume conventions, Audiobookshelf library setup flow, arr wiring sequences), and the zero-config execution policy. Because it's cached, the first tokens of every conversation cost near zero — you only pay for new messages and tool results.
+
+### 2. Dynamic Context Injection
+
+Before the AI sees your message, Talome injects live context into the conversation:
+
+- **Memories** — the top 10 most relevant memories about you, ranked by a composite score of recency, access frequency, and confidence
+- **Page context** — which dashboard page you're on (the AI knows if you're looking at containers, media, or settings)
+- **Stack status** — which feature stacks are installed and their current health
+- **Configured apps** — which integrations have URLs and API keys set, so the AI knows what tools are available
+
+### 3. Tool Selection (Keyword Routing + Domain Filtering)
+
+Not all 230 tools load for every message. The tool registry uses a two-layer filter:
+
+**Layer 1: Domain activation.** Each tool belongs to a domain. A domain's tools only load when the corresponding app is configured in Settings. If you haven't set up Jellyfin, the 6 Jellyfin tools don't exist in the AI's context.
+
+**Layer 2: Message keyword routing.** Even among active domains, tools are further filtered by scanning your message for domain-relevant keywords. If your message mentions "torrent" or "download speed," the qBittorrent domain loads. If it mentions "indexer" or "quality profile," the arr domain loads. If no optional domain matches (ambiguous message), all active tools load as a fallback.
+
+This keeps the per-message tool count low — typically 80-120 tools instead of 230 — which directly improves the AI's tool selection accuracy.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/ai/agent.ts` — 16 `registerDomain()` calls starting at line 333 define all tool domains. The core domain alone registers ~113 tools (lines 336-448). The system prompt is defined at `DEFAULT_SYSTEM_PROMPT` (line 986), approximately 5,000 tokens, and is cached via `cacheControl: { type: "ephemeral" }` at line 1304. Keyword routing is implemented via the `DOMAIN_KEYWORDS` map in `apps/core/src/ai/tool-registry.ts` (lines 126-140), and `getToolsForMessage()` (line 148) performs the two-layer filtering.
+</Accordion>
+</Accordions>
+
+### 4. Security Gateway
+
+Every tool execution passes through the security gateway, which enforces one of three modes:
+
+| Mode | Read Tools | Modify Tools | Destructive Tools |
+|------|-----------|-------------|------------------|
+| **Permissive** | Execute freely | Execute freely | Execute freely |
+| **Cautious** (default) | Execute freely | Execute freely | Require `confirmed: true` — the AI asks you first |
+| **Locked** | Execute freely | Blocked | Blocked |
+
+You can change the security mode in **Settings > Security**. The default "cautious" mode means the AI can read anything and modify anything, but destructive operations like uninstalling apps, deleting containers, or pruning Docker resources require your explicit confirmation.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/ai/tool-gateway.ts` — `gateToolExecution()` (line 31) wraps each tool with tier-based access control. The three modes (permissive, cautious, locked) are enforced at lines 38-81. Blocked calls write to the audit log via `writeAuditEntry()`.
+</Accordion>
+</Accordions>
+
+### 5. Streaming Execution
+
+The AI streams responses using the Vercel AI SDK's `streamText()` with a maximum of 10 tool calls per turn (`stepCountIs(10)`). Each tool call appears as a real-time execution card in the chat UI showing the tool name, parameters, and result. The AI processes tool results and continues reasoning — it can chain multiple tool calls in a single response to complete multi-step tasks.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/ai/agent.ts` — `streamText()` call at line 1391 with `stopWhen: stepCountIs(10)` at line 1397. Prompt caching is configured at line 1302-1306 via Anthropic's `cacheControl: { type: "ephemeral" }` provider option on the static system prompt.
+</Accordion>
+</Accordions>
+
+## Tool Domains
+
+All 230+ tools are organized into 16 domains. Each domain activates when you configure the corresponding app in Settings:
+
+| Domain | Tools | Activates When | What It Does |
+|--------|-------|---------------|-------------|
+| **Core** | ~113 | Always | Docker, system, apps, filesystem, groups, backups, memory, widgets, automations, self-improvement, compose, config files, notifications, settings, updates, shell, storage, GPU |
+| **Media** | 5 | `sonarr_url` or `radarr_url` | Library browsing, search, downloads, calendar, media requests |
+| **Optimization** | 9 | `sonarr_url` or `radarr_url` | Media analysis, transcoding, library health, batch optimization |
+| **Arr** | 27 | `sonarr_url`, `radarr_url`, `readarr_url`, or `prowlarr_url` | Root folders, download clients, indexers, quality profiles, queue management, release search, monitoring |
+| **qBittorrent** | 6 | `qbittorrent_url` | Version, preferences, torrents, download paths, speed limits |
+| **Jellyfin** | 6 | `jellyfin_url` | Status, libraries, scanning, stats, API keys |
+| **Audiobookshelf** | 13 | `audiobookshelf_url` | Libraries, items, search, progress tracking, scanning, audiobook search, download, and request |
+| **Overseerr** | 7 | `overseerr_url` | Status, Jellyfin/Sonarr/Radarr configuration, requests, approval/decline |
+| **Plex** | 5 | `plex_url` | Status, on deck, recently watched, mark watched/unwatched |
+| **Home Assistant** | 5 | `homeassistant_url` | Status, entities, service calls, history, automations |
+| **Pi-hole** | 5 | `pihole_url` | Stats, enable/disable, whitelist/blacklist |
+| **Vaultwarden** | 4 | `vaultwarden_url` | Status, users, invitations, signup toggle |
+| **Proxy** | 5 | `proxy_enabled` | Routes, TLS, reload |
+| **Tailscale** | 3 | `tailscale_auth_key` | Setup, status, stop |
+| **mDNS** | 4 | Always | Local DNS status, enable/disable, refresh |
+| **Ollama** | 5 | `ollama_url` | Models, pull/delete, model info, running processes |
+
+The MCP server always loads all tools regardless of configuration — each tool fails gracefully with a clear error if its app isn't set up.
+
+## Tool Tiers
+
+Every tool has an assigned security tier that determines how the security gateway handles it:
+
+### Read Tier
+Always execute, in any security mode. These tools only observe — they never change state.
+
+Examples: `list_containers`, `get_system_stats`, `search_apps`, `recall`, `arr_get_status`, `jellyfin_list_libraries`, `get_disk_usage`, `diagnose_app`
+
+### Modify Tier
+Execute freely in permissive and cautious modes. Blocked in locked mode. These tools change state but are generally reversible.
+
+Examples: `install_app`, `start_container`, `restart_app`, `wire_apps`, `set_app_env`, `remember`, `arr_add_download_client`, `create_automation`
+
+### Destructive Tier
+Execute freely in permissive mode. Require explicit confirmation in cautious mode (the AI asks before proceeding). Blocked in locked mode. These operations are difficult or impossible to reverse.
+
+Examples: `uninstall_app`, `prune_resources`, `cleanup_docker`, `delete_group`, `apply_change`, `remove_network`, `delete_file`
+
+## Memory System
+
+The AI remembers what you tell it — permanently. Memories persist in SQLite across conversations, sessions, and restarts.
+
+### Memory Types
+
+| Type | Purpose | Example |
+|------|---------|---------|
+| **Preference** | How you like things configured | "I prefer Jellyfin over Plex" |
+| **Fact** | Concrete details about your setup | "Media drive is mounted at /mnt/nas" |
+| **Context** | Situational information | "Setting up a home lab for the first time" |
+| **Correction** | Things the AI got wrong that it shouldn't repeat | "Port 8080 is taken by Apache" |
+
+### How Ranking Works
+
+Each conversation turn, the top 10 memories are injected into the AI's context. The ranking algorithm scores every memory on three factors:
+
+1. **Recency** — more recently created or accessed memories score higher
+2. **Access frequency** (`accessCount`) — memories the AI references often score higher
+3. **Confidence** — memories with higher confidence scores (set at creation, boosted by confirmations) score higher
+
+When the AI stores a new memory, it checks existing memories for bigram similarity. If a new memory is more than 80% similar to an existing one, the duplicate is rejected — preventing the same fact from being stored repeatedly across conversations.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/db/memories.ts` — `getTopMemories()` (line 57) implements the composite ranking: 40% recency + 30% access frequency + 30% confidence, computed in a single SQL `ORDER BY` expression (lines 67-71). Deduplication uses a Dice coefficient on bigrams in the `similarity()` function (line 8), with the 80% threshold checked in `writeMemory()` at line 45.
+</Accordion>
+</Accordions>
+
+### Memory Tools
+
+| Tool | What It Does |
+|------|-------------|
+| `remember` | Store a new memory with type and confidence |
+| `recall` | Search memories by keyword (semantic-ish, bigram matching) |
+| `forget` | Delete a specific memory by ID |
+| `update_memory` | Modify an existing memory's content or confidence |
+| `list_memories` | Show all stored memories with metadata |
+
+### Memory in Practice
+
+Memories are stored implicitly when you share information, and explicitly when you ask:
+
+```
+You: My media is stored at /Volumes/Media Vault/Media
+
+AI: Got it. I'll remember that your media is at /Volumes/Media Vault/Media.
+    [remember: type=fact, content="Media files stored at /Volumes/Media Vault/Media"]
+
+--- later, in a different conversation ---
+
+You: Install Jellyfin
+
+AI: [recall: "media"]
+    Installing Jellyfin with your media directory at /Volumes/Media Vault/Media.
+    [install_app: jellyfin, volumeMounts: { media: "/Volumes/Media Vault/Media" }]
+```
+
+The AI didn't ask where your media was the second time. It remembered.
+
+### Managing Memories
+
+```
+You: What do you remember about me?
+AI: [list_memories]
+    Here's what I know:
+    1. Media files stored at /Volumes/Media Vault/Media (fact, high confidence)
+    2. Prefers Jellyfin over Plex (preference)
+    3. Port 8080 is used by Apache (correction)
+    4. DNS is handled by Pi-hole at 192.168.1.53 (fact)
+    ...
+
+You: Forget the thing about port 8080 — I freed that port.
+AI: [forget: memory_id]
+    Done. I've forgotten that port 8080 was taken.
+```
+
+## The Zero-Config Philosophy
+
+Traditional self-hosted apps require you to install an app, then open its web UI, navigate to settings, find the right field, paste a URL or API key, save, restart, and repeat for every connected service. Talome's AI eliminates this entirely.
+
+The system prompt contains a strict **Config-First Execution Policy**:
+
+1. Use dedicated configuration tools first (`overseerr_configure_sonarr`, `arr_add_download_client`, etc.)
+2. If a dedicated tool fails, fall back to config-file automation (`read_app_config_file` / `write_app_config_file`)
+3. Only ask the user for values that are truly unavailable (API keys they haven't provided)
+4. Never output "manual configuration required" if a tool or config-file path exists
+
+This means the AI will never tell you to "go to Sonarr's settings page and add qBittorrent as a download client." It will call `arr_add_download_client` and do it.
+
+## Conversation Patterns
+
+### 1. Single App Install
+
+<ChatSimulation>
+  <UserMessage>Install Pi-hole</UserMessage>
+  <AssistantMessage>
+    Found Pi-hole in the Talome store. Installing now.
+    <ToolCall tool="search_apps" result="found Pi-hole in Talome store" />
+    <ToolCall tool="install_app" result="pihole container created and started" />
+    <ToolCall tool="inspect_container" result="pihole: running, healthy" />
+    pihole is running and healthy. Web UI at http://localhost:8089/admin, DNS on port 53 (TCP/UDP). Your Pi-hole admin password was auto-generated. You can find it in the container logs or reset it with "Show me the Pi-hole admin password." Want me to configure your server to use Pi-hole as its DNS resolver?
+  </AssistantMessage>
+</ChatSimulation>
+
+### 2. Multi-App Stack Orchestration
+
+<ChatSimulation>
+  <UserMessage>Set up a complete media stack. My media is at /mnt/media.</UserMessage>
+  <AssistantMessage>
+    I will install Jellyfin, Sonarr, Radarr, Prowlarr, and qBittorrent, then wire them together.
+    <ToolCall tool="search_apps" result="found all 5 apps in Talome store" />
+    <ToolCall tool="install_app x 5" result="jellyfin, sonarr, radarr, prowlarr, qbittorrent — all created" />
+    <ToolCall tool="wire_apps" result="connected download clients" />
+    <ToolCall tool="arr_add_download_client" result="sonarr and radarr linked to qbittorrent" />
+    <ToolCall tool="arr_add_root_folder" result="/mnt/media/TV on Sonarr, /mnt/media/Movies on Radarr" />
+    <ToolCall tool="arr_sync_indexers_from_prowlarr" result="indexers synced to sonarr and radarr" />
+    <ToolCall tool="check_service_health" result="all 5 apps healthy" />
+    All five apps are running and wired together. Jellyfin at :8096, Sonarr at :8989, Radarr at :7878, Prowlarr at :9696, qBittorrent at :8080. Sonarr and Radarr are configured with qBittorrent as download client, root folders at /mnt/media/TV and /mnt/media/Movies, and indexers synced from Prowlarr. Try: "Search for The Bear"
+  </AssistantMessage>
+</ChatSimulation>
+
+### 3. Diagnostics
+
+<ChatSimulation>
+  <UserMessage>Why is Sonarr not finding any releases?</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="arr_get_status" result="sonarr: running" />
+    <ToolCall tool="arr_list_indexers" result="sonarr: 0 indexers configured" />
+    <ToolCall tool="arr_list_download_clients" result="sonarr: qbittorrent connected" />
+    <ToolCall tool="prowlarr_get_indexer_stats" result="3 active indexers, all healthy" />
+    Found the issue. Sonarr has 0 indexers configured, even though Prowlarr has 3 active indexers with healthy stats. The indexer sync is not set up. Fixing now.
+    <ToolCall tool="arr_sync_indexers_from_prowlarr" result="3 indexers synced to sonarr" />
+    <ToolCall tool="arr_list_indexers" result="sonarr: 3 indexers active" />
+    Done. Sonarr now has 3 indexers synced from Prowlarr: NZBgeek (Usenet, 142 queries today), 1337x (Torrent, 89 queries), RARBG (Torrent, 67 queries). Try searching for a show now — it should find releases immediately.
+  </AssistantMessage>
+</ChatSimulation>
+
+### 4. System Monitoring
+
+```
+You: What's eating all my resources?
+
+AI: [get_system_stats]
+    [get_container_stats]
+
+    Your server is under moderate load:
+    - CPU: 67% (4 cores)
+    - Memory: 5.2 GB / 8 GB (65%)
+    - Disk: 412 GB / 500 GB (82%)
+
+    Top containers by memory:
+    | Container | CPU | Memory |
+    |-----------|-----|--------|
+    | `jellyfin` | 34% | 1.8 GB |
+    | `plex` | 12% | 920 MB |
+    | `sonarr` | 8% | 340 MB |
+    | `radarr` | 6% | 310 MB |
+    | `postgres` | 4% | 280 MB |
+
+    `jellyfin` is the heaviest — 34% CPU and 1.8 GB RAM. That's
+    typical during active transcoding. If nobody's streaming right now,
+    it might be running a library scan.
+
+    Want me to check Jellyfin's active sessions or set resource limits
+    on it?
+```
+
+### 5. App Creation
+
+```
+You: Create a recipe manager with ingredient search and meal planning
+
+AI: [design_app_blueprint: "Recipe manager with ingredient search,
+    meal planning, PostgreSQL backend, clean dark UI"]
+
+    Blueprint generated:
+    - **Mealie** pattern adapted — two services (web + postgres)
+    - Port 9925 (auto-selected, no conflicts with your running apps)
+    - Volumes: ./data (recipes), ./postgres (database)
+    - Healthcheck: HTTP GET /api/health
+
+    Scaffolding the app now with Claude Code...
+
+    [scaffold generation runs in background]
+
+    Your app "Recipe Manager" is ready in My Creations.
+    - 2 services: web app (Node.js 20) + PostgreSQL 16
+    - Features: ingredient search, weekly meal planner, recipe import
+    - Dark theme matching Talome's design system
+
+    Want me to install it?
+```
+
+### 6. Configuration
+
+```
+You: Change Sonarr's quality profile to prefer 1080p Bluray
+
+AI: [arr_list_quality_profiles: sonarr]
+
+    Sonarr has 4 quality profiles. Here's what they allow:
+
+    | Profile | Top Quality | Cutoff |
+    |---------|------------|--------|
+    | Any | Remux-2160p | HDTV-720p |
+    | HD-1080p | Remux-1080p | Bluray-1080p |
+    | Ultra-HD | Remux-2160p | WEBDL-2160p |
+    | SD | DVD | SDTV |
+
+    "HD-1080p" with a Bluray-1080p cutoff matches what you want.
+    Applying it now:
+
+    [arr_apply_quality_profile: sonarr, profileName: "HD-1080p"]
+
+    Done. All new series in Sonarr will use the HD-1080p profile.
+    Existing series keep their current profiles — want me to change
+    those too?
+```
+
+### 7. Cross-Integration Wiring
+
+```
+You: Connect Overseerr to everything
+
+AI: [overseerr_get_status]
+    [list_configured_apps]
+    [arr_get_status: sonarr]
+    [arr_get_status: radarr]
+    [jellyfin_get_status]
+
+    Overseerr is running. I'll connect it to your configured apps.
+
+    [overseerr_configure_jellyfin]
+    [overseerr_configure_sonarr]
+    [overseerr_configure_radarr]
+
+    Overseerr is now connected to:
+    - **Jellyfin** — for user authentication and media availability
+    - **Sonarr** — for TV show requests (HD-1080p profile, /mnt/media/TV)
+    - **Radarr** — for movie requests (HD-1080p profile, /mnt/media/Movies)
+
+    Users can now request media at http://localhost:5055.
+    Requests will auto-route to the right *arr app and start downloading.
+
+    Want me to set up auto-approval so requests don't need manual review?
+```
+
+### 8. Self-Improvement
+
+<ChatSimulation>
+  <UserMessage>The container list loads slowly when I have 20+ containers</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="plan_change" result="Optimize container list performance for 20+ containers" />
+    I found the issue. The container list page calls inspect_container for each container sequentially to get detailed stats. With 20+ containers, that is 20+ serial Docker API calls. Proposed fix: use list_containers with stats: true to get basic stats in a single API call, only call inspect_container for the detail view, and add a 5-second cache. This should reduce API calls from N to 1 and cut load time from ~4 seconds to under 200ms. Should I apply this change?
+  </AssistantMessage>
+  <UserMessage>Do it.</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="apply_change" result="TypeScript compilation passed, 2 files modified" />
+    Change applied. Modified apps/core/src/routes/containers.ts and apps/dashboard/src/components/containers/container-list.tsx. The container list now fetches all stats in a single call. Refresh the containers page to see the difference.
+  </AssistantMessage>
+</ChatSimulation>
+
+## Multi-Provider Support
+
+Talome supports three AI providers:
+
+| Provider | Default Model | Best For |
+|----------|--------------|----------|
+| **Anthropic** | Claude Haiku 4.5 | Best tool use, recommended default |
+| **OpenAI** | GPT-5.3 | Alternative cloud option |
+| **Ollama** | Local models | Fully offline, privacy-first |
+
+Configure your provider in **Settings > AI Provider**. The system prompt and tool architecture work identically across all providers — only the model's reasoning quality varies.
+
+## What the AI Can Create
+
+Beyond managing existing infrastructure, the AI assistant can create new resources through conversation:
+
+- **Custom tools** -- define new tools at runtime via `create_tool`. Describe a capability (e.g., "check my UPS battery status via NUT") and the AI generates a working tool with Zod schema, execution function, and keyword triggers.
+- **Dashboard widgets** -- create and configure widgets programmatically via `create_widget_manifest`. Describe what metrics or data you want to see and the AI builds a widget that appears on your dashboard.
+- **Automations** -- describe a workflow in plain English and the AI generates the full automation with triggers, conditions, and steps via `create_automation`.
+- **App blueprints** -- describe an app you want to build and the AI generates a complete Docker Compose stack with manifest, health checks, and optionally a full web UI via `design_app_blueprint`.
+- **Integration wiring** -- the AI can configure cross-app connections (download clients, indexer sync, media server linking) through tools like `wire_apps`, `overseerr_configure_sonarr`, and `arr_add_download_client`.
+- **Codebase changes** -- the AI can modify Talome's own TypeScript source code via the self-improvement pipeline (`plan_change` / `apply_change`), with automatic TypeScript validation and rollback.
+
+Everything is conversational. You describe the intent, the AI builds the implementation.
+
+## Custom System Prompts
+
+You can append custom instructions to the system prompt in **Settings > AI**. Common uses:
+
+- Set a preferred language: "Always respond in Spanish"
+- Define naming conventions: "Use kebab-case for all container names"
+- Add domain knowledge: "My NAS is a Synology DS920+ at 192.168.1.100"
+
+Custom prompts are appended after the default system prompt and do not override it.
+
+## Limitations
+
+- **No internet access** — the AI works with your local system. It cannot browse the web, access external APIs, or download files from the internet (unless you've configured a web search tool).
+- **Destructive operations need confirmation** — in the default "cautious" mode, operations like uninstalling apps, deleting files, or pruning Docker resources require you to confirm.
+- **10 tool calls per turn** — the AI can execute up to 10 tool calls in a single response. For operations requiring more steps, it completes across multiple turns.
+- **Zod validation on all inputs** — every tool parameter is validated with a Zod schema. The AI cannot pass malformed data to any tool.
+- **No `eval()`** — the AI never executes arbitrary code strings. All operations go through typed, validated tool definitions.
+- **Shell commands are restricted** — `run_shell` only executes commands you explicitly request and logs every execution to the audit trail.
+
+<Cards>
+  <Card title="Tools Reference" href="/docs/reference/tools">
+    Browse all 230+ tools with parameters and examples.
+  </Card>
+  <Card title="Media Stack Guide" href="/docs/guides/media-stack">
+    The most popular AI-orchestrated workflow.
+  </Card>
+  <Card title="Self-Improvement" href="/docs/guides/self-improvement">
+    How the AI rewrites its own source code.
+  </Card>
+  <Card title="MCP Server" href="/docs/reference/mcp-server">
+    Use Talome's tools from Claude Code or Cursor.
+  </Card>
+</Cards>

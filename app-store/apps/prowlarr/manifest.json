@@ -1,0 +1,21 @@
+{
+  "id": "prowlarr",
+  "name": "Prowlarr",
+  "description": "Indexer manager for Sonarr, Radarr and other *arr apps",
+  "icon": "🔍",
+  "category": "media",
+  "version": "latest",
+  "website": "https://prowlarr.com",
+  "image": "lscr.io/linuxserver/prowlarr:latest",
+  "ports": [{"host": 9696, "container": 9696}],
+  "volumes": [
+    {"name": "config", "containerPath": "/config", "description": "Prowlarr configuration and database"}
+  ],
+  "env": [
+    {"key": "TZ", "label": "Timezone", "required": false, "default": "UTC"},
+    {"key": "PUID", "label": "User ID", "required": false, "default": "1000"},
+    {"key": "PGID", "label": "Group ID", "required": false, "default": "1000"}
+  ],
+  "minResources": {"cpuCores": 1, "memoryMb": 256, "diskMb": 512},
+  "arm64": true
+}

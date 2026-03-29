@@ -1,0 +1,256 @@
+---
+title: Your First Conversation
+description: From zero to a running app in one conversation. A step-by-step walkthrough of Talome's AI assistant.
+---
+
+<VideoPlaceholder description="Watch: From fresh install to running Jellyfin in one conversation (2 minutes)" />
+
+This guide walks you through your first interaction with Talome — from creating your account to having a fully configured app running on your server. By the end, you will understand how the AI works, what it can do, and how to get the most out of it.
+
+---
+
+## Step 1: Create Your Admin Account
+
+Open `http://localhost:3000` in your browser. On first visit, Talome presents a simple form to set your admin password.
+
+<ScreenshotPlaceholder description="The onboarding screen with a password field and 'Create Account' button" />
+
+Enter a strong password and click **Create Account**. This is the only user account — Talome is designed for single-admin use. You will be logged in immediately.
+
+---
+
+## Step 2: Configure Your AI Provider
+
+Before the assistant can do anything, it needs an AI provider. Navigate to **Settings** from the sidebar, then open the **AI Provider** section.
+
+<ScreenshotPlaceholder description="Settings page with AI Provider section showing Anthropic, OpenAI, and Ollama options" />
+
+### Anthropic (Recommended)
+
+Anthropic's Claude is Talome's default and best-tested provider. The assistant uses Claude Haiku for fast, routine operations and Claude Sonnet for complex reasoning.
+
+1. Go to [console.anthropic.com](https://console.anthropic.com) and create an API key
+2. Paste it into the **Anthropic API Key** field
+3. Click **Save**
+
+Typical cost: **$0.01-0.05 per conversation**. A full media stack setup with five app installs, wiring, and verification costs roughly $0.03.
+
+### OpenAI (Alternative)
+
+If you prefer OpenAI, set your `OPENAI_API_KEY` and select OpenAI as the default provider. GPT-5.3 is the recommended model. All tools work identically — the AI layer is provider-agnostic.
+
+### Ollama (Local, Free)
+
+For fully local AI with no cloud dependency:
+
+1. Install [Ollama](https://ollama.ai) on your server
+2. Pull a model: `ollama pull llama3.1`
+3. In Talome Settings, set the Ollama URL (typically `http://localhost:11434`)
+4. Select Ollama as the default provider
+
+<Callout type="info">
+Local models work well for basic tasks (container management, simple installs) but may struggle with complex multi-step operations like full media stack wiring. Anthropic or OpenAI provide better results for advanced workflows.
+</Callout>
+
+---
+
+## Step 3: Open the Assistant
+
+The AI assistant is always available. You have two ways to open it:
+
+- Click **Assistant** in the sidebar navigation
+- Press **`/`** on your keyboard from any page to open the command palette in chat mode
+
+The assistant is a full page in the dashboard with conversation history, suggestion cards, and a chat input bar.
+
+<ScreenshotPlaceholder description="The assistant page showing the empty state with suggestion cards and conversation history" />
+
+---
+
+## Step 4: Ask What It Can Do
+
+Type your first message:
+
+```
+What can you do?
+```
+
+The AI responds with a structured overview of its capabilities, organized by category — Docker management, app store, media, networking, automations, self-improvement, and more. This is not a static help page. The response is generated live, reflecting which integrations you have configured.
+
+If you have not configured Sonarr yet, the AI will not mention arr tools. Once you configure an integration, those capabilities appear automatically.
+
+---
+
+## Step 5: Install Your First App
+
+Now for the real demonstration. Type:
+
+```
+Install Jellyfin
+```
+
+Here is what happens, step by step:
+
+<ChatSimulation>
+  <UserMessage>Install Jellyfin</UserMessage>
+  <AssistantMessage>
+    Installing Jellyfin...
+    <ToolCall tool="search_apps" result="found Jellyfin in Talome store" />
+    <ToolCall tool="install_app" result="pulled linuxserver/jellyfin:10.9.11, container created, ports 8096:8096" />
+    <ToolCall tool="check_service_health" result="jellyfin: healthy (responded in 1.2s)" />
+    Jellyfin is running at http://localhost:8096. The container is healthy and using the default configuration. Media libraries are empty — once you add media files, tell me the path and I will configure Jellyfin's library to point to it. Want me to set up Sonarr and Radarr to automatically download media into Jellyfin?
+  </AssistantMessage>
+</ChatSimulation>
+
+<ScreenshotPlaceholder description="Chat showing the Jellyfin install with three tool execution cards (search, install, health check) and the AI's summary" />
+
+Notice what happened:
+
+1. **`search_apps`** — The AI searched across all configured stores to find the Jellyfin app, identified the correct store ID and app ID
+2. **`install_app`** — It pulled the Docker image, created the container with correct ports, volumes, environment variables, and a health check
+3. **`check_service_health`** — It verified the container started correctly and the HTTP endpoint responds
+
+Three tool calls, executed automatically. You typed five words.
+
+---
+
+## Step 6: Go Deeper
+
+The assistant remembers your conversation context. Try these follow-up messages:
+
+### Check your server
+
+```
+Show me all running containers
+```
+
+The AI calls `list_containers` and returns a formatted table with container names, status, CPU/memory usage, and ports.
+
+### Add a memory
+
+```
+Remember that my media is stored at /mnt/nas/media
+```
+
+The AI stores this as a **fact** memory. Next time you install a media app, it will automatically use this path for volume mounts without asking.
+
+### Diagnose something
+
+```
+Why is Jellyfin using so much memory?
+```
+
+The AI calls `get_container_stats` to read the actual resource usage, then `inspect_container` to check the configuration. It gives you specifics — exact memory consumption, limits (or lack thereof), and offers to set resource limits if needed.
+
+### Install a full stack
+
+```
+Set up Sonarr, Radarr, Prowlarr, and qBittorrent and wire them all together
+```
+
+This is where Talome shines. The AI chains multiple tools: five `install_app` calls, then `wire_apps` to connect download clients, then `arr_sync_indexers_from_prowlarr` to push indexers — all in a single turn.
+
+---
+
+## What Happens Behind the Scenes
+
+Understanding the mechanics helps you get the most out of Talome. Here is what happens every time you send a message:
+
+### 1. System prompt construction
+
+The backend builds a context-aware system prompt that includes:
+- Talome's core instructions (how to use tools, response patterns, safety rules)
+- Your current page context (if you are on the Media page, media tools are prioritized)
+- A custom system prompt, if you have set one in Settings
+
+### 2. Memory injection
+
+The top 10 most relevant memories are fetched from SQLite and injected into the prompt. Memories are ranked by a composite score:
+- **Recency** — more recent memories rank higher
+- **Access frequency** — memories the AI has recalled before rank higher
+- **Confidence** — memories with high confidence (set by the AI based on how explicit you were) rank higher
+
+This means the AI always has your preferences and facts in context without you repeating them.
+
+### 3. Dynamic tool loading
+
+Not all 230+ tools are sent to the AI on every message. Talome uses **per-message tool routing**:
+- Core tools (Docker, apps, system, filesystem, memories) are always available
+- Domain-specific tools (arr, Jellyfin, qBittorrent, etc.) load only when that app is configured in Settings
+- Within active domains, keyword matching in your message further narrows the tool set — a message about "torrents" loads qBittorrent tools but not Home Assistant tools
+
+This keeps the tool count low for each call, which improves AI accuracy and reduces latency.
+
+### 4. Streaming execution
+
+The AI's response streams back token by token. When it decides to call a tool, the tool executes server-side against your real Docker socket, database, or app API. The result flows back into the AI's context, and it continues generating its response. You see this as tool execution cards appearing inline in the chat.
+
+### 5. Security gating
+
+Every tool call passes through the security gateway before execution:
+- **Permissive mode** — all tools execute freely
+- **Cautious mode** (default) — read and modify tools execute normally; destructive tools (uninstall, delete volume, prune) require the AI to explicitly confirm
+- **Locked mode** — only read-tier tools work; all modifications are blocked
+
+Each tool is classified into a tier (read / modify / destructive), and the gateway enforces the active security mode.
+
+---
+
+## Things to Try Next
+
+### System management
+- `"What's using the most disk space?"`
+- `"Show me system health"`
+- `"Clean up unused Docker images"`
+- `"Set up nightly backups for Jellyfin"`
+
+### App store
+- `"Search for a self-hosted note-taking app"`
+- `"Install Pi-hole for DNS ad blocking"`
+- `"What apps do I have installed?"`
+- `"Update all my apps"`
+
+### Media (after installing Sonarr/Radarr)
+- `"Search for The Bear and add it to Sonarr"`
+- `"What's downloading right now?"`
+- `"Show me what's coming out this week"`
+- `"Why is Radarr not finding releases for Dune?"`
+
+### Networking
+- `"Set up local DNS so I can access apps at *.talome.local"`
+- `"Add a reverse proxy route for Jellyfin at media.example.com"`
+- `"Set up Tailscale for remote access"`
+
+### Home automation (after installing Home Assistant)
+- `"Show me all Home Assistant entities"`
+- `"Turn off the living room lights"`
+- `"Create an automation to turn on the porch light at sunset"`
+
+### Custom apps
+- `"Create a bookmark manager with tags, search, and a dark UI"`
+- `"Build me a simple dashboard that shows my Sonarr and Radarr calendars"`
+
+### Self-improvement
+- `"Read the source code for the container list page"`
+- `"The dashboard loads slowly — can you profile it?"`
+- `"Add a button to the container card that opens the logs"`
+
+<Callout type="info">
+The AI remembers everything you tell it across conversations. Say `"Remember that I prefer Jellyfin over Plex"` or `"My server is in the basement closet, don't restart things during the day"` — these preferences will influence future interactions automatically.
+</Callout>
+
+---
+
+## Next Steps
+
+<Cards>
+  <Card title="Dashboard Tour" href="/docs/getting-started/dashboard-tour">
+    Explore every page of the Talome dashboard — widgets, app store, containers, media, and more.
+  </Card>
+  <Card title="AI Assistant Guide" href="/docs/guides/ai-assistant">
+    Deep dive into how the AI works — tool domains, memory system, conversation patterns, and security modes.
+  </Card>
+  <Card title="Media Stack Guide" href="/docs/guides/media-stack">
+    Set up the complete Jellyfin + Sonarr + Radarr + Prowlarr + qBittorrent stack.
+  </Card>
+</Cards>

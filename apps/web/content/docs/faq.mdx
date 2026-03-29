@@ -1,0 +1,304 @@
+---
+title: FAQ
+description: Frequently asked questions about Talome.
+---
+
+## What is Talome?
+
+Talome is an AI-first, open-source home server management platform. It combines a Docker container orchestrator, a multi-source app store (Talome + CasaOS + Umbrel + custom), and an agentic AI assistant with 230+ tools — all in a single self-hosted package. You install, configure, and manage apps through natural language conversations.
+
+## How is Talome different from CasaOS, Umbrel, or Coolify?
+
+| | Talome | CasaOS | Umbrel | Coolify |
+|---|---|---|---|---|
+| **Primary interface** | AI chat + dashboard | GUI dashboard | GUI dashboard | GUI dashboard |
+| **Interaction model** | Conversational — describe what you want | Click-to-install | Click-to-install | Git-push deploy |
+| **App store** | 300+ apps (native + CasaOS + Umbrel + custom) | ~70 apps | ~300 apps | 280+ one-click services |
+| **AI assistant** | 230+ tools, autonomous care, self-improvement | None | None | None |
+| **Target user** | Home server operators | Home server beginners | Home server / Bitcoin node | Web developers deploying apps |
+| **Multi-service wiring** | AI auto-configures connections between apps | Manual | Manual | Manual |
+| **Self-improvement** | Modifies its own source code with compiler validation | No | No | No |
+| **License** | AGPL-3.0 (fully open source) | Apache 2.0 | PolyForm Noncommercial (source-available, not open source) | AGPL v3 |
+| **App creation** | Describe an app in English → generates working Docker app | No | No | Deploy from Git repos |
+
+**CasaOS** provides a clean, beginner-friendly UI for Docker management. Its limitations include no advanced storage management (no ZFS, no RAID), no built-in backup, and a smaller app catalog. The project's maintenance has slowed — the team has shifted focus to ZimaOS.
+
+**Umbrel** offers a polished, consumer-grade experience and sells its own hardware. It originated as a Bitcoin node platform. Key concerns: it switched from open source to a "source available" license (PolyForm Noncommercial 1.0.0) — you can view and modify the code for personal use but cannot use it commercially. It also lacks HTTPS for local connections.
+
+**Coolify** is a self-hosted PaaS — an alternative to Vercel or Heroku, not a home server OS. It targets developers deploying web apps from Git repos. It's excellent for that use case but doesn't provide the home server management features (media stack orchestration, system monitoring, app creation) that Talome focuses on.
+
+All of their apps are available in Talome's unified store. You get their catalogs without their limitations.
+
+## How does Talome compare to OpenClaw?
+
+Different tools for different problems. [OpenClaw](https://github.com/openclaw/openclaw) is a personal AI agent accessed through messaging apps (Signal, Telegram, Discord). It runs LLM-powered conversations and has 100+ "AgentSkills" for shell commands and web automation.
+
+Talome is a **home server platform** — it manages Docker containers, provides a multi-source app store, runs a dashboard with 25+ widgets, and has deep integrations with 16 self-hosted apps. The AI is embedded in the platform, not bolted on. It understands your running containers, storage paths, network configuration, and app relationships.
+
+The overlap is that both involve AI agents executing tasks on local infrastructure. The difference is scope: OpenClaw is a general-purpose chat agent. Talome is a purpose-built system with 230+ domain-specific tools for home server management. And like OpenClaw, Talome also supports messaging — you can manage your server through Telegram, Discord, or other messaging platforms, not just the web dashboard.
+
+## Is Talome free?
+
+Yes. Talome is fully open-source under the AGPL-3.0 license. The only cost is your AI provider:
+
+| Provider | Model | Cost per Conversation |
+|----------|-------|----------------------|
+| Anthropic | Haiku | ~$0.01 - $0.05 |
+| Anthropic | Sonnet | ~$0.05 - $0.20 |
+| Anthropic | Opus | ~$0.20 - $1.00 |
+| OpenAI | GPT-5.3 | ~$0.01-0.10/conversation |
+| Ollama | Any local model | Free |
+
+Haiku handles most day-to-day tasks well. Sonnet is the default and best balance of capability and cost. Heavy sessions with many tool calls (like setting up an entire media stack) cost more because of the back-and-forth.
+
+## Is my data safe?
+
+All data stays on your server. Talome stores everything locally:
+
+- **SQLite database** — settings, memories, automations, app metadata
+- **Docker volumes** — all app data lives in Docker volumes on your machine
+- **Backups** — stored in `~/.talome/backups/` on your filesystem
+
+There is no telemetry, no analytics, no cloud sync, and no phone-home. The only external call is to your chosen AI provider when you send a message in the chat. If you use Ollama, even that stays local.
+
+## Why does Talome need Docker socket access?
+
+Talome manages Docker containers — installing, starting, stopping, inspecting, and monitoring them. This requires access to the Docker socket (`/var/run/docker.sock`), the same access model used by Portainer, CasaOS, Umbrel, Coolify, and every other container management tool.
+
+The Docker socket is **never exposed to the frontend**. All container operations go through Talome's authenticated backend API, which validates inputs with Zod schemas before executing any Docker commands.
+
+## Can the AI break my server?
+
+Talome has multiple safety layers:
+
+**Tool boundaries** — The AI can only perform actions defined by its 230+ tools. It cannot execute arbitrary code. All tool inputs are validated with Zod schemas. `eval()` is never used.
+
+**Confirmation for destructive operations** — Deleting containers, removing volumes, and uninstalling apps require explicit confirmation before execution.
+
+**Self-improvement safety net** — When the AI modifies Talome's own code:
+- Every change must pass the TypeScript compiler (`tsc --noEmit`)
+- Failed changes are automatically stashed with `git stash` and reported
+- Changes are scoped to the Talome project directory only — no system files
+- An audit trail logs every modification with before/after diffs
+- One change at a time — no chaining without confirmation
+
+**Automation safety** — Scheduled automations can only use a subset of tools explicitly marked as "automation-safe." Destructive tools are excluded from unattended execution.
+
+## Why a sandboxed AI model?
+
+Giving an AI agent access to Docker, file systems, and system configuration is powerful — and dangerous without constraints. The risks are not theoretical:
+
+- **CVE-2026-25253** — a critical RCE vulnerability in OpenClaw allowed any malicious webpage to steal auth tokens, disable the sandbox, turn off confirmation prompts, and execute arbitrary commands with full system privileges. Every version from launch was affected.
+- **1,467 malicious skills** were discovered on OpenClaw's ClawHub marketplace, including one installed 340,000+ times before removal. Skills exfiltrated credentials, installed cryptominers, and created SSH backdoors.
+- **30,000+ OpenClaw instances** were found exposed to the internet with insecure defaults, with nearly 1,000 running zero authentication.
+
+The common failure: security as an opt-in afterthought. OpenClaw grants the agent arbitrary shell execution, full filesystem access, and browser control by default — then asks operators to manually lock it down. Cisco's assessment: *"Security for OpenClaw is an option, but it is not built in."*
+
+Talome inverts this model. **Security is the architecture, not a configuration option.**
+
+- **No arbitrary execution** — the AI operates through a defined tool interface. Every action goes through a Zod-validated tool with explicit input schemas. There is no `eval()`, no shell passthrough, no raw command execution. The AI literally cannot run a command that isn't a predefined tool.
+- **Least privilege by design** — tools are scoped to their domain. Media tools can't modify network settings. Container tools can't read arbitrary host files. There is no "full access" mode.
+- **Confirmation cannot be bypassed** — destructive operations require explicit user confirmation. This gate is enforced in the backend, not the AI's prompt. No API call can disable it.
+- **No plugin marketplace** — Talome's tools are part of the verified codebase, not downloaded from an unmoderated marketplace. Custom tools go through the same TypeScript compilation and validation as built-in tools.
+- **Audit trail** — every tool invocation is logged with parameters and results. The log is append-only and not accessible to the AI for modification.
+- **Automation restrictions** — unattended automations use a curated subset of tools explicitly marked as safe. Destructive tools are excluded entirely.
+
+A sandbox prevents unintended actions from affecting your machine. Least privilege prevents the AI from taking actions outside its role. Talome uses both — not as options you enable, but as the foundation everything else is built on.
+
+## Why Docker?
+
+Docker wins on ecosystem. Virtually every self-hosted application — Jellyfin, Sonarr, Pi-hole, Vaultwarden, Home Assistant — publishes an official Docker image. Docker Compose is the standard for defining multi-container stacks. LinuxServer.io, the largest community image maintainer, builds exclusively for Docker.
+
+**Podman** has a stronger security architecture (daemonless, rootless by default) but a smaller ecosystem and less mature Compose support. Most app documentation assumes Docker. Choosing Podman would mean constant friction with upstream app publishers.
+
+**LXC** creates system containers (lightweight VMs) rather than application containers. Better for long-running services that expect a full OS, but no Docker Compose equivalent and no image registry ecosystem.
+
+Talome mitigates Docker's security trade-offs by:
+- Never exposing the Docker socket to the frontend
+- Proxying all container operations through the authenticated backend API
+- Validating all inputs with Zod schemas before executing Docker commands
+- Supporting Docker's rootless mode for reduced attack surface
+
+## Does Talome work on mobile?
+
+Yes. Talome's dashboard is fully responsive and works as a web app on any mobile device. The interface adapts to phone and tablet screens — the chat assistant, app store, media browser, file manager, and all dashboard widgets are touch-optimized.
+
+On iOS and Android, you can add Talome to your home screen for an app-like experience. The dashboard loads in a standalone window without browser chrome, with your server's icon and name on your home screen.
+
+All features work on mobile: install apps, chat with the AI, browse files, manage containers, view monitoring widgets, and configure settings. The same server, accessible from anywhere on your network.
+
+## What is cinema mode?
+
+Talome includes a built-in media player that streams video files directly from your server's filesystem in the browser. When Plex or Jellyfin isn't available, is buggy, or hasn't indexed a file yet, open it in the file browser and play it immediately — no transcoding server needed.
+
+Cinema mode supports MKV, MP4, and most common formats with subtitle support. It works on any screen: your phone, your laptop, or your TV in the living room. It's not a replacement for a full media server — it's the fallback that always works.
+
+## Can I message Talome from my phone?
+
+Yes. Beyond the mobile dashboard, you can communicate with Talome through messaging platforms. Connect your server to services like Telegram or Discord, and manage your home server through regular messages — install apps, check status, get notifications, and troubleshoot issues, all from the same apps you already use for daily communication. Your server becomes a contact in your messaging app.
+
+## What AI models does Talome support?
+
+| Provider | Models | Notes |
+|----------|--------|-------|
+| **Anthropic** | Claude Sonnet, Opus, Haiku | Recommended. Best tool-use capability. |
+| **OpenAI** | GPT-5.3, GPT-5.4 | Full tool support. |
+| **Ollama** | Llama, Mistral, Qwen, Gemma, and any other local model | Free, fully local, no internet required. |
+
+Set your provider and API key in the dashboard Settings page or via environment variables. You can switch models at any time — your memories and settings are preserved.
+
+## Can I use Talome without AI?
+
+Yes. The dashboard, app store, container management, widget dashboard, and all UI features work without an AI provider configured. You just won't have access to the chat assistant. Everything the AI does can also be done through the dashboard UI — the AI is a faster interface, not the only interface.
+
+## How are backups done?
+
+Talome creates per-app backups as compressed tarballs containing Docker volumes, compose files, and environment variables. Docker images are not included — they're re-pulled from registries using pinned digests on restore.
+
+```
+"Back up Jellyfin"
+"Back up all my apps"
+"Restore Sonarr from the latest backup"
+```
+
+Backups can be scheduled with automations:
+
+```
+"Create an automation that backs up all apps every Sunday at 3am"
+```
+
+See the [Backups guide](/docs/guides/backups) for full details.
+
+## How do updates work?
+
+```
+"Check for updates"
+"Update Sonarr"
+"Update all apps"
+```
+
+Talome compares installed image digests against the latest available. Updates pull the new image, stop the container, replace it, and start the updated version. A pre-update backup is created automatically. If the update fails healthchecks, `rollback_update` reverts to the previous image.
+
+You can set per-app update policies — auto-update, manual, or confirmation-required.
+
+## Can Talome run on a Raspberry Pi?
+
+Yes. Talome runs on any machine with Docker and 2GB+ RAM. The Pi 4 (4GB or 8GB) and Pi 5 work well. ARM images are supported for the Talome server itself and for most apps in the store.
+
+Performance considerations:
+- AI conversations using cloud providers (Anthropic, OpenAI) work normally — the compute happens remotely
+- Ollama on a Pi is slow for large models. Use smaller models (Phi, TinyLlama) or a cloud provider
+- Memory-heavy apps (Jellyfin transcoding, Sonarr + Radarr + Prowlarr together) benefit from 4GB+ RAM
+
+## What about Windows?
+
+Talome runs on Windows via Docker Desktop or WSL2. Install Docker Desktop, enable WSL2 integration, and run Talome in a WSL2 terminal:
+
+```bash
+curl -fsSL https://get.talome.dev | bash
+```
+
+Or use Docker Compose directly from PowerShell. All features work, though some host-level monitoring (SMART status, GPU) may have limited support depending on your WSL2 configuration.
+
+## Are CasaOS and Umbrel apps compatible?
+
+Yes — natively. Talome's app store includes adapters for both CasaOS and Umbrel app stores. These adapters:
+
+1. Clone the upstream app store repositories
+2. Parse each app's manifest and compose file
+3. Normalize them into Talome's format
+4. Make them installable through the same pipeline as native Talome apps
+
+CasaOS and Umbrel apps install with the same port resolution, volume setup, network injection, and health monitoring as Talome-native apps. See the [CasaOS migration guide](/docs/guides/migrating-from-casaos) and [Umbrel migration guide](/docs/guides/migrating-from-umbrel).
+
+## What are security modes?
+
+Talome has configuration options that control the AI's level of autonomy:
+
+- **Confirmation required** (default) — destructive operations prompt for confirmation before executing
+- **Automation-safe tools** — only a curated subset of tools can run in unattended automations; destructive tools are excluded
+- **Scope restriction** — self-improvement changes are limited to the Talome project directory
+- **Audit trail** — every tool invocation is logged with parameters and results
+
+These are not discrete "modes" you select — they're layered safety mechanisms that are always active.
+
+## Can I create custom tools?
+
+Yes. The `create_tool` function lets you define new tools that the AI can use:
+
+```
+"Create a tool that checks my UPS battery status via NUT"
+```
+
+Custom tools are defined with a name, description, Zod input schema, and an execution function. They appear in the AI's tool list alongside built-in tools.
+
+For integration-level tools (multiple tools for a new app), see [Adding Integrations](/docs/developers/adding-integrations).
+
+## What is the MCP server?
+
+MCP (Model Context Protocol) is an open standard for connecting AI models to tools. Talome's MCP server exposes all 230+ tools to external AI clients — Claude Code, Cursor, Claude Desktop, or any MCP-compatible tool.
+
+The MCP server runs as a local stdio process. No HTTP server, no token, no environment variables needed for local use. It connects to the same database and Docker socket as the web dashboard.
+
+See the [MCP Server reference](/docs/reference/mcp-server) for setup instructions.
+
+## How does Ollama performance compare to cloud models?
+
+It depends on the model and your hardware:
+
+| Hardware | Model | Response Time | Quality |
+|---------|-------|--------------|---------|
+| RTX 3090 (24GB) | Llama 3.1 70B (Q4) | 2-5 seconds | Excellent tool use |
+| RTX 3060 (12GB) | Llama 3.1 8B | 1-3 seconds | Good for simple tasks |
+| M2 Mac (16GB) | Mistral 7B | 1-4 seconds | Good for simple tasks |
+| Raspberry Pi 5 | Phi-3 Mini | 10-30 seconds | Basic tasks only |
+
+Cloud models (Claude Sonnet, GPT-5.3) respond in 1-3 seconds regardless of your hardware and handle complex multi-tool tasks better. For most users, the best setup is a cloud provider for daily use and Ollama as a free fallback.
+
+## How do I update Talome itself?
+
+```bash
+curl -fsSL https://get.talome.dev | bash -s -- update
+```
+
+Or if running via Docker Compose:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Updates preserve your data, settings, memories, automations, and backups. Only the Talome container image is replaced.
+
+## Is there multi-user support?
+
+Talome is currently designed for single-user (or household) use. There is no user account system — anyone who can access the dashboard has full control. Secure access to the dashboard using:
+
+- Network isolation (only accessible on your LAN)
+- Tailscale (only your devices can reach it)
+- Reverse proxy with basic auth (for shared environments)
+
+Multi-user support with role-based access is on the roadmap.
+
+## Can I access Talome via API?
+
+Yes. The Hono backend exposes a REST API on port 4000. All dashboard functionality goes through this API, so anything the UI can do, you can do via HTTP.
+
+Key endpoints follow the pattern `/api/containers`, `/api/apps`, `/api/settings`, etc. For the full API reference, see [API Reference](/docs/reference/api).
+
+## Where do I get help?
+
+- **Ask the AI** — the Talome assistant can troubleshoot most issues directly
+- **GitHub Issues** — [github.com/talomehq/talome/issues](https://github.com/talomehq/talome/issues)
+- **Discord** — [discord.gg/HK7gFaVRJ](https://discord.gg/HK7gFaVRJ)
+- **Documentation** — you're reading it
+
+## How can I contribute?
+
+Talome is open-source and welcomes contributions. The codebase is a TypeScript monorepo with a Hono backend and Next.js frontend. See the [Contributing guide](/docs/developers/contributing) for setup instructions, coding conventions, and PR guidelines.
+
+Ways to contribute:
+- Report bugs and suggest features via GitHub Issues
+- Add new app integrations (see [Adding Integrations](/docs/developers/adding-integrations))
+- Improve the dashboard UI
+- Write documentation
+- Submit apps to the community store

@@ -1,0 +1,18 @@
+services:
+  talome:
+    image: ghcr.io/talomehq/talome:latest
+    container_name: talome
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+      - "3000:3000"
+    volumes:
+      - talome-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+
+volumes:
+  talome-data:

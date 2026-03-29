@@ -1,0 +1,24 @@
+{
+  "id": "pihole",
+  "name": "Pi-hole",
+  "description": "Network-wide ad blocker and DNS sinkhole",
+  "icon": "🕳️",
+  "category": "networking",
+  "version": "latest",
+  "website": "https://pi-hole.net",
+  "image": "pihole/pihole:latest",
+  "ports": [
+    {"host": 80, "container": 80},
+    {"host": 53, "container": 53}
+  ],
+  "volumes": [
+    {"name": "etc-pihole", "containerPath": "/etc/pihole", "description": "Pi-hole configuration"},
+    {"name": "etc-dnsmasq.d", "containerPath": "/etc/dnsmasq.d", "description": "DNSmasq configuration"}
+  ],
+  "env": [
+    {"key": "WEBPASSWORD", "label": "Web Admin Password", "required": false, "secret": true},
+    {"key": "TZ", "label": "Timezone", "required": false, "default": "UTC"}
+  ],
+  "minResources": {"cpuCores": 1, "memoryMb": 256, "diskMb": 512},
+  "arm64": true
+}

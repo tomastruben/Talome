@@ -1,0 +1,27 @@
+{
+  "name": "talome",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
+  "author": "Tomas Truben",
+  "private": true,
+  "packageManager": "pnpm@10.30.3",
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:safe": "apps/core/node_modules/.bin/tsx scripts/supervisor.ts --mode=dev",
+    "build": "turbo build",
+    "start": "apps/core/node_modules/.bin/tsx scripts/supervisor.ts --mode=build",
+    "start:legacy": "scripts/start-core.sh & (cd apps/dashboard && cp -r .next/static .next/standalone/apps/dashboard/.next/static 2>/dev/null; node .next/standalone/apps/dashboard/server.js) & wait",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/sharp": "^0.32.0",
+    "turbo": "^2.8.12"
+  },
+  "dependencies": {
+    "qrcode.react": "^4.2.0",
+    "sharp": "^0.34.5"
+  }
+}

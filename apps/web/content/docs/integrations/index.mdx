@@ -1,0 +1,130 @@
+---
+title: Integrations
+description: Connect your self-hosted apps to Talome and manage them through natural conversation.
+---
+
+Talome integrates deeply with 12 self-hosted applications. Each integration adds domain-specific tools that let the AI assistant understand, configure, and manage the app as if it were a native feature. Instead of clicking through settings pages, you describe what you want in plain language and the AI executes the right API calls.
+
+## How Integrations Work
+
+Every integration follows the same architecture: a **tool domain**. A domain is a group of AI tools that belong to a specific app. When you configure an app's URL and API key in Settings, the corresponding domain activates and its tools become available to the assistant.
+
+### The Domain System
+
+Tools are organized into domains registered in the tool registry. Each domain declares which settings keys indicate the app is configured:
+
+```
+registerDomain({
+  name: "jellyfin",
+  settingsKeys: ["jellyfin_url"],
+  tools: { ... }
+})
+```
+
+When `jellyfin_url` exists in settings, the 6 Jellyfin tools load into the assistant's context. If the setting is missing, those tools don't exist as far as the AI is concerned. This keeps the tool count low per conversation, which directly improves tool selection accuracy.
+
+### Keyword Routing
+
+Even among active domains, tools are further filtered by scanning your message for relevant keywords. If your message mentions "torrent" or "download speed," the qBittorrent domain loads. If it mentions "indexer" or "quality profile," the arr domain loads. For ambiguous messages, all active tools load as a fallback. This two-layer filtering means the AI typically works with 80-120 tools per message instead of 230+.
+
+### Settings Activation
+
+The universal pattern for every integration:
+
+1. **Install the app** -- via `"Install Jellyfin"` in the chat, the app store, or manual Docker setup
+2. **Add the URL and API key** -- in **Settings > Integrations**, or let `wire_apps` do it automatically
+3. **Tools activate immediately** -- no restart needed, the AI gains access on the next message
+
+For apps installed through Talome, the API key is often extracted automatically from the app's config files during installation or wiring.
+
+## Universal Tools
+
+These tools work with any installed app, not just those with dedicated integrations. They are always available in the core domain:
+
+| Tool | Description |
+|------|-------------|
+| `app_api_call` | Make arbitrary API calls to any configured app |
+| `discover_app_api` | Explore an app's API endpoints and capabilities |
+| `test_app_connectivity` | Verify that Talome can reach an app |
+| `wire_apps` | Auto-detect installed apps, extract API keys from config files, set up cross-app connections, and save settings |
+
+The `wire_apps` tool is particularly powerful. After installing multiple apps, a single `wire_apps` call will:
+
+- Scan running containers for known apps
+- Extract API keys from config files (e.g., Sonarr's `config.xml`)
+- Save URLs and keys to Talome settings
+- Configure cross-app connections (e.g., adding qBittorrent as a download client in Sonarr)
+- Sync indexers from Prowlarr to all arr apps
+
+## Integration Matrix
+
+| Integration | Domain | Tools | Settings Keys | Category |
+|-------------|--------|-------|--------------|----------|
+| [Sonarr & Radarr](/docs/integrations/sonarr-radarr) | `arr` + `media` | 32 | `sonarr_url`, `radarr_url`, `sonarr_api_key`, `radarr_api_key` | Media management |
+| [Prowlarr](/docs/integrations/prowlarr) | `arr` | 3 + shared | `prowlarr_url`, `prowlarr_api_key` | Indexer management |
+| [Jellyfin](/docs/integrations/jellyfin) | `jellyfin` | 6 | `jellyfin_url`, `jellyfin_api_key` | Media server |
+| [Plex](/docs/integrations/plex) | `plex` | 5 | `plex_url`, `plex_token` | Media server |
+| [qBittorrent](/docs/integrations/qbittorrent) | `qbittorrent` | 6 | `qbittorrent_url`, `qbittorrent_username`, `qbittorrent_password` | Downloads |
+| [Overseerr](/docs/integrations/overseerr) | `overseerr` | 7 | `overseerr_url`, `overseerr_api_key` | Media requests |
+| [Home Assistant](/docs/integrations/home-assistant) | `homeassistant` | 5 | `homeassistant_url`, `homeassistant_token` | Smart home |
+| [Pi-hole](/docs/integrations/pihole) | `pihole` | 5 | `pihole_url`, `pihole_api_key` | Network security |
+| [Audiobookshelf](/docs/integrations/audiobookshelf) | `audiobookshelf` | 13 | `audiobookshelf_url`, `audiobookshelf_api_key` | Media library |
+| [Vaultwarden](/docs/integrations/vaultwarden) | `vaultwarden` | 4 | `vaultwarden_url`, `vaultwarden_admin_token` | Security |
+| [Ollama](/docs/integrations/ollama) | `ollama` | 5 | `ollama_url` | AI |
+
+## All Integrations
+
+<Cards>
+  <Card title="Sonarr & Radarr" href="/docs/integrations/sonarr-radarr">
+    TV and movie management with 27 arr tools plus 5 media tools. Queue management, release searching, quality profiles, indexer syncing, and automated library organization.
+  </Card>
+  <Card title="Prowlarr" href="/docs/integrations/prowlarr">
+    Centralized indexer management. Configure search sources once, sync to all arr apps automatically.
+  </Card>
+  <Card title="Jellyfin" href="/docs/integrations/jellyfin">
+    Open-source media server. Library management, scanning, playback statistics, and API key generation for other apps.
+  </Card>
+  <Card title="Plex" href="/docs/integrations/plex">
+    Media server with on-deck tracking, watch history, and watched-state management across your library.
+  </Card>
+  <Card title="qBittorrent" href="/docs/integrations/qbittorrent">
+    Torrent client management. Speed limits, download paths, preferences, and active torrent monitoring.
+  </Card>
+  <Card title="Overseerr" href="/docs/integrations/overseerr">
+    Media request system. Family and friends request content, you approve or decline through conversation.
+  </Card>
+  <Card title="Home Assistant" href="/docs/integrations/home-assistant">
+    Smart home control. List entities, call services, read history, and create automations through natural language.
+  </Card>
+  <Card title="Pi-hole" href="/docs/integrations/pihole">
+    Network-wide DNS blocking. View statistics, manage whitelists and blacklists, and temporarily disable filtering.
+  </Card>
+  <Card title="Audiobookshelf" href="/docs/integrations/audiobookshelf">
+    Audiobook and podcast management. Search libraries, track listening progress, and manage collections.
+  </Card>
+  <Card title="Vaultwarden" href="/docs/integrations/vaultwarden">
+    Self-hosted Bitwarden-compatible password manager. User management, invitations, and signup control.
+  </Card>
+  <Card title="Ollama" href="/docs/integrations/ollama">
+    Local AI model management. Pull, delete, and inspect models. Also usable as Talome's own AI provider.
+  </Card>
+</Cards>
+
+## Beyond Dedicated Integrations
+
+Not every app needs a dedicated integration. The universal tools (`app_api_call`, `discover_app_api`) let the AI interact with any app that has an HTTP API. If an app exposes a REST or GraphQL endpoint and you've configured its URL in Settings, the AI can discover its endpoints and make calls on your behalf. Dedicated integrations just make common operations faster and more reliable by encoding app-specific knowledge into purpose-built tools.
+
+<Cards>
+  <Card title="AI Assistant Guide" href="/docs/guides/ai-assistant">
+    Deep dive into how the AI selects and uses tools.
+  </Card>
+  <Card title="Media Stack Guide" href="/docs/guides/media-stack">
+    Set up a complete media pipeline in one conversation.
+  </Card>
+  <Card title="Tools Reference" href="/docs/reference/tools">
+    Complete listing of all 230+ tools by domain.
+  </Card>
+  <Card title="Adding Integrations" href="/docs/developers/adding-integrations">
+    Developer guide for building new integration domains.
+  </Card>
+</Cards>

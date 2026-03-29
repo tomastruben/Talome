@@ -1,0 +1,199 @@
+---
+title: Talome Documentation
+description: Your server, one message away. AI-powered home server management with 230+ tools, a multi-source app store, and a self-improving codebase.
+---
+
+Self-hosting is a paradox. You get total control over your data, your media, your infrastructure — but you pay for it with an endless tax of YAML files, port conflicts, broken upgrades, and hours spent wiring services together that should just work. Every new app means another compose file, another reverse proxy entry, another set of credentials to manage. The tools exist to build something remarkable, but the friction stops most people from ever getting there.
+
+Talome changes the equation. Instead of configuring your server through files and admin panels, you have a conversation with it.
+
+```bash
+curl -fsSL https://get.talome.dev | bash
+```
+
+One command. Open `http://localhost:3000`. Tell it what you want.
+
+---
+
+## What Makes Talome Different
+
+### AI-first, not AI-added
+
+Talome's assistant is not a chatbot bolted onto a dashboard. It is the primary interface. 230+ purpose-built tools across 16 domains give it deep, structured access to your system — Docker containers, app configurations, media libraries, network routing, storage health, and its own source code. It does not generate suggestions for you to follow. It executes.
+
+When you say "set up a media stack," the AI chains `search_apps` to find the right images, `install_app` five times in parallel, `wire_apps` to connect download clients, `arr_add_root_folder` to set media paths, and `arr_sync_indexers_from_prowlarr` to push indexers — then reports back with URLs. That is not autocomplete. That is an agent with real tools and real authority over your infrastructure.
+
+Tools are organized into domains that activate dynamically. Install Sonarr, and 27 arr tools appear. Configure Home Assistant, and 5 smart home tools unlock. The AI only sees tools it can actually use, which keeps it fast and accurate.
+
+### Multi-source app store
+
+One search, every ecosystem. Talome aggregates apps from four sources into a single, unified catalog:
+
+- **Talome-native apps** — optimized Docker configs with deep integrations, health checks, and automatic wiring
+- **CasaOS stores** — official and community apps from the CasaOS ecosystem
+- **Umbrel stores** — official and community apps from Umbrel
+- **My Creations** — apps you build yourself using the AI app creator
+
+Install Jellyfin from Talome's catalog, Pi-hole from CasaOS, and a Bitcoin node from Umbrel — all from the same interface, all managed the same way. No ecosystem lock-in.
+
+### Self-improving codebase
+
+Talome can read and modify its own TypeScript source code. The pipeline is: `plan_change` (propose a diff) then `apply_change` (write it), which triggers `tsc --noEmit` automatically. If the compiler fails, the change is rolled back via `git stash`. If it passes, the change is committed with a full audit trail.
+
+Found a bug in the dashboard? Tell the AI. It reads the component with `read_file`, proposes a fix, validates the types, and deploys. Your server gets better the more you use it. Every change is reversible with `rollback_change`.
+
+### Zero-config philosophy
+
+When you install an app, Talome does not hand you a URL and say "go configure it." The AI follows a post-install checklist automatically:
+
+1. `inspect_container` — verify volume mounts match your data paths
+2. `add_volume_mount` + `restart_app` — fix any incorrect mounts
+3. `arr_add_root_folder` — configure media paths for arr apps
+4. `arr_add_download_client` — wire download clients
+5. `arr_sync_indexers_from_prowlarr` — push indexers
+6. `check_service_health` — confirm everything is healthy
+
+The goal is that every app works on first launch, not after thirty minutes of manual setup. If a configuration tool fails, the AI falls back to reading and writing config files directly — it never tells you to "open the settings page and configure it manually."
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/ai/agent.ts` — 230+ tools across 16 domains registered via `registerDomain()` calls (lines 333-967). `apps/core/src/ai/tool-registry.ts` — dynamic tool loading with settings-based activation and keyword routing. `apps/core/src/ai/tool-gateway.ts` — security gateway enforcing three tier-based modes. `apps/core/src/stores/lifecycle.ts` — multi-stage install pipeline. `apps/core/src/app-registry/auto-configure.ts` — post-install auto-configuration with API key extraction.
+</Accordion>
+</Accordions>
+
+---
+
+## See It in Action
+
+Here is a real conversation. The user wants a complete media server. No compose files, no port spreadsheets, no manual API key copying.
+
+<ChatSimulation>
+  <UserMessage>Set up a complete media stack with Jellyfin, Sonarr, Radarr, Prowlarr, and qBittorrent. My media is at /mnt/media.</UserMessage>
+  <AssistantMessage>
+    Installing 5 apps...
+    <ToolCall tool="search_apps" result="found Jellyfin, Sonarr, Radarr, Prowlarr, qBittorrent" />
+    <ToolCall tool="install_app x 5" result="all containers healthy" />
+    <ToolCall tool="wire_apps" result="connected Sonarr/Radarr to qBittorrent as download client" />
+    <ToolCall tool="arr_add_root_folder" result="/mnt/media/TV on Sonarr, /mnt/media/Movies on Radarr" />
+    <ToolCall tool="arr_sync_indexers_from_prowlarr" result="3 indexers synced to both apps" />
+    Your media stack is running. Jellyfin at :8096, Sonarr at :8989, Radarr at :7878, Prowlarr at :9696, qBittorrent at :8080. All services are healthy. Sonarr and Radarr are using qBittorrent as their download client and share 3 indexers from Prowlarr. Media paths point to /mnt/media. Want me to add Overseerr so family members can request media?
+  </AssistantMessage>
+</ChatSimulation>
+
+Five apps. Configured and connected. One message.
+
+Behind that conversation, the AI executed 10+ tool calls: searching the app store, pulling Docker images, creating containers with health checks, discovering APIs, configuring download clients via Sonarr/Radarr's API, syncing Prowlarr indexers, and verifying health on every service. The user typed one sentence.
+
+---
+
+## Capabilities
+
+<Cards>
+  <Card title="Install and manage apps" href="/docs/guides/app-store">
+    Browse 100+ apps from Talome, CasaOS, and Umbrel stores. Install, update, back up, and roll back — with one message or one click.
+  </Card>
+  <Card title="230+ AI tools" href="/docs/guides/ai-assistant">
+    Docker management, media libraries, network routing, storage analysis, home automation, password vaults, DNS blocking, and more — all accessible through conversation. The AI can also create custom tools, dashboard widgets, automations, and app blueprints on the fly.
+  </Card>
+  <Card title="Create custom apps" href="/docs/guides/app-creation">
+    Describe what you want in plain English. Talome generates a Docker Compose stack, health checks, volume mounts, and optionally a full web UI — then publishes it to your personal app store.
+  </Card>
+  <Card title="Self-improving codebase" href="/docs/guides/self-improvement">
+    The AI can read its own TypeScript source, propose fixes, run the compiler, and commit — with automatic rollback on failure. Your server evolves.
+  </Card>
+  <Card title="Automations" href="/docs/guides/automations">
+    Schedule recurring tasks with cron, container events, disk thresholds, or webhooks. Nightly backups, health monitoring, download cleanup — described in plain English.
+  </Card>
+  <Card title="12 deep integrations" href="/docs/integrations">
+    Sonarr, Radarr, Prowlarr, Jellyfin, Plex, qBittorrent, Overseerr, Home Assistant, Pi-hole, Audiobookshelf, Vaultwarden, and Ollama — each with dedicated tools, not just API wrappers.
+  </Card>
+</Cards>
+
+---
+
+## Who Is Talome For?
+
+**Media enthusiasts** who want Jellyfin, Sonarr, Radarr, and a download client working together without reading five wikis. Ask for a media stack and it is running in under a minute.
+
+**Home lab builders** who run dozens of containers and are tired of managing them through Portainer and SSH. Talome gives you a single pane of glass with an AI that understands your entire infrastructure.
+
+**Privacy-focused users** who want Pi-hole, Vaultwarden, and Tailscale configured correctly without being a networking expert. Everything runs locally. No data leaves your server unless you choose a cloud AI provider.
+
+**Developers and tinkerers** who want to extend their server with custom apps. Describe what you need, and Talome generates the Docker stack. Submit it to the community store if others would benefit.
+
+**People who tried self-hosting before and gave up.** The gap between "I want Jellyfin" and "Jellyfin is working with hardware transcoding, connected to Sonarr, auto-downloading my shows" used to be hours of work. Talome closes that gap to one conversation.
+
+---
+
+## The Memory System
+
+The AI remembers what you tell it. Not just within a conversation — permanently.
+
+<ChatSimulation>
+  <UserMessage>Remember that my media is stored at /mnt/nas/media</UserMessage>
+  <UserMessage>Remember that I prefer Jellyfin over Plex</UserMessage>
+  <UserMessage>Remember that port 8080 is taken by my dev server</UserMessage>
+</ChatSimulation>
+
+Memories are stored locally in SQLite with four types: **preference**, **fact**, **context**, and **correction**. The top 10 most relevant memories are injected into every conversation, ranked by recency, access frequency, and confidence score. Deduplication at 80% bigram similarity prevents redundant storage.
+
+The next time you install a media app, the AI already knows where your media lives, which server you prefer, and which ports to avoid — without you repeating anything.
+
+---
+
+## Automations in Plain English
+
+Talome's automation engine turns natural language into scheduled workflows:
+
+<ChatSimulation>
+  <UserMessage>Create an automation that checks disk usage every hour and notifies me on Telegram if it exceeds 90%</UserMessage>
+</ChatSimulation>
+
+This creates an automation with:
+- **Trigger:** Cron schedule (`0 * * * *`)
+- **Step 1:** `get_disk_usage` tool action
+- **Step 2:** Condition — if any mount exceeds 90%
+- **Step 3:** `send_notification` via your configured Telegram channel
+
+Four trigger types (cron schedule, container stopped, disk usage threshold, webhook) and four step types (tool action, AI prompt, condition, notify) combine into workflows that handle backups, monitoring, cleanup, and maintenance — all running unattended.
+
+---
+
+## Architecture at a Glance
+
+Talome is a TypeScript monorepo with three packages:
+
+- **`apps/core`** — Hono backend serving the API, AI agent, 230+ tools, Docker orchestration, SQLite database, automation engine, and MCP server
+- **`apps/dashboard`** — Next.js 16 frontend with a widget-based dashboard, app store, media views, terminal, and the AI chat interface
+- **`packages/types`** — Shared TypeScript types used by both apps
+
+All state lives in a single SQLite database — users, conversations, memories, automations, widgets, audit logs, app records. The backend talks to Docker via the Unix socket. The AI communicates with Anthropic Claude (recommended), OpenAI, or local Ollama models through the Vercel AI SDK. The MCP server exposes every tool to external AI environments — Claude Code, Cursor, and Claude Desktop can manage your server with the same 230+ tools the dashboard uses.
+
+### Security
+
+Three security modes control what the AI can do:
+
+- **Permissive** — full access, zero friction
+- **Cautious** (default) — destructive operations require confirmation
+- **Locked** — read-only, no modifications
+
+Every tool is classified into a tier (read / modify / destructive), and the security gateway enforces the active mode on every call. Every tool execution is logged to an audit trail. No `eval()`, no arbitrary code execution — all inputs validated with Zod schemas.
+
+---
+
+## Next Steps
+
+<Cards>
+  <Card title="Installation" href="/docs/getting-started/installation">
+    System requirements, one-line install, Docker Compose setup, and platform-specific notes.
+  </Card>
+  <Card title="Your First Conversation" href="/docs/getting-started/first-conversation">
+    Create your account, configure the AI, and install your first app — in under five minutes.
+  </Card>
+  <Card title="Dashboard Tour" href="/docs/getting-started/dashboard-tour">
+    A visual walkthrough of the home page, app store, containers, media, automations, terminal, and settings.
+  </Card>
+  <Card title="MCP Server" href="/docs/reference/mcp-server">
+    Use all 230+ Talome tools from Claude Code, Cursor, or Claude Desktop.
+  </Card>
+</Cards>

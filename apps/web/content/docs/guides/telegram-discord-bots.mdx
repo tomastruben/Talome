@@ -1,0 +1,212 @@
+---
+title: Telegram & Discord Bots
+description: Talk to your Talome server from Telegram or Discord -- full AI assistant access from your phone or desktop, no dashboard needed.
+---
+
+Talome's AI assistant is not limited to the web dashboard. Connect a Telegram or Discord bot and you get the same agentic AI -- with access to all 230+ tools -- right inside the messaging app you already use. Ask about container health from your phone, restart an app from Discord while gaming, or check download progress from Telegram while away from home.
+
+Both bots share the same backend: every message is routed through the same agent pipeline (system prompt, memory injection, tool selection, security gateway) described in the [AI Assistant guide](/docs/guides/ai-assistant). The only differences are platform-specific: Telegram uses plain text messages, Discord uses the `/talome` slash command.
+
+## How It Works
+
+When you send a message to either bot, Talome's message router:
+
+1. **Finds or creates a conversation** for your platform and user ID, so context carries across messages
+2. **Loads the full message history** for that conversation
+3. **Passes everything to the AI agent** with a context hint like `Platform: telegram, user: John` and an instruction to respond in plain text (no markdown code blocks, since you are reading in a chat app)
+4. **Streams the response** and sends the final text back to your chat
+5. **Extracts memories** in the background -- the same memory system that learns your preferences in the dashboard also learns from bot conversations
+
+Conversations are persistent. If you ask "what's my Jellyfin URL?" today and "is Jellyfin still healthy?" tomorrow, the bot remembers the context.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/messaging/router.ts` -- the `routeMessage()` function handles conversation persistence, message history loading, agent invocation, and background memory extraction. `apps/core/src/messaging/telegram.ts` and `apps/core/src/messaging/discord-bot.ts` implement the platform-specific message handling.
+</Accordion>
+</Accordions>
+
+## Telegram Setup
+
+### 1. Create a Bot with BotFather
+
+1. Open Telegram and search for **@BotFather**
+2. Send `/newbot`
+3. Choose a display name (e.g., "Talome Server")
+4. Choose a username ending in `bot` (e.g., `my_talome_bot`)
+5. BotFather replies with a token like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11` -- copy it
+
+### 2. Add the Token in Talome
+
+Go to **Settings > Integrations** in the Talome dashboard. Under the Telegram section, paste the bot token and click **Connect**.
+
+Talome validates the token by calling `getMe()` on the Telegram API. If valid, the bot starts long-polling for messages immediately. The dashboard shows **Connected as @your_bot_username**.
+
+You can also configure the token through conversation:
+
+```
+You: Connect my Telegram bot with token 123456:ABC-DEF...
+
+AI: [set_setting: telegram_bot_token]
+    Telegram bot connected as @my_talome_bot. You can now message
+    the bot directly to interact with your server.
+```
+
+### 3. Start Chatting
+
+Open a conversation with your bot in Telegram and send any message. The bot supports two built-in commands:
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Sends a greeting and confirms the bot is alive |
+| `/forget` | Clears all stored memories (respects the global memory enabled/disabled setting) |
+
+All other text messages are routed to the AI agent. There is no special command syntax -- just type naturally.
+
+### Example Conversations
+
+```
+You: How's my server doing?
+
+Talome: Everything looks healthy. All 12 containers are running.
+        CPU is at 23%, memory at 4.1 GB / 16 GB, and disk usage
+        is 340 GB / 1 TB. No alerts in the last 24 hours.
+```
+
+```
+You: Restart Jellyfin
+
+Talome: Are you sure? This will briefly interrupt any active
+        streams. (Destructive actions require confirmation in
+        cautious mode.)
+
+You: Yes
+
+Talome: Jellyfin container restarted. It's back up and healthy
+        -- took 4 seconds.
+```
+
+```
+You: Any new download requests?
+
+Talome: You have 2 pending Overseerr requests:
+        - "Severance Season 2" requested by Alice (TV)
+        - "The Brutalist" requested by Bob (Movie)
+        Want me to approve either of them?
+```
+
+## Discord Setup
+
+### 1. Create a Discord Application
+
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
+2. Click **New Application** and give it a name (e.g., "Talome")
+3. Go to the **Bot** tab and click **Reset Token** to get a bot token -- copy it
+4. Under **Privileged Gateway Intents**, no special intents are required (Talome only uses the `Guilds` intent for slash commands)
+
+### 2. Invite the Bot to Your Server
+
+1. Go to the **OAuth2** tab
+2. Under **OAuth2 URL Generator**, select the `bot` and `applications.commands` scopes
+3. Under **Bot Permissions**, select at minimum: **Send Messages**, **Use Slash Commands**
+4. Copy the generated URL and open it in your browser to invite the bot to your Discord server
+
+### 3. Add the Token in Talome
+
+Go to **Settings > Integrations** in the Talome dashboard. Under the Discord section, paste the bot token and click **Connect**.
+
+Talome logs the bot into Discord's gateway, registers the `/talome` slash command globally, and shows **Connected as YourBot#1234** in the dashboard.
+
+### 4. Use the Slash Command
+
+Discord interactions use the `/talome` slash command with a `message` parameter:
+
+```
+/talome message: How much disk space do I have left?
+```
+
+The bot defers the reply (showing "Talome is thinking...") while the agent processes your request, then edits the message with the final response.
+
+### Example Interactions
+
+```
+/talome message: Check if Sonarr has any missing episodes
+
+Talome: Sonarr reports 3 missing episodes:
+        - Breaking Bad S01E01 (not monitored)
+        - The Office S03E12 (searching)
+        - Severance S02E08 (airs next week)
+```
+
+```
+/talome message: Set qBittorrent speed limit to 5 MB/s
+
+Talome: Download speed limit set to 5 MB/s on qBittorrent.
+        Upload limit unchanged at 1 MB/s.
+```
+
+## Notifications
+
+Both bots can also push notifications to you. When Talome detects issues (container crashes, disk space warnings, update failures), it sends alerts to all connected messaging platforms.
+
+You can control which severity levels each platform receives in **Settings > Integrations** under each bot's "Send alerts for" setting. The options are:
+
+| Level | Examples |
+|-------|----------|
+| **Info** | App updates available, backup completed |
+| **Warning** | Disk usage above 80%, container restart detected |
+| **Critical** | Container crash, disk full, service unreachable |
+
+The default is **warning** and **critical**. Notifications are best-effort -- if a push fails (e.g., the bot is temporarily disconnected), it is silently skipped.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/routes/notifications.ts` -- the `pushToMessaging()` function sends alerts to all active Telegram and Discord conversations. Per-platform level filtering is controlled by the `telegram_notification_levels` and `discord_notification_levels` settings keys.
+</Accordion>
+</Accordions>
+
+## Auto-Start on Boot
+
+If a bot token is saved in settings, Talome automatically starts the bot when the server starts. You do not need to manually reconnect after a reboot. The Telegram bot starts via direct import at startup; the Discord bot is lazy-loaded (the `discord.js` module is only imported when a token exists) to keep startup fast.
+
+## Security
+
+Bot conversations go through the same security gateway as the dashboard. The AI's security mode (permissive, cautious, or locked) applies equally:
+
+- In **cautious** mode (the default), destructive operations still require confirmation -- the bot will ask before deleting containers, uninstalling apps, or pruning Docker resources
+- In **locked** mode, the bot can only read data and answer questions -- no modifications are possible
+- In **permissive** mode, the bot can do everything without asking first
+
+There is no separate authentication for bot users. Anyone who can message your Telegram bot or use the `/talome` command in your Discord server can interact with the AI. Keep your bot tokens private and only invite the Discord bot to servers you trust.
+
+## Limitations
+
+- **One response at a time** -- each platform processes messages sequentially per conversation. If you send multiple messages quickly, later ones queue behind the first.
+- **Plain text only** -- the bots respond in plain text without markdown formatting, since rendering varies across platforms. No images, tables, or code blocks are sent.
+- **Discord message length** -- Discord enforces a 2,000-character limit on messages. Responses longer than 1,900 characters are truncated with a "...(truncated)" indicator.
+- **No file attachments** -- you cannot send files (logs, screenshots) to the bot for analysis. Use the dashboard for file-based interactions.
+- **No multi-turn confirmation UI** -- when the AI asks for confirmation (e.g., before a destructive action), you reply with a normal text message. There are no inline buttons or interactive components.
+- **Conversation scope** -- bot conversations are separate from dashboard conversations. Memories are shared (they are global), but message history is not.
+- **Single bot instance** -- only one Telegram bot and one Discord bot can be connected at a time. If you change the token, the previous bot disconnects.
+
+## Settings Reference
+
+| Setting Key | Description |
+|-------------|-------------|
+| `telegram_bot_token` | Telegram bot token from BotFather |
+| `discord_bot_token` | Discord bot token from the developer portal |
+| `telegram_notification_levels` | Comma-separated alert levels to send via Telegram (e.g., `warning,critical`) |
+| `discord_notification_levels` | Comma-separated alert levels to send via Discord (e.g., `warning,critical`) |
+
+## Troubleshooting
+
+**Bot shows "Connected" but does not respond to messages**
+Check that you are messaging the correct bot. For Telegram, make sure you started a conversation with `/start`. For Discord, use the `/talome` slash command (plain messages are not picked up).
+
+**Discord slash command does not appear**
+Global slash commands can take up to an hour to propagate after first registration. If the bot just connected, wait and try again. You can check the Talome server logs for `[discord] Registered /talome command` to confirm registration succeeded.
+
+**"Telegram bot is disconnected" warning in Settings**
+The bot may have lost its long-polling connection (e.g., after a network interruption). Click **Reconnect** in Settings or restart the Talome server. The bot will auto-reconnect on next startup if the token is saved.
+
+**Responses are slow**
+Bot responses go through the full AI agent pipeline, which includes an LLM call and potentially multiple tool executions. Response time depends on the complexity of the request and your AI provider's latency. Simple questions (system stats, app status) typically respond in 2-5 seconds; complex multi-step operations can take 10-30 seconds.

@@ -1,0 +1,183 @@
+---
+title: Migrating from CasaOS
+description: Move from CasaOS to Talome — keep your apps, gain AI superpowers.
+---
+
+Talome runs CasaOS apps natively. The CasaOS app store is one of Talome's built-in sources, and your existing Docker containers can be detected and managed without reinstallation. This is an enhancement, not a replacement — you don't lose anything.
+
+## What You Keep vs What You Gain
+
+| What You Keep | What You Gain |
+|-------------|-------------|
+| All running Docker containers | AI assistant with 230+ tools |
+| Volume data and configurations | Natural language app management |
+| CasaOS app store access | Multi-source app store (Talome + CasaOS + Umbrel + custom) |
+| Docker Compose files | Automatic app wiring and configuration |
+| Port mappings and networks | Self-improvement — the platform evolves its own code |
+| | Media optimization and transcoding |
+| | Automation engine with cron scheduling |
+| | Built-in reverse proxy, mDNS, and Tailscale |
+| | Dashboard with 25+ customizable widgets |
+| | MCP server for Claude Code and Cursor |
+| | Per-app backups with scheduled automation |
+| | App creation from natural language descriptions |
+
+## Step-by-Step Migration
+
+### 1. Install Talome Alongside CasaOS
+
+Talome and CasaOS use different ports, so they can run side by side. Install Talome without touching your CasaOS setup:
+
+```bash
+curl -fsSL https://get.talome.dev | bash
+```
+
+Talome runs on ports 3000 (dashboard) and 4000 (API). CasaOS stays on port 80. No conflicts.
+
+### 2. Discover Existing Containers
+
+Open the Talome dashboard at `http://your-server:3000` and ask the AI:
+
+```
+"Show me all running Docker containers"
+```
+
+Talome calls `list_containers` and displays every running container — including your CasaOS apps. They appear with their container names, images, ports, and health status.
+
+### 3. Import Apps into Talome Management
+
+For apps you want Talome to manage:
+
+```
+"Import my running Jellyfin container"
+"Import all my CasaOS containers"
+```
+
+Talome reads the container's configuration, generates a compose file, and adds the app to its management database. The container keeps running — no downtime.
+
+### 4. Configure Integrations
+
+For apps that have deep AI integration (Sonarr, Radarr, Jellyfin, qBittorrent, etc.), add their API keys so the AI can manage them:
+
+```
+"Configure Sonarr — it's running at http://localhost:8989"
+```
+
+The AI auto-discovers the API key from the running container when possible. Once configured, you get access to all domain-specific tools (27 arr tools, 6 Jellyfin tools, etc.).
+
+### 5. Verify Everything Works
+
+```
+"Check the health of all my apps"
+"Are all containers running?"
+```
+
+The AI runs healthchecks across all managed containers and reports any issues.
+
+### 6. Optional: Remove CasaOS
+
+Once you're comfortable with Talome managing everything, you can remove CasaOS:
+
+```bash
+casaos-uninstall
+```
+
+Your containers continue running — CasaOS was just a management layer, and Talome has taken over that role. The CasaOS app store remains available through Talome's built-in CasaOS adapter.
+
+<Callout type="warn">
+Before removing CasaOS, make sure all your apps are properly imported into Talome and responding to health checks. Run `"Diagnose all apps"` to verify.
+</Callout>
+
+## CasaOS vs Talome
+
+| Feature | CasaOS | Talome |
+|---------|--------|--------|
+| App installation | Click install in web UI | Click install **or** one message to the AI |
+| App store | CasaOS store only | Talome + CasaOS + Umbrel + custom sources |
+| Multi-app setup | Install and configure each one manually | `"Set up a media stack"` — AI installs and wires everything |
+| Diagnostics | Check container logs manually | `"Why is Sonarr broken?"` — AI reads logs, checks configs, diagnoses |
+| Backups | Manual or third-party | Built-in per-app backups with scheduling |
+| Updates | One-click per app | `"Update all apps"` with automatic rollback on failure |
+| Reverse proxy | Separate Nginx Proxy Manager | Built-in Caddy with automatic TLS |
+| Remote access | Manual Tailscale/WireGuard setup | `"Set up Tailscale"` — one message |
+| Monitoring | Basic CPU/memory/disk | 25+ widgets + AI-powered diagnostics + SMART monitoring |
+| Automation | None | Cron-based automations with any tool |
+| App creation | Not available | Create new Docker apps from descriptions |
+| Self-improvement | Not available | Platform rewrites its own code |
+
+## The CasaOS Adapter
+
+Talome's `casaos-adapter` syncs the full CasaOS app store into Talome's catalog. It works by:
+
+1. Cloning the [CasaOS AppStore repository](https://github.com/IceWhaleTech/CasaOS-AppStore)
+2. Parsing each app's `docker-compose.yml` and metadata files
+3. Normalizing fields into Talome's manifest format (name, description, icon, category, ports, volumes, environment)
+4. Making them available in the Talome app store with a "CasaOS" source badge
+
+The adapter syncs on startup and can be triggered manually. All CasaOS apps install through the same pipeline as native Talome apps — port resolution, volume setup, network injection, and health monitoring included.
+
+### What About Custom CasaOS Apps?
+
+If you built custom CasaOS apps using the CasaOS app definition format, those can be added to Talome as a custom store source:
+
+```
+"Add my custom CasaOS apps from /home/user/my-casaos-apps"
+```
+
+Talome's adapter will parse them alongside the official CasaOS store.
+
+## Data Migration Tips
+
+### Volume Locations
+
+CasaOS stores app data in `/DATA/AppData/` by default. When importing containers, Talome detects the existing volume mounts and preserves them. You don't need to move any data.
+
+If you later want to consolidate:
+
+```
+"Where is Jellyfin storing its data?"
+"Move Jellyfin's config to the standard Talome location"
+```
+
+### Network Transitions
+
+CasaOS uses Docker's default bridge network. Talome creates its own `talome` bridge network for better isolation and DNS resolution. After importing apps:
+
+```
+"Connect all my apps to the talome network"
+```
+
+This enables container-to-container communication by name (e.g., Sonarr can reach qBittorrent at `qbittorrent:8080`).
+
+## Troubleshooting
+
+**Imported container not showing in app list**
+- Check that the container is running: `"Is the Jellyfin container running?"`
+- Verify the import completed: `"List all managed apps"`
+- Try reimporting: `"Import the jellyfin container"`
+
+**API key not auto-discovered**
+- Some apps don't store API keys in accessible locations
+- Set it manually: `"Set the Sonarr API key to abc123"`
+- Check the app's web UI for the API key (usually under Settings)
+
+**Port conflicts after migration**
+- If CasaOS and Talome try to manage the same port, Talome's port resolver handles it
+- Check current port mappings: `"Show me Jellyfin's port mapping"`
+- Change if needed: `"Change Jellyfin's port to 8097"`
+
+**CasaOS apps not appearing in store**
+- Trigger a sync: `"Sync the app store"`
+- Check store sources: `"List app store sources"`
+
+<Cards>
+  <Card title="Installation" href="/docs/getting-started/installation">
+    Install Talome.
+  </Card>
+  <Card title="First Conversation" href="/docs/getting-started/first-conversation">
+    Start using the AI assistant.
+  </Card>
+  <Card title="App Store" href="/docs/guides/app-store">
+    How the multi-source store works.
+  </Card>
+</Cards>

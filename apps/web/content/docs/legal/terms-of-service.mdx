@@ -1,0 +1,73 @@
+---
+title: Terms of Service
+description: Terms for using Talome. Plain English, no surprises.
+---
+
+*Last updated: March 29, 2026*
+
+Talome is open-source software licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.html). These terms cover what you should know when using it.
+
+---
+
+## The short version
+
+- Talome is free, open-source software provided as-is
+- You run it on your own hardware and are responsible for securing it
+- There is no warranty and no guaranteed support
+- You are responsible for how you use it and what you run on it
+
+---
+
+## License
+
+Talome is licensed under AGPL-3.0. You are free to use, modify, and distribute the software under the terms of that license. The full license text is included in the repository and available at [gnu.org/licenses/agpl-3.0.html](https://www.gnu.org/licenses/agpl-3.0.html).
+
+If you modify Talome and make it available over a network (e.g., as a hosted service), AGPL-3.0 requires you to make your modified source code available to users of that service.
+
+## No warranty
+
+Talome is provided **as-is**, without warranty of any kind, express or implied. This includes but is not limited to warranties of merchantability, fitness for a particular purpose, and non-infringement.
+
+The software manages Docker containers and system resources on your hardware. While Talome includes safety mechanisms (confirmation prompts for destructive operations, TypeScript compiler validation for code changes, audit logging), no software is bug-free. Use it at your own risk.
+
+## Your responsibilities
+
+**Securing your instance.** Talome runs on your hardware and your network. You are responsible for:
+
+- Keeping your server and Docker installation updated
+- Restricting network access to your Talome instance (LAN-only, Tailscale, reverse proxy with auth, etc.)
+- Managing API keys and credentials stored in Talome
+- Configuring appropriate AI security modes for your environment
+
+**Content and compliance.** You are responsible for the legality of content you manage, store, or access through Talome and the apps it installs. Talome is a management platform -- it does not host, distribute, or provide access to any media content.
+
+**Third-party apps.** Apps installed through Talome (whether from the Talome catalog, CasaOS stores, Umbrel stores, or your own creations) are independent software. You must comply with each app's own license and terms of service. Talome aggregates these apps for convenience but does not endorse, audit, or take responsibility for their behavior.
+
+**AI provider terms.** When you configure an AI provider (Anthropic, OpenAI), your use of that provider is governed by their terms of service. Talome facilitates the connection but is not a party to your agreement with the provider.
+
+## Media and content
+
+Talome includes tools for managing media libraries (Sonarr, Radarr, Jellyfin, Plex, etc.). These are management and automation tools. Talome does not:
+
+- Host or distribute any media content
+- Provide access to copyrighted material
+- Operate or control indexers, trackers, or content sources
+- Encourage or facilitate copyright infringement
+
+How you configure and use media management tools is your responsibility.
+
+## Limitation of liability
+
+To the maximum extent permitted by applicable law, the Talome authors and contributors shall not be liable for any direct, indirect, incidental, special, consequential, or exemplary damages arising from your use of the software. This includes but is not limited to data loss, system downtime, security breaches, or costs incurred from third-party services.
+
+## Support
+
+Talome is a community-driven open-source project. Support is provided on a best-effort basis through [GitHub Issues](https://github.com/talomehq/talome/issues) and [Discord](https://discord.gg/HK7gFaVRJ). There is no guaranteed response time or resolution.
+
+## Changes to these terms
+
+These terms may be updated as the project evolves. Changes will be reflected in the documentation with a new "last updated" date. Continued use of the software after changes constitutes acceptance of the updated terms.
+
+## Questions
+
+If you have questions about these terms, open an issue on [GitHub](https://github.com/talomehq/talome/issues).

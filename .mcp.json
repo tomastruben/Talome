@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "talome": {
+      "type": "stdio",
+      "command": "apps/core/node_modules/.bin/tsx",
+      "args": ["apps/core/src/mcp-stdio.ts"],
+      "env": {
+        "DATABASE_PATH": "apps/core/data/talome.db",
+        "NODE_ENV": "production"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "env": {
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
+      }
+    },
+    "shadcn": {
+      "command": "npx",
+      "args": ["shadcn@latest", "mcp"]
+    }
+  }
+}

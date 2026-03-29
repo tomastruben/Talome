@@ -1,0 +1,121 @@
+---
+title: "ADR-003: Automation-Safe Tools"
+description: Why automations are restricted to a safe subset of tools and how the tier system enforces this.
+---
+
+**Status:** Accepted
+**Date:** 2025-03-20
+**Applies to:** `apps/core/src/ai/tool-registry.ts`, `apps/core/src/automation/`
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/ai/automation-safe-tools.ts` — `ALLOWED_MODIFY_TOOLS` allowlist at line 17, `getAutomationSafeTools()` at line 42 derives the full safe list from `getAllTiers()`. `apps/core/src/automation/engine.ts` — trigger matching at `matchesTrigger()` (line 78), step executor imports `getAutomationSafeToolNames()` at line 11 for runtime validation.
+</Accordion>
+</Accordions>
+
+## Context
+
+Talome's automation engine runs workflows unattended -- on cron schedules, in response to system events (container crashes, disk thresholds), or via incoming webhooks. These automations can execute AI tools as part of their step sequences.
+
+Allowing unrestricted tool access in automations is dangerous. An automation with a bug in its condition logic could uninstall apps, delete files, or prune Docker resources with no human in the loop to catch the mistake. Unlike interactive chat (where the user sees each tool call and its result), automations execute silently in the background.
+
+The risk profile is different from interactive chat:
+- **Interactive chat**: user is present, reviews tool calls, can stop the AI, damage is limited to one conversation
+- **Automation**: no user present, runs on a schedule, damage compounds over repeated executions
+
+We need a clear, enforceable boundary between what automations can and cannot do.
+
+## Decision
+
+Every tool in Talome is tagged with one of three security tiers: `read`, `modify`, or `destructive`. These tiers serve double duty -- they control behavior in the security gateway (interactive chat) and determine automation eligibility.
+
+### Tier Definitions
+
+| Tier | Description | Interactive Chat | Automations |
+|------|-------------|-----------------|-------------|
+| `read` | Retrieves data, no side effects | Always allowed | Always allowed |
+| `modify` | Changes state, can typically be undone | Allowed (confirmation in cautious mode) | Curated subset only |
+| `destructive` | Irreversible operations | Requires CONFIRM in cautious mode | Always blocked |
+
+### Curated Modify Subset
+
+Not all modify tools are safe for unattended execution. The automation engine maintains a curated allowlist of modify-tier tools:
+
+**Allowed in automations:**
+- `start_container`, `restart_container` -- container recovery after crashes
+- `start_app`, `restart_app` -- app recovery
+- `send_notification` -- alerting is always safe
+- `backup_app` -- creating backups is always safe
+- `cleanup_hls_cache` -- cache cleanup is safe and reversible
+- `set_setting` -- configuration changes for automation-driven tuning
+- `remember`, `update_memory` -- memory operations are low-risk
+
+**Blocked in automations (modify tier but excluded):**
+- `install_app` -- auto-installing apps without user intent is risky
+- `stop_app`, `stop_container` -- stopping services should be deliberate
+- `write_app_config_file` -- config changes can break apps silently
+- `apply_change` -- codebase changes must be human-reviewed
+- `set_app_env` -- environment variable changes can break apps
+- `upgrade_app_image` -- image upgrades can introduce breaking changes
+
+## Implementation
+
+### Tool Availability Check
+
+The `list_automation_safe_tools` tool queries the tier map from `getAllTiers()` and applies the filtering rules:
+
+1. All `read` tier tools are included
+2. Tools in the curated modify allowlist are included
+3. Everything else is excluded
+
+This tool is available to the AI when creating automations, so it can verify step compatibility before saving.
+
+### Step Execution Guard
+
+The automation step executor checks each `tool_action` step before execution:
+
+```
+For each step in automation.steps:
+  if step.type === "tool_action":
+    tier = getAllTiers()[step.tool]
+    if tier === "destructive":
+      → block with error "Tool X is destructive and not available for automations"
+    if tier === "modify" && !isInAllowlist(step.tool):
+      → block with error "Tool X is not in the automation-safe modify list"
+    else:
+      → execute normally
+```
+
+### Audit Trail
+
+When a step is blocked:
+1. The step is recorded in `automation_step_runs` with `blocked: true`
+2. An error message is stored explaining why the tool was blocked
+3. The automation run is marked as failed
+4. Remaining steps in the workflow are skipped
+5. If a notification step was configured, it still fires to alert the user
+
+## Consequences
+
+**Benefits:**
+- Safe unattended execution -- automations cannot delete data, uninstall apps, or make irreversible changes
+- Users don't need to understand the tier system -- `list_automation_safe_tools` provides transparency
+- The AI verifies tool availability before creating an automation, preventing invalid workflows
+- Blocked attempts are logged with clear error messages for debugging
+- The curated allowlist is conservative by default -- new modify tools are excluded until explicitly added
+
+**Tradeoffs:**
+- Some legitimate automation use cases (scheduled cleanup, automated app rotation) are not possible via automations. Users must trigger these manually via chat.
+- The curated modify subset requires manual maintenance -- when new modify tools are added, a developer must decide whether to include them in the automation allowlist.
+- There is no "power user" override to bypass restrictions. This is intentional -- if you need destructive operations on a schedule, use a cron job via `run_shell` in interactive chat or an external scheduler.
+- The all-or-nothing approach (entire automation fails if one step is blocked) may be too strict for some workflows. A future version could allow "skip blocked steps" as an option.
+
+## Alternatives Considered
+
+1. **Allow all tools with a human confirmation step**: require a webhook-based approval before destructive operations execute. Rejected because it defeats the purpose of automation (unattended execution) and introduces complex state management for pending approvals.
+
+2. **Per-automation tool allowlists**: let users specify which tools each automation can use. Rejected because it shifts the security burden to the user, who may not understand the implications of allowing destructive tools.
+
+3. **Rate limiting instead of blocking**: allow destructive tools but limit execution frequency (e.g., max 1 uninstall per day). Rejected because even one accidental destructive operation is one too many in an unattended context.
+
+4. **Dry-run mode for destructive tools**: execute destructive tools in a preview mode that shows what would happen without actually doing it. This is a potential future enhancement but doesn't replace the safety of blocking -- a preview that always succeeds would train users to ignore the warnings.

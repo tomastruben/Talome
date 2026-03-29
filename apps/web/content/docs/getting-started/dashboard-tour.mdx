@@ -1,0 +1,321 @@
+---
+title: Dashboard Tour
+description: A visual walkthrough of the Talome dashboard — every page, every panel, every interaction.
+---
+
+The Talome dashboard is your control center. Everything about your server — apps, containers, media, system health, automations, and the AI assistant — is accessible from a single interface. This tour walks through each section so you know where everything lives.
+
+<ScreenshotPlaceholder description="Full dashboard view showing the home page with widget grid: CPU, memory, disk, active downloads, container health, and media calendar" />
+
+---
+
+## Sidebar Navigation
+
+The sidebar is the spine of the dashboard. It is always visible and provides quick access to every section:
+
+| Icon | Page | Purpose |
+|------|------|---------|
+| Home | **Home** | Widget-based dashboard overview |
+| Grid | **Apps** | Multi-source app store |
+| Box | **Containers** | Docker container management |
+| Film | **Media** | Unified media library and downloads |
+| Clock | **Automations** | Scheduled tasks and event triggers |
+| Folder | **Files** | File browser for server and mounted drives |
+| Terminal | **Terminal** | Persistent tmux shell and Claude Code |
+| Gear | **Settings** | AI provider, integrations, security, notifications |
+
+The sidebar collapses on smaller screens and can be toggled with the hamburger menu. Active page is highlighted with a subtle indicator.
+
+---
+
+## Home Page
+
+The home page is a customizable grid of widgets. Each widget shows a focused slice of your server's state — real-time, no polling delays.
+
+<ScreenshotPlaceholder description="Home page with a 3-column widget grid showing system health, active downloads, services, CPU chart, disk usage, and media calendar" />
+
+### Widget Categories
+
+Talome ships with **25+ built-in widgets** organized into four categories:
+
+**System widgets** — real-time hardware monitoring
+- **CPU** — usage percentage with a sparkline history chart
+- **Memory** — used/total RAM with trend
+- **Disk** — per-mount usage bars with free space
+- **Network** — upload/download throughput graph
+- **GPU** — GPU utilization and VRAM (if available)
+- **System Health** — composite health score with status indicators
+- **System Info** — OS, kernel, uptime, Docker version
+- **System Status** — compact one-line health summary
+- **Storage Mounts** — all mounted drives with usage and S.M.A.R.T. status
+
+**Media widgets** — library and download tracking
+- **Active Downloads** — currently downloading items from qBittorrent with progress bars
+- **Media Calendar** — upcoming releases from Sonarr and Radarr in a visual calendar
+- **Arr Status** — Sonarr/Radarr queue depth, warnings, and health
+
+**Service widgets** — app and container overview
+- **Services** — grid of installed apps with health status indicators (green/amber/red)
+- **Quick Actions** — configurable buttons for common tasks (restart Plex, clear DNS cache, run backup)
+
+**Utility widgets**
+- **Activity** — recent AI conversations and tool executions
+- **Digest** — AI-generated daily summary of what happened on your server
+- **Stat Tile** — single-metric display (configurable: container count, uptime, etc.)
+- **List** — generic list widget (bookmarks, notes, links)
+- **Divider** — visual separator for layout organization
+
+### Customizing the Grid
+
+Widgets can be rearranged by dragging. The grid is responsive — widgets reflow on smaller screens. You can also ask the AI to configure your layout:
+
+```
+"Set up my dashboard with CPU, memory, disk, active downloads, and media calendar"
+```
+
+The AI uses `create_widget_manifest` and `update_widget_manifest` to build your layout programmatically.
+
+---
+
+## Apps Page
+
+The app store is the fastest way to add services to your server. It aggregates apps from multiple sources into a single, searchable catalog.
+
+<ScreenshotPlaceholder description="App store page showing a grid of app cards (Jellyfin, Sonarr, Pi-hole, Vaultwarden) with source badges and install buttons" />
+
+### Multi-Source Architecture
+
+Every app card shows its source:
+
+- **Talome** — native apps with deep integration, optimized Docker configs, and health checks
+- **CasaOS** — apps from CasaOS official and community stores
+- **Umbrel** — apps from Umbrel's ecosystem
+- **My Creations** — apps you built with the AI app creator
+
+All sources are unified in a single search. Install from any source the same way.
+
+### Category Filtering
+
+Apps are organized by category: Media, Productivity, Developer Tools, Networking, Storage, Security, AI, and Other. Use the category filter bar at the top to narrow results, or search by name.
+
+### Install Flow
+
+Click **Install** on any app card to begin installation. The AI handles the rest — pulling the image, configuring ports, setting up volumes, and verifying health. You can also install via chat:
+
+```
+"Install Vaultwarden"
+```
+
+### App Detail Page
+
+Click an app card to see its detail page: description, version, resource requirements, configuration options, and action buttons (start, stop, restart, update, uninstall, back up).
+
+---
+
+## Containers Page
+
+The containers page gives you direct visibility into every Docker container running on your server — not just apps installed through Talome.
+
+<ScreenshotPlaceholder description="Containers page showing a table of running containers with status, image, CPU%, memory, ports, and action buttons" />
+
+### Real-Time Status
+
+Each container shows:
+- **Name** and **image** with version tag
+- **Status** — running, stopped, restarting, exited (with exit code)
+- **CPU and memory** — live resource consumption
+- **Ports** — mapped host:container ports
+- **Uptime** — how long the container has been running
+
+### Quick Actions
+
+Every container has inline actions:
+- **Start / Stop / Restart** — lifecycle management
+- **Logs** — view recent output with search and filtering
+- **Inspect** — full container configuration (mounts, env vars, networks, labels)
+- **Stats** — detailed resource usage over time
+
+### Container Detail
+
+Click a container to open its detail view. Here you can:
+- Read live-streaming logs with regex search
+- View environment variables (secrets are masked)
+- See volume mounts and network connections
+- Check health check status and history
+- Execute commands inside the container
+
+---
+
+## Media Page
+
+If you have Sonarr, Radarr, or Jellyfin configured, the Media page becomes your unified media command center.
+
+<ScreenshotPlaceholder description="Media page with three sections: library grid showing movie posters, a download queue with progress bars, and a calendar showing upcoming releases" />
+
+### Library
+
+Browse your media collection with poster art, ratings, and status indicators. Filter by type (movies, TV, music), status (downloaded, monitored, missing), and quality.
+
+### Downloads
+
+A real-time view of active downloads from qBittorrent (or your configured download client). See progress, speed, ETA, and which app requested the download.
+
+### Calendar
+
+Upcoming releases from Sonarr (TV episodes) and Radarr (movies) displayed in a visual calendar. Know what is coming before it arrives.
+
+### Media Player
+
+Talome includes a built-in media player for previewing files directly in the dashboard. Click any media file in the file browser to play it without leaving Talome — no need to open Jellyfin for a quick preview.
+
+---
+
+## Automations Page
+
+Automations let you schedule tasks and respond to events without manual intervention.
+
+<ScreenshotPlaceholder description="Automations page showing a list of automations with name, trigger type, last run time, and status toggle" />
+
+### Automation List
+
+Each automation shows its name, trigger type, last execution time, and an enable/disable toggle. Click to view the full configuration and run history.
+
+### Trigger Types
+
+- **Cron schedule** — standard cron expressions (`0 2 * * *` for 2am daily)
+- **Container stopped** — fires when a specific container stops unexpectedly
+- **Disk usage exceeds** — fires when a mount crosses a threshold percentage
+- **Webhook** — fires when an external service hits a unique URL
+
+### Step Types
+
+- **Tool action** — execute any automation-safe Talome tool
+- **AI prompt** — send a message to the AI and let it reason about what to do
+- **Condition** — branch logic (if disk > 90%, do X; otherwise, do Y)
+- **Notify** — send a notification via configured channels
+
+### Creating Automations
+
+The easiest way is through conversation:
+
+```
+"Create an automation that backs up Jellyfin every night at 2am
+ and notifies me on Telegram when it's done"
+```
+
+The AI calls `create_automation` with the correct cron expression, backup tool step, and notification step.
+
+### Run History
+
+Every automation execution is logged. View the history to see when it ran, what steps executed, whether they succeeded, and any output or errors.
+
+---
+
+## Files Page
+
+A full-featured file browser for your server's filesystem and mounted drives.
+
+<ScreenshotPlaceholder description="File browser showing a directory listing with file names, sizes, dates, and a sidebar showing mounted drives" />
+
+Navigate directories, preview files (images, text, video), rename, delete, and create directories. Mounted drives (NAS, USB, external storage) appear in the sidebar for quick access.
+
+The media player integrates directly — click a video file and it plays inline.
+
+---
+
+## Terminal Page
+
+A persistent terminal with full shell access to your server.
+
+<ScreenshotPlaceholder description="Terminal page showing a tmux session with a shell prompt and a 'Launch Claude Code' button" />
+
+### Persistent tmux Session
+
+The terminal runs inside a tmux session that persists across page navigations and browser refreshes. Close the tab, come back later — your session is still running.
+
+### Claude Code Integration
+
+Click **Launch Claude Code** to start an interactive Claude Code session inside the terminal. This gives you the full agentic AI coding experience — Claude Code reads the Talome codebase, uses MCP tools, and can make changes to the source code interactively.
+
+The terminal and Claude Code share the same tmux session (`talome-claude`), so you can switch between shell commands and AI-assisted development seamlessly.
+
+---
+
+## Settings Page
+
+All configuration lives in Settings, organized into sections.
+
+<ScreenshotPlaceholder description="Settings page showing the navigation sections: AI Provider, Integrations, Security, Notifications, System" />
+
+### AI Provider
+
+Configure Anthropic, OpenAI, or Ollama. Set the default provider and model. Add a custom system prompt to customize the AI's behavior.
+
+### Integrations
+
+Connect external apps: Sonarr, Radarr, Prowlarr, Jellyfin, Plex, qBittorrent, Overseerr, Home Assistant, Pi-hole, Audiobookshelf, Vaultwarden, and Ollama. Each integration needs a URL and API key. Once saved, the corresponding AI tools activate automatically — no restart needed.
+
+### Security
+
+Choose between three security modes:
+- **Permissive** — full access, no confirmations
+- **Cautious** — destructive operations require confirmation (default)
+- **Locked** — read-only mode, no modifications allowed
+
+Also configure shell command allowlists for cautious mode.
+
+### Notifications
+
+Set up notification channels: Telegram, Discord, webhooks, and browser push notifications. Test each channel directly from the settings page.
+
+### System
+
+View system information, manage data storage paths, configure the reverse proxy and mDNS, and set up Tailscale for remote access.
+
+---
+
+## The Assistant
+
+The AI assistant has its own page in the sidebar navigation. Click **Assistant** to open it.
+
+<ScreenshotPlaceholder description="The assistant page showing a conversation with tool execution cards and the chat input bar" />
+
+### Chat Interface
+
+Type messages in natural language. The AI responds with text and inline tool execution cards that show exactly what it did — which tools it called, what arguments it used, and what results came back.
+
+### Tool Execution Cards
+
+When the AI uses a tool, a card appears in the conversation showing:
+- The tool name (e.g., `install_app`)
+- Key parameters (e.g., appId, storeId)
+- The result summary
+- Expandable raw output for power users
+
+### Conversation History
+
+The assistant page shows your conversation history grouped by date (Today, Yesterday, This week, Older). Click any conversation to resume it, or click **New** to start a fresh one.
+
+### Keyboard Shortcut
+
+Press **`/`** from any page to open the command palette in chat mode. Press **Escape** to close.
+
+### Context Awareness
+
+The assistant knows which page you are on. If you open the chat from the Media page and say "show me what's downloading," it prioritizes media tools. If you are on the Containers page and say "restart this," it infers you mean the container you are looking at.
+
+---
+
+## Next Steps
+
+<Cards>
+  <Card title="Configuration" href="/docs/getting-started/configuration">
+    Deep dive into AI providers, integrations, security modes, and environment variables.
+  </Card>
+  <Card title="Monitoring Guide" href="/docs/guides/monitoring">
+    Customize your dashboard widgets for system monitoring and alerting.
+  </Card>
+  <Card title="AI Assistant Guide" href="/docs/guides/ai-assistant">
+    Learn the full scope of what the AI can do — 230+ tools across 16 domains.
+  </Card>
+</Cards>

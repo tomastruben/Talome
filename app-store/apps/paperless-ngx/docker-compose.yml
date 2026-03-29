@@ -1,0 +1,13 @@
+services:
+  paperless-ngx:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    container_name: paperless-ngx
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/usr/src/paperless/data
+      - ./media:/usr/src/paperless/media
+      - ./consume:/usr/src/paperless/consume
+    environment:
+      - TZ=UTC

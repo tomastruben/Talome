@@ -1,0 +1,9 @@
+services:
+  immich:
+    image: ghcr.io/immich-app/immich-server:latest
+    container_name: immich
+    restart: unless-stopped
+    ports:
+      - "2283:2283"
+    volumes:
+      - ./upload:/usr/src/app/upload

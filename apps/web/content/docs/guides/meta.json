@@ -1,0 +1,19 @@
+{
+  "title": "Guides",
+  "icon": "Book02",
+  "pages": [
+    "ai-assistant",
+    "telegram-discord-bots",
+    "media-stack",
+    "app-store",
+    "app-creation",
+    "automations",
+    "networking",
+    "backups",
+    "monitoring",
+    "self-improvement",
+    "terminal",
+    "migrating-from-casaos",
+    "migrating-from-umbrel"
+  ]
+}

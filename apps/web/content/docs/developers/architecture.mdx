@@ -1,0 +1,356 @@
+---
+title: Architecture
+description: Deep dive into Talome's system architecture -- monorepo structure, data flow, database design, and runtime components.
+---
+
+Talome is built as a TypeScript monorepo with three applications and a shared types package. This page provides a comprehensive technical overview of how the system is structured and how data flows through it.
+
+<Mermaid chart={`graph TD
+    subgraph Dashboard - Next.js 16
+        A[Browser] --> B[React UI]
+        B --> C[SWR / Fetch]
+    end
+    subgraph Core - Hono
+        C --> D[REST API :4000]
+        D --> E[AI Agent]
+        D --> F[Docker Client]
+        D --> G[SQLite DB]
+        E --> H[Tool Registry]
+        H --> I[230+ Tools]
+        I --> F
+        I --> G
+    end
+    subgraph MCP - stdio
+        J[Claude Code] --> K[MCP Server]
+        K --> H
+    end
+`} />
+
+## Monorepo Layout
+
+```
+talome/
+  apps/
+    core/           Hono backend: AI agent, tools, Docker API, DB, MCP server
+    dashboard/      Next.js 16 frontend: dashboard, chat UI, app store
+    web/            Fumadocs site: documentation and marketing
+  packages/
+    types/          Shared TypeScript types (UserPermissions, etc.)
+  .claude/          Claude Code skills and auto-memory
+  docs/             Internal architecture documentation
+```
+
+### `apps/core` -- The Backend
+
+The backend is a Hono server written in TypeScript. It handles API requests, AI chat streaming, Docker container management, database operations, automation scheduling, and MCP protocol serving.
+
+| Path | Purpose |
+|------|---------|
+| `src/ai/agent.ts` | System prompt definition and domain registrations. The central file that wires all tools to the AI. |
+| `src/ai/tool-registry.ts` | Dynamic tool loading engine. Manages domains, settings-based activation, keyword routing. |
+| `src/ai/tool-gateway.ts` | Security gateway. Enforces tier-based access control per security mode. |
+| `src/ai/tools/` | 37 tool files containing 230+ tool definitions across 16 domains. |
+| `src/ai/custom-tools.ts` | Runtime for user-created custom tools. |
+| `src/ai/claude-runner.ts` | Headless Claude Code executor for self-improvement and app creation. |
+| `src/routes/` | 47 Hono route files. Each exports a Hono router mounted at `/api/*`. |
+| `src/db/schema.ts` | Drizzle ORM schema defining ~25 SQLite tables. |
+| `src/db/index.ts` | Database connection and singleton export. |
+| `src/db/audit.ts` | Audit log write helper. |
+| `src/db/memories.ts` | Memory ranking and retrieval logic. |
+| `src/docker/client.ts` | Dockerode wrapper for container operations. |
+| `src/stores/` | Multi-source app store: Talome native, CasaOS, Umbrel format parsers. |
+| `src/creator/` | App creation orchestrator. Blueprint generation and workspace scaffolding. |
+| `src/middleware/` | Auth middleware, CORS, session management. |
+| `src/automation/` | Cron scheduler (croner) and step executor. |
+| `src/mcp/` | MCP server implementation for Claude Code and other MCP clients. |
+
+### `apps/dashboard` -- The Frontend
+
+The frontend is a Next.js 16 application using the App Router, React 19, Tailwind CSS 4, and shadcn/ui.
+
+| Path | Purpose |
+|------|---------|
+| `src/app/dashboard/` | 26+ App Router pages (containers, apps, media, files, settings, etc.) |
+| `src/components/ui/` | 40+ shadcn/ui primitives (button, card, dialog, table, etc.) |
+| `src/components/widgets/` | 20+ dashboard widgets (CPU, memory, disk, services, media calendar, etc.) |
+| `src/components/assistant/` | AI chat interface: message bubbles, tool call display, streaming indicator. |
+| `src/components/dashboard/` | Dashboard-level components (app cards, container tables, store views). |
+| `src/components/files/` | File manager and media player components. |
+| `src/components/settings/` | Settings page sections (general, integrations, security, users). |
+| `src/atoms/` | Jotai atoms for global state management (chat state, sidebar, preferences). |
+| `src/hooks/` | Custom React hooks (useContainers, useSettings, useChat, etc.). |
+| `src/lib/` | Utility functions, API client, formatting helpers. |
+
+### `apps/web` -- Documentation Site
+
+A Fumadocs-powered site serving the documentation and marketing pages. Content lives in MDX files under `content/docs/`.
+
+### `packages/types` -- Shared Types
+
+TypeScript type definitions shared between `apps/core` and `apps/dashboard`. Includes `UserPermissions`, API response types, and shared constants.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/ai/tool-registry.ts` — the dynamic tool loading engine: `registerDomain()` at line 65, `getActiveRegisteredTools()` at line 112, `getToolsForMessage()` at line 148, and `DOMAIN_KEYWORDS` at line 126. `apps/core/src/db/schema.ts` — Drizzle ORM schema defining all SQLite tables (users, conversations, messages, memories, installed_apps, automations, evolution_runs, etc.).
+</Accordion>
+</Accordions>
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| Frontend | Next.js 16 App Router | Server-side rendering, routing, React Server Components |
+| React | React 19 | UI rendering with concurrent features |
+| Styling | Tailwind CSS 4 | Utility-first CSS framework |
+| UI Primitives | shadcn/ui | 40+ accessible, customizable components |
+| Icons | HugeIcons | Icon library (`@hugeicons/react`, `@hugeicons/core-free-icons`) |
+| State | Jotai | Atomic state management for client state |
+| Backend | Hono | Fast, lightweight TypeScript HTTP framework |
+| AI SDK | Vercel AI SDK | Streaming chat, tool execution, structured output |
+| AI Provider | `@ai-sdk/anthropic` | Claude integration (primary) |
+| Database | SQLite + better-sqlite3 | Embedded database with synchronous reads |
+| ORM | Drizzle ORM | Type-safe SQL query builder |
+| Docker | Dockerode | Native Node.js Docker Engine API client |
+| Scheduling | croner | Cron expression parser and job scheduler |
+| Validation | Zod | Runtime type validation everywhere |
+| Monorepo | pnpm workspaces + Turborepo | Dependency management and parallel build tasks |
+
+---
+
+## Data Flow
+
+### AI Chat
+
+<Mermaid chart={`graph TD
+    A["User types message in dashboard"] --> B["POST /api/chat"]
+    B --> C["Hono validates JWT, loads conversation"]
+    C --> D["Tool Registry: getToolsForMessage()"]
+    D --> E["Check active domains via settings"]
+    D --> F["Match message against domain keywords"]
+    E --> G["Security Gateway: gateToolExecution()"]
+    F --> G
+    G --> H["Vercel AI SDK streamText()"]
+    H --> I{"Claude selects tools?"}
+    I -->|Yes| J["Zod validates params"]
+    J --> K["Execute tool"]
+    K --> L["Write audit log entry"]
+    L --> H
+    I -->|No| M["Stream text response via SSE"]
+    M --> N["Dashboard renders in real time"]
+
+    style A fill:#1a1a2e,stroke:#444,color:#eee
+    style N fill:#1a1a2e,stroke:#444,color:#eee
+`} />
+
+**Context injected into each request:**
+- System prompt (~5,000 tokens, cached via Anthropic prompt caching)
+- Top 10 memories (ranked by 0.4 recency + 0.3 access + 0.3 confidence)
+- Active domain context and page context
+- Security mode (permissive/cautious/locked)
+- Max 10 tool calls per turn (`stepCountIs(10)`)
+
+### App Installation
+
+<Mermaid chart={`graph TD
+    A["User: install Jellyfin"] --> B["AI calls search_apps"]
+    B --> C["Search across Talome + CasaOS + Umbrel stores"]
+    C --> D["AI calls install_app"]
+    D --> E["Sanitize compose file"]
+    E --> F["Resolve port conflicts"]
+    F --> G["Apply volume mounts"]
+    G --> H["Inject talome network"]
+    H --> I["docker compose pull"]
+    I --> J["docker compose up -d"]
+    J --> K["Discover containers"]
+    K --> L["Auto-configure: extract API keys"]
+    L --> M["Wire to related apps"]
+    M --> N["AI reports status + next steps"]
+
+    style A fill:#1a1a2e,stroke:#444,color:#eee
+    style N fill:#1a1a2e,stroke:#444,color:#eee
+`} />
+
+### Self-Improvement
+
+<Mermaid chart={`graph TD
+    A["AI calls apply_change"] --> B["Spawn detached evolution worker"]
+    B --> C["Worker runs headless Claude Code"]
+    C --> D["Claude Code reads CLAUDE.md + makes changes"]
+    D --> E["Run tsc --noEmit"]
+    E --> F{"Compiles?"}
+    F -->|Yes| G["Commit to evolution_runs"]
+    G --> H["Auto-rebuild if needed"]
+    F -->|No| I["git stash — auto rollback"]
+    I --> J["Report failure with errors"]
+
+    style A fill:#1a1a2e,stroke:#444,color:#eee
+    style G fill:#0d2818,stroke:#2d6a4f,color:#eee
+    style I fill:#2d1117,stroke:#a94442,color:#eee
+`} />
+
+---
+
+## Database Schema
+
+Talome uses a single SQLite file managed by Drizzle ORM. The database provides synchronous reads (via better-sqlite3) for performance and simplicity. Key table groups:
+
+### Authentication and Users
+
+| Table | Purpose |
+|-------|---------|
+| `users` | User accounts with hashed passwords, roles (admin/member), and permissions |
+
+### Conversations and AI
+
+| Table | Purpose |
+|-------|---------|
+| `conversations` | Chat conversations with optimistic locking version |
+| `messages` | Individual messages (user, assistant, system) linked to conversations |
+| `memories` | AI memory system: preferences, facts, contexts, corrections with confidence and access count |
+| `ai_usage_log` | Token usage tracking per model with cost estimation |
+
+### App Management
+
+| Table | Purpose |
+|-------|---------|
+| `store_sources` | Configured app store sources (Talome, CasaOS, Umbrel, Git) |
+| `app_catalog` | Normalized app metadata from all store sources |
+| `installed_apps` | Currently installed apps with status, version, and container IDs |
+| `install_errors` | Detailed error logs for failed installations |
+
+### Automation
+
+| Table | Purpose |
+|-------|---------|
+| `automations` | Automation definitions with trigger, steps, and schedule |
+| `automation_runs` | Execution history for each automation |
+| `automation_step_runs` | Per-step execution details within a run |
+
+### System
+
+| Table | Purpose |
+|-------|---------|
+| `settings` | Key-value configuration store |
+| `settings_history` | Change history for settings (who changed what, when) |
+| `audit_log` | Every tool execution with tier, timestamp, and approval status |
+| `notifications` | System notifications (info, warning, critical) |
+| `metrics` | Historical system metrics (CPU, memory, disk, network) |
+| `container_events` | Container state transitions (for crash detection) |
+| `system_events` | System-level events for the agent loop |
+| `remediation_log` | Autonomous remediation actions taken by the agent |
+
+### Self-Improvement
+
+| Table | Purpose |
+|-------|---------|
+| `evolution_log` | Legacy evolution change log |
+| `evolution_runs` | Self-improvement run tracking with status, diff output, and rollback info |
+| `evolution_suggestions` | AI-generated improvement suggestions with priority and risk |
+
+### UI and Configuration
+
+| Table | Purpose |
+|-------|---------|
+| `widget_manifests` | Dashboard widget definitions and layout |
+| `proxy_routes` | Reverse proxy route configuration with TLS status |
+| `terminal_sessions` | Persistent terminal session metadata |
+
+---
+
+## Runtime Components
+
+### Security Gateway
+
+The security gateway wraps every tool with access control based on the system-wide `security_mode` setting:
+
+| Mode | Read Tools | Modify Tools | Destructive Tools |
+|------|-----------|-------------|-------------------|
+| `permissive` | Execute freely | Execute freely | Execute freely |
+| `cautious` (default) | Execute freely | Execute freely | Require user confirmation |
+| `locked` | Execute freely | Blocked | Blocked |
+
+The gateway also writes to the `audit_log` for every tool execution, including blocked attempts.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/ai/tool-gateway.ts` — `gateToolExecution()` at line 31 wraps each tool with tier-based enforcement. `apps/core/src/db/memories.ts` — `getTopMemories()` at line 57 implements the composite ranking formula.
+</Accordion>
+</Accordions>
+
+### Memory Ranking
+
+The top 10 memories are injected into each chat system prompt, selected by a composite score:
+
+1. **Recency** -- recently created or updated memories score higher
+2. **Access frequency** -- memories recalled more often score higher
+3. **Confidence** -- corrections (confidence adjustments) affect ranking
+4. **Deduplication** -- new memories with >80% bigram similarity to existing ones are rejected
+
+### Automation Scheduler
+
+The automation engine uses croner for cron-based scheduling. On startup:
+
+1. All enabled automations with `schedule` triggers are registered with croner
+2. Event-based triggers (container_stopped, disk_usage_exceeds) are registered with the event bus
+3. Webhook triggers generate unique URLs
+4. When a trigger fires, the step executor runs each step in sequence, passing output forward
+
+### MCP Server
+
+The MCP server runs as a stdio process launched by Claude Code at startup. It:
+
+1. Calls `getAllRegisteredTools()` to get every tool from every domain
+2. Converts Vercel AI SDK tool schemas to MCP-compatible JSON Schema
+3. Handles tool call requests from Claude Code, executing them through the same tool pipeline
+4. Operates independently of the Hono web server (reads the same SQLite DB and Docker socket)
+
+---
+
+## Ports
+
+| Service | Port | Configurable Via |
+|---------|------|-----------------|
+| Dashboard | 3000 | `DASHBOARD_PORT` |
+| Backend API | 4000 | `CORE_PORT` |
+| Terminal daemon | 4001 | `TERMINAL_DAEMON_PORT` |
+| Docs site | 3100 | Dev mode only |
+
+---
+
+## Directory Conventions
+
+### App Installation
+
+Apps are installed to `~/.talome/apps/<appId>/`. Each app directory contains:
+
+```
+~/.talome/apps/jellyfin/
+  docker-compose.yml    Generated from the app manifest
+  config/               Volume mount (relative paths)
+  cache/                Volume mount
+  .env                  App-specific environment overrides
+```
+
+### App Creation
+
+Generated apps use a workspace at `~/.talome/generated-apps/<appId>/`:
+
+```
+~/.talome/generated-apps/<appId>/
+  .talome-creator/
+    blueprint.json       Structured app specification
+    instructions/        Generation guides
+    references/          Talome source file snapshots
+    sources/             Existing app manifests to adapt
+  generated-app/         Scaffold output
+```
+
+### User Apps
+
+User-created apps are stored at `~/.talome/user-apps/`.
+
+### Backups
+
+App backups are stored at `~/.talome/backups/<appId>/<timestamp>.tar.gz`.

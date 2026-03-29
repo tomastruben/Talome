@@ -1,0 +1,268 @@
+---
+title: Design System
+description: Talome's design system -- OKLCH color palette, spacing scale, typography, motion, icons, and component guidelines.
+---
+
+Talome's design system is built on constraint. Every decision reduces visual noise so the content and data speak for themselves. Dark mode is the only mode. Motion is barely perceptible. Whitespace does the heavy lifting.
+
+This guide covers the complete visual language used across the dashboard, generated apps, and documentation.
+
+## Design Principles
+
+These principles apply to all UI work -- dashboard pages, generated apps, new components, and widget designs.
+
+**Radical reduction** -- if a UI element doesn't serve the user's immediate task, remove it. No decorative borders, no background patterns, no visual filler. Each screen should have one clear purpose.
+
+**Breathing space** -- content areas use `p-6` minimum. Cards are separated by `gap-6`. Dense data tables still need padding between rows. Cramped interfaces feel broken; spacious ones feel premium.
+
+**Honest materials** -- no decorative gradients, no fake depth with stacked shadows, no glossy effects. Surfaces are flat with subtle borders. The card surface (`--card`) is barely lighter than the background -- just enough to define areas.
+
+**One primary action per view** -- every screen has one thing the user is most likely to do. That action is visually prominent. Secondary actions exist but don't compete. Tertiary actions hide behind menus.
+
+**Motion restraint** -- all animations complete in under 200ms. The only easing function is `ease-out`. No bounce, no spring physics, no overshoot. Motion should be barely noticed -- it smooths transitions, nothing more.
+
+**Typography discipline** -- four font sizes, two weights. This constraint prevents the "ransom note" effect where every heading is a different size. Hierarchy comes from size and color, never from decorative typography.
+
+**Dark mode is the default** -- all UI must look correct in dark mode. There is no light mode toggle. Colors are chosen for dark backgrounds first. This simplifies the design system and matches the typical home server environment (terminals, monitoring dashboards).
+
+---
+
+## Color Palette
+
+All colors use the OKLCH color space, which provides perceptual uniformity -- a given chroma value looks equally saturated across different hues. The palette is defined as CSS custom properties in `apps/dashboard/src/app/globals.css`.
+
+### Neutral Scale
+
+| Token | OKLCH Value | Usage |
+|-------|-------------|-------|
+| `--background` | `oklch(0.145 0 0)` | Page background. Very dark, almost black. |
+| `--foreground` | `oklch(0.985 0 0)` | Primary text. Near-white, not pure white (reduces eye strain). |
+| `--card` | `oklch(0.205 0 0)` | Card and panel surfaces. Subtle elevation from background. |
+| `--muted` | `oklch(0.269 0 0)` | Muted backgrounds for hover states, selected rows, secondary panels. |
+| `--muted-foreground` | `oklch(0.708 0 0)` | Secondary text, labels, timestamps, helper text. |
+| `--border` | `oklch(1 0 0 / 10%)` | Borders and dividers. White at 10% opacity for subtlety. |
+| `--input` | `oklch(1 0 0 / 15%)` | Input field backgrounds. Slightly lighter than borders. |
+| `--primary` | `oklch(0.922 0 0)` | Primary interactive elements (buttons, links). High contrast. |
+
+### Status Colors
+
+Status colors are the only chromatic values in the palette. They are used sparingly for system state indicators.
+
+| Token | OKLCH Value | Usage |
+|-------|-------------|-------|
+| `--status-healthy` | `oklch(0.723 0.191 149.58)` | Green. Running containers, successful operations, healthy systems. |
+| `--status-warning` | `oklch(0.795 0.184 86.047)` | Amber. Degraded services, approaching limits, pending actions. |
+| `--status-critical` | `oklch(0.704 0.191 22.216)` | Red. Stopped containers, failed operations, critical alerts. |
+
+### Usage Rules
+
+- **Never use inline color overrides.** All colors come from CSS custom properties in `globals.css`.
+- **Never add new color tokens without strong justification.** The existing palette covers all cases.
+- **Status colors are for system state only.** Don't use green for "confirm" buttons or red for "cancel" -- use the primary color for both and rely on the label text.
+- **Avoid colored text except for status.** Body text is always `--foreground` or `--muted-foreground`.
+
+---
+
+## Spacing Scale
+
+The spacing scale uses a limited set of values that map directly to Tailwind CSS utility classes.
+
+| Token | Value | Pixels | Tailwind | Usage |
+|-------|-------|--------|----------|-------|
+| xs | 0.25rem | 4px | `p-1`, `gap-1` | Tight inline spacing (icon + label) |
+| sm | 0.5rem | 8px | `p-2`, `gap-2` | Small padding, badge internals |
+| md | 0.75rem | 12px | `p-3`, `gap-3` | Medium spacing, between related items |
+| lg | 1rem | 16px | `p-4`, `gap-4` | Standard padding, list item spacing |
+| xl | 1.5rem | 24px | `p-6`, `gap-6` | Content padding, card spacing (primary) |
+| 2xl | 2rem | 32px | `p-8`, `gap-8` | Section spacing, page-level gaps |
+| 3xl | 3rem | 48px | `p-12` | Hero spacing, large section separators |
+
+### Rules
+
+- **`p-6` minimum on content areas.** Card content, page bodies, panel interiors.
+- **`gap-6` between cards.** This is the default grid gap for card layouts.
+- **Avoid arbitrary values.** Use Tailwind's built-in spacing, not `p-[13px]` or `mt-[7px]`.
+- **Vertical rhythm matters.** Consistent spacing between sections creates a visual beat that makes pages feel organized.
+
+---
+
+## Typography
+
+Talome uses the Geist font family: Geist Sans for body text and Geist Mono for code.
+
+### Scale
+
+| Class | Size | Usage |
+|-------|------|-------|
+| `text-sm` | 0.8125rem (13px) | Secondary text, labels, metadata, timestamps, table headers |
+| `text-base` | 0.875rem (14px) | Body text, descriptions, card content |
+| `text-lg` | 1rem (16px) | Subheadings, card titles, section labels |
+| `text-2xl` | 1.5rem (24px) | Page titles, hero numbers, primary statistics |
+
+### Weights
+
+Only two weights are used:
+
+| Weight | Tailwind | Usage |
+|--------|----------|-------|
+| 400 | `font-normal` | Body text, descriptions, all regular content |
+| 500 | `font-medium` | Headings, labels, button text, emphasis |
+
+**No bold (700).** No light (300). No thin (100). Two weights are enough to establish hierarchy when combined with the size scale.
+
+### Rules
+
+- **Never use `text-xs` or `text-3xl` or larger.** The four sizes above cover all use cases.
+- **Never use bold or semi-bold.** Use `font-medium` (500) for emphasis instead.
+- **Use `text-muted-foreground` for secondary text.** Don't reduce font size for de-emphasis; reduce the color contrast instead.
+- **Code blocks use Geist Mono.** Inline code (`backtick` markup) and code blocks both use the mono variant.
+
+---
+
+## Motion
+
+Animation in Talome is functional, not decorative. It smooths state transitions and gives feedback.
+
+| Property | Value |
+|----------|-------|
+| Maximum duration | 200ms |
+| Easing function | `ease-out` |
+| CSS bezier | `cubic-bezier(0.25, 0.1, 0.25, 1)` |
+
+### Rules
+
+- **200ms maximum for all animations.** Hover states, panel opens, loading transitions.
+- **`ease-out` only.** Starts fast, ends slow. Feels responsive without being jarring.
+- **No bounce.** No spring physics. No overshoot. These draw attention to the motion itself.
+- **Opacity and transform only.** Avoid animating layout properties (width, height, padding) as they cause layout thrashing.
+- **Prefer `transition` over `@keyframes`.** Simple property transitions are easier to control and debug.
+
+---
+
+## Icons
+
+Talome uses HugeIcons exclusively. Never import from `lucide-react` directly (it exists only as a peer dependency for shadcn/ui internals).
+
+### Import Pattern
+
+```tsx
+import { HugeiconsIcon } from "@/components/icons";
+import { Home01Icon, Settings01Icon } from "@/components/icons";
+
+// Usage
+<HugeiconsIcon icon={Home01Icon} size={20} />
+```
+
+The icon barrel file is at `apps/dashboard/src/components/icons.tsx`. If an icon you need isn't already re-exported, add it from `@hugeicons/core-free-icons`:
+
+```tsx
+// In apps/dashboard/src/components/icons.tsx
+export { UptimeMonitorIcon } from "@hugeicons/core-free-icons";
+```
+
+### Size Guidelines
+
+| Context | Size | Example |
+|---------|------|---------|
+| Inline with text | 16px | Card headers, list items, breadcrumbs |
+| Standalone small | 20px | Buttons, navigation items, badges |
+| Standalone medium | 24px | Empty state illustrations, section headers |
+| Standalone large | 32px | Hero icons, feature highlights |
+
+### Rules
+
+- **Never use colored icons.** Icons use `text-muted-foreground` or `text-foreground` -- never status colors.
+- **Never mix icon libraries.** Only HugeIcons via `@/components/icons`.
+- **Use the `HugeiconsIcon` wrapper.** It handles sizing and alignment consistently.
+
+---
+
+## Components
+
+All UI primitives live in `apps/dashboard/src/components/ui/`. They are pre-installed shadcn/ui components. Never recreate them.
+
+### Available Primitives
+
+`alert` -- `avatar` -- `badge` -- `bento-gallery` -- `breadcrumb` -- `button` -- `button-group` -- `card` -- `chart` -- `collapsible` -- `command` -- `dialog` -- `dropdown-menu` -- `empty-state` -- `hover-card` -- `input` -- `input-group` -- `label` -- `popover` -- `progress` -- `scroll-area` -- `search-field` -- `select` -- `separator` -- `sheet` -- `sidebar` -- `skeleton` -- `sonner` -- `spinner` -- `switch` -- `table` -- `tabs` -- `textarea` -- `tooltip`
+
+### Card Pattern
+
+Cards are the primary content container. They follow a consistent pattern:
+
+```tsx
+<Card>
+  <CardHeader className="flex flex-row items-center gap-2 pb-2">
+    <HugeiconsIcon icon={SomeIcon} size={16} className="text-muted-foreground" />
+    <CardTitle className="text-sm font-medium">Title</CardTitle>
+  </CardHeader>
+  <CardContent>
+    {/* Content here */}
+  </CardContent>
+</Card>
+```
+
+### Dashboard Widgets
+
+Dashboard widgets live in `apps/dashboard/src/components/widgets/`:
+
+`active-downloads` -- `activity` -- `arr-status` -- `cpu` -- `declarative` -- `digest` -- `disk` -- `divider` -- `list` -- `media-calendar` -- `memory` -- `network` -- `quick-actions` -- `services` -- `stat-tile` -- `storage-mounts` -- `system-health` -- `system-info` -- `system-status`
+
+### Rules
+
+- **Never install alternative UI libraries.** No Material UI, no Chakra, no Ant Design.
+- **Extend existing components, don't fork them.** If a shadcn component doesn't do exactly what you need, compose it with other components rather than copying and modifying the source.
+- **Generated app UIs should use these same components.** When the app creation system generates a UI, it should feel like a native Talome page.
+
+---
+
+## Layout Patterns
+
+### Page Layout
+
+```tsx
+<div className="flex flex-col gap-6 p-6">
+  <div className="flex items-center justify-between">
+    <h1 className="text-2xl font-medium">Page Title</h1>
+    <Button>Primary Action</Button>
+  </div>
+  {/* Content */}
+</div>
+```
+
+### Grid Layout
+
+```tsx
+<div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+  <Card>...</Card>
+  <Card>...</Card>
+  <Card>...</Card>
+</div>
+```
+
+### Empty State
+
+```tsx
+<EmptyState
+  icon={SomeIcon}
+  title="No items yet"
+  description="Get started by creating your first item."
+  action={<Button>Create Item</Button>}
+/>
+```
+
+---
+
+## Do Not
+
+A quick list of things to avoid:
+
+- Gradients for decorative purposes
+- Box shadows deeper than `shadow-sm`
+- Borders thicker than 1px
+- Rounded corners larger than `rounded-lg`
+- Background images or patterns
+- Colored backgrounds (except card and muted tokens)
+- Multiple primary-colored buttons on the same screen
+- Emojis in UI text (unless representing app icons)
+- All-caps text (except very short labels like "NEW")
+- Tooltips on touch targets smaller than 32x32px

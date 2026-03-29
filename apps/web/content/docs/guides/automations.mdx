@@ -1,0 +1,528 @@
+---
+title: Automations
+description: Set-and-forget workflows — scheduled backups, disk alerts, container health checks, AI-driven maintenance, and webhook-triggered deploys.
+---
+
+Automations are Talome's answer to "I wish this happened automatically." A nightly backup. A disk usage alert. A container health check that restarts crashed services and notifies you on Telegram. An AI-driven improvement session that runs while you sleep.
+
+You describe the workflow in plain English, the AI builds the automation, and it runs on schedule without further intervention. Or you build it yourself in the dashboard UI or via the API.
+
+<VideoPlaceholder description="Watch: Creating a disk usage alert automation in one conversation" />
+
+## Anatomy of an Automation
+
+Every automation has the same structure: a **trigger** that decides when it runs, and **steps** that define what happens.
+
+```
+Trigger: "Every hour" (cron: 0 * * * *)
+    ↓
+Step 1: Check disk usage (tool_action: get_disk_usage)
+    ↓
+Step 2: Is usage >= 90%? (condition: $.usage_percent gte 90)
+    ↓ yes
+Step 3: Send alert (notify: "Disk at {{usage_percent}}%")
+```
+
+Data flows between steps. The output of Step 1 becomes the input context for Step 2's condition check. Template variables like `{{usage_percent}}` resolve from previous step results.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/automation/engine.ts` — trigger matching at `matchesTrigger()` (line 78) checks containerId, mountPath, appId, and threshold fields. Step types (`tool_action`, `ai_prompt`, `condition`, `notify`) are defined as the `AutomationStep` union type at line 45. Template interpolation is handled by `interpolate()` at line 101.
+</Accordion>
+</Accordions>
+
+## Trigger Types
+
+| Trigger | Configuration | Example |
+|---------|--------------|---------|
+| **Schedule (cron)** | `expression`: a cron string | `0 3 * * *` — every day at 3 AM |
+| **Container stopped** | `container`: container name | Fires when `jellyfin` stops unexpectedly |
+| **Disk usage exceeds** | `threshold`: percentage | Fires when disk usage crosses 90% |
+| **Webhook** | `path`: URL path | Fires when POST hits `/api/webhooks/deploy` |
+| **App installed** | `appId`: optional filter | Fires when any (or a specific) app is installed |
+| **Manual** | *(none)* | Run on demand from the dashboard or API |
+
+### Cron Expressions
+
+Cron expressions use the standard 5-field format: `minute hour day-of-month month day-of-week`.
+
+| Expression | Meaning |
+|-----------|---------|
+| `0 * * * *` | Every hour, on the hour |
+| `*/15 * * * *` | Every 15 minutes |
+| `0 3 * * *` | Daily at 3:00 AM |
+| `0 0 * * 0` | Weekly, Sunday at midnight |
+| `0 2 1 * *` | Monthly, 1st at 2:00 AM |
+| `0 4 * * 1-5` | Weekdays at 4:00 AM |
+| `30 22 * * *` | Daily at 10:30 PM |
+
+The AI can validate cron expressions before saving with `validate_cron`:
+
+<ChatSimulation>
+  <UserMessage>Does "0 3 * * *" mean every day at 3am?</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="validate_cron" result="valid: fires at 03:00 every day" />
+    Yes. That expression fires at 03:00 every day. Next 3 runs: tomorrow at 3:00 AM, day after at 3:00 AM, and so on.
+  </AssistantMessage>
+</ChatSimulation>
+
+## Step Types
+
+### tool_action
+
+Execute any automation-safe Talome tool with specific parameters.
+
+```json
+{
+  "type": "tool_action",
+  "tool": "get_disk_usage",
+  "params": {}
+}
+```
+
+```json
+{
+  "type": "tool_action",
+  "tool": "backup_app",
+  "params": { "appId": "jellyfin" }
+}
+```
+
+### ai_prompt
+
+Run an AI prompt with a curated set of allowed tools. The AI reasons about the situation and decides which tools to call — just like in a chat conversation, but unattended.
+
+```json
+{
+  "type": "ai_prompt",
+  "prompt": "Check all containers for health issues. If any container has restarted more than 3 times in the last hour, investigate the logs and send a notification with the diagnosis.",
+  "allowedTools": ["list_containers", "get_container_logs", "inspect_container", "send_notification"]
+}
+```
+
+The `ai_prompt` step is the most powerful step type. It combines the AI's reasoning with specific tool access — you define the goal and boundaries, the AI figures out the execution.
+
+### condition
+
+Check a value from a previous step's output. If the condition is false, the automation stops (subsequent steps are skipped).
+
+```json
+{
+  "type": "condition",
+  "field": "$.usage_percent",
+  "operator": "gte",
+  "value": 90
+}
+```
+
+The `field` uses JSONPath-style dot notation to extract values from previous step results.
+
+### notify
+
+Send a notification through a configured channel (Telegram, Discord, email, webhook).
+
+```json
+{
+  "type": "notify",
+  "channel": "telegram",
+  "message": "Disk usage is at {{usage_percent}}%. Top directories: {{top_dirs}}"
+}
+```
+
+Template variables (`{{variable}}`) resolve from the accumulated context of all previous steps.
+
+## Creating Automations
+
+### Via AI Conversation
+
+The fastest way — describe what you want and the AI builds it:
+
+<ChatSimulation>
+  <UserMessage>Every night at 2am, back up Jellyfin and Sonarr, then notify me on Telegram when it's done</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_automation" result="created: Nightly backup, cron 0 2 * * *, 3 steps" />
+    Automation created: "Nightly backup -- Jellyfin + Sonarr". Schedule: daily at 2:00 AM. Steps: backup Jellyfin, backup Sonarr, Telegram notification. Next run: tomorrow at 2:00 AM.
+  </AssistantMessage>
+</ChatSimulation>
+
+### Via the Dashboard
+
+Navigate to **Automations** in the sidebar. The UI provides:
+- A visual automation builder with drag-and-drop steps
+- Cron expression helper with human-readable preview
+- Tool picker that shows only automation-safe tools
+- Template variable autocomplete in notification messages
+- Run history with logs for each execution
+
+### Via the API
+
+```bash
+curl -X POST http://localhost:4000/api/automations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Disk alert",
+    "trigger": { "type": "cron", "expression": "0 * * * *" },
+    "steps": [
+      { "type": "tool_action", "tool": "get_disk_usage", "params": {} },
+      { "type": "condition", "field": "$.usage_percent", "operator": "gte", "value": 90 },
+      { "type": "notify", "channel": "telegram", "message": "Disk at {{usage_percent}}%" }
+    ]
+  }'
+```
+
+## 8 Complete Examples
+
+### 1. Nightly Backup
+
+Back up critical apps every night.
+
+<ChatSimulation>
+  <UserMessage>Back up Jellyfin and Sonarr every night at 2am</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_automation" result="created: Nightly backup, cron 0 2 * * *, 2 steps" />
+    Automation created: "Nightly backup" -- daily at 2:00 AM, backs up Jellyfin then Sonarr.
+  </AssistantMessage>
+</ChatSimulation>
+
+Resulting automation:
+
+```json
+{
+  "name": "Nightly backup",
+  "trigger": { "type": "cron", "expression": "0 2 * * *" },
+  "steps": [
+    { "type": "tool_action", "tool": "backup_app", "params": { "appId": "jellyfin" } },
+    { "type": "tool_action", "tool": "backup_app", "params": { "appId": "sonarr" } }
+  ]
+}
+```
+
+### 2. Disk Usage Alert
+
+Check disk space hourly and alert when it's getting full.
+
+<ChatSimulation>
+  <UserMessage>Alert me on Telegram when disk usage goes above 90%</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_automation" result="created: Disk usage alert, hourly, 3 steps with condition" />
+    Automation created: "Disk usage alert" -- checks every hour, alerts on Telegram if disk usage is 90% or above.
+  </AssistantMessage>
+</ChatSimulation>
+
+```json
+{
+  "name": "Disk usage alert",
+  "trigger": { "type": "cron", "expression": "0 * * * *" },
+  "steps": [
+    { "type": "tool_action", "tool": "get_disk_usage", "params": {} },
+    { "type": "condition", "field": "$.usage_percent", "operator": "gte", "value": 90 },
+    { "type": "notify", "channel": "telegram", "message": "Disk usage is at {{usage_percent}}%. Free space: {{free_gb}} GB." }
+  ]
+}
+```
+
+### 3. Container Health Check with Recovery
+
+Monitor containers every 5 minutes. If any are unhealthy, restart them and notify.
+
+<ChatSimulation>
+  <UserMessage>Every 5 minutes, check if any containers are unhealthy. If so, restart them and tell me on Discord.</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_automation" result="created: Container health monitor, every 5 min, AI prompt + notify" />
+    Automation created: "Container health monitor" -- every 5 minutes, an AI prompt checks all containers, restarts unhealthy ones, and sends a summary to Discord.
+  </AssistantMessage>
+</ChatSimulation>
+
+```json
+{
+  "name": "Container health monitor",
+  "trigger": { "type": "cron", "expression": "*/5 * * * *" },
+  "steps": [
+    {
+      "type": "ai_prompt",
+      "prompt": "Check all containers. For any that are unhealthy or exited unexpectedly, restart them. Report what you found and what you restarted.",
+      "allowedTools": ["list_containers", "inspect_container", "restart_container", "get_container_logs"]
+    },
+    { "type": "notify", "channel": "discord", "message": "Health check complete: {{summary}}" }
+  ]
+}
+```
+
+### 4. Download Cleanup
+
+Clean up completed downloads daily to reclaim disk space.
+
+<ChatSimulation>
+  <UserMessage>Every day at midnight, clean up completed torrents in qBittorrent</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_automation" result="created: Download cleanup, daily at midnight, 2 steps" />
+    Automation created: "Download cleanup" -- daily at midnight, lists completed torrents then uses AI to remove old ones with good ratios.
+  </AssistantMessage>
+</ChatSimulation>
+
+```json
+{
+  "name": "Download cleanup",
+  "trigger": { "type": "cron", "expression": "0 0 * * *" },
+  "steps": [
+    { "type": "tool_action", "tool": "qbt_list_torrents", "params": { "filter": "completed" } },
+    {
+      "type": "ai_prompt",
+      "prompt": "Review completed torrents. Remove any that finished downloading more than 7 days ago and have a ratio above 1.0. Report how many were cleaned up and how much space was freed.",
+      "allowedTools": ["qbt_list_torrents"]
+    }
+  ]
+}
+```
+
+### 5. Weekly Library Scan
+
+Scan Jellyfin libraries every Sunday to pick up manually added files.
+
+<ChatSimulation>
+  <UserMessage>Scan all Jellyfin libraries every Sunday at 6am</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_automation" result="created: Weekly Jellyfin scan, Sundays at 6 AM" />
+    Automation created: "Weekly Jellyfin scan" -- every Sunday at 6:00 AM, triggers a full library scan.
+  </AssistantMessage>
+</ChatSimulation>
+
+```json
+{
+  "name": "Weekly Jellyfin scan",
+  "trigger": { "type": "cron", "expression": "0 6 * * 0" },
+  "steps": [
+    { "type": "tool_action", "tool": "jellyfin_scan_library", "params": {} }
+  ]
+}
+```
+
+### 6. AI-Driven Overnight Improvement
+
+Let the AI improve Talome's own code while you sleep.
+
+<ChatSimulation>
+  <UserMessage>Every night at 3am, review open issues and apply up to 2 fixes</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_automation" result="created: Nightly self-improvement, daily at 3 AM" />
+    Automation created: "Nightly self-improvement" -- daily at 3:00 AM, an AI prompt reviews open issues, plans and applies up to 2 fixes with TypeScript validation.
+  </AssistantMessage>
+</ChatSimulation>
+
+```json
+{
+  "name": "Nightly self-improvement",
+  "trigger": { "type": "cron", "expression": "0 3 * * *" },
+  "steps": [
+    {
+      "type": "ai_prompt",
+      "prompt": "Review open issues with list_issues. Pick the highest priority issue. Use plan_change to understand the fix, then apply_change to implement it. Stop after 2 successful changes or if any change fails.",
+      "allowedTools": ["list_issues", "plan_change", "apply_change", "read_file", "list_changes", "track_issue"]
+    }
+  ]
+}
+```
+
+### 7. Webhook-Triggered Deploy
+
+Redeploy an app when a webhook fires (e.g., from a CI pipeline or GitHub Actions).
+
+<ChatSimulation>
+  <UserMessage>When my deploy webhook fires, pull the latest image for my-custom-app and restart it</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_automation" result="created: Deploy my-custom-app, webhook trigger, 3 steps" />
+    Automation created: "Deploy my-custom-app" -- triggered by webhook, upgrades the image, restarts the app, and sends a Telegram notification. Webhook URL: POST http://your-server:4000/api/webhooks/deploy/my-custom-app. Call this URL from your CI pipeline to trigger the deploy.
+  </AssistantMessage>
+</ChatSimulation>
+
+```json
+{
+  "name": "Deploy my-custom-app",
+  "trigger": { "type": "webhook", "path": "/deploy/my-custom-app" },
+  "steps": [
+    { "type": "tool_action", "tool": "upgrade_app_image", "params": { "appId": "my-custom-app" } },
+    { "type": "tool_action", "tool": "restart_app", "params": { "appId": "my-custom-app" } },
+    { "type": "notify", "channel": "telegram", "message": "Deployed latest version of my-custom-app." }
+  ]
+}
+```
+
+### 8. Conditional Restart on High Memory
+
+Check container memory every 10 minutes and restart heavy containers.
+
+<ChatSimulation>
+  <UserMessage>If any container uses more than 2GB of memory, restart it and notify me. Check every 10 minutes.</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_automation" result="created: Memory watchdog, every 10 min, AI prompt + notify" />
+    Automation created: "Memory watchdog" -- every 10 minutes, an AI prompt checks container stats, restarts any using more than 2 GB, and sends a Telegram summary.
+  </AssistantMessage>
+</ChatSimulation>
+
+```json
+{
+  "name": "Memory watchdog",
+  "trigger": { "type": "cron", "expression": "*/10 * * * *" },
+  "steps": [
+    {
+      "type": "ai_prompt",
+      "prompt": "Check container stats. If any container is using more than 2 GB of memory, restart it and report which container was restarted.",
+      "allowedTools": ["list_containers", "get_container_stats", "restart_container"]
+    },
+    { "type": "notify", "channel": "telegram", "message": "Memory watchdog: {{summary}}" }
+  ]
+}
+```
+
+## Automation-Safe Tools
+
+Automations can only use tools explicitly marked as automation-safe. This prevents unattended workflows from accidentally running destructive operations like uninstalling apps, deleting volumes, or pruning Docker resources.
+
+**What's allowed:**
+- All read-tier tools (list, get, search, check, inspect)
+- Curated modify-tier tools (restart, backup, scan, notify, set preferences)
+- AI prompt steps with explicitly listed `allowedTools`
+
+**What's blocked:**
+- Destructive-tier tools (uninstall, delete, prune, cleanup)
+- Shell commands (`run_shell`)
+- Self-improvement tools (`apply_change`) *unless explicitly listed in an ai_prompt step*
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/ai/automation-safe-tools.ts` — `getAutomationSafeTools()` (line 42) derives the safe tool list from the tier registry: all read-tier tools plus the curated `ALLOWED_MODIFY_TOOLS` set (line 17) which includes `restart_container`, `backup_app`, `send_notification`, and others.
+</Accordion>
+</Accordions>
+
+Check which tools are available for automations:
+
+<ChatSimulation>
+  <UserMessage>What tools can automations use?</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="list_automation_safe_tools" result="87 tools across 6 categories" />
+    Automations can use 87 tools across these categories: Docker (list_containers, get_container_logs, restart_container, ...), System (get_system_stats, get_disk_usage, ...), Apps (list_apps, restart_app, backup_app, ...), Media (get_library, get_downloads, ...), Arr (arr_get_status, arr_get_queue_details, ...), and Notifications (send_notification, ...).
+  </AssistantMessage>
+</ChatSimulation>
+
+## Condition Operators Reference
+
+Use these in `condition` steps to control automation flow:
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `eq` | Equals | `$.status eq "running"` |
+| `neq` | Not equals | `$.status neq "healthy"` |
+| `gt` | Greater than | `$.count gt 100` |
+| `lt` | Less than | `$.free_gb lt 50` |
+| `gte` | Greater than or equal | `$.usage_percent gte 90` |
+| `lte` | Less than or equal | `$.cpu_percent lte 10` |
+| `contains` | String contains | `$.message contains "error"` |
+
+The `field` uses dot notation to traverse the JSON output from previous steps. `$` refers to the root of the previous step's result.
+
+## Monitoring Automation Runs
+
+### Via the AI
+
+<ChatSimulation>
+  <UserMessage>Show me recent automation runs</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="get_automation_runs" result="last 10 runs retrieved" />
+    Last 10 runs: Nightly backup (cron, Success, 2m 34s at 2:00 AM), Disk usage alert (cron, Skipped -- condition false, 1s at 1:00 AM), Container health (cron, Success, 8s at 12:55 AM), Memory watchdog (cron, Success -- restarted jellyfin, 12s at 12:50 AM), Disk usage alert (cron, Skipped, 1s at 12:00 AM). The nightly backup ran successfully in 2m 34s. The disk alert hasn't triggered -- your disk is at 67%. The memory watchdog restarted Jellyfin at 12:50 AM (it was using 2.3 GB).
+  </AssistantMessage>
+</ChatSimulation>
+
+### Via the Dashboard
+
+The **Automations** page shows:
+- All automations with their status (active/paused), trigger type, and next run time
+- Run history for each automation with expandable logs
+- Success/failure counts and average duration
+- A "Run Now" button to trigger any automation manually
+
+## Editing and Managing Automations
+
+### Updating an Automation
+
+<ChatSimulation>
+  <UserMessage>Change the disk alert threshold from 90% to 85%</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="list_automations" result="found Disk usage alert (id=3)" />
+    <ToolCall tool="update_automation" result="threshold updated from 90% to 85%" />
+    Updated "Disk usage alert" -- threshold changed from 90% to 85%. Next run: top of the next hour.
+  </AssistantMessage>
+</ChatSimulation>
+
+### Deleting an Automation
+
+<ChatSimulation>
+  <UserMessage>Delete the weekly library scan automation</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="list_automations" result="found Weekly Jellyfin scan (id=5)" />
+    This will permanently delete "Weekly Jellyfin scan" and all its run history. Confirm?
+  </AssistantMessage>
+  <UserMessage>Confirmed</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="delete_automation" result="deleted Weekly Jellyfin scan" />
+    Deleted "Weekly Jellyfin scan."
+  </AssistantMessage>
+</ChatSimulation>
+
+## Troubleshooting
+
+### Automation Didn't Run
+
+Check the trigger. For cron triggers, verify the expression matches your expectation:
+
+<ChatSimulation>
+  <UserMessage>My 3am automation didn't run last night</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="list_automations" result="found Nightly self-improvement, active" />
+    <ToolCall tool="validate_cron" result="valid: daily at 3:00 AM" />
+    <ToolCall tool="get_automation_runs" result="last run was 3 days ago" />
+    The automation "Nightly self-improvement" is active with cron "0 3 * * *" (daily at 3:00 AM). But the last run was 3 days ago. Your server was rebooted at 2:47 AM and didn't finish starting until 3:12 AM. The cron trigger fired during the restart window and was missed. I can run it now manually, or shift the schedule to 3:30 AM to give the server boot time.
+    <ToolCall tool="update_automation" result="schedule shifted to 30 3 * * *" />
+  </AssistantMessage>
+</ChatSimulation>
+
+### Condition Never Triggers
+
+If your alert automation never fires, the condition might be too strict:
+
+<ChatSimulation>
+  <UserMessage>The disk alert has never triggered -- is it working?</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="get_automation_runs" result="240 runs, all conditions evaluated false" />
+    <ToolCall tool="get_disk_usage" result="67% used" />
+    The automation has run 240 times (hourly for 10 days). Every run hit the condition step and evaluated to false -- your disk usage has never exceeded 90%. Current disk usage: 67%. The automation is working correctly; your disk just hasn't hit the threshold. Want me to lower the threshold to 80% for earlier warning?
+  </AssistantMessage>
+</ChatSimulation>
+
+### AI Prompt Step Fails
+
+If an `ai_prompt` step fails, check the allowed tools list:
+
+<ChatSimulation>
+  <UserMessage>The health check automation keeps failing</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="get_automation_runs" result="last 3 runs failed: restart_container not in allowedTools" />
+    The last 3 runs failed with: "Tool restart_container is not in the allowedTools list for this ai_prompt step." The AI tried to restart an unhealthy container but restart_container wasn't in the allowed tools. Adding it now.
+    <ToolCall tool="update_automation" result="added restart_container to allowedTools" />
+    Fixed. The AI prompt step now has permission to restart containers.
+  </AssistantMessage>
+</ChatSimulation>
+
+<Cards>
+  <Card title="Automation Schema Reference" href="/docs/reference/automation-schema">
+    Trigger types, step types, and condition operators — full spec.
+  </Card>
+  <Card title="AI Assistant" href="/docs/guides/ai-assistant">
+    How the AI agent powers automation steps.
+  </Card>
+  <Card title="Self-Improvement" href="/docs/guides/self-improvement">
+    Schedule code improvements as automations.
+  </Card>
+  <Card title="Backups" href="/docs/guides/backups">
+    Automated backup strategies.
+  </Card>
+</Cards>

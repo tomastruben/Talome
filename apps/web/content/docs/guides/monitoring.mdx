@@ -1,0 +1,226 @@
+---
+title: Monitoring
+description: Real-time system health, 25+ dashboard widgets, and AI-powered diagnostics.
+---
+
+Talome gives you real-time visibility into your server's health — CPU, memory, disk, network, GPU, containers, and every integrated app. The dashboard shows it at a glance. The AI diagnoses it on demand.
+
+<ScreenshotPlaceholder description="Dashboard home showing system health widgets: CPU, memory, disk, network, and container status" />
+
+## Dashboard Widgets
+
+The dashboard home page is built from customizable widgets. Talome ships with 25+ built-in widgets organized by category.
+
+### System Widgets
+
+| Widget | What It Shows |
+|--------|-------------|
+| **CPU** | Real-time CPU usage graph with per-core breakdown |
+| **Memory** | RAM and swap usage with historical trend |
+| **Disk** | Per-mount usage, free space, and growth rate |
+| **Network** | Throughput in/out with real-time graph |
+| **GPU** | GPU utilization, memory, temperature, and encoder/decoder usage |
+| **System Health** | Overall health score combining CPU, memory, disk, and container status |
+| **System Info** | OS, kernel, uptime, Docker version, and hardware details |
+| **System Status** | Quick traffic-light status for all monitored subsystems |
+| **Storage Mounts** | All mounted drives with usage bars and mount points |
+
+### App and Service Widgets
+
+| Widget | What It Shows |
+|--------|-------------|
+| **Services** | Grid of installed apps with health status indicators |
+| **Arr Status** | Sonarr/Radarr queue, upcoming, and missing counts |
+| **Overseerr Requests** | Pending and approved media requests |
+| **Ollama Status** | Loaded models, VRAM usage, and inference stats |
+| **Active Downloads** | qBittorrent download queue with progress bars |
+| **Audiobooks** | Audiobookshelf listening progress and library stats |
+| **Backup Status** | Last backup time and success/failure for each app |
+
+### Media Widgets
+
+| Widget | What It Shows |
+|--------|-------------|
+| **Media Calendar** | Upcoming TV episodes and movie releases from Sonarr/Radarr |
+| **Optimization** | Media transcoding queue status and space savings |
+
+### Utility Widgets
+
+| Widget | What It Shows |
+|--------|-------------|
+| **Quick Actions** | Configurable shortcut buttons for common tasks |
+| **Activity** | Recent actions and events across all apps |
+| **Digest** | AI-generated summary of what happened since your last visit |
+| **Launcher** | Quick-launch grid for installed app web UIs |
+| **List** | Custom list widget — bookmarks, notes, or any structured data |
+| **Stat Tile** | Single-stat display for any metric (CPU temp, disk free, etc.) |
+| **Divider** | Visual separator between widget groups |
+| **Declarative** | Custom widget defined by a JSON schema — for advanced users |
+| **Bento Gallery** | Photo grid widget pulling from your media library |
+
+## Widget Customization
+
+### Drag-and-Drop Layout
+
+Widgets can be rearranged by dragging on the dashboard. Resize them by pulling the corner handle. The layout is saved per-user.
+
+### AI-Driven Arrangement
+
+Tell the AI how you want your dashboard:
+
+<ChatSimulation>
+  <UserMessage>Put system health widgets at the top, media widgets in the middle, and downloads at the bottom</UserMessage>
+  <UserMessage>Remove the GPU widget — I don't have a GPU</UserMessage>
+  <UserMessage>Add an arr-status widget to my dashboard</UserMessage>
+</ChatSimulation>
+
+The `create_widget_manifest` and `update_widget_manifest` tools manage the widget layout. The `list_widgets` tool shows what's currently on the dashboard.
+
+### Creating Custom Widgets
+
+The AI can create custom widgets through conversation using the `create_widget_manifest` tool. Describe what you want to see, and the AI generates a declarative widget definition that appears on your dashboard immediately:
+
+<ChatSimulation>
+  <UserMessage>Create a widget that shows my Plex recently watched</UserMessage>
+  <UserMessage>Add a stat tile showing my current CPU temperature</UserMessage>
+  <UserMessage>Build a widget that shows Sonarr queue depth and Radarr missing count side by side</UserMessage>
+</ChatSimulation>
+
+You can also create entirely custom widget types using the declarative widget system, which accepts a JSON schema defining data sources and display format.
+
+## System Health Tools
+
+The AI has direct access to system metrics — no widgets required:
+
+| Tool | What It Returns |
+|------|----------------|
+| `get_system_stats` | CPU, memory, disk, and network usage in one call |
+| `get_system_health` | Overall health assessment with per-subsystem scores |
+| `get_disk_usage` | Detailed per-mount disk usage with inodes |
+| `get_gpu_status` | GPU utilization, memory, temperature, running processes |
+| `get_smart_status` | S.M.A.R.T. health data for all drives |
+| `get_metrics_history` | Historical metrics over a time range for trend analysis |
+
+### Conversation Examples
+
+<ChatSimulation>
+  <UserMessage>How is my server doing?</UserMessage>
+</ChatSimulation>
+
+The AI calls `get_system_health` and gives you a plain-English summary: CPU at 12%, memory at 4.2GB/16GB, all disks healthy, 23 containers running with 22 healthy.
+
+<ChatSimulation>
+  <UserMessage>Is my main drive dying?</UserMessage>
+</ChatSimulation>
+
+The AI calls `get_smart_status`, reads the reallocated sector count, power-on hours, and temperature, and tells you whether to worry.
+
+<ChatSimulation>
+  <UserMessage>Show me CPU and memory trends for the last 24 hours</UserMessage>
+</ChatSimulation>
+
+The AI calls `get_metrics_history` with a 24-hour window and summarizes the peaks, averages, and any anomalies.
+
+## Container Monitoring
+
+Every running container is monitored for health, resource usage, and logs.
+
+| Tool | What It Does |
+|------|-------------|
+| `get_container_stats` | CPU, memory, network, and disk I/O for a specific container |
+| `check_service_health` | Runs the container's healthcheck and reports pass/fail with details |
+| `analyze_service_health` | Deep analysis — checks logs, resource trends, and connectivity |
+| `search_container_logs` | Full-text search across a container's log output |
+| `get_container_logs` | Returns the last N lines of a container's logs |
+
+### Conversation Examples
+
+<ChatSimulation>
+  <UserMessage>What's using the most resources right now?</UserMessage>
+</ChatSimulation>
+
+The AI checks all containers and ranks them by CPU and memory usage.
+
+<ChatSimulation>
+  <UserMessage>Why is Sonarr restarting?</UserMessage>
+</ChatSimulation>
+
+The AI calls `analyze_service_health`, reads the logs for OOM kills or crash traces, checks memory limits, and reports the root cause.
+
+<ChatSimulation>
+  <UserMessage>Are all containers healthy?</UserMessage>
+</ChatSimulation>
+
+The AI calls `list_containers`, filters for unhealthy ones, and runs `diagnose_app` on each.
+
+## Storage Monitoring
+
+Disk space is the most common home server emergency. Talome helps you stay ahead of it.
+
+| Tool | What It Returns |
+|------|----------------|
+| `get_storage_breakdown` | Space usage by category — apps, media, backups, Docker images, system |
+| `get_reclaimable_space` | Unused Docker images, build cache, stopped containers, and orphaned volumes |
+| `cleanup_docker` | Removes reclaimable resources with a dry-run option |
+| `get_disk_usage` | Per-mount usage with growth trends |
+
+### Conversation Examples
+
+<ChatSimulation>
+  <UserMessage>Where is all my disk space going?</UserMessage>
+</ChatSimulation>
+
+The AI calls `get_storage_breakdown` and shows you a categorized breakdown — 800GB media, 12GB Docker images, 3GB app data, 2GB backups.
+
+<ChatSimulation>
+  <UserMessage>How can I free up space?</UserMessage>
+</ChatSimulation>
+
+The AI calls `get_reclaimable_space` to find unused images, dangling volumes, and build cache. Then offers to run `cleanup_docker` with your confirmation.
+
+<ChatSimulation>
+  <UserMessage>Will I run out of disk space this month?</UserMessage>
+</ChatSimulation>
+
+The AI checks `get_disk_usage` trends, calculates the growth rate from `get_metrics_history`, and projects when you'll hit capacity.
+
+## Automated Monitoring
+
+Combine monitoring tools with [automations](/docs/guides/automations) for proactive alerts:
+
+<ChatSimulation>
+  <UserMessage>Create an automation that checks disk usage every hour and notifies me on Telegram if any drive exceeds 90%</UserMessage>
+</ChatSimulation>
+
+<ChatSimulation>
+  <UserMessage>Alert me if any container has been unhealthy for more than 5 minutes</UserMessage>
+</ChatSimulation>
+
+<ChatSimulation>
+  <UserMessage>Send a daily digest of system health every morning at 8am</UserMessage>
+</ChatSimulation>
+
+The automation engine can run any monitoring tool on a cron schedule and trigger notifications when conditions are met.
+
+### Monitoring Automation Ideas
+
+| Automation | Schedule | What It Does |
+|-----------|----------|-------------|
+| Disk space alert | Every hour | Checks disk usage, notifies if > 90% |
+| Container health check | Every 5 minutes | Checks all containers, notifies on unhealthy |
+| Daily digest | Daily 8:00 AM | Summarizes overnight health, downloads, and issues |
+| SMART check | Weekly | Reads drive S.M.A.R.T. data, warns on degradation |
+| Docker cleanup | Weekly | Removes unused images and build cache |
+| Resource hog alert | Every 15 minutes | Notifies if any container uses > 80% CPU for sustained period |
+
+<Cards>
+  <Card title="Automations" href="/docs/guides/automations">
+    Set up cron-based monitoring workflows.
+  </Card>
+  <Card title="AI Assistant" href="/docs/guides/ai-assistant">
+    How the AI uses monitoring tools in conversations.
+  </Card>
+  <Card title="Tools Reference" href="/docs/reference/tools">
+    Complete list of all monitoring tools.
+  </Card>
+</Cards>

@@ -1,0 +1,234 @@
+---
+title: CLI Reference
+description: Installation script flags, development commands, and Talome CLI usage.
+---
+
+Talome provides a one-line install script for production deployments and a set of development commands for contributors. This page covers both.
+
+## Install Script
+
+The install script handles Docker installation (if needed), downloads the latest Talome release, configures the environment, and starts the server.
+
+```bash
+curl -fsSL https://get.talome.dev | bash
+```
+
+### What the Script Does
+
+1. Checks system requirements (architecture, OS, available memory)
+2. Installs Docker and Docker Compose if not already present
+3. Creates the Talome data directory at `~/.talome/`
+4. Generates `TALOME_SECRET` (64-char hex string)
+5. Creates the `.env` file from the template
+6. Pulls the Docker images and starts the services
+7. Prints the dashboard URL
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `update` | Update an existing Talome installation to the latest version. Preserves data, configuration, and installed apps. |
+| `--port PORT` | Set the backend API port. Default: `4000`. Also updates `NEXT_PUBLIC_CORE_URL` accordingly. |
+| `--no-docker` | Skip Docker installation. Use this if Docker is already installed via a custom method (e.g., Snap, manual binary). |
+| `--branch BRANCH` | Install from a specific Git branch instead of the latest release. Useful for testing pre-release versions. |
+
+### Examples
+
+```bash
+# Fresh install with defaults
+curl -fsSL https://get.talome.dev | bash
+
+# Update existing installation
+curl -fsSL https://get.talome.dev | bash -s -- update
+
+# Install on a custom port
+curl -fsSL https://get.talome.dev | bash -s -- --port 5000
+
+# Install without Docker setup (Docker already present)
+curl -fsSL https://get.talome.dev | bash -s -- --no-docker
+
+# Install from a development branch
+curl -fsSL https://get.talome.dev | bash -s -- --branch dev
+```
+
+### Post-Install
+
+After installation, the dashboard is available at `http://<your-server-ip>:3000`. The first login creates the admin account -- choose a strong password.
+
+---
+
+## Development CLI
+
+### Prerequisites
+
+- **Node.js 22+** -- Talome uses modern Node.js features. Install via [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm).
+- **pnpm 10+** -- the monorepo package manager. Install with `corepack enable && corepack prepare pnpm@latest --activate`.
+- **Docker** -- required for container management features. The Docker daemon must be running.
+
+### Initial Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/talomehq/talome.git
+cd talome
+
+# Install all dependencies across the monorepo
+pnpm install
+
+# Create environment file
+cp .env.example .env
+# Edit .env -- at minimum, set ANTHROPIC_API_KEY
+```
+
+### Development Commands
+
+All commands are run from the monorepo root.
+
+```bash
+# Start all development servers (dashboard, backend, docs site)
+pnpm dev
+```
+
+This starts three servers via Turborepo in parallel:
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Dashboard | `http://localhost:3000` | Next.js 16 frontend |
+| Backend | `http://localhost:4000` | Hono API server |
+| Docs/Web | `http://localhost:3100` | Fumadocs site |
+
+```bash
+# Build all packages for production
+pnpm build
+
+# Build a specific app
+pnpm --filter core build
+pnpm --filter dashboard build
+
+# Run TypeScript type checking across all packages
+pnpm exec tsc --noEmit
+
+# Type check a specific package
+cd apps/core && pnpm exec tsc --noEmit
+cd apps/dashboard && pnpm exec tsc --noEmit
+
+# Run tests
+pnpm test
+
+# Run tests for a specific package
+pnpm --filter core test
+
+# Lint the codebase
+pnpm lint
+
+# Format code
+pnpm format
+```
+
+### Database Commands
+
+Drizzle ORM manages database migrations.
+
+```bash
+# Generate a migration after changing schema.ts
+cd apps/core && pnpm drizzle-kit generate
+
+# Apply pending migrations
+cd apps/core && pnpm drizzle-kit migrate
+
+# Open Drizzle Studio (visual database browser)
+cd apps/core && pnpm drizzle-kit studio
+```
+
+### Turborepo
+
+The monorepo uses Turborepo for parallel task execution and caching. Configuration is in `turbo.json` at the root.
+
+```bash
+# Run a specific task across all packages
+pnpm turbo run build
+
+# Run a task for a specific package and its dependencies
+pnpm turbo run build --filter=dashboard...
+
+# Clear Turborepo cache
+pnpm turbo run build --force
+```
+
+---
+
+## Claude Code Integration
+
+Talome includes a `.mcp.json` configuration that automatically connects Claude Code to the Talome MCP server when you open the project.
+
+```bash
+# Launch Claude Code in the project (MCP auto-connects)
+claude
+
+# Verify MCP connection
+# Inside Claude Code, type: /mcp
+# You should see 'talome' with a green status
+
+# If tools aren't showing up, reinstall dependencies
+pnpm install
+```
+
+### Claude Code Skills
+
+Talome ships with reusable Claude Code skills in `.claude/skills/`:
+
+| Skill | Command | Description |
+|-------|---------|-------------|
+| Self-Improve | `/self-improve` | Apply a codebase change with TypeScript validation and auto-rollback |
+| Create App | `/create-app` | Scaffold a new app in a generated workspace |
+| Add Domain | `/add-domain` | Register a new tool domain for an app integration |
+
+---
+
+## Project Structure Quick Reference
+
+```
+talome/
+  apps/
+    core/           Hono backend (port 4000)
+    dashboard/      Next.js frontend (port 3000)
+    web/            Docs + marketing site (port 3100)
+  packages/
+    types/          Shared TypeScript types
+  .claude/          Claude Code skills and memory
+  .env              Environment configuration
+  .env.example      Template environment file
+  .mcp.json         MCP server configuration
+  turbo.json        Turborepo configuration
+  pnpm-workspace.yaml  Monorepo workspace definition
+```
+
+---
+
+## Troubleshooting
+
+### `pnpm install` fails
+
+Ensure you are using pnpm 10+ and Node.js 22+:
+
+```bash
+node --version   # Should be v22.x or higher
+pnpm --version   # Should be 10.x or higher
+```
+
+### Backend fails to start
+
+Check that the Docker daemon is running and the socket is accessible:
+
+```bash
+docker info
+ls -la /var/run/docker.sock
+```
+
+### Dashboard can't connect to backend
+
+Verify `NEXT_PUBLIC_CORE_URL` in `.env` matches the backend's actual URL and port. If the backend runs on a different host or port, update this value and restart the dashboard.
+
+### MCP tools not appearing in Claude Code
+
+Run `pnpm install` to ensure dependencies are built, then restart Claude Code. The MCP server runs as a stdio process and needs the compiled TypeScript output to exist.

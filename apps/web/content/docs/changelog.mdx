@@ -1,0 +1,96 @@
+---
+title: Changelog
+description: All notable changes to Talome, following the Keep a Changelog format.
+---
+
+All notable changes to Talome are documented here. This project uses [Semantic Versioning](https://semver.org/) and follows the [Keep a Changelog](https://keepachangelog.com/) format.
+
+---
+
+## Unreleased
+
+### Added
+
+**AI Assistant**
+- AI assistant with 230+ tools across 16 domains (core, media, optimization, arr, qbittorrent, jellyfin, audiobookshelf, overseerr, plex, homeassistant, pihole, vaultwarden, proxy, tailscale, mdns, ollama)
+- Three-tier security system (read/modify/destructive) with three enforcement modes (permissive, cautious, locked)
+- Dynamic tool loading: settings-based domain activation and keyword-based message routing
+- Memory system with ranked retrieval (recency + access frequency + confidence) and 80% bigram deduplication
+- Custom tool creation: users can define new tools at runtime via the AI
+- Audit logging for every tool execution with tier, timestamp, and approval status
+- AI usage tracking: token counts, cache hit rates, and cost estimation per model and context
+
+**App Store**
+- Multi-source app store aggregating apps from Talome native, CasaOS, Umbrel, and user-created sources
+- App creation from natural language descriptions: AI generates a complete Docker Compose app with manifest, icon, and configuration
+- Community app submission: users can submit created apps for community review
+- Dependency checking: warns when required apps are not installed
+- Bulk app operations: start, stop, restart, and update multiple apps at once
+- App groups for organizing installed apps into logical bundles
+- Rollback support: revert an app to its previous version after a failed update
+
+**Dashboard**
+- 20+ customizable widgets in a bento grid layout: CPU, memory, disk, network, services, media calendar, active downloads, storage mounts, system health, system info, system status, quick actions, arr status, activity, digest, stat tile, divider, list, and declarative widgets
+- Declarative widget system: AI can create and configure widgets programmatically
+- Real-time system stats via Server-Sent Events
+- File manager with directory browsing, upload, download, rename, and delete
+- Media player with HLS streaming and subtitle support
+
+**Integrations**
+- Sonarr and Radarr: 27 arr tools covering status, root folders, download clients, indexers, quality profiles, queue management, release search, history, and naming conventions
+- Prowlarr: indexer search, management, and statistics with automatic sync to Sonarr/Radarr
+- Jellyfin: server status, library management, scanning, statistics, and API key generation
+- Plex: server status, on-deck items, recently watched, and watched/unwatched marking
+- qBittorrent: preferences, speed limits, download paths, and torrent listing
+- Overseerr: media request management, approval/decline, and service configuration for Jellyfin/Sonarr/Radarr
+- Home Assistant: entity listing, service calls, history, and automation creation
+- Pi-hole: blocking stats, enable/disable, whitelist/blacklist management
+- Audiobookshelf: library management, search, item details, progress tracking, and scanning
+- Vaultwarden: server status, user management, invitation system, and signup controls
+- Ollama: model management (list, pull, delete, info, running processes)
+
+**Networking**
+- Built-in Caddy reverse proxy with automatic TLS (Let's Encrypt), self-signed certificates for LAN, and custom domain routing
+- mDNS local DNS via CoreDNS for `.talome.local` domain resolution
+- Tailscale VPN integration for remote access with setup, status, and teardown tools
+
+**Automation**
+- Automation engine with five trigger types: cron schedule, container stopped, disk usage threshold, webhook, and app installed
+- Four step types: tool action, AI prompt, condition check, and notification
+- Automation-safe tool restrictions: read tier always allowed, curated modify subset, destructive always blocked
+- Execution history with per-step tracking, duration, and error details
+- Cron expression validation with next-run-time preview
+
+**Self-Improvement**
+- Self-improvement system: the AI can modify its own codebase via headless Claude Code
+- TypeScript validation: changes that fail `tsc --noEmit` are automatically rolled back via `git stash`
+- Evolution run tracking with status, diff output, files changed, and duration
+- AI-generated improvement suggestions with priority, risk, and category classification
+- Rollback support for any applied change
+
+**Infrastructure**
+- Multi-user authentication with admin and member roles
+- Granular permissions (RBAC) for member accounts
+- JWT session management with cookie and Bearer token support
+- Password recovery via recovery codes (no email required)
+- Persistent browser terminal with tmux session persistence and Claude Code launcher
+- MCP server for Claude Code, Cursor, and Claude Desktop integration (auto-sync from tool registry, stdio transport, zero configuration)
+- Notification system: Telegram, Discord, webhooks, email, and web push channels
+- Backup and restore for app data and configuration with archive support
+- Media optimization: library scanning, codec analysis, transcoding queue with FFmpeg
+- HLS transcoding with fragmented MP4 for instant-start playback
+- Settings history tracking with previous value, who changed it, and timestamp
+- Agent loop for autonomous system event detection and remediation
+
+### Changed
+
+- Renamed project from Talon to Talome across the entire codebase, database paths, domains, and settings
+- Transmux pipeline switched to fragmented MP4 (`-movflags frag_keyframe+empty_moov+default_base_moof`) for instant-start playback instead of progressive MP4
+- Transmux auto-cleans temporary files on stop and on startup to prevent disk space leaks
+- Dashboard UX overhaul: redesigned services page, automations page, media player, and docs site navigation
+
+---
+
+## Version History
+
+Talome is approaching its first public release (v1.0.0). The changelog above covers all features built during the development phase. After v1.0.0, each release will have its own dated section with categorized changes.

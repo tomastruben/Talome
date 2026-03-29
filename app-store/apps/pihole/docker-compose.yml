@@ -1,0 +1,13 @@
+services:
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "53:53"
+    volumes:
+      - ./etc-pihole:/etc/pihole
+      - ./etc-dnsmasq.d:/etc/dnsmasq.d
+    environment:
+      - TZ=UTC

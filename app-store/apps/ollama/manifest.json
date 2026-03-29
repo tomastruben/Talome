@@ -1,0 +1,20 @@
+{
+  "id": "ollama",
+  "name": "Ollama",
+  "description": "Local LLM runner for running large language models",
+  "icon": "🤖",
+  "category": "ai",
+  "version": "latest",
+  "website": "https://ollama.ai",
+  "image": "ollama/ollama:latest",
+  "ports": [{"host": 11434, "container": 11434}],
+  "volumes": [
+    {"name": "ollama", "containerPath": "/root/.ollama", "description": "Ollama models and data"}
+  ],
+  "env": [
+    {"key": "OLLAMA_NUM_PARALLEL", "label": "Parallel requests", "required": false, "default": "2"},
+    {"key": "OLLAMA_MODELS", "label": "Models path", "required": false}
+  ],
+  "minResources": {"cpuCores": 4, "memoryMb": 8192, "diskMb": 20480},
+  "arm64": true
+}

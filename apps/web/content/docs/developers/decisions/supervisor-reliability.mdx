@@ -1,0 +1,45 @@
+---
+title: Supervisor Reliability
+description: How the process supervisor handles crashes, mode switches, auto-recovery, and code reverts — and why each decision was made.
+---
+
+The Talome supervisor (`scripts/supervisor.ts`) manages three processes: the core backend, the Next.js dashboard, and the terminal daemon. It handles health monitoring, crash recovery, mode switching (dev/build), and automatic code reversion when self-improvement changes break things.
+
+## Escalation State Machine
+
+When a process crashes, the supervisor follows a graduated escalation:
+
+1. **Level 1: Restart with backoff** — exponential backoff from 2s to 60s. Dev mode never escalates beyond this. A 60-second post-evolution grace period also keeps crashes at Level 1 after code changes.
+
+2. **Level 2: Diagnose** — at 3 crashes in 5 minutes, checks for recent evolution runs. If uncommitted changes exist, stashes them. If the working tree is clean (crash is in committed code), falls through to AI diagnosis via Claude Code or Haiku.
+
+3. **Level 2.5: Autofix** — for dashboard build errors, attempts Claude Code autofix before reverting.
+
+4. **Level 3: Known-good revert** — at 5+ crashes, reverts to the last stable git tag. Safety check: never checks out a tag that's behind HEAD to protect committed improvements.
+
+5. **Level 4: Stop** — if all recovery fails, stops the process and notifies the user.
+
+## Mode Switching
+
+The Server Mode toggle on the main Settings page controls whether Talome runs in dev mode (source files watched, instant reload on save) or build mode (compiled for performance, self-improvement changes trigger rebuilds).
+
+**How it works:** The dashboard sends `POST /api/supervisor/mode` which writes the mode to `~/.talome/server-mode` and sends `SIGUSR1` to the supervisor process. The supervisor is the sole owner of process lifecycle — the core backend never exits or restarts itself for mode switches.
+
+The supervisor's `switchMode()` function:
+1. Reads the new mode from the file
+2. If switching to build: runs `pnpm build` (compiles everything)
+3. Kills all child process trees recursively (including Next.js grandchild processes)
+4. Actively waits for ports to be free (polls until bind succeeds)
+5. Spawns all processes in the new mode
+6. If the build fails: restarts in the previous mode instead of leaving processes dead
+
+## Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `crashesBeforeDiagnosis` | 3 | Crashes before AI diagnosis |
+| `crashesBeforeRevert` | 5 | Crashes before known-good revert |
+| `crashWindowMs` | 5 min | Sliding window for crash counting |
+| `stabilityWindowMs` | 5 min | Health duration before tagging known-good |
+| `startupGraceMs` | 30s | Grace before health checks count |
+| `maxDiagnosesPerDay` | 3 | Cap on AI diagnosis calls per process |

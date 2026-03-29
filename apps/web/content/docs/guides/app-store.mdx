@@ -1,0 +1,255 @@
+---
+title: App Store
+description: Unified app store — four sources, one install pipeline, AI-powered management.
+---
+
+Talome's app store unifies four sources into a single browsable, searchable interface. Whether an app was built for Talome, CasaOS, or Umbrel, the install experience is identical — one click or one message.
+
+<ScreenshotPlaceholder description="App store grid showing apps from Talome, CasaOS, and Umbrel sources with colored source badges" />
+
+## Why Multi-Source Matters
+
+Most home server platforms lock you into their app store. If CasaOS has the app but Umbrel doesn't, you're stuck manually writing Docker Compose files. Talome solves this by normalizing every source into a common manifest format. You get the combined catalog of all three ecosystems, plus anything you build yourself.
+
+Four sources ship out of the box:
+
+| Source | Description |
+|--------|-------------|
+| **Talome Native** | Curated apps with deep AI integration, optimized compose files, and healthchecks |
+| **CasaOS** | Full CasaOS app store catalog, imported and normalized |
+| **Umbrel** | Full Umbrel app store catalog, imported and normalized |
+| **My Creations** | Apps you've built with the app creation system |
+
+## Multi-Source Architecture
+
+Each source is backed by an **adapter** — a module that knows how to fetch, parse, and normalize that source's manifest format into Talome's internal structure.
+
+| Adapter | Source Format | Sync Method |
+|---------|--------------|-------------|
+| `talome-adapter` | Talome JSON manifest | Git clone/pull from registry |
+| `casaos-adapter` | CasaOS `docker-compose.yml` + metadata | Git clone/pull from CasaOS AppStore repo |
+| `umbrel-adapter` | Umbrel `umbrel-app.yml` + compose | Git clone/pull from Umbrel App Store repo |
+
+Store sources are tracked in the `storeSources` database table. The sync process runs on startup and can be triggered manually:
+
+```
+"Sync the app store"
+```
+
+During sync, each adapter clones or pulls its upstream repository, parses every app manifest, normalizes fields (name, description, icon, category, ports, volumes, environment variables), and writes the result to the local app database.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/stores/adapters/index.ts` — registers all three adapters (talome, casaos, umbrel) and exports `detectStoreType()` and `getAdapter()`. Individual adapters live at `apps/core/src/stores/adapters/talome-adapter.ts`, `casaos-adapter.ts`, and `umbrel-adapter.ts`.
+</Accordion>
+</Accordions>
+
+## Browsing and Searching
+
+### Dashboard UI
+
+The app store page displays a grid of app cards. Each card shows the app icon, name, tagline, category, and a **source badge** indicating where it came from (Talome, CasaOS, Umbrel, or My Creations).
+
+You can filter by:
+
+- **Category** — media, productivity, developer, networking, storage, security, AI, other
+- **Source** — show only apps from a specific store
+- **Search** — text search across name, description, and tags
+
+### AI Search
+
+The AI assistant has full access to the app catalog:
+
+```
+"Find me a self-hosted password manager"
+"What photo management apps are available?"
+"Show me all AI-related apps"
+```
+
+The `search_apps` tool searches across all sources and returns matching apps with their metadata.
+
+## Install Pipeline
+
+When you install an app — whether from the UI or via the AI — it passes through a multi-stage pipeline:
+
+<Mermaid chart={`graph TD
+    A[User: Install app] --> B[Search catalog]
+    B --> C[Sanitize compose file]
+    C --> D[Resolve port conflicts]
+    D --> E[Apply volume mounts]
+    E --> F[Inject talome network]
+    F --> G[Validate compose]
+    G --> H[docker compose pull]
+    H --> I[docker compose up -d]
+    I --> J[Discover containers]
+    J --> K[Auto-configure]
+    K --> L[Extract API keys]
+    L --> M[Wire to related apps]
+`} />
+
+### 1. Sanitize Compose
+
+The raw `docker-compose.yml` from the source is sanitized. Unsafe fields are stripped, image references are validated, and the structure is normalized to Compose v3 format.
+
+### 2. Resolve Ports
+
+Talome checks which host ports are already in use and assigns free ones. If an app requests port 8080 but it's taken, Talome picks the next available port and updates the compose file.
+
+### 3. Apply Volumes
+
+Volume paths are resolved relative to the Talome data directory. Named volumes are created, bind mounts are validated, and persistent storage paths are set up.
+
+### 4. Inject Network
+
+The app is connected to the `talome` bridge network. This allows container-to-container communication — Sonarr can reach qBittorrent, Overseerr can reach Jellyfin, etc.
+
+### 5. Validate
+
+The final compose file is validated against the Docker Compose spec. Port conflicts, missing images, and invalid configurations are caught here.
+
+### 6. Docker Compose Up
+
+The app is started with `docker compose up -d`. Talome monitors the startup and waits for healthchecks to pass.
+
+### 7. Discover Containers
+
+Talome inspects the running containers to identify exposed ports, assigned IPs, and healthcheck status. This metadata is stored in the database for quick access.
+
+### 8. Pin Image Digest
+
+The pulled image digest is recorded. This enables rollback — if an update breaks the app, Talome can revert to the exact image that was working.
+
+### 9. Auto-Configure
+
+For supported apps (Sonarr, Radarr, Jellyfin, qBittorrent, etc.), Talome extracts API keys from the running container, saves them to settings, and wires the app into the AI tool system automatically.
+
+```
+"Install Sonarr"
+```
+
+After install, the AI can immediately use all 27 arr tools against Sonarr — no manual API key configuration needed.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/stores/lifecycle.ts` — the install pipeline orchestrates sanitization, port resolution, volume setup, network injection, validation, and `docker compose up`. `apps/core/src/app-registry/auto-configure.ts` — `autoConfigureApp()` handles post-install API key extraction (polling `config.xml` for arr apps at line 39), settings auto-save, and inter-app wiring.
+</Accordion>
+</Accordions>
+
+## App Lifecycle
+
+### Starting and Stopping
+
+```
+"Stop Jellyfin"
+"Start all media apps"
+"Restart Sonarr"
+```
+
+Tools: `start_app`, `stop_app`, `restart_app`.
+
+### Updating
+
+```
+"Check for updates"
+"Update Sonarr"
+"Update all apps"
+```
+
+The `check_updates` tool compares installed image digests against the latest available. `update_app` pulls the new image, stops the container, replaces it, and starts the updated version. If the new version fails healthchecks, `rollback_update` reverts to the pinned digest.
+
+<Callout type="info">
+Talome automatically backs up an app before updating it. If something goes wrong, the pre-update backup is available for restore.
+</Callout>
+
+### Update Policies
+
+You can set per-app update policies:
+
+```
+"Set Sonarr to auto-update"
+"Set Jellyfin to manual updates only"
+```
+
+The `set_update_policy` tool configures whether an app updates automatically, requires confirmation, or stays on manual.
+
+### Uninstalling
+
+```
+"Uninstall Pi-hole"
+```
+
+The `uninstall_app` tool stops the container, removes the compose project, and optionally deletes volumes. You're prompted before volume deletion.
+
+## App Groups and Bulk Operations
+
+Group related apps together for bulk management:
+
+```
+"Create a group called 'Media' with Jellyfin, Sonarr, Radarr, Prowlarr, and qBittorrent"
+```
+
+Once grouped, you can operate on all of them at once:
+
+```
+"Stop the Media group"
+"Back up all apps in the Media group"
+"Update the Media group"
+```
+
+Tools: `create_group`, `list_groups`, `group_action`, `update_group`, `delete_group`, `bulk_app_action`.
+
+## Custom Store Sources
+
+You can add your own app store sources:
+
+```
+"Add a custom store from https://github.com/myorg/my-apps"
+```
+
+The `add_store` tool registers a new git repository as a store source. On sync, Talome clones the repo and imports any valid app manifests it finds.
+
+Custom stores follow the same manifest format as Talome Native apps. See the [App Manifest Reference](/docs/reference/app-manifest) for the schema.
+
+## Compose Configuration
+
+For advanced users, Talome provides tools to inspect and modify the underlying Docker Compose configuration:
+
+```
+"Show me Jellyfin's compose config"
+"Change Sonarr's port to 8990"
+"Add an environment variable to Radarr"
+```
+
+Tools: `get_app_config`, `set_app_env`, `change_port_mapping`, `add_volume_mount`, `set_resource_limits`.
+
+## Diagnosing Apps
+
+When something goes wrong:
+
+```
+"Why is Sonarr unhealthy?"
+"Diagnose Jellyfin"
+```
+
+The `diagnose_app` tool checks container status, reads recent logs, tests network connectivity, and reports what it finds. The `test_app_connectivity` tool verifies that an app is reachable on its expected port.
+
+For deeper investigation:
+
+```
+"Show me the last 50 lines of Sonarr logs"
+"Search Radarr logs for errors"
+```
+
+Tools: `get_container_logs`, `search_container_logs`.
+
+<Cards>
+  <Card title="App Creation" href="/docs/guides/app-creation">
+    Build custom apps from natural language descriptions.
+  </Card>
+  <Card title="App Manifest Reference" href="/docs/reference/app-manifest">
+    Full manifest schema for custom and community apps.
+  </Card>
+  <Card title="Integrations" href="/docs/integrations">
+    Deep integration guides for supported apps.
+  </Card>
+</Cards>

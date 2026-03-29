@@ -1,0 +1,177 @@
+---
+title: Terminal
+description: Browser-based terminal with persistent sessions and Claude Code integration.
+---
+
+Talome includes a full terminal in your browser. It runs as a separate daemon process, supports persistent sessions via tmux, and integrates directly with Claude Code for AI-assisted system administration.
+
+<ScreenshotPlaceholder description="Terminal page showing a tmux session with Claude Code running alongside system logs" />
+
+## Built-in Terminal
+
+The Terminal page renders a full shell using xterm.js in the browser. Behind the scenes, a terminal daemon runs on port 4001, independent of the main Talome server.
+
+### How It Works
+
+| Component | Role |
+|-----------|------|
+| **Terminal daemon** | Separate Node.js process on port 4001, manages PTY sessions |
+| **WebSocket** | Browser connects to the daemon via WebSocket for real-time I/O |
+| **tmux** | Each terminal session runs inside tmux for persistence |
+| **xterm.js** | Terminal rendering in the browser with full ANSI support |
+
+When you open the Terminal page, the browser connects to the daemon via WebSocket. If a tmux session already exists, you attach to it. If not, a new one is created. This means:
+
+- **Sessions survive page refreshes** — close the tab, come back, your session is exactly where you left it
+- **Sessions survive server restarts** — tmux persists as long as the daemon is running
+- **Multiple terminals** — open several tabs to run parallel sessions
+
+### What You Can Do
+
+The terminal gives you full shell access to the host machine. Common uses:
+
+- Check container logs with `docker logs`
+- Inspect Docker networks and volumes
+- Run system commands (`htop`, `df -h`, `free -m`)
+- Edit configuration files
+- Run scripts and one-off commands
+- Manage packages with your system package manager
+
+## Claude Code Integration
+
+The Terminal page includes a **"Launch Claude Code"** button. Clicking it runs:
+
+```bash
+tmux new-session -A -s talome-claude -c /path/to/talome "claude"
+```
+
+This attaches to an existing `talome-claude` tmux session if one is running, or creates a new one with Claude Code started inside it.
+
+### What Claude Code Gets
+
+Claude Code in a Talome session has:
+
+- **Full filesystem access** — read and modify any file in the Talome project
+- **All 230+ MCP tools** — via the `.mcp.json` committed to the repo root
+- **Same Docker socket** — inspect containers, read logs, check health
+- **Same SQLite database** — query settings, memories, automations
+- **TypeScript compiler** — validate changes with `tsc --noEmit`
+- **Git history** — review commits, diffs, and branches
+
+The MCP connection starts automatically when Claude Code launches. Verify it's working with `/mcp` inside Claude Code — you should see `talome` listed with a green status.
+
+### What You Can Do with Claude Code
+
+#### Debugging
+
+```
+"Why is the dashboard showing stale data? Check the API route and the React query."
+```
+
+Claude Code reads the source files, traces the data flow, identifies the issue, and proposes a fix.
+
+#### Reading Logs
+
+```
+"Check the Sonarr container logs for errors in the last hour"
+```
+
+Claude Code uses `mcp__talome__search_container_logs` to search logs without leaving the terminal.
+
+#### Code Changes
+
+```
+"Add a new column to the automations table for tracking consecutive failures"
+```
+
+Claude Code modifies the Drizzle schema, creates a migration, updates the relevant routes and tools, and validates with TypeScript.
+
+#### System Investigation
+
+```
+"What's using all the disk space on /dev/sda1?"
+```
+
+Claude Code combines shell commands (`du -sh`) with MCP tools (`get_storage_breakdown`) to give you a complete picture.
+
+#### Self-Improvement
+
+```
+"The container stats widget is slow. Optimize the data fetching."
+```
+
+Claude Code reads the widget source, identifies the bottleneck, applies the change, runs `tsc --noEmit`, and commits if successful. See [Self-Improvement](/docs/guides/self-improvement) for details on the safety mechanisms.
+
+## Session Management
+
+### Named Sessions
+
+The default Claude Code session is named `talome-claude`. You can create additional named sessions:
+
+```bash
+tmux new-session -s my-session
+```
+
+### Listing Sessions
+
+```bash
+tmux list-sessions
+```
+
+### Attaching to a Session
+
+```bash
+tmux attach -t talome-claude
+```
+
+### Killing a Session
+
+```bash
+tmux kill-session -t my-session
+```
+
+### Session Persistence
+
+tmux sessions persist as long as the terminal daemon is running. If you restart the Talome server, the daemon restarts and existing tmux sessions are preserved. If you restart the entire host machine, tmux sessions are lost — but Claude Code can be relaunched with one click.
+
+## MCP Tools from Claude Code
+
+All Talome tools are available as MCP calls inside Claude Code. A few examples of what you can do without leaving the terminal:
+
+```
+# Check what's running
+mcp__talome__list_containers()
+
+# Install an app
+mcp__talome__install_app({ appId: "prowlarr" })
+
+# Read system health
+mcp__talome__get_system_health()
+
+# Search logs
+mcp__talome__search_container_logs({ container: "sonarr", query: "error" })
+
+# Check user preferences before making UI changes
+mcp__talome__recall({ query: "ui preferences" })
+
+# Create a backup before making changes
+mcp__talome__backup_app({ appId: "sonarr" })
+```
+
+For the complete tool list, see the [Tools Reference](/docs/reference/tools).
+
+<Callout type="info">
+The MCP server is independent of the Talome web dashboard. It connects directly to the SQLite database and Docker socket. You can use MCP tools even if the dashboard is stopped.
+</Callout>
+
+<Cards>
+  <Card title="MCP Server" href="/docs/reference/mcp-server">
+    MCP setup for Claude Code, Cursor, and Claude Desktop.
+  </Card>
+  <Card title="Self-Improvement" href="/docs/guides/self-improvement">
+    How the AI modifies Talome's own code safely.
+  </Card>
+  <Card title="AI Assistant" href="/docs/guides/ai-assistant">
+    How the AI assistant uses tools.
+  </Card>
+</Cards>

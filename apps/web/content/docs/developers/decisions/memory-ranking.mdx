@@ -1,0 +1,96 @@
+---
+title: "ADR-002: Memory Ranking"
+description: How the AI decides which memories to include in the conversation context.
+---
+
+**Status:** Accepted
+**Date:** 2025-03-18
+**Applies to:** `apps/core/src/db/memories.ts`, `apps/core/src/ai/agent.ts`
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/db/memories.ts` — `getTopMemories()` at line 57 with the composite SQL ranking formula at lines 67-71 (40% recency, 30% access frequency capped at 10, 30% confidence). Bigram deduplication via `similarity()` at line 8, with the >0.8 threshold enforced in `writeMemory()` at line 45. `apps/core/src/ai/agent.ts` — top 10 memories injected into the system prompt at line 1318.
+</Accordion>
+</Accordions>
+
+## Context
+
+Talome's AI assistant stores memories about the user -- preferences ("I prefer Jellyfin over Plex"), facts ("My media drive is mounted at /mnt/media"), contexts ("I'm setting up a media stack this week"), and corrections ("Actually, my timezone is Europe/Bratislava, not America/New_York").
+
+Over time, a user accumulates dozens or hundreds of memories. Including all memories in every prompt would waste context tokens, dilute important memories with stale ones, and confuse the model with contradictory or outdated information.
+
+We need a ranking system that selects the most relevant memories for each conversation without requiring vector embeddings, an external search engine, or significant computational overhead.
+
+## Decision
+
+The top 10 memories are injected into the system prompt for each chat turn. They are selected using a composite score based on three signals:
+
+1. **Recency** -- recently created or updated memories rank higher. The timestamp is compared against the current time, with a decay function that reduces the score as memories age. This ensures fresh information takes priority.
+
+2. **Access frequency** (`accessCount`) -- each time a memory is returned by the `recall` tool, its `accessCount` increments. Frequently accessed memories are demonstrably useful and rank higher. This creates a positive feedback loop: useful memories get recalled, which increases their rank, which makes them more likely to be included.
+
+3. **Confidence** -- memories have a confidence score from 0.0 to 1.0. Memories of type `correction` start with higher confidence because they represent verified, user-confirmed information. The confidence score can be adjusted via `update_memory`.
+
+**Deduplication** prevents near-duplicate memories from accumulating. When a new memory is stored via the `remember` tool, its bigrams (character pairs) are compared against all recent memories of the same type. If the Dice coefficient (2 * shared bigrams / total bigrams) exceeds 80%, the new memory is rejected and the existing one is updated instead.
+
+## Implementation
+
+### Ranking Function
+
+The `getTopMemories()` function in `memories.ts`:
+
+1. Queries all enabled memories from the `memories` table (typically < 200 rows)
+2. Computes a composite score: `recencyWeight * recencyScore + accessWeight * log(accessCount + 1) + confidenceWeight * confidence`
+3. Sorts by composite score descending
+4. Returns the top 10
+
+The logarithmic scaling of `accessCount` prevents runaway dominance -- a memory accessed 100 times scores only marginally higher than one accessed 50 times.
+
+### Deduplication
+
+On `remember` tool execution:
+
+1. Extract bigrams from the new memory content (e.g., "hello" yields `["he", "el", "ll", "lo"]`)
+2. Load recent memories of the same type from the database
+3. For each existing memory, compute the Dice coefficient
+4. If any coefficient > 0.80, reject the new memory and update the existing one's content and timestamp instead
+5. If no match, insert the new memory
+
+### Memory Types
+
+| Type | Typical Content | Default Confidence |
+|------|----------------|-------------------|
+| `preference` | "User prefers Jellyfin over Plex" | 1.0 |
+| `fact` | "Media drive is at /mnt/media" | 1.0 |
+| `context` | "Setting up media stack this week" | 0.8 |
+| `correction` | "Timezone is Europe/Bratislava, not America/New_York" | 1.0 |
+
+### System Prompt Injection
+
+The top 10 memories are formatted and injected into the system prompt as a `## What I Remember About You` section. This gives the model persistent context about the user without explicit recall.
+
+## Consequences
+
+**Benefits:**
+- Context stays focused and relevant -- the model sees the 10 most useful memories each turn
+- Old, unused memories naturally age out of the top 10 without explicit cleanup or manual pruning
+- Corrections (high-confidence memories) rank prominently, reducing repeated mistakes
+- No vector database or embedding model required -- pure arithmetic on SQLite columns, runs in < 1ms
+- Deduplication keeps the memory store clean automatically
+- The system works well from 0 to hundreds of memories without tuning
+
+**Tradeoffs:**
+- Fixed top-10 limit may miss relevant memories in rare edge cases. In practice, 10 memories provide sufficient context for most home server conversations.
+- Access count creates a popularity bias -- frequently searched topics dominate the ranking. This is acceptable because frequently searched topics are genuinely important to the user.
+- Bigram similarity is language-agnostic but crude. It catches near-duplicates ("My timezone is EST" vs "My timezone is EST timezone") but may miss semantically similar memories with different wording ("I use EST" vs "My timezone is Eastern"). This is acceptable for the expected scale.
+- No semantic relevance to the current message -- the ranking is static, not query-dependent. A future version could incorporate message relevance.
+
+## Alternatives Considered
+
+1. **Vector embeddings + similarity search**: embed each memory and the current message, then retrieve by cosine similarity. Rejected because it requires an embedding model (additional dependency, startup cost), increases per-message latency, and the current approach is sufficient for the expected memory scale (hundreds, not millions).
+
+2. **Include all memories**: stuff everything into the context. Rejected because it wastes tokens, dilutes important memories, and degrades model quality as the memory count grows.
+
+3. **Keyword search only**: use `recall` with text matching, no automatic injection. Rejected because it requires the model to explicitly search for relevant context on every message, which is unreliable.
+
+4. **LLM-based memory selection**: ask the model to choose which memories are relevant given the current message. Rejected because it adds a round-trip per message, increasing latency by 500-1000ms and doubling cost.

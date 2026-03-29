@@ -1,0 +1,20 @@
+{
+  "root": true,
+  "pages": [
+    "---Getting Started---",
+    "getting-started",
+    "---Guides---",
+    "guides",
+    "---Integrations---",
+    "integrations",
+    "---Reference---",
+    "reference",
+    "---Developers---",
+    "developers",
+    "---More---",
+    "changelog",
+    "faq",
+    "---Legal---",
+    "legal"
+  ]
+}

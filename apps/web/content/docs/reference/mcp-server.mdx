@@ -1,0 +1,229 @@
+---
+title: MCP Server
+description: Use all 230+ Talome tools from Claude Code, Cursor, or Claude Desktop.
+---
+
+Talome includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that exposes all 230+ tools to external AI clients. Manage your entire home server from Claude Code, Cursor, Claude Desktop, or any MCP-compatible client — without opening the Talome dashboard.
+
+## How It Works
+
+The MCP server runs as a **local stdio process**. It connects directly to:
+
+- The **SQLite database** — same database as the Talome web server (settings, memories, app metadata)
+- The **Docker socket** — full container management capabilities
+- The **filesystem** — file browsing within the sandboxed paths
+
+The MCP server is **independent of the Talome web dashboard**. It works whether or not the dashboard is running. This means you can use MCP tools from Claude Code even if you've stopped the Talome web server for maintenance.
+
+### Dashboard vs MCP Tool Loading
+
+In the dashboard chat, tools are loaded dynamically based on which apps are configured. If you haven't set up Sonarr, the 27 arr tools don't load — this keeps the tool count low for better AI selection accuracy.
+
+Via MCP, **all tools are always loaded**. Every domain is available regardless of configuration. Tools for unconfigured apps will return a helpful error message ("Sonarr is not configured — set `sonarr_url` in settings") rather than being hidden.
+
+This means MCP clients always have the full 230+ tool set available.
+
+## Setup
+
+### Claude Code (Automatic)
+
+If you're working in the Talome repository, the `.mcp.json` is already committed to the repo root. Claude Code reads it on startup and connects to the Talome MCP server automatically.
+
+Verify the connection:
+
+1. Open Claude Code in the Talome directory
+2. Type `/mcp`
+3. You should see `talome` listed with a green status indicator
+
+If tools aren't loading, run `pnpm install` in the Talome directory to ensure dependencies are installed.
+
+### Claude Code (Other Projects)
+
+To use Talome MCP tools from a different project, add this to the project's `.mcp.json`:
+
+```json title=".mcp.json"
+{
+  "mcpServers": {
+    "talome": {
+      "command": "npx",
+      "args": ["tsx", "/path/to/talome/apps/core/src/mcp-stdio.ts"]
+    }
+  }
+}
+```
+
+Replace `/path/to/talome` with the absolute path to your Talome installation.
+
+### Cursor
+
+Add to your Cursor MCP settings at `.cursor/mcp.json` in your project root:
+
+```json title=".cursor/mcp.json"
+{
+  "mcpServers": {
+    "talome": {
+      "command": "npx",
+      "args": ["tsx", "/path/to/talome/apps/core/src/mcp-stdio.ts"]
+    }
+  }
+}
+```
+
+After saving, restart Cursor or reload the MCP configuration. Talome tools will appear in Cursor's tool list.
+
+### Claude Desktop
+
+Add to your Claude Desktop configuration file:
+
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Linux:** `~/.config/Claude/claude_desktop_config.json`
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json title="claude_desktop_config.json"
+{
+  "mcpServers": {
+    "talome": {
+      "command": "npx",
+      "args": ["tsx", "/path/to/talome/apps/core/src/mcp-stdio.ts"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop after saving. You should see Talome tools available in the tool picker.
+
+### Other MCP Clients
+
+Any MCP client that supports stdio transports can connect. The entry point is:
+
+```
+npx tsx /path/to/talome/apps/core/src/mcp-stdio.ts
+```
+
+No environment variables or auth tokens are required for local stdio connections.
+
+## Available Tools
+
+All 230+ tools are organized by domain:
+
+| Domain | Count | Description | Example Tools |
+|--------|-------|-------------|---------------|
+| **Core** | ~40 | Container management, system stats, app lifecycle, settings, memories | `list_containers`, `install_app`, `get_system_stats`, `remember` |
+| **Arr** | 27 | Sonarr, Radarr, Readarr, and Prowlarr management | `arr_get_queue_details`, `arr_search_releases`, `arr_sync_indexers_from_prowlarr` |
+| **Media** | 5 | Cross-app media search, library health, optimization | `search_media`, `get_library`, `queue_optimization` |
+| **qBittorrent** | 6 | Torrent management and download configuration | `qbt_list_torrents`, `qbt_set_speed_limits`, `qbt_set_download_path` |
+| **Jellyfin** | 6 | Media server management, libraries, and scanning | `jellyfin_get_status`, `jellyfin_scan_library`, `jellyfin_add_library` |
+| **Overseerr** | 6 | Media request management and service configuration | `overseerr_list_requests`, `overseerr_approve_request`, `overseerr_configure_sonarr` |
+| **Home Assistant** | 5 | Smart home entity control and automation | `hass_list_entities`, `hass_call_service`, `hass_create_automation` |
+| **Pi-hole** | 5 | DNS ad-blocking management | `pihole_get_stats`, `pihole_enable`, `pihole_blacklist` |
+| **Audiobookshelf** | 13 | Audiobook library, playback progress, and audiobook download | `audiobookshelf_search`, `audiobookshelf_get_progress`, `audiobook_request`, `audiobook_download` |
+| **Vaultwarden** | 4 | Password vault management | `vaultwarden_get_status`, `vaultwarden_list_users`, `vaultwarden_invite_user` |
+| **Plex** | 5 | Plex media server status and watch history | `plex_get_status`, `plex_get_on_deck`, `plex_mark_watched` |
+| **Ollama** | 5 | Local LLM model management | `ollama_list_models`, `ollama_pull_model`, `ollama_ps` |
+| **Proxy** | 5 | Caddy reverse proxy management | `proxy_add_route`, `proxy_list_routes`, `proxy_configure_tls` |
+| **mDNS** | 4 | Local DNS advertisement | `mdns_enable`, `mdns_status`, `mdns_refresh` |
+| **Tailscale** | 3 | VPN remote access | `tailscale_setup`, `tailscale_status`, `tailscale_stop` |
+| **Files** | 6 | Sandboxed file management | `browse_files`, `read_user_file`, `create_directory` |
+| **Automations** | 5 | Scheduled workflow management | `create_automation`, `list_automations`, `list_automation_safe_tools` |
+| **Self-Improvement** | 5 | Codebase modification with safety nets | `plan_change`, `apply_change`, `rollback_change`, `list_changes` |
+| **App Creation** | 2 | Natural language app scaffolding | `design_app_blueprint`, `create_tool` |
+| **Notifications** | 4 | Multi-channel notifications | `send_notification`, `add_notification_channel`, `test_notification_channel` |
+| **Widgets** | 3 | Dashboard widget management | `create_widget_manifest`, `update_widget_manifest`, `list_widgets` |
+
+For the complete tool listing with parameters and descriptions, see the [Tools Reference](/docs/reference/tools).
+
+## Complete Example Session
+
+Here's a realistic Claude Code session using Talome MCP tools:
+
+```
+You: What's running on my server right now?
+
+Claude Code calls: mcp__talome__list_containers()
+  → 23 containers running, 22 healthy, 1 unhealthy (sonarr)
+
+You: Why is Sonarr unhealthy?
+
+Claude Code calls: mcp__talome__diagnose_app({ appId: "sonarr" })
+  → Healthcheck failing: HTTP 502 on port 8989
+
+Claude Code calls: mcp__talome__search_container_logs({ container: "sonarr", query: "error", lines: 50 })
+  → [Error] Database migration failed: disk full
+
+You: How much disk space do I have?
+
+Claude Code calls: mcp__talome__get_disk_usage()
+  → /dev/sda1: 95% used (228GB / 240GB)
+
+Claude Code calls: mcp__talome__get_reclaimable_space()
+  → 18GB reclaimable: 12GB unused Docker images, 4GB build cache, 2GB dangling volumes
+
+You: Clean it up.
+
+Claude Code calls: mcp__talome__cleanup_docker({ dryRun: false })
+  → Reclaimed 18.2GB
+
+You: Now restart Sonarr.
+
+Claude Code calls: mcp__talome__restart_app({ appId: "sonarr" })
+  → Sonarr restarted, healthcheck passing
+```
+
+## Using Memories from MCP
+
+When making changes that affect the user experience — UI modifications, app configurations, widget layouts — use the memory system to check for user preferences first:
+
+```
+mcp__talome__recall({ query: "ui preferences" })
+mcp__talome__recall({ query: "media setup" })
+mcp__talome__recall({ query: "network configuration" })
+```
+
+This prevents the user from having to repeat themselves. If they told the dashboard AI "I prefer Jellyfin over Plex" last week, that memory is available via MCP too.
+
+## Connection Resilience
+
+The MCP stdio server is a **long-running process** launched when your AI client starts. Key points:
+
+- **Editing Talome source files does not restart the MCP server** — your connection stays alive while you work on the codebase
+- **Internet blips don't affect MCP** — if Claude Code shows a "Connection error," that's Claude's API connection, not the MCP server. Wait for auto-reconnect; your MCP tools will still work.
+- **The MCP server outlives the web dashboard** — stopping `pnpm dev` or the Talome Docker container does not stop the MCP server
+
+If the MCP server itself goes down (rare), reinitialize with `/mcp` in Claude Code.
+
+## Troubleshooting
+
+**Tools not showing up in Claude Code**
+- Run `pnpm install` in the Talome directory
+- Check `/mcp` for the `talome` server status
+- Verify `.mcp.json` exists in the repo root and points to the correct path
+
+**Tools returning "not configured" errors**
+- This is expected for unconfigured integrations
+- Set the required settings: `"Set the sonarr_url to http://localhost:8989"`
+- Via MCP: `mcp__talome__set_setting({ key: "sonarr_url", value: "http://localhost:8989" })`
+
+**"Cannot find module" on startup**
+- Dependencies may not be installed: `pnpm install`
+- TypeScript may need to be compiled: `pnpm build` in the `apps/core` directory
+
+**Stale data after restarting apps**
+- The MCP server caches some data. Calling the tool again will refresh it.
+- For container state, `list_containers` always reads live data from Docker.
+
+**Permission errors on Docker socket**
+- The MCP server needs access to `/var/run/docker.sock`
+- On Linux: add your user to the `docker` group
+- On macOS with OrbStack: set `DOCKER_SOCKET` in your environment
+
+<Cards>
+  <Card title="Tools Reference" href="/docs/reference/tools">
+    Complete list of all 230+ tools with parameters.
+  </Card>
+  <Card title="Terminal" href="/docs/guides/terminal">
+    Launch Claude Code from the Talome dashboard.
+  </Card>
+  <Card title="AI Assistant" href="/docs/guides/ai-assistant">
+    How the dashboard AI uses these same tools.
+  </Card>
+</Cards>

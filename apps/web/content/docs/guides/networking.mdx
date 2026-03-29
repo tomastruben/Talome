@@ -1,0 +1,257 @@
+---
+title: Networking
+description: Reverse proxy, local DNS, and secure remote access — three layers that make your apps reachable.
+---
+
+Talome manages three networking layers so your apps are reachable by name — locally, on your LAN, and remotely — without you touching config files.
+
+<ScreenshotPlaceholder description="Network topology diagram showing Caddy, mDNS, and Tailscale layers" />
+
+## Three Layers
+
+| Layer | Technology | What It Does |
+|-------|-----------|--------------|
+| **Reverse Proxy** | Caddy | Routes `app.yourdomain.com` to the right container, with automatic HTTPS |
+| **Local DNS** | CoreDNS + Avahi (mDNS) | Makes apps reachable at `appname.talome.local` on your LAN |
+| **Remote Access** | Tailscale | Secure access from anywhere, no port forwarding needed |
+
+Each layer is independent. Use one, two, or all three depending on your setup.
+
+## Reverse Proxy (Caddy)
+
+Talome runs a built-in Caddy instance that acts as a reverse proxy for your apps. Instead of remembering `http://192.168.1.50:8096`, you access `jellyfin.home.example.com` with automatic TLS.
+
+### How It Works
+
+When you add a route, Talome writes a Caddy configuration block that maps an external hostname to an internal container port. Caddy handles TLS certificate provisioning, renewal, and termination.
+
+### Adding Routes
+
+<ChatSimulation>
+  <UserMessage>Set up jellyfin.home.example.com to point to Jellyfin</UserMessage>
+  <UserMessage>Add a reverse proxy route for sonarr.home.example.com</UserMessage>
+</ChatSimulation>
+
+Or be more specific:
+
+<ChatSimulation>
+  <UserMessage>Add a proxy route from media.example.com to port 8096 on the jellyfin container</UserMessage>
+</ChatSimulation>
+
+The `proxy_add_route` tool creates the route and reloads Caddy automatically.
+
+### Managing Routes
+
+<ChatSimulation>
+  <UserMessage>Show me all proxy routes</UserMessage>
+  <UserMessage>Remove the route for sonarr.home.example.com</UserMessage>
+  <UserMessage>Reload the reverse proxy</UserMessage>
+</ChatSimulation>
+
+Tools: `proxy_list_routes`, `proxy_remove_route`, `proxy_reload`.
+
+### TLS Modes
+
+Talome supports three TLS modes, configured with `proxy_configure_tls`:
+
+| Mode | Use Case | How It Works |
+|------|----------|-------------|
+| `auto` | Public domain with internet access | Let's Encrypt issues and renews certificates automatically |
+| `selfsigned` | LAN only, no internet | Caddy generates a self-signed certificate for HTTPS without a CA |
+| `off` | Development or behind another proxy | Plain HTTP, no TLS termination |
+
+<ChatSimulation>
+  <UserMessage>Configure TLS in auto mode for *.home.example.com</UserMessage>
+  <UserMessage>Switch to self-signed certificates for LAN access</UserMessage>
+  <UserMessage>Disable TLS — I'm behind Cloudflare</UserMessage>
+</ChatSimulation>
+
+### Complete Example
+
+Set up HTTPS for your entire home lab:
+
+<ChatSimulation>
+  <UserMessage>Configure TLS in auto mode with my domain home.example.com</UserMessage>
+  <UserMessage>Add proxy routes for all my installed apps using subdomains of home.example.com</UserMessage>
+</ChatSimulation>
+
+The AI will iterate through your installed apps, create a route for each one (`jellyfin.home.example.com`, `sonarr.home.example.com`, etc.), and reload Caddy once at the end.
+
+## Local DNS (mDNS)
+
+mDNS gives your apps `.talome.local` addresses on your local network — no DNS server or router configuration needed.
+
+### How It Works
+
+Talome runs CoreDNS for DNS resolution and Avahi for mDNS advertisement. When mDNS is enabled, every installed app gets a `.talome.local` address:
+
+- `jellyfin.talome.local`
+- `sonarr.talome.local`
+- `radarr.talome.local`
+- `talome.talome.local` (the dashboard itself)
+
+Any device on the same network can resolve these addresses automatically.
+
+### Enabling mDNS
+
+<ChatSimulation>
+  <UserMessage>Enable mDNS so I can access apps at talome.local</UserMessage>
+</ChatSimulation>
+
+The `mdns_enable` tool starts the CoreDNS and Avahi services, registers all installed apps, and begins advertising on the local network.
+
+### Managing mDNS
+
+<ChatSimulation>
+  <UserMessage>What's the mDNS status?</UserMessage>
+  <UserMessage>Refresh mDNS records</UserMessage>
+  <UserMessage>Disable mDNS</UserMessage>
+</ChatSimulation>
+
+Tools: `mdns_status`, `mdns_refresh`, `mdns_disable`.
+
+The `mdns_refresh` tool re-scans installed apps and updates the DNS records. This is useful after installing or uninstalling apps.
+
+### Network Requirements
+
+mDNS uses multicast UDP on port 5353. For it to work:
+
+- Your devices must be on the same network segment (same subnet/VLAN)
+- Your router must not block multicast traffic (most home routers allow it by default)
+- On Windows, mDNS is supported natively since Windows 10
+- On macOS and Linux, mDNS works out of the box
+- On Android, mDNS support varies by manufacturer — most modern devices support it
+
+<Callout type="info">
+If mDNS doesn't work on your network, you can achieve the same result by adding entries to your router's DNS settings or your device's hosts file pointing to the Talome server's IP.
+</Callout>
+
+## Remote Access (Tailscale)
+
+Tailscale creates a secure mesh VPN between your devices. Access your Talome server from anywhere — phone, laptop, office — without opening ports on your router.
+
+### Why Not Port Forwarding
+
+Port forwarding exposes services directly to the internet. Even with TLS, you're increasing your attack surface. A misconfigured app or an unpatched vulnerability becomes an entry point.
+
+Tailscale uses WireGuard encryption and requires authentication through your identity provider. Only devices on your Tailscale network can reach your server — nothing is exposed publicly.
+
+### Setting Up Tailscale
+
+<ChatSimulation>
+  <UserMessage>Set up Tailscale so I can access my server remotely</UserMessage>
+</ChatSimulation>
+
+The `tailscale_setup` tool:
+
+1. Starts a Tailscale container connected to the Talome network
+2. Prompts you for an auth key (generated at [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys))
+3. Connects to your Tailscale network
+4. Makes all your Talome apps accessible via the Tailscale IP
+
+### Accessing from Anywhere
+
+Once Tailscale is running, your server gets a Tailscale IP (e.g., `100.64.x.x`) and optionally a MagicDNS name (e.g., `talome-server.tail1234.ts.net`). Access the dashboard at:
+
+```
+http://100.64.x.x:3000
+```
+
+Or combine with the reverse proxy for named access:
+
+<ChatSimulation>
+  <UserMessage>Add a proxy route for jellyfin.talome-server.tail1234.ts.net</UserMessage>
+</ChatSimulation>
+
+### Managing Tailscale
+
+<ChatSimulation>
+  <UserMessage>What's my Tailscale status?</UserMessage>
+  <UserMessage>Stop Tailscale</UserMessage>
+</ChatSimulation>
+
+Tools: `tailscale_status`, `tailscale_stop`.
+
+## Docker Networking
+
+Under the hood, Talome creates a shared Docker bridge network called `talome`. All installed apps are connected to this network, which enables:
+
+- **Container-to-container communication** — Sonarr can reach qBittorrent at `qbittorrent:8080` without exposing ports to the host
+- **Internal DNS resolution** — Docker's embedded DNS resolves container names within the network
+- **Network isolation** — apps on the `talome` network can't reach containers on other networks unless explicitly connected
+
+You can manage Docker networks directly:
+
+```
+"List all Docker networks"
+"Create a network called 'isolated' for my dev apps"
+"Connect my-app to the talome network"
+"Disconnect my-app from the default bridge"
+```
+
+Tools: `list_networks`, `create_network`, `connect_container_to_network`, `disconnect_container`, `remove_network`.
+
+## Common Scenarios
+
+### Home lab with a domain
+
+```
+"I own home.example.com. Set up reverse proxy with auto TLS for all my apps."
+```
+
+The AI configures Caddy with Let's Encrypt, creates subdomain routes for each installed app, and sets up automatic certificate renewal.
+
+### LAN-only access
+
+```
+"Enable mDNS and set up self-signed TLS so I can use HTTPS on my local network."
+```
+
+Apps become available at `appname.talome.local` with self-signed certificates.
+
+### Remote access for one person
+
+```
+"Set up Tailscale so I can access my server from my phone."
+```
+
+Minimal setup — just Tailscale, no domain or public TLS needed.
+
+### Remote access for the family
+
+```
+"Set up Tailscale and add proxy routes so my family can access Jellyfin and Overseerr at friendly URLs."
+```
+
+Tailscale for the VPN tunnel, Caddy for friendly names, no port forwarding.
+
+## Troubleshooting
+
+**Apps not reachable on .talome.local**
+- Verify mDNS is enabled: `"What's the mDNS status?"`
+- Check that your device supports mDNS (multicast DNS)
+- Ensure you're on the same network segment as the server
+- Try refreshing: `"Refresh mDNS records"`
+
+**TLS certificate not working**
+- For `auto` mode, verify your domain's DNS A record points to the server's public IP
+- For `selfsigned` mode, you'll need to accept the certificate warning in your browser
+- Check proxy routes: `"Show me all proxy routes"`
+
+**Can't reach server via Tailscale**
+- Verify Tailscale is running: `"What's my Tailscale status?"`
+- Ensure the connecting device is also on your Tailscale network
+- Check that the Tailscale container is connected to the `talome` Docker network
+
+**Port conflicts**
+- Talome resolves port conflicts during install, but manual compose changes can reintroduce them
+- Check what's using a port: `"What's running on port 8080?"`
+
+<Cards>
+  <Card title="Configuration" href="/docs/getting-started/configuration">
+    Network-related environment variables and settings.
+  </Card>
+  <Card title="App Store" href="/docs/guides/app-store">
+    How apps are installed and networked.
+  </Card>
+</Cards>

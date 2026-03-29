@@ -1,0 +1,61 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/tomas/.claude/**)",
+      "Bash(grep -A 20 \"settings\" /Users/tomas/dev/Talome/apps/core/src/db/*.ts)",
+      "Bash(chmod +x /Users/tomas/dev/Talome/.claude/hooks/typecheck.sh)",
+      "Bash(git add CLAUDE.md .claude/settings.json .claude/hooks/typecheck.sh .claude/skills/self-improve/SKILL.md .claude/skills/create-app/SKILL.md .claude/skills/add-domain/SKILL.md docs/tools-reference.md docs/decisions/001-dynamic-tool-loading.md docs/decisions/002-memory-ranking.md docs/decisions/003-automation-safe-tools.md docs/decisions/004-mcp-auto-sync.md)",
+      "Bash(apps/core/node_modules/.bin/tsc --noEmit -p apps/core/tsconfig.json)",
+      "WebSearch",
+      "Bash(ls /Users/tomas/dev/Talome/*.md)",
+      "Bash(wc -l /Users/tomas/dev/Talome/apps/core/src/ai/tools/*.ts)",
+      "Bash(ls -la /Users/tomas/dev/Talome/*.md)",
+      "Bash(pnpm exec vitest run)",
+      "Bash(pnpm test)",
+      "Bash(grep -n \"POST.*chat\" apps/core/src/routes/*.ts apps/core/src/index.ts)",
+      "Bash(git status -u)",
+      "Bash(git add apps/dashboard/src/app/dashboard/apps/page.tsx apps/dashboard/src/app/dashboard/apps/[storeId]/[appId]/page.tsx apps/dashboard/src/components/dashboard/app-card.tsx apps/dashboard/src/components/icons.tsx apps/core/src/routes/user-apps.ts)",
+      "Bash(pnpm install:*)",
+      "Bash(pnpm dlx:*)",
+      "Read(//Volumes/Media Hub/movies/The Devil Wears Prada \\(2006\\)/**)",
+      "Bash(ffprobe -v error -print_format json -show_format -show_streams \"/Volumes/Media Hub/movies/The Devil Wears Prada \\(2006\\)/The Devil Wears Prada \\(2006\\) WEBDL-2160p.mkv\")",
+      "Bash(find /Users/tomas/dev/Talome/apps/dashboard/src/components/assistant -type f -name *.tsx)",
+      "Bash(pnpm next:*)",
+      "Bash(kill 4082 56896)",
+      "mcp__talome__arr_list_root_folders",
+      "mcp__talome__get_settings",
+      "mcp__talome__exec_container",
+      "Bash(docker exec:*)",
+      "Bash(echo \"Write test: $?\")",
+      "mcp__talome__add_volume_mount",
+      "mcp__talome__audiobookshelf_get_status",
+      "mcp__talome__audiobookshelf_list_libraries",
+      "mcp__talome__set_setting",
+      "mcp__talome__audiobookshelf_add_library",
+      "mcp__talome__recall",
+      "Bash(/Users/tomas/dev/Talome/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/bin/tsc --noEmit -p apps/dashboard/tsconfig.json)",
+      "Bash(find /Users/tomas/dev/Talome -path */node_modules/@hugeicons -type d)"
+    ],
+    "additionalDirectories": [
+      "/Users/tomas/dev/Talome/.claude/skills",
+      "/Users/tomas/dev/Talome/.claude",
+      "/Users/tomas/dev/Talome/apps/dashboard/src/app/dashboard/audiobooks",
+      "/Volumes/Media Vault/Media/Movies",
+      "/Users/tomas/dev/Talome"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./.claude/hooks/typecheck.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

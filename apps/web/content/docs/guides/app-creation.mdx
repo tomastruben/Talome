@@ -1,0 +1,311 @@
+---
+title: App Creation
+description: Create any Docker app by describing it in plain English — from single-service tools to multi-container stacks with custom UIs.
+---
+
+Describe what you want. Talome generates a complete Docker stack — compose file, manifest, health checks, environment variables, volumes, and optionally a full web UI. The app appears in your "My Creations" store and installs with one click, identical to any app from the public store.
+
+No Dockerfile knowledge required. No YAML editing. No manual port allocation. Describe the app, review the blueprint, and it exists.
+
+<VideoPlaceholder description="Watch: Creating a custom bookmark manager app from a description" />
+
+## How It Works
+
+App creation is a five-stage pipeline that takes a natural language description and produces a production-ready, installable app.
+
+### Stage 1: Design the Blueprint
+
+When you describe an app, the AI calls `design_app_blueprint` — a specialized tool that generates a structured `AppBlueprint` using Claude's structured output via the Vercel AI SDK's `generateObject()`.
+
+The blueprint contains:
+
+- **Identity** — name, description, tagline, category, icon, version
+- **Services** — Docker images, tags, ports, volumes, environment variables, healthchecks
+- **Environment** — which variables are secrets vs. config, default values, descriptions
+- **Scaffold** — whether to generate a custom frontend UI, what framework to use, which pages to create
+
+The blueprint generator is context-aware. It checks your system for:
+- **Used ports** — auto-selects an available port instead of conflicting with running apps
+- **Running services** — avoids duplicate databases if you already have PostgreSQL or Redis running
+- **Memory/CPU** — adjusts resource recommendations based on your hardware
+
+### Stage 2: Workspace Scaffolding
+
+The blueprint creates a workspace at `~/.talome/generated-apps/<appId>/`:
+
+```
+.talome-creator/
+  blueprint.json           — the structured blueprint
+  instructions/            — markdown generation guides
+  references/              — Talome source file snapshots (UI components, patterns)
+  sources/                 — existing store apps to adapt from
+generated-app/             — output directory for all generated files
+```
+
+### Stage 3: Code Generation
+
+Claude Code runs inside the workspace and generates the actual files:
+
+- `docker-compose.yml` — the complete compose file with all services
+- `manifest.json` — app metadata for the store
+- `.env.example` — environment variable template
+- `README.md` — usage documentation
+- Optional: full frontend scaffold (React + Tailwind + shadcn/ui components)
+
+The generation prioritizes **source reuse**. Before writing anything from scratch, it checks:
+1. `.talome-creator/sources/` for existing store apps with similar patterns
+2. Public compose examples from the image's documentation
+3. Official Docker Hub templates
+
+### Stage 4: Publish to My Creations
+
+The generated app is saved to `~/.talome/user-apps/` and immediately appears in the "My Creations" section of your app store. No build step, no deployment — it's available instantly.
+
+### Stage 5: Install and Test
+
+Install your custom app exactly like any store app:
+
+```
+You: Install my Recipe Manager
+```
+
+Or click "Install" on the app card in the store.
+
+## Complete Example
+
+Here's a full transcript of creating a bookmark manager from description to running app:
+
+```
+You: Create a bookmark manager with tag-based organization,
+     full-text search, and automatic favicon fetching.
+     Use PostgreSQL for storage.
+
+AI: I'll design a blueprint for your bookmark manager.
+
+    [design_app_blueprint:
+     "Bookmark manager with tags, full-text search,
+      favicon fetching, PostgreSQL backend"]
+
+    Blueprint ready. Here's what I'll generate:
+
+    **Linkmark** (bookmark-manager)
+    - Web UI on port 9340 (auto-selected, no conflicts)
+    - PostgreSQL 16 database
+    - Node.js 20 backend with automatic favicon fetching
+    - Full-text search via PostgreSQL's built-in tsvector
+
+    Services:
+    | Service | Image | Port |
+    |---------|-------|------|
+    | web | node:20-slim | 9340 |
+    | postgres | postgres:16-alpine | (internal only) |
+
+    Volumes:
+    - ./data — bookmark data and favicons
+    - ./postgres — database files
+
+    Environment:
+    - DATABASE_URL (auto-configured, points to postgres service)
+    - FAVICON_FETCH=true (enable automatic favicon fetching)
+
+    Generating files now...
+
+    [Claude Code scaffolds the workspace]
+
+    Done. "Linkmark" is now in My Creations with:
+    - docker-compose.yml (2 services, healthchecks, restart policies)
+    - manifest.json (store metadata)
+    - .env.example
+    - README.md
+
+    Want me to install it?
+
+You: Yes
+
+AI: [install_app: bookmark-manager, storeId: user]
+    [check_service_health: bookmark-manager]
+
+    Linkmark is running at http://localhost:9340.
+    - Web UI: http://localhost:9340
+    - PostgreSQL: internal (port 5432, not exposed)
+    - Health check: passing
+
+    Start adding bookmarks — tags and search work immediately.
+```
+
+## Docker Best Practices (Enforced)
+
+The blueprint generator enforces production-quality Docker practices automatically. You don't need to know these rules — the AI applies them — but here's what's happening under the hood:
+
+### Image Tags
+Every service uses a specific version tag. Never `latest`, never `lts`. If the blueprint says PostgreSQL, the compose file says `postgres:16-alpine`, not `postgres:latest`. This prevents surprise breaking changes on container restarts.
+
+### Volume Paths
+All volume mounts use relative paths: `./data`, `./config`, `./postgres`. Never absolute host paths like `/home/user/data`. Relative paths keep the app portable — it works on any machine without path editing.
+
+### Restart Policies
+Every service includes `restart: unless-stopped`. If your server reboots, your apps come back automatically. The only time a container stays stopped is when you explicitly stop it.
+
+### Health Checks
+Every service that exposes an HTTP endpoint includes a Docker healthcheck:
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:9340/api/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+```
+
+Talome uses these healthchecks to display accurate status on the dashboard and to verify deployments after install.
+
+### Default Environment Variables
+Every Linux-based service gets:
+
+```yaml
+environment:
+  PUID: 1000
+  PGID: 1000
+  TZ: America/New_York
+```
+
+`PUID`/`PGID` ensure file permissions match your host user. `TZ` ensures logs and schedules use the correct timezone. The AI remembers your timezone if you've told it.
+
+### Secrets Separation
+Environment variables are categorized as secrets (API keys, passwords, database URLs) or config (feature flags, timezone, paths). Secrets get placeholder values in `.env.example` with clear comments. Config variables get sensible defaults.
+
+## Adding a Custom UI
+
+For apps that need a frontend, the blueprint's scaffold section tells Claude Code to generate a full web UI:
+
+```
+You: Create a home inventory tracker with a nice dark UI.
+     I want to scan barcodes, organize by room, and track warranties.
+
+AI: [design_app_blueprint: ...]
+
+    Blueprint includes a frontend scaffold:
+    - React 19 + Tailwind CSS 4
+    - Pages: inventory list, add item, room view, warranty calendar
+    - Barcode scanning via device camera (navigator.mediaDevices API)
+    - Dark theme matching Talome's design system
+
+    The UI will use shadcn/ui components (cards, tables, dialogs,
+    inputs) adapted from Talome's component library.
+```
+
+Generated UIs use the same component primitives, color palette, and spacing scale as Talome's own dashboard. They look like they belong next to existing Talome pages on first render.
+
+## Publishing to My Creations
+
+Generated apps automatically appear in your "My Creations" store section. Each app gets:
+
+- A store card with icon, name, description, and category
+- An install button that works identically to public store apps
+- Version tracking (you can update and re-publish)
+- Full compose file and manifest accessible from the app detail page
+
+## Submitting to the Community Store
+
+Once your app is working and polished, you can share it with other Talome users:
+
+1. Open the app detail page in the store
+2. Click **"Submit to Community"**
+3. Automated checks validate:
+   - Manifest completeness (all required fields filled, no placeholders)
+   - Docker compose quality (specific image tags, healthchecks, restart policies)
+   - Security (no exposed secrets, no privileged containers without justification)
+   - Documentation (README exists with usage instructions)
+4. The app enters the community review queue
+
+### Manifest Quality
+
+Community submissions require a complete manifest. The AI fills these automatically, but here's the standard:
+
+```json
+{
+  "id": "bookmark-manager",
+  "name": "Linkmark",
+  "description": "A bookmark manager with tag-based organization, full-text search, and automatic favicon fetching.",
+  "tagline": "Organize your web.",
+  "version": "1.0.0",
+  "icon": "bookmark",
+  "category": "productivity",
+  "author": "Your Name"
+}
+```
+
+No placeholders, no "TODO" values, no generic descriptions. Every field should help a user understand what the app does before installing it.
+
+## Connecting to Existing Services
+
+Generated apps can integrate with services already running on your server:
+
+```
+You: Create a photo gallery that uses my existing PostgreSQL database
+
+AI: [list_containers]
+    [inspect_container: postgres]
+
+    I see you have PostgreSQL 16 running on port 5432. I'll configure
+    the photo gallery to use your existing database instead of
+    spinning up a new one.
+
+    The compose file will:
+    - Skip the postgres service entirely
+    - Set DATABASE_URL to point at your running postgres container
+    - Create a dedicated database (photo_gallery) inside your
+      existing instance
+    - Use the same Docker network so the connection works
+```
+
+The AI avoids duplicating infrastructure. If you already have Redis, PostgreSQL, or any other backing service, it reuses it instead of creating a second instance.
+
+## Adapting Existing Apps
+
+You don't always need to create from scratch. The app store contains 100+ apps that can be adapted:
+
+```
+You: Create something like Paperless-ngx but for receipts only,
+     with expense tracking and monthly summaries
+
+AI: [search_apps: "paperless"]
+
+    I'll use Paperless-ngx as the foundation and customize it for
+    receipt management. The blueprint adapts Paperless-ngx's compose
+    file and adds:
+    - Expense amount extraction from OCR'd receipts
+    - Monthly summary dashboard
+    - Category-based organization (groceries, utilities, etc.)
+    - CSV export for tax season
+```
+
+The source reuse priority is:
+1. Existing store apps with similar patterns (highest quality, already tested)
+2. Public compose templates from image documentation
+3. Generate from scratch (last resort)
+
+## What Can Be Created
+
+The app creation system works for any Docker-based application:
+
+- **Single-service apps** — a web UI backed by SQLite or embedded storage
+- **Multi-service stacks** — web app + database + cache + worker
+- **CLI tools** — containerized utilities with no UI
+- **API services** — backend services exposed on a specific port
+- **Adapters** — services that bridge two existing apps
+
+The only requirement is that it runs in Docker. If it can be containerized, it can be a Talome app.
+
+<Cards>
+  <Card title="App Manifest Reference" href="/docs/reference/app-manifest">
+    Full manifest schema for custom and community apps.
+  </Card>
+  <Card title="App Store" href="/docs/guides/app-store">
+    How the multi-source store aggregates apps.
+  </Card>
+  <Card title="AI Assistant" href="/docs/guides/ai-assistant">
+    The AI agent that powers app creation.
+  </Card>
+</Cards>

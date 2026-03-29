@@ -1,0 +1,18 @@
+{
+  "title": "Integrations",
+  "icon": "Plug02",
+  "pages": [
+    "index",
+    "sonarr-radarr",
+    "prowlarr",
+    "jellyfin",
+    "plex",
+    "qbittorrent",
+    "overseerr",
+    "home-assistant",
+    "pihole",
+    "audiobookshelf",
+    "vaultwarden",
+    "ollama"
+  ]
+}

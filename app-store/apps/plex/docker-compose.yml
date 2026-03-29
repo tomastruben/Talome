@@ -1,0 +1,12 @@
+services:
+  plex:
+    image: plexinc/pms-docker:latest
+    container_name: plex
+    restart: unless-stopped
+    ports:
+      - "32400:32400"
+    volumes:
+      - ./config:/config
+      - ./media:/media
+    environment:
+      - TZ=UTC

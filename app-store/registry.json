@@ -1,0 +1,4 @@
+{
+  "version": 1,
+  "apps": ["plex", "sonarr", "radarr", "prowlarr", "qbittorrent", "jellyfin", "ollama", "pihole", "paperless-ngx", "immich"]
+}

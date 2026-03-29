@@ -1,0 +1,542 @@
+---
+title: Tools Reference
+description: Complete reference for all 230+ Talome AI tools across 16 domains.
+---
+
+Talome's AI assistant has access to 230+ tools organized into 16 domains. Each tool has a defined purpose, Zod-validated input parameters, and returns structured data. Tools are classified into three security tiers that determine when and how they can execute.
+
+## Security Tiers
+
+Every tool is assigned a tier that controls its behavior under different security modes.
+
+| Tier | Label | Description | Automation-safe |
+|------|-------|-------------|-----------------|
+| `read` | Read | Retrieves data without side effects. Always executes in all security modes. | Yes |
+| `modify` | Modify | Changes state (start/stop containers, update settings, install apps). Blocked in `locked` mode. | Curated subset |
+| `destructive` | Destructive | Irreversible operations (uninstall, delete, prune). Requires confirmation in `cautious` mode, blocked in `locked` mode. | No |
+
+## Execution Flow
+
+Every tool call follows the same pipeline:
+
+1. **AI selection** -- the language model picks a tool based on the user's message and the tool's description
+2. **Security gateway** -- the tool's tier is checked against the active security mode (`permissive`, `cautious`, or `locked`). Destructive tools in `cautious` mode require the user to type CONFIRM.
+3. **Zod validation** -- input parameters are validated against the tool's Zod schema. Invalid inputs are rejected before execution.
+4. **Tool execution** -- the tool's `execute` function runs (Docker API call, database query, HTTP request, etc.)
+5. **Audit log** -- every execution is recorded in the `audit_log` table with the tool name, tier, timestamp, and whether it was approved
+6. **Streaming result** -- the result is streamed back to the user through the Vercel AI SDK
+
+## Domain Loading
+
+Tools are organized into domains. Each domain declares `settingsKeys` -- the settings that indicate the corresponding app is configured.
+
+- **Dashboard chat**: only loads tools from domains whose `settingsKeys` are present in the database. This keeps tool count low for better model selection accuracy.
+- **MCP server**: always loads all tools from all domains. Tools fail gracefully if the app isn't configured.
+- **Keyword routing**: within active domains, the system matches the user's message against domain-specific keywords. If a message mentions "torrent", only core + qBittorrent tools load. If no keyword matches, all active tools load as a fallback.
+
+---
+
+## Core Domain (~113 tools)
+
+Always available, regardless of which integrations are configured. These tools are subdivided into categories.
+
+### Container Management
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `list_containers` | read | List all Docker containers with status, image, ports, and uptime |
+| `start_container` | modify | Start a stopped container by name or ID |
+| `stop_container` | modify | Stop a running container |
+| `restart_container` | modify | Restart a container |
+| `inspect_container` | read | Detailed container configuration including mounts, env vars, networks |
+| `get_container_logs` | read | Read container logs with optional tail limit |
+| `search_container_logs` | read | Search container logs by keyword or regex pattern |
+| `get_container_stats` | read | Live CPU, memory, network, and disk I/O stats for a container |
+| `check_service_health` | read | Check the health status of a service |
+| `exec_container` | modify | Execute a command inside a running container |
+
+### Docker Infrastructure
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `list_images` | read | List all Docker images with size and tag info |
+| `list_networks` | read | List Docker networks |
+| `create_network` | modify | Create a new Docker network |
+| `connect_container_to_network` | modify | Connect a container to a network |
+| `disconnect_container` | modify | Disconnect a container from a network |
+| `remove_network` | destructive | Remove a Docker network |
+| `prune_resources` | destructive | Prune unused Docker resources (images, volumes, networks) |
+
+### App Management
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `list_apps` | read | List all available apps across all store sources |
+| `search_apps` | read | Search the app store by keyword |
+| `install_app` | modify | Install an app from the store by appId and storeId |
+| `uninstall_app` | destructive | Remove an installed app and its containers |
+| `start_app` | modify | Start all containers for an installed app |
+| `stop_app` | modify | Stop all containers for an installed app |
+| `restart_app` | modify | Restart all containers for an installed app |
+| `update_app` | modify | Update an app to its latest version |
+| `add_store` | modify | Add a new app store source (CasaOS, Umbrel, Git) |
+| `check_dependencies` | read | Check if an app's dependencies are satisfied |
+| `bulk_app_action` | modify | Start, stop, or restart multiple apps at once |
+| `bulk_update_apps` | modify | Update multiple apps in one operation |
+| `rollback_update` | destructive | Revert an app to its previous version |
+| `design_app_blueprint` | read | Generate a structured app blueprint from a natural-language description |
+
+### App Groups
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `list_groups` | read | List all app groups |
+| `create_group` | modify | Create a new app group |
+| `update_group` | modify | Update group name or members |
+| `delete_group` | destructive | Delete an app group |
+| `group_action` | modify | Start, stop, or restart all apps in a group |
+
+### System Monitoring
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `get_system_stats` | read | CPU, memory, disk, and network statistics |
+| `get_system_health` | read | Overall system health check with status indicators |
+| `get_disk_usage` | read | Disk usage breakdown by mount point |
+| `get_gpu_status` | read | GPU utilization, temperature, and VRAM usage |
+| `get_metrics_history` | read | Historical metrics data for charting |
+
+### Storage
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `get_smart_status` | read | Drive SMART health data and predictions |
+| `get_storage_breakdown` | read | Storage usage analysis by category |
+| `get_reclaimable_space` | read | Identify space that can be freed |
+| `analyze_watched_media` | read | Find watched media that could be removed |
+| `cleanup_docker` | destructive | Remove unused Docker images, volumes, and build cache |
+| `cleanup_hls_cache` | modify | Clean up HLS transcoding cache files |
+
+### Compose and App Configuration
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `get_app_config` | read | Read an app's Docker Compose configuration |
+| `set_app_env` | modify | Set environment variables on an app's compose file |
+| `change_port_mapping` | modify | Change an app's exposed port |
+| `add_volume_mount` | modify | Add a volume mount to an app's compose file |
+| `set_resource_limits` | modify | Set CPU/memory resource limits on an app |
+| `upgrade_app_image` | modify | Upgrade an app's Docker image tag |
+| `diagnose_app` | read | Diagnose common issues with an installed app |
+| `analyze_service_health` | read | Deep health analysis of a service |
+
+### Universal App Interaction
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `read_app_config_file` | read | Read a config file from inside an app's container or volumes |
+| `write_app_config_file` | modify | Write or update a config file for an app |
+| `list_app_config_files` | read | List config files for an app |
+| `app_api_call` | modify | Make an HTTP request to any app's API |
+| `discover_app_api` | read | Discover an app's API endpoints |
+| `test_app_connectivity` | read | Test network connectivity to an app |
+| `wire_apps` | modify | Auto-configure connections between two apps |
+
+### Backup and Restore
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `backup_app` | modify | Create a backup of an app's data and configuration |
+| `restore_app` | destructive | Restore an app from a backup archive |
+
+### Memory System
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `remember` | modify | Store a new memory (preference, fact, context, or correction) |
+| `recall` | read | Search memories by keyword |
+| `forget` | modify | Delete a specific memory |
+| `update_memory` | modify | Update the content of an existing memory |
+| `list_memories` | read | List all stored memories with metadata |
+
+### Widget Management
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `list_widgets` | read | List all dashboard widgets and their layout |
+| `create_widget_manifest` | modify | Create a new dashboard widget |
+| `update_widget_manifest` | modify | Update an existing widget's configuration |
+
+### Automation Engine
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `list_automations` | read | List all configured automations |
+| `create_automation` | modify | Create a new automation with triggers and steps |
+| `update_automation` | modify | Update an existing automation |
+| `delete_automation` | destructive | Delete an automation |
+| `get_automation_runs` | read | View execution history for an automation |
+| `validate_cron` | read | Validate a cron expression and show next run times |
+| `list_automation_safe_tools` | read | List tools available for use in automations |
+
+### Settings and Configuration
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `get_settings` | read | Read all or specific settings |
+| `set_setting` | modify | Update a setting value |
+| `revert_setting` | modify | Revert a setting to its previous value |
+| `list_configured_apps` | read | List all apps that have settings configured |
+
+### Notifications
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `send_notification` | modify | Send a notification through configured channels |
+| `get_notifications` | read | Read recent notifications |
+| `list_notification_channels` | read | List configured notification channels |
+| `add_notification_channel` | modify | Add a new notification channel (Telegram, Discord, webhook, email) |
+| `remove_notification_channel` | destructive | Remove a notification channel |
+| `test_notification_channel` | modify | Send a test message through a channel |
+
+### Updates
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `check_updates` | read | Check for available app updates |
+| `set_update_policy` | modify | Set auto-update policy for an app |
+| `update_all_apps` | modify | Update all apps with available updates |
+
+### Filesystem
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `browse_files` | read | Browse directory contents on user drives |
+| `read_user_file` | read | Read a file from user-accessible directories |
+| `delete_file` | destructive | Delete a file or directory |
+| `rename_file` | modify | Rename or move a file |
+| `create_directory` | modify | Create a new directory |
+| `get_file_info` | read | Get file metadata (size, permissions, modified date) |
+| `run_shell` | modify | Execute a shell command on the host |
+| `read_file` | read | Read a file from the project filesystem |
+| `list_directory` | read | List directory contents |
+| `rollback_file` | modify | Revert a file to a previous version |
+
+### Custom Tools
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `create_tool` | modify | Create a new custom tool from a specification |
+| `reload_tools` | modify | Reload custom tools from disk |
+| `list_custom_tools` | read | List all user-created custom tools |
+
+### Self-Improvement
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `plan_change` | read | Plan a code change and preview affected files |
+| `apply_change` | destructive | Apply a code change with TypeScript validation and auto-rollback |
+| `rollback_change` | destructive | Revert a previously applied change |
+| `list_changes` | read | List recent self-improvement changes |
+| `track_issue` | modify | Track a bug or improvement suggestion |
+| `list_issues` | read | List tracked issues |
+
+### Search and Documentation
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `query_docs` | read | Search Talome documentation |
+
+---
+
+## Media Domain (5 tools)
+
+Activates when `sonarr_url` or `radarr_url` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `search_media` | read | Search for movies and TV shows across TMDB/TVDB |
+| `get_library` | read | Browse the user's existing media library |
+| `get_downloads` | read | List active downloads across all download clients |
+| `get_calendar` | read | Upcoming and recent media releases |
+| `request_media` | modify | Add a movie or TV show to Sonarr/Radarr for download |
+
+---
+
+## Optimization Domain (9 tools)
+
+Activates when `sonarr_url` or `radarr_url` is configured. Handles media file analysis and transcoding optimization.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `analyze_media_file` | read | Analyze a media file's codec, bitrate, resolution, and optimization potential |
+| `scan_library_for_optimization` | modify | Scan an entire library to find optimization candidates |
+| `get_optimization_status` | read | Check the status of the optimization queue |
+| `queue_optimization` | modify | Queue a media file for transcoding optimization |
+| `cancel_optimization` | modify | Cancel a pending or running optimization job |
+| `get_optimization_config` | modify | Get or update optimization configuration settings |
+| `get_library_health` | read | Assess overall library health (codec distribution, space savings potential) |
+| `reprocess_failed_jobs` | modify | Retry failed optimization jobs |
+| `diagnose_optimization_failures` | read | Diagnose why optimization jobs failed |
+
+---
+
+## Arr Domain (27 tools)
+
+Activates when `sonarr_url`, `radarr_url`, `readarr_url`, or `prowlarr_url` is configured. Provides deep control over the *arr stack.
+
+### Status and Configuration
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `arr_get_status` | read | Get status of Sonarr, Radarr, or Readarr |
+| `arr_list_root_folders` | read | List configured root folders |
+| `arr_add_root_folder` | modify | Add a new root folder for media storage |
+| `arr_list_download_clients` | read | List configured download clients |
+| `arr_add_download_client` | modify | Add a download client (qBittorrent, SABnzbd, etc.) |
+| `arr_test_download_client` | read | Test a download client connection |
+| `arr_list_indexers` | read | List configured indexers |
+| `arr_sync_indexers_from_prowlarr` | modify | Sync indexers from Prowlarr to Sonarr/Radarr |
+
+### Quality and Naming
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `arr_list_quality_profiles` | read | List available quality profiles |
+| `arr_apply_quality_profile` | modify | Apply a quality profile to items |
+| `arr_set_naming_convention` | modify | Set file naming conventions |
+
+### Queue and Downloads
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `arr_get_queue_details` | read | Detailed queue information including progress |
+| `arr_queue_action` | modify | Perform actions on queue items (pause, resume, remove) |
+| `arr_delete_queue_item` | modify | Delete a specific item from the download queue |
+| `arr_mark_failed` | modify | Mark a download as failed for re-search |
+| `arr_manage_blocklist` | modify | Add or remove releases from the blocklist |
+
+### Search and Releases
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `arr_search_releases` | read | Search for releases across indexers |
+| `arr_grab_release` | modify | Manually grab a specific release |
+| `arr_get_wanted_missing` | read | List media that is wanted but missing files |
+| `arr_get_wanted_cutoff` | read | List media that does not meet quality cutoff |
+| `arr_set_monitoring` | modify | Enable or disable monitoring for specific items |
+
+### History and Maintenance
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `arr_get_history` | read | View download and import history |
+| `arr_run_command` | modify | Run an arr command (RefreshSeries, RenameFiles, etc.) |
+| `arr_cleanup_dry_run` | read | Preview what a cleanup operation would remove |
+
+### Prowlarr-Specific
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `prowlarr_search` | read | Search across all Prowlarr indexers |
+| `prowlarr_manage_indexers` | modify | Add, update, or remove Prowlarr indexers |
+| `prowlarr_get_indexer_stats` | read | Get performance statistics for indexers |
+
+---
+
+## qBittorrent Domain (6 tools)
+
+Activates when `qbittorrent_url` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `qbt_get_version` | read | Get qBittorrent version and API version |
+| `qbt_get_preferences` | read | Read current qBittorrent preferences |
+| `qbt_set_preferences` | modify | Update qBittorrent preferences |
+| `qbt_set_download_path` | modify | Change the default download directory |
+| `qbt_set_speed_limits` | modify | Set upload and download speed limits |
+| `qbt_list_torrents` | read | List active torrents with progress and status |
+
+---
+
+## Jellyfin Domain (6 tools)
+
+Activates when `jellyfin_url` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `jellyfin_get_status` | read | Get Jellyfin server status and version |
+| `jellyfin_list_libraries` | read | List all media libraries |
+| `jellyfin_add_library` | modify | Create a new media library |
+| `jellyfin_scan_library` | modify | Trigger a library scan |
+| `jellyfin_get_stats` | read | Playback and session statistics |
+| `jellyfin_create_api_key` | modify | Generate a new API key |
+
+---
+
+## Audiobookshelf Domain (13 tools)
+
+Activates when `audiobookshelf_url` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `audiobookshelf_get_status` | read | Get server status, version, and library count |
+| `audiobookshelf_list_libraries` | read | List all libraries with item counts |
+| `audiobookshelf_add_library` | modify | Create a new audiobook or podcast library |
+| `audiobookshelf_get_library_items` | read | List items in a library with pagination |
+| `audiobookshelf_search` | read | Search across all libraries by title, author, or narrator |
+| `audiobookshelf_get_item` | read | Get detailed metadata for a specific item |
+| `audiobookshelf_get_progress` | read | Get listening progress for an item |
+| `audiobookshelf_update_progress` | modify | Update listening progress |
+| `audiobookshelf_scan_library` | modify | Force a library scan to detect new files |
+| `audiobook_search_releases` | read | Search for audiobook torrent releases across Prowlarr indexers |
+| `audiobook_download` | modify | Download an audiobook release via qBittorrent |
+| `audiobook_list_downloads` | read | List active and completed audiobook downloads from qBittorrent |
+| `audiobook_request` | modify | Search and auto-download the best audiobook release via Prowlarr and qBittorrent |
+
+---
+
+## Overseerr Domain (7 tools)
+
+Activates when `overseerr_url` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `overseerr_get_status` | read | Get Overseerr server status |
+| `overseerr_configure_jellyfin` | modify | Configure Jellyfin as the media server |
+| `overseerr_configure_sonarr` | modify | Connect Sonarr for TV show requests |
+| `overseerr_configure_radarr` | modify | Connect Radarr for movie requests |
+| `overseerr_list_requests` | read | List pending and approved media requests |
+| `overseerr_approve_request` | modify | Approve a pending request |
+| `overseerr_decline_request` | modify | Decline a pending request |
+
+---
+
+## Plex Domain (5 tools)
+
+Activates when `plex_url` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `plex_get_status` | read | Get Plex server status, version, and active sessions |
+| `plex_get_on_deck` | read | Get the "On Deck" continue-watching list |
+| `plex_get_recently_watched` | read | Get recently watched items |
+| `plex_mark_watched` | modify | Mark an item as watched |
+| `plex_mark_unwatched` | modify | Mark an item as unwatched |
+
+---
+
+## Home Assistant Domain (5 tools)
+
+Activates when `homeassistant_url` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `hass_get_status` | read | Get Home Assistant status and configuration |
+| `hass_list_entities` | read | List entities filtered by domain (light, switch, sensor, etc.) |
+| `hass_call_service` | modify | Call a Home Assistant service (turn on lights, set thermostat, etc.) |
+| `hass_get_history` | read | Get state history for an entity |
+| `hass_create_automation` | modify | Create a Home Assistant automation |
+
+---
+
+## Pi-hole Domain (5 tools)
+
+Activates when `pihole_url` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `pihole_get_stats` | read | Get blocking stats (queries today, blocked, percentage, top domains) |
+| `pihole_enable` | modify | Enable Pi-hole ad blocking |
+| `pihole_disable` | modify | Disable Pi-hole blocking (optionally for a duration) |
+| `pihole_whitelist` | modify | Add a domain to the whitelist |
+| `pihole_blacklist` | modify | Add a domain to the blacklist |
+
+---
+
+## Vaultwarden Domain (4 tools)
+
+Activates when `vaultwarden_url` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `vaultwarden_get_status` | read | Get Vaultwarden server status and user count |
+| `vaultwarden_invite_user` | modify | Send an invitation email to a new user |
+| `vaultwarden_list_users` | read | List all registered users |
+| `vaultwarden_toggle_signups` | modify | Enable or disable new user registrations |
+
+---
+
+## Proxy Domain (5 tools)
+
+Activates when `proxy_enabled` is configured. Manages the built-in Caddy reverse proxy.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `proxy_list_routes` | read | List all configured proxy routes |
+| `proxy_add_route` | modify | Add a reverse proxy route mapping a domain to an upstream |
+| `proxy_remove_route` | destructive | Remove a proxy route |
+| `proxy_reload` | modify | Reload the proxy configuration |
+| `proxy_configure_tls` | modify | Set TLS mode (auto/Let's Encrypt, selfsigned, manual, off) |
+
+---
+
+## Tailscale Domain (3 tools)
+
+Activates when `tailscale_auth_key` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `tailscale_setup` | modify | Set up Tailscale for remote access |
+| `tailscale_status` | read | Get Tailscale connection status and peer list |
+| `tailscale_stop` | destructive | Stop the Tailscale connection |
+
+---
+
+## mDNS Domain (4 tools)
+
+Always available (no settings required). Manages local DNS resolution via CoreDNS.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `mdns_status` | read | Get mDNS/CoreDNS service status and registered names |
+| `mdns_enable` | modify | Enable mDNS for local `.talome.local` domain resolution |
+| `mdns_disable` | destructive | Disable mDNS service |
+| `mdns_refresh` | modify | Refresh mDNS records to pick up new containers |
+
+---
+
+## Ollama Domain (5 tools)
+
+Activates when `ollama_url` is configured.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `ollama_list_models` | read | List downloaded models with sizes |
+| `ollama_pull_model` | modify | Download a new model |
+| `ollama_delete_model` | destructive | Delete a downloaded model |
+| `ollama_model_info` | read | Get detailed info about a specific model |
+| `ollama_ps` | read | List currently running models and their resource usage |
+
+---
+
+## Domain Summary
+
+| Domain | Tools | Activation Settings | Always Active |
+|--------|-------|-------------------|---------------|
+| core | ~113 | None | Yes |
+| media | 5 | `sonarr_url`, `radarr_url` | No |
+| optimization | 9 | `sonarr_url`, `radarr_url` | No |
+| arr | 27 | `sonarr_url`, `radarr_url`, `readarr_url`, `prowlarr_url` | No |
+| qbittorrent | 6 | `qbittorrent_url` | No |
+| jellyfin | 6 | `jellyfin_url` | No |
+| audiobookshelf | 13 | `audiobookshelf_url` | No |
+| overseerr | 7 | `overseerr_url` | No |
+| plex | 5 | `plex_url` | No |
+| homeassistant | 5 | `homeassistant_url` | No |
+| pihole | 5 | `pihole_url` | No |
+| vaultwarden | 4 | `vaultwarden_url` | No |
+| proxy | 5 | `proxy_enabled` | No |
+| tailscale | 3 | `tailscale_auth_key` | No |
+| mdns | 4 | None | Yes |
+| ollama | 5 | `ollama_url` | No |

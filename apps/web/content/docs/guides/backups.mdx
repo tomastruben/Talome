@@ -1,0 +1,186 @@
+---
+title: Backups
+description: Per-app backups, scheduled automation, and one-command restore.
+---
+
+Talome backs up individual apps as compressed tarballs — volumes, configuration, and environment variables in a single file. Restore from any backup with one message.
+
+## What Gets Backed Up
+
+| Included | Description |
+|----------|-------------|
+| **Docker volumes** | All named volumes attached to the app's containers |
+| **Configuration files** | App config files within the Talome data directory |
+| **Environment variables** | The `.env` and compose environment from the running stack |
+| **Compose file** | The `docker-compose.yml` used to create the stack |
+
+| Not Included | Why |
+|-------------|-----|
+| **Docker images** | Images are pulled from registries — backing them up wastes space. On restore, the exact image is re-pulled using the pinned digest. |
+| **External mounts** | If you bind-mounted `/mnt/media` into Jellyfin, that media is not included. Back up external storage separately. |
+
+## Per-App Backup
+
+### Creating a Backup
+
+<ChatSimulation>
+  <UserMessage>Back up Jellyfin</UserMessage>
+</ChatSimulation>
+
+The `backup_app` tool:
+
+1. Pauses the app's containers to ensure data consistency
+2. Creates a tarball of all attached Docker volumes
+3. Includes the compose file and environment variables
+4. Compresses the archive with gzip
+5. Stores the backup in `~/.talome/backups/<appId>/<timestamp>.tar.gz`
+6. Resumes the containers
+7. Records the backup in the `backups` database table
+
+The entire process typically takes seconds for small apps, or a few minutes for apps with large databases.
+
+### Backing Up Multiple Apps
+
+<ChatSimulation>
+  <UserMessage>Back up all my apps</UserMessage>
+  <UserMessage>Back up the Media group</UserMessage>
+  <UserMessage>Back up Sonarr, Radarr, and Prowlarr</UserMessage>
+</ChatSimulation>
+
+The AI iterates through each app and creates individual backups. Each backup is independent — you can restore them individually.
+
+### Viewing Backup History
+
+<ChatSimulation>
+  <UserMessage>Show me my backups</UserMessage>
+  <UserMessage>When was Sonarr last backed up?</UserMessage>
+</ChatSimulation>
+
+The `backups` table tracks every backup run: app ID, timestamp, file size, duration, and success/failure status. The backup-status dashboard widget shows this at a glance.
+
+## Restoring from Backup
+
+<ChatSimulation>
+  <UserMessage>Restore Jellyfin from the latest backup</UserMessage>
+</ChatSimulation>
+
+The `restore_app` tool:
+
+1. Stops the app's containers
+2. Removes the current volumes
+3. Extracts the backup tarball into fresh volumes
+4. Restores the compose file and environment variables
+5. Pulls the exact Docker image using the pinned digest
+6. Starts the app
+7. Verifies health
+
+<Callout type="warn">
+Restoring replaces all current app data with the backup contents. If you've made changes since the backup, those changes will be lost. Consider creating a fresh backup before restoring an older one.
+</Callout>
+
+### Restoring to a Specific Point
+
+If you have multiple backups, specify which one:
+
+<ChatSimulation>
+  <UserMessage>Show me all Jellyfin backups</UserMessage>
+  <UserMessage>Restore Jellyfin from the backup taken on March 15th</UserMessage>
+</ChatSimulation>
+
+## Scheduled Backups
+
+Use [automations](/docs/guides/automations) to run backups on a schedule:
+
+<ChatSimulation>
+  <UserMessage>Create an automation that backs up all apps every Sunday at 3am</UserMessage>
+</ChatSimulation>
+
+<ChatSimulation>
+  <UserMessage>Back up Jellyfin and Sonarr every night at 2am</UserMessage>
+</ChatSimulation>
+
+<ChatSimulation>
+  <UserMessage>Back up the Media group every Saturday at midnight</UserMessage>
+</ChatSimulation>
+
+The automation engine runs `backup_app` on the cron schedule you specify. Failed backups are logged and can trigger notifications:
+
+<ChatSimulation>
+  <UserMessage>Create an automation that backs up all apps nightly and notifies me on Telegram if any backup fails</UserMessage>
+</ChatSimulation>
+
+### Recommended Schedule
+
+| Apps | Frequency | Why |
+|------|-----------|-----|
+| Databases (Sonarr, Radarr, Prowlarr) | Daily | Small backups, frequent config changes |
+| Media servers (Jellyfin, Plex) | Weekly | Larger backups, less frequent changes |
+| Everything else | Weekly | Good baseline protection |
+
+## Database Backup
+
+Talome's own data lives in a SQLite database. This includes your settings, memories, automations, installed app metadata, and backup history.
+
+The simplest backup:
+
+```bash
+cp ~/.talome/data/talome.db ~/.talome/data/talome.db.backup
+```
+
+Or use the AI:
+
+<ChatSimulation>
+  <UserMessage>Back up the Talome database</UserMessage>
+</ChatSimulation>
+
+<Callout type="info">
+The SQLite database is typically under 10MB. Include it in your system-level backup strategy (rsync, Borg, Restic, etc.) alongside the `~/.talome/backups/` directory for complete disaster recovery.
+</Callout>
+
+## Pre-Update Backups
+
+Talome automatically creates a backup before updating an app. If the update fails or breaks something, you can roll back:
+
+<ChatSimulation>
+  <UserMessage>Roll back the Sonarr update</UserMessage>
+</ChatSimulation>
+
+The `rollback_update` tool restores the pre-update backup and reverts to the previous image digest. This is separate from the `restore_app` flow — it specifically targets update failures.
+
+## Conversation Examples
+
+### Full backup workflow
+
+<ChatSimulation>
+  <UserMessage>Back up all my apps</UserMessage>
+  <UserMessage>How much space are my backups using?</UserMessage>
+  <UserMessage>Delete backups older than 30 days</UserMessage>
+</ChatSimulation>
+
+### Disaster recovery
+
+<ChatSimulation>
+  <UserMessage>Sonarr's database is corrupted. Restore from the latest backup.</UserMessage>
+</ChatSimulation>
+
+The AI stops Sonarr, restores the backup, starts it back up, and verifies the healthcheck passes.
+
+### Pre-migration backup
+
+<ChatSimulation>
+  <UserMessage>I'm about to migrate to a new server. Back up everything.</UserMessage>
+</ChatSimulation>
+
+The AI backs up every installed app and tells you the total backup size and location, so you can copy the `~/.talome/backups/` directory to the new server.
+
+<Cards>
+  <Card title="Automations" href="/docs/guides/automations">
+    Schedule recurring backups with cron triggers.
+  </Card>
+  <Card title="App Store" href="/docs/guides/app-store">
+    How app lifecycle management works.
+  </Card>
+  <Card title="Monitoring" href="/docs/guides/monitoring">
+    Track backup status on the dashboard.
+  </Card>
+</Cards>

@@ -1,0 +1,341 @@
+---
+title: API Reference
+description: Complete REST API reference for the Talome backend.
+---
+
+Talome's backend is a Hono server running on port 4000 (configurable via `CORE_PORT`). It exposes a REST API that the dashboard, MCP server, and external clients use to interact with the system. The API currently spans 47 route files covering every aspect of the platform.
+
+## Authentication
+
+All API routes except `/api/health` and the initial setup endpoint require a valid JWT session token. The token can be provided in two ways:
+
+- **Cookie**: the `talome_session` cookie, set automatically on login
+- **Bearer header**: `Authorization: Bearer <token>`
+
+Tokens are signed with `TALOME_SECRET` (a 64-character hex string). Sessions can be revoked server-side.
+
+```bash
+# Example: authenticate and use the token
+TOKEN=$(curl -s -X POST http://localhost:4000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"your-password"}' \
+  | jq -r '.token')
+
+curl http://localhost:4000/api/containers \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
+## Auth Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/auth/login` | Authenticate with username and password. On first call with no existing users, creates the admin account. Returns JWT token. |
+| POST | `/api/auth/logout` | Revoke the current session and clear the session cookie. |
+| POST | `/api/auth/recover` | Reset password using a recovery code. Requires `username`, `recoveryCode`, and `newPassword`. |
+| GET | `/api/auth/me` | Get the currently authenticated user's profile. |
+| GET | `/api/health` | Health check endpoint (no auth required). Returns `{ status: "ok" }`. |
+
+---
+
+## Container Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/containers` | List all Docker containers with status, image, ports, and resource usage. |
+| GET | `/api/containers/:id` | Get detailed information about a specific container. |
+| POST | `/api/containers/:id/start` | Start a stopped container. |
+| POST | `/api/containers/:id/stop` | Stop a running container. |
+| POST | `/api/containers/:id/restart` | Restart a container. |
+| GET | `/api/containers/:id/logs` | Get container logs. Query params: `tail` (number of lines), `since` (timestamp). |
+| GET | `/api/containers/:id/stats` | Get live CPU, memory, and network stats for a container. |
+| POST | `/api/containers/:id/exec` | Execute a command inside a container. Body: `{ command: string }`. |
+| GET | `/api/containers/:id/inspect` | Full Docker inspect output for a container. |
+
+---
+
+## App Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/apps` | List all available apps across all store sources. Query params: `category`, `search`, `source`. |
+| GET | `/api/apps/:id` | Get detailed app manifest including compose configuration. |
+| POST | `/api/apps/install` | Install an app. Body: `{ appId, storeId, env?, ports? }`. |
+| DELETE | `/api/apps/:id` | Uninstall an app and remove its containers. |
+| POST | `/api/apps/:id/start` | Start all containers for an installed app. |
+| POST | `/api/apps/:id/stop` | Stop all containers for an installed app. |
+| POST | `/api/apps/:id/restart` | Restart all containers for an installed app. |
+| POST | `/api/apps/:id/update` | Update an app to its latest version. |
+| GET | `/api/apps/updates` | Check for available updates across all installed apps. |
+| POST | `/api/apps/bulk` | Bulk action on multiple apps. Body: `{ action, appIds }`. |
+
+---
+
+## Store Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/stores` | List all configured store sources with app counts. |
+| POST | `/api/stores` | Add a new store source. Body: `{ name, type, gitUrl?, branch? }`. |
+| POST | `/api/stores/:id/sync` | Trigger a sync for a specific store source. |
+| DELETE | `/api/stores/:id` | Remove a store source. |
+
+---
+
+## User App Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/user-apps` | List user-created apps ("My Creations"). |
+| POST | `/api/user-apps` | Create or update a user app manifest. |
+| DELETE | `/api/user-apps/:id` | Delete a user-created app. |
+
+---
+
+## Chat and AI Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/chat` | Stream an AI chat response. Body: `{ messages, conversationId? }`. Returns Server-Sent Events with the Vercel AI SDK streaming protocol. |
+| GET | `/api/conversations` | List all conversations with pagination. Query params: `limit`, `offset`. |
+| GET | `/api/conversations/:id` | Get a conversation with all its messages. |
+| DELETE | `/api/conversations/:id` | Delete a conversation and its messages. |
+| GET | `/api/suggestions` | Get AI-generated improvement suggestions for the system. |
+
+---
+
+## Settings Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/settings` | Get all settings as key-value pairs. |
+| PUT | `/api/settings` | Update one or more settings. Body: `{ key: value, ... }`. |
+| GET | `/api/settings/history` | Get settings change history. |
+
+---
+
+## Media Endpoints
+
+These endpoints power the dashboard's media browsing, streaming, and optimization features.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/media/library` | Get media library contents with filtering and pagination. |
+| GET | `/api/media/search` | Search for movies and TV shows. |
+| GET | `/api/media/downloads` | Get active downloads with progress. |
+| GET | `/api/media/calendar` | Get upcoming and recent releases. |
+| POST | `/api/media/request` | Request a movie or TV show for download. |
+| GET | `/api/media/stream/:id` | Stream a media file (HLS or direct). |
+| GET | `/api/media/stream/:id/manifest.m3u8` | Get HLS manifest for transcoded playback. |
+| GET | `/api/media/stream/:id/segment/:seg` | Get an HLS segment. |
+| GET | `/api/media/subtitles/:id` | Get subtitle tracks for a media item. |
+| GET | `/api/media/metadata/:id` | Get full metadata for a media item. |
+
+---
+
+## Automation Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/automations` | List all automations. |
+| POST | `/api/automations` | Create a new automation. |
+| PUT | `/api/automations/:id` | Update an automation. |
+| DELETE | `/api/automations/:id` | Delete an automation. |
+| GET | `/api/automations/:id/runs` | Get execution history for an automation. |
+| POST | `/api/automations/:id/run` | Manually trigger an automation. |
+
+---
+
+## Notification Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/notifications` | List recent notifications. Query params: `unread`, `limit`. |
+| PUT | `/api/notifications/:id/read` | Mark a notification as read. |
+| PUT | `/api/notifications/read-all` | Mark all notifications as read. |
+| GET | `/api/notification-channels` | List configured notification channels. |
+| POST | `/api/notification-channels` | Add a notification channel. |
+| DELETE | `/api/notification-channels/:id` | Remove a notification channel. |
+| POST | `/api/notification-channels/:id/test` | Send a test notification. |
+
+---
+
+## File Management Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/files` | Browse directory contents. Query params: `path`, `sort`. |
+| GET | `/api/files/info` | Get file metadata. Query params: `path`. |
+| POST | `/api/files/mkdir` | Create a directory. Body: `{ path }`. |
+| POST | `/api/files/rename` | Rename or move a file. Body: `{ from, to }`. |
+| DELETE | `/api/files` | Delete a file. Query params: `path`. |
+| GET | `/api/files/download` | Download a file. Query params: `path`. |
+| POST | `/api/files/upload` | Upload a file. Multipart form data with `file` and `path` fields. |
+
+---
+
+## Backup Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/backups/:appId` | Create a backup for an app. |
+| POST | `/api/backups/:appId/restore` | Restore an app from a backup. |
+| GET | `/api/backups/:appId/list` | List available backups for an app. |
+
+---
+
+## Proxy Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/proxy/routes` | List all proxy routes. |
+| POST | `/api/proxy/routes` | Add a proxy route. Body: `{ domain, upstream, tlsMode? }`. |
+| DELETE | `/api/proxy/routes/:id` | Remove a proxy route. |
+| POST | `/api/proxy/reload` | Reload the Caddy proxy configuration. |
+
+---
+
+## Network Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/networks` | List Docker networks. |
+| POST | `/api/networks` | Create a Docker network. Body: `{ name, driver? }`. |
+| DELETE | `/api/networks/:id` | Remove a Docker network. |
+
+---
+
+## Widget Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/widgets` | List all dashboard widgets. |
+| POST | `/api/widgets` | Create or update a widget manifest. |
+| PUT | `/api/widgets/:id` | Update a widget. |
+| DELETE | `/api/widgets/:id` | Delete a widget. |
+
+---
+
+## System and Metrics Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/system/stats` | Current CPU, memory, disk, and network stats. |
+| GET | `/api/system/health` | Overall system health assessment. |
+| GET | `/api/system/gpu` | GPU status and utilization. |
+| GET | `/api/metrics` | Historical metrics data. Query params: `period` (1h, 6h, 24h, 7d). |
+| GET | `/api/stats-stream` | Server-Sent Events stream of real-time system stats. |
+
+---
+
+## Optimization Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/optimization/status` | Get optimization queue status. |
+| POST | `/api/optimization/queue` | Queue a file for optimization. |
+| DELETE | `/api/optimization/:id` | Cancel an optimization job. |
+| GET | `/api/optimization/config` | Get optimization configuration. |
+| PUT | `/api/optimization/config` | Update optimization configuration. |
+
+---
+
+## Terminal Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/terminal/sessions` | List active terminal sessions. |
+| POST | `/api/terminal/sessions` | Create a new terminal session. |
+| DELETE | `/api/terminal/sessions/:id` | Close a terminal session. |
+
+The terminal uses WebSocket connections on port 4001 (configurable via `TERMINAL_DAEMON_PORT`) for real-time PTY communication.
+
+---
+
+## Evolution (Self-Improvement) Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/evolution/runs` | List self-improvement runs. |
+| GET | `/api/evolution/runs/:id` | Get details of a specific run. |
+| POST | `/api/evolution/runs` | Start a new self-improvement run. |
+| DELETE | `/api/evolution/runs/:id` | Cancel a running evolution task. |
+| GET | `/api/evolution/suggestions` | List AI-generated improvement suggestions. |
+| POST | `/api/evolution/suggestions/:id/approve` | Approve and execute a suggestion. |
+| POST | `/api/evolution/suggestions/:id/dismiss` | Dismiss a suggestion. |
+
+---
+
+## MCP Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/mcp` | MCP protocol endpoint for stdio-based tool execution. Used by Claude Code, Cursor, and other MCP clients. |
+
+---
+
+## User Management Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/users` | List all users (admin only). |
+| POST | `/api/users` | Create a new user (admin only). |
+| PUT | `/api/users/:id` | Update a user's role or permissions (admin only). |
+| DELETE | `/api/users/:id` | Delete a user (admin only). |
+
+---
+
+## Webhook Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/webhooks/:id` | Receive a webhook trigger for an automation. The `:id` is the automation's webhook token. |
+
+---
+
+## Additional Endpoints
+
+| Route File | Description |
+|------------|-------------|
+| `/api/storage` | Storage breakdown, SMART status, and reclaimable space analysis. |
+| `/api/search` | Cross-system search across apps, containers, files, and media. |
+| `/api/integrations` | Integration configuration and status for Sonarr, Radarr, etc. |
+| `/api/audiobooks` | Audiobookshelf library browsing, search, and progress tracking. |
+| `/api/services` | Service discovery and health monitoring. |
+| `/api/stacks` | Feature stack management (curated app bundles). |
+| `/api/ai-models` | List available AI models and providers. |
+| `/api/audit-log` | Query the audit log with filtering. |
+| `/api/memories` | CRUD operations on AI memories. |
+| `/api/mdns` | mDNS/CoreDNS management. |
+| `/api/ollama` | Ollama model management proxy. |
+| `/api/push` | Web push notification subscription. |
+| `/api/community` | Community app submission and review. |
+| `/api/tools` | List available AI tools and their metadata. |
+| `/api/supervisor` | Agent loop and autonomous remediation management. |
+
+---
+
+## Error Format
+
+All error responses follow a consistent format:
+
+```json
+{
+  "error": "Human-readable error message"
+}
+```
+
+Common HTTP status codes:
+
+| Code | Meaning |
+|------|---------|
+| 400 | Invalid request body or parameters (Zod validation failure) |
+| 401 | Missing or invalid authentication token |
+| 403 | Insufficient permissions for the requested action |
+| 404 | Resource not found |
+| 500 | Internal server error |
+
+## Rate Limiting
+
+The API does not currently enforce rate limits. The AI chat endpoint uses Vercel AI SDK streaming, which is subject to the upstream LLM provider's rate limits.

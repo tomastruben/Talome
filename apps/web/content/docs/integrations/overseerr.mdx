@@ -1,0 +1,289 @@
+---
+title: Overseerr
+description: Manage media requests from family and friends -- approve, decline, and wire Overseerr to your entire media stack through conversation.
+---
+
+Overseerr is a request management system for your media server. It provides a clean web UI where family members and friends can browse and request movies and TV shows. Those requests flow to Sonarr and Radarr for automatic downloading, and the finished media appears in Jellyfin or Plex. Talome's integration gives the AI 7 tools to manage requests, configure service connections, and handle the approval workflow.
+
+Overseerr is the user-facing front door to your media stack. While Sonarr, Radarr, and qBittorrent handle the pipeline behind the scenes, Overseerr gives non-technical household members a simple way to ask for content. The AI can manage the entire flow: approving requests, checking if content is already available, and diagnosing why a request might be stuck.
+
+## Setup
+
+### 1. Install Overseerr
+
+```
+You: Install Overseerr
+```
+
+The AI installs Overseerr from the app store. Overseerr runs on port 5055 by default.
+
+### 2. Initial configuration
+
+Overseerr requires first-time setup through its web UI. This involves connecting it to your media server (Jellyfin or Plex) and your arr apps. The AI can handle this entire process:
+
+```
+You: Set up Overseerr and connect it to Jellyfin, Sonarr, and Radarr
+```
+
+### 3. Configure settings
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `overseerr_url` | `http://localhost:5055` | Overseerr base URL |
+| `overseerr_api_key` | `abc123...` | API key from Overseerr settings |
+
+The API key can be found in Overseerr's Settings > General page after initial setup is complete.
+
+## Auto-Configuration
+
+When `wire_apps` runs with Overseerr and the media stack:
+
+- Detects the Overseerr container
+- Saves the URL and API key to settings
+- Connects Overseerr to Jellyfin using a generated API key (via `overseerr_configure_jellyfin`)
+- Connects Overseerr to Sonarr with the correct URL, API key, and quality profile (via `overseerr_configure_sonarr`)
+- Connects Overseerr to Radarr with the correct URL, API key, and quality profile (via `overseerr_configure_radarr`)
+- Verifies that all connections are working
+
+This is one of the more complex auto-configurations because Overseerr needs to know about three other services. The AI handles the cross-app API key exchange automatically.
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `overseerr_get_status` | Server status, version, and whether initial setup is complete. Shows if Overseerr is connected to a media server and arr apps. |
+| `overseerr_configure_jellyfin` | Connect Overseerr to a Jellyfin server. Requires the Jellyfin hostname (Docker service name), port, and API key. This is the first step in Overseerr setup. |
+| `overseerr_configure_sonarr` | Connect Overseerr to Sonarr. Configures the URL, API key, quality profile, root folder, and language profile. Requests for TV shows will be sent to Sonarr. |
+| `overseerr_configure_radarr` | Connect Overseerr to Radarr. Configures the URL, API key, quality profile, root folder, and language profile. Requests for movies will be sent to Radarr. |
+| `overseerr_list_requests` | List all media requests with their status (pending, approved, available, declined), requester name, request date, and media details. Supports filtering by status. |
+| `overseerr_approve_request` | Approve a pending request. The request is sent to Sonarr or Radarr for automatic downloading. |
+| `overseerr_decline_request` | Decline a pending request with an optional reason message. |
+
+## Conversation Examples
+
+### Checking pending requests
+
+```
+You: Are there any pending media requests?
+
+AI: [overseerr_list_requests: status: "pending"]
+    You have 3 pending requests:
+
+    1. Oppenheimer (2023) — Movie
+       Requested by: Sarah, 2 days ago
+
+    2. The Last of Us — Season 2 (TV)
+       Requested by: Mike, 1 day ago
+
+    3. Civil War (2024) — Movie
+       Requested by: Sarah, 3 hours ago
+
+    Want me to approve any of these?
+```
+
+### Approving and declining requests
+
+```
+You: Approve the first two, decline Civil War
+
+AI: [overseerr_approve_request: id: 1]
+    Approved Oppenheimer. Sent to Radarr for download.
+
+    [overseerr_approve_request: id: 2]
+    Approved The Last of Us S02. Sent to Sonarr for monitoring.
+
+    [overseerr_decline_request: id: 3, reason: "Not available in good quality yet"]
+    Declined Civil War. Sarah will see the reason in Overseerr.
+```
+
+### Bulk approval
+
+```
+You: Approve all pending requests
+
+AI: [overseerr_list_requests: status: "pending"]
+    Found 5 pending requests.
+
+    [overseerr_approve_request: id: 4]
+    [overseerr_approve_request: id: 5]
+    [overseerr_approve_request: id: 6]
+    [overseerr_approve_request: id: 7]
+    [overseerr_approve_request: id: 8]
+
+    All 5 requests approved. Movies sent to Radarr, TV shows sent to Sonarr.
+    Downloads will start automatically once matching releases are found.
+```
+
+### Full initial setup
+
+```
+You: I just installed Overseerr. Connect it to Jellyfin, Sonarr, and Radarr.
+
+AI: [overseerr_get_status]
+    Overseerr is running but initial setup is not complete.
+    I'll configure the connections now.
+
+    [jellyfin_create_api_key: label: "Overseerr"]
+    Created Jellyfin API key for Overseerr.
+
+    [overseerr_configure_jellyfin: hostname: "jellyfin", port: 8096,
+     apiKey: "jf_xxxx"]
+    Connected to Jellyfin. Overseerr can now see your libraries.
+
+    [arr_list_quality_profiles: sonarr]
+    [arr_list_root_folders: sonarr]
+    [overseerr_configure_sonarr: url: "http://sonarr:8989",
+     apiKey: "sonarr_key", qualityProfile: "HD-1080p",
+     rootFolder: "/media/TV"]
+    Connected to Sonarr with HD-1080p quality profile.
+
+    [arr_list_quality_profiles: radarr]
+    [arr_list_root_folders: radarr]
+    [overseerr_configure_radarr: url: "http://radarr:7878",
+     apiKey: "radarr_key", qualityProfile: "HD-1080p",
+     rootFolder: "/media/Movies"]
+    Connected to Radarr with HD-1080p quality profile.
+
+    Overseerr is fully configured. Users can now browse and request
+    media at http://your-server:5055.
+```
+
+### Checking request status
+
+```
+You: Did Sarah's request for Oppenheimer get downloaded yet?
+
+AI: [overseerr_list_requests: status: "approved"]
+    Oppenheimer (2023) — Status: Available
+    Requested by Sarah, approved 2 days ago.
+
+    The movie was downloaded and is available in your library.
+    Sarah can watch it in Jellyfin now.
+```
+
+### Request flow diagnosis
+
+```
+You: Mike says his TV show request has been stuck for days
+
+AI: [overseerr_list_requests]
+    The Last of Us S02 — Status: Approved (3 days ago)
+    Requested by Mike.
+
+    [arr_get_wanted_missing: sonarr]
+    The Last of Us S02E01-E04 are monitored but missing.
+
+    [arr_search_releases: sonarr, "The Last of Us S02E01"]
+    No releases found. The episodes may not have aired yet.
+
+    [get_calendar: sonarr]
+    The Last of Us S02E01 airs in 2 weeks.
+
+    The request is approved and Sonarr is monitoring it, but the episodes
+    haven't aired yet. Once they air, Sonarr will find and download them
+    automatically. I can let Mike know this is expected.
+```
+
+## Advanced Usage
+
+### Quality profile coordination
+
+When configuring Overseerr, it needs to know which quality profile to use in Sonarr/Radarr. The AI can help choose:
+
+```
+You: What quality profiles should Overseerr use?
+
+AI: [arr_list_quality_profiles: sonarr]
+    Sonarr profiles: Any, HD-1080p, Ultra-HD
+
+    [arr_list_quality_profiles: radarr]
+    Radarr profiles: Any, HD-1080p, Ultra-HD, Remux
+
+    Currently, Overseerr is sending requests with:
+    TV: HD-1080p
+    Movies: HD-1080p
+
+    Want me to change these? For example, you could use Ultra-HD
+    for movies to prefer 4K content when available.
+```
+
+### Multi-user household management
+
+Overseerr supports multiple users with different request quotas. The AI can help manage the user experience:
+
+```
+You: How many requests has each person made this month?
+
+AI: [overseerr_list_requests]
+    Request summary this month:
+
+    Sarah: 8 requests (5 movies, 3 TV)
+    Mike: 4 requests (2 movies, 2 TV)
+    Guest: 1 request (1 movie)
+
+    All requests have been processed.
+    Sarah is the most active requester.
+```
+
+### Connecting to Plex instead of Jellyfin
+
+Overseerr also supports Plex as the media server. The configuration flow is similar:
+
+```
+You: Connect Overseerr to Plex instead of Jellyfin
+
+AI: Overseerr connects to Plex differently — it uses Plex's authentication
+    system directly. You'll need to complete the Plex sign-in through
+    Overseerr's web UI at http://your-server:5055/setup.
+
+    After signing in, I can configure the Sonarr and Radarr connections:
+
+    [overseerr_configure_sonarr: ...]
+    [overseerr_configure_radarr: ...]
+```
+
+## Troubleshooting
+
+### "Initial setup not complete" status
+
+**Cause:** Overseerr requires connecting to a media server (Jellyfin or Plex) before it can be used. This must be done through the web UI or API.
+
+**Fix:** Ask the AI to run the setup: `"Set up Overseerr with Jellyfin"`. The AI will configure the Jellyfin connection, then the Sonarr and Radarr connections.
+
+### Requests stay "pending" forever
+
+**Cause:** No admin has approved them. Overseerr supports auto-approval for trusted users, but by default requests require manual approval.
+
+**Fix:** Approve pending requests through conversation: `"Approve all pending requests"`. To enable auto-approval for specific users, configure it in Overseerr's web UI under Users > Auto-Approve.
+
+### Approved requests don't start downloading
+
+**Cause:** Overseerr sent the request to Sonarr/Radarr, but no matching release was found, or the connection between Overseerr and the arr app is broken.
+
+**Fix:** Ask the AI to diagnose: `"Why isn't this approved request downloading?"`. It will check the Sonarr/Radarr queue, search for releases, and verify the connection between all three services.
+
+### "Could not connect to Sonarr/Radarr" error
+
+**Cause:** The URL, API key, or network configuration is wrong.
+
+**Fix:** Reconfigure the connection: `"Reconnect Overseerr to Sonarr"`. The AI will use the current Sonarr settings to update the Overseerr configuration. Ensure the containers are on the same Docker network.
+
+### Users can't access Overseerr
+
+**Cause:** Overseerr is only accessible on the local network by default. External access requires a reverse proxy or VPN.
+
+**Fix:** Set up a reverse proxy route: `"Add a proxy route for Overseerr"`. The AI can configure Caddy or your reverse proxy to expose Overseerr securely.
+
+<Cards>
+  <Card title="Jellyfin" href="/docs/integrations/jellyfin">
+    Media server that Overseerr connects to.
+  </Card>
+  <Card title="Sonarr & Radarr" href="/docs/integrations/sonarr-radarr">
+    Where approved requests go for downloading.
+  </Card>
+  <Card title="Media Stack Guide" href="/docs/guides/media-stack">
+    Full pipeline setup including Overseerr.
+  </Card>
+</Cards>

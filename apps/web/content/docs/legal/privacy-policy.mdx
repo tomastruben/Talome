@@ -1,0 +1,79 @@
+---
+title: Privacy Policy
+description: How Talome handles your data. Short version — it stays on your machine.
+---
+
+*Last updated: March 29, 2026*
+
+Talome is self-hosted software. It runs entirely on your hardware, under your control. This policy explains what data Talome handles and where it goes.
+
+---
+
+## The short version
+
+- All your data stays on your machine
+- There is no telemetry, analytics, or phone-home
+- The only external calls are to AI providers you explicitly configure
+- If you use Ollama, nothing leaves your network
+
+---
+
+## Data storage
+
+Everything Talome stores lives locally on your server:
+
+- **SQLite database** -- user settings, conversation history, memories, automations, app metadata, and audit logs
+- **Docker volumes** -- all installed app data
+- **Backups** -- compressed tarballs stored in `~/.talome/backups/`
+
+There is no cloud sync, no remote database, and no external storage. If you delete Talome, the data is gone.
+
+## AI provider communication
+
+When you send a message in the chat, Talome forwards your conversation to the AI provider you configured:
+
+- **Anthropic (Claude)** -- conversations are sent to Anthropic's API. See [Anthropic's Privacy Policy](https://www.anthropic.com/privacy) and [Usage Policy](https://www.anthropic.com/usage-policy).
+- **OpenAI (GPT)** -- conversations are sent to OpenAI's API. See [OpenAI's Privacy Policy](https://openai.com/privacy).
+- **Ollama (local models)** -- conversations stay entirely on your machine. Nothing is sent externally.
+
+Talome sends only the conversation context and tool results needed for the AI to respond. It does not send system information, file contents, or other data beyond what is part of the active conversation.
+
+When using cloud providers, their privacy policies govern how they handle conversation data. If this concerns you, use Ollama for fully local operation.
+
+## API keys
+
+API keys for AI providers (Anthropic, OpenAI) are stored encrypted in the local SQLite database. They are only sent to the respective provider's API endpoint during requests. They are never logged, never sent to any other service, and never leave your server except to authenticate with the provider you configured.
+
+## Telemetry
+
+There is none. Talome does not collect usage statistics, crash reports, feature flags, or analytics of any kind. There are no tracking pixels, no beacon calls, and no background requests to any Talome-operated server. The software does not phone home.
+
+## Cookies
+
+Talome uses a single session cookie for authentication when you log into the dashboard. This cookie is:
+
+- **HTTP-only** -- not accessible to JavaScript
+- **Local only** -- sent only to your Talome instance
+- **Session-scoped** -- expires when you close the browser or after the configured timeout
+
+There are no third-party cookies, no tracking cookies, and no advertising cookies.
+
+## Third-party services
+
+Talome itself makes no calls to third-party services beyond the AI provider you configure. However, apps you install through Talome (Jellyfin, Sonarr, Pi-hole, etc.) are independent software with their own network behavior and privacy policies. Talome does not modify or monitor their external communications.
+
+## Network exposure
+
+By default, Talome listens only on your local network. It does not register DNS records, open ports on your router, or create tunnels. If you configure Tailscale or a reverse proxy to expose Talome externally, that is your configuration and your responsibility to secure.
+
+## Children's privacy
+
+Talome does not collect personal information from anyone, including children. It is self-hosted software with no user accounts beyond the local instance.
+
+## Changes to this policy
+
+If this policy changes, the update will be reflected in the documentation with a new "last updated" date. Since Talome has no way to contact you (no email, no accounts, no telemetry), checking the documentation is the only way to see changes.
+
+## Questions
+
+If you have questions about Talome's privacy practices, open an issue on [GitHub](https://github.com/talomehq/talome/issues).
