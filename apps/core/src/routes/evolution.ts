@@ -316,7 +316,7 @@ evolution.get("/screenshots/:filename", async (c) => {
     const data = await readFile(join(SCREENSHOTS_DIR, filename));
     const ext = filename.split(".").pop() ?? "png";
     const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
-    return new Response(data, { headers: { "Content-Type": mime, "Cache-Control": "public, max-age=86400" } });
+    return new Response(new Uint8Array(data), { headers: { "Content-Type": mime, "Cache-Control": "public, max-age=86400" } });
   } catch {
     return c.json({ error: "Not found" }, 404);
   }

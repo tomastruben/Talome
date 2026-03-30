@@ -143,7 +143,7 @@ userApps.get("/:appId/cover", async (c) => {
     try {
       const data = await readFile(coverPath);
       const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
-      return new Response(data, {
+      return new Response(new Uint8Array(data), {
         headers: {
           "Content-Type": mime,
           "Cache-Control": "public, max-age=3600",
@@ -172,7 +172,7 @@ userApps.get("/:appId/icon", async (c) => {
         ext === "jpg" ? "image/jpeg" :
         ext === "svg" ? "image/svg+xml" :
         `image/${ext}`;
-      return new Response(data, {
+      return new Response(new Uint8Array(data), {
         headers: {
           "Content-Type": mime,
           "Cache-Control": "public, max-age=3600",

@@ -504,7 +504,7 @@ media.get("/poster", async (c) => {
 
     try {
       const cached = await readFile(cachePath);
-      return new Response(cached, {
+      return new Response(new Uint8Array(cached), {
         headers: { "Content-Type": "image/webp", "Cache-Control": "public, max-age=86400" },
       });
     } catch { /* cache miss */ }
@@ -544,7 +544,7 @@ media.get("/poster", async (c) => {
 
     try {
       const cached = await readFile(cachePath);
-      return new Response(cached, {
+      return new Response(new Uint8Array(cached), {
         headers: { "Content-Type": "image/webp", "Cache-Control": "public, max-age=86400" },
       });
     } catch { /* cache miss */ }
@@ -588,7 +588,7 @@ media.get("/poster", async (c) => {
           headers: { ETag: etag, "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800" },
         });
       }
-      return new Response(cached, {
+      return new Response(new Uint8Array(cached), {
         headers: {
           "Content-Type": "image/webp",
           "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
@@ -702,7 +702,7 @@ media.get("/backdrop", async (c) => {
         headers: { ETag: etag, "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800" },
       });
     }
-    return new Response(cached, {
+    return new Response(new Uint8Array(cached), {
       headers: {
         "Content-Type": "image/webp",
         "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",

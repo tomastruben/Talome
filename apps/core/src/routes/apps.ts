@@ -548,7 +548,7 @@ apps.get("/store-asset", async (c) => {
   try {
     const { readFile } = await import("node:fs/promises");
     const data = await readFile(resolved);
-    return new Response(data, {
+    return new Response(new Uint8Array(data), {
       headers: { "Content-Type": mime, "Cache-Control": "public, max-age=86400" },
     });
   } catch {

@@ -277,7 +277,7 @@ audiobooks.get("/cover", async (c) => {
   // Serve from cache
   try {
     const cached = await readFile(cachePath);
-    return new Response(cached, {
+    return new Response(new Uint8Array(cached), {
       headers: { "Content-Type": "image/webp", "Cache-Control": "public, max-age=86400" },
     });
   } catch { /* cache miss */ }
