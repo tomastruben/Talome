@@ -380,7 +380,7 @@ Wants=docker.service
 Type=simple
 User=${USER}
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=$(which node) ${INSTALL_DIR}/scripts/supervisor.js
+ExecStart=${INSTALL_DIR}/apps/core/node_modules/.bin/tsx ${INSTALL_DIR}/scripts/supervisor.ts
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
@@ -411,8 +411,8 @@ elif [ "${OS}" = "Darwin" ]; then
   <string>dev.talome</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$(which node)</string>
-    <string>${INSTALL_DIR}/scripts/supervisor.js</string>
+    <string>${INSTALL_DIR}/apps/core/node_modules/.bin/tsx</string>
+    <string>${INSTALL_DIR}/scripts/supervisor.ts</string>
   </array>
   <key>WorkingDirectory</key>
   <string>${INSTALL_DIR}</string>
