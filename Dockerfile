@@ -66,8 +66,11 @@ ENV TALOME_WATCHDOG=true
 
 EXPOSE 4000 3000
 
+COPY scripts/docker-start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "core/dist/index.js"]
+CMD ["/app/start.sh"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -sf http://localhost:4000/api/health || exit 1
