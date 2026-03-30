@@ -178,7 +178,9 @@ install_homebrew() {
   ask REPLY
   REPLY="${REPLY:-Y}"
   if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/tty
+    info "Homebrew needs administrator access (you'll be asked once)."
+    sudo -v </dev/tty
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     # Add Homebrew to PATH for Apple Silicon
     if [ -f /opt/homebrew/bin/brew ]; then
       eval "$(/opt/homebrew/bin/brew shellenv)"
