@@ -77,7 +77,7 @@ auth.post("/login", async (c) => {
     const token = await createSessionToken(userId, "admin", name);
     setCookie(c, SESSION_COOKIE, token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: false,
       sameSite: "Strict",
       path: "/",
       maxAge: 60 * 60 * 24 * 7,
@@ -108,7 +108,7 @@ auth.post("/login", async (c) => {
   const token = await createSessionToken(user.id, user.role as "admin" | "member", user.username);
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: false,
     sameSite: "Strict",
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
@@ -229,7 +229,7 @@ auth.post("/recover", async (c) => {
   const token = await createSessionToken(user.id, user.role as "admin" | "member", user.username);
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: false,
     sameSite: "Strict",
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
