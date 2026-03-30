@@ -171,34 +171,16 @@ install_docker_linux() {
   fi
 }
 
-install_homebrew() {
-  echo ""
-  info "Homebrew is the standard macOS package manager."
-  printf "  ${ARROW} Install Homebrew? ${BOLD}[Y/n]${RESET} "
-  ask REPLY
-  REPLY="${REPLY:-Y}"
-  if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/tty
-    # Add Homebrew to PATH for Apple Silicon
-    if [ -f /opt/homebrew/bin/brew ]; then
-      eval "$(/opt/homebrew/bin/brew shellenv)"
-    fi
-    success "Homebrew installed"
-  else
-    fatal "Homebrew is required to install Docker on macOS. Install it manually: https://brew.sh"
-  fi
-}
-
 wait_for_docker() {
   local label="$1"
   info "Waiting for ${label} to start..."
   local i=0
   while ! docker info &>/dev/null 2>&1; do
-    i=$(( i / 2 % 10 ))
+    i=$(( WAITED / 2 % 10 ))
     printf "\r  ${CYAN}${SPINNER:$i:1}${RESET} Starting ${label}...  " >&2
     sleep 2
-    i=$((i+2))
-    if [ $i -ge 90 ]; then
+    WAITED=$((WAITED+2))
+    if [ $WAITED -ge 90 ]; then
       printf "\r                              \r" >&2
       fatal "${label} didn't start within 90 seconds. Start it manually and re-run."
     fi
@@ -206,12 +188,24 @@ wait_for_docker() {
   printf "\r                              \r" >&2
 }
 
-install_docker_mac() {
-  # Ensure Homebrew is available
-  if ! command -v brew &>/dev/null; then
-    install_homebrew
-  fi
+install_dmg() {
+  local name="$1" url="$2" app_name="$3"
+  local dmg_path="/tmp/${name}.dmg"
+  local mount_point="/tmp/${name}-mount"
 
+  info "Downloading ${name}..."
+  curl -fsSL "${url}" -o "${dmg_path}" || fatal "Failed to download ${name}."
+
+  info "Installing ${name}..."
+  hdiutil attach "${dmg_path}" -mountpoint "${mount_point}" -nobrowse -quiet || fatal "Failed to mount ${name} disk image."
+  cp -R "${mount_point}/${app_name}.app" /Applications/ 2>/dev/null || \
+    sudo cp -R "${mount_point}/${app_name}.app" /Applications/ </dev/tty
+  hdiutil detach "${mount_point}" -quiet 2>/dev/null
+  rm -f "${dmg_path}"
+  success "${name} installed"
+}
+
+install_docker_mac() {
   echo ""
   info "Docker is required to run Talome. Pick your runtime:"
   echo ""
@@ -222,18 +216,23 @@ install_docker_mac() {
   ask CHOICE
   CHOICE="${CHOICE:-1}"
 
+  local ARCH_DL
+  if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then
+    ARCH_DL="arm64"
+  else
+    ARCH_DL="amd64"
+  fi
+
   case "${CHOICE}" in
     1)
-      info "Installing OrbStack..."
-      brew install --cask orbstack
+      install_dmg "OrbStack" "https://orbstack.dev/download/stable/latest/${ARCH_DL}" "OrbStack"
       info "Opening OrbStack..."
       open -a OrbStack
       DOCKER_RUNTIME="OrbStack"
       wait_for_docker "OrbStack"
       ;;
     2)
-      info "Installing Docker Desktop..."
-      brew install --cask docker
+      install_dmg "Docker Desktop" "https://desktop.docker.com/mac/main/${ARCH_DL}/Docker.dmg" "Docker"
       info "Opening Docker Desktop..."
       open -a Docker
       DOCKER_RUNTIME="Docker Desktop"
