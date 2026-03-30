@@ -36,8 +36,8 @@ if [ "${1:-}" = "update" ]; then
     fatal "Talome not found at ${INSTALL_DIR}. Run the installer first."
   fi
   cd "${INSTALL_DIR}"
-  info "Pulling latest changes..."
-  git pull --ff-only origin main || fatal "Git pull failed. Resolve conflicts manually."
+  info "Downloading latest version..."
+  curl -fsSL "https://github.com/tomastruben/Talome/archive/refs/heads/main.tar.gz" | tar xz -C "${INSTALL_DIR}" --strip-components=1
   info "Installing dependencies..."
   pnpm install --frozen-lockfile 2>/dev/null || pnpm install
   info "Building..."
@@ -305,34 +305,29 @@ fi
 success "pnpm $(pnpm -v)"
 
 # ── Git check ────────────────────────────────────────────────────────────────
-if ! command -v git &>/dev/null; then
-  if [ "${OS}" = "Darwin" ]; then
-    # macOS ships git with Xcode CLT — trigger install if needed
-    info "Git not found. macOS will prompt to install Xcode Command Line Tools..."
-    xcode-select --install 2>/dev/null || true
-    # Wait for it
-    until command -v git &>/dev/null; do sleep 3; done
-  elif [ "${OS}" = "Linux" ]; then
-    info "Installing Git..."
-    sudo apt-get install -y git 2>/dev/null || sudo dnf install -y git 2>/dev/null || sudo pacman -S --noconfirm git 2>/dev/null
-  fi
+# Git is optional — used for self-evolution. Install silently if available.
+if command -v git &>/dev/null; then
+  success "Git $(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+else
+  info "Git not found ${DIM}(optional — needed for self-evolution)${RESET}"
 fi
-command -v git &>/dev/null || fatal "Git is required. Install it and re-run."
-success "Git $(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
 
 # ── Clone or update Talome ──────────────────────────────────────────────────
 step "Installing Talome"
 
 mkdir -p "${TALOME_DIR}"
 
-if [ -d "${INSTALL_DIR}/.git" ]; then
-  info "Existing installation found, updating..."
+if [ -d "${INSTALL_DIR}/package.json" ]; then
+  info "Existing installation found"
   cd "${INSTALL_DIR}"
-  git pull --ff-only origin main 2>/dev/null || warn "Could not pull latest — using existing version"
 else
-  info "Cloning Talome..."
-  git clone --depth 1 "${TALOME_REPO}" "${INSTALL_DIR}"
+  info "Downloading Talome..."
+  TARBALL_URL="https://github.com/tomastruben/Talome/archive/refs/heads/main.tar.gz"
+  mkdir -p "${INSTALL_DIR}"
+  curl -fsSL "${TARBALL_URL}" | tar xz -C "${INSTALL_DIR}" --strip-components=1
   cd "${INSTALL_DIR}"
+  # Init git for self-evolution support
+  git init -q 2>/dev/null && git add -A 2>/dev/null && git commit -q -m "Initial install" 2>/dev/null || true
 fi
 
 success "Source ready"
