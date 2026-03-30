@@ -425,7 +425,7 @@ elif [ "${OS}" = "Darwin" ]; then
     <key>NODE_ENV</key>
     <string>production</string>
     <key>PATH</key>
-    <string>${TALOME_DIR}/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>${TALOME_DIR}/node/bin:${INSTALL_DIR}/node_modules/.bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
   <key>StandardOutPath</key>
   <string>${TALOME_DIR}/logs/talome.log</string>
