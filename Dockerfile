@@ -64,7 +64,7 @@ ENV DASHBOARD_PORT=3000
 ENV NODE_ENV=production
 ENV TALOME_WATCHDOG=true
 
-EXPOSE 4000 3000
+EXPOSE 4000 4001 3000
 
 COPY scripts/docker-start.sh /app/start.sh
 RUN chmod +x /app/start.sh

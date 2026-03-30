@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     ports:
       - "4000:4000"
+      - "4001:4001"
       - "3000:3000"
     volumes:
       - talome-data:/app/data

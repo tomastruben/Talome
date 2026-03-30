@@ -357,6 +357,7 @@ services:
     restart: unless-stopped
     ports:
       - "${API_PORT}:4000"
+      - "4001:4001"
       - "${DASHBOARD_PORT}:3000"
     volumes:
       - talome-data:/app/data
