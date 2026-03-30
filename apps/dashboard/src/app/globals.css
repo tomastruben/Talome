@@ -165,24 +165,21 @@
     @apply border-border outline-ring/70;
   }
   html {
-    @apply bg-background;
-    height: 100%;
-  }
-  body {
-    @apply bg-background text-foreground;
     height: 100dvh;
     overflow: hidden;
     overscroll-behavior: none;
   }
+  body {
+    @apply bg-background text-foreground;
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
 
-  /* Fixed positioning only for standalone PWA (iOS home screen) where
-     safe-area-inset-bottom needs to be accounted for */
+  /* Extend past safe area for standalone PWA (iOS home screen) */
   @media (display-mode: standalone) {
     body {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
       bottom: -env(safe-area-inset-bottom, 0px);
     }
   }
