@@ -42,7 +42,7 @@ RUN pnpm deploy --filter @talome/core --prod --legacy /app/core-deploy
 FROM node:22-alpine AS runtime
 WORKDIR /app
 
-RUN apk add --no-cache docker-cli tini curl
+RUN apk add --no-cache docker-cli tini curl git
 
 # Core: self-contained deploy with all production deps resolved
 COPY --from=core-builder /app/core-deploy ./core
