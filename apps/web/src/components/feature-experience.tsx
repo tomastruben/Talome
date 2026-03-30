@@ -99,7 +99,7 @@ const features = [
 // Map videoSlug → actual video files (only for features that have videos ready)
 const VIDEO_ASSETS: Record<string, { mp4: string; webm: string; low: string; poster: string; aspect: string }> = {
   "media-management": { mp4: "/media.mp4", webm: "/media.webm", low: "/media-low.mp4", poster: "/media-poster.jpg", aspect: "1728/1080" },
-  "automations": { mp4: "/automations.mp4", webm: "/automations.webm", low: "/automations-low.mp4", poster: "/automations-poster.jpg", aspect: "1620/1080" },
+  "automations": { mp4: "/automations.mp4", webm: "/automations.webm", low: "/automations-low.mp4", poster: "/automations-poster.jpg", aspect: "1728/1080" },
   "file-browser": { mp4: "/files.mp4", webm: "/files.webm", low: "/files-low.mp4", poster: "/files-poster.jpg", aspect: "1724/1080" },
   "conversational-intelligence": { mp4: "/conversation.mp4", webm: "/conversation.webm", low: "/conversation-low.mp4", poster: "/conversation-poster.jpg", aspect: "1724/1080" },
   "deep-integrations": { mp4: "/integrations.mp4", webm: "/integrations.webm", low: "/integrations-low.mp4", poster: "/integrations-poster.jpg", aspect: "1724/1080" },
