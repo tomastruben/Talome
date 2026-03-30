@@ -66,7 +66,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               {!hideHeader && <SiteHeader />}
               <SystemHealthBanner />
               <main id="main-content" className={`flex-1 min-h-0 min-w-0 overflow-hidden relative flex flex-col ${hideHeader ? "" : "[container-type:inline-size]"}`}>
-                <div className={`flex-1 min-h-0 min-w-0 flex flex-col ${hideHeader ? "" : "overflow-y-auto p-4 sm:p-6 overscroll-none"}`}>
+                <div className={`flex-1 min-h-0 min-w-0 flex flex-col ${hideHeader ? "" : "overflow-y-auto p-4 pb-8 sm:p-6 sm:pb-10 overscroll-none"}`}>
                   {children}
                 </div>
               </main>

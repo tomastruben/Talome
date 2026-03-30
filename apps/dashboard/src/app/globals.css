@@ -170,13 +170,21 @@
   }
   body {
     @apply bg-background text-foreground;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: -env(safe-area-inset-bottom, 0px);
+    height: 100dvh;
     overflow: hidden;
     overscroll-behavior: none;
+  }
+
+  /* Fixed positioning only for standalone PWA (iOS home screen) where
+     safe-area-inset-bottom needs to be accounted for */
+  @media (display-mode: standalone) {
+    body {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: -env(safe-area-inset-bottom, 0px);
+    }
   }
 }
 
