@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const CORE_BACKEND = process.env.CORE_BACKEND_URL || "http://127.0.0.1:4000";
 const PUBLIC_PATHS = ["/login", "/api/", "/_next", "/favicon.ico", "/manifest.json"];
 
 /** Decode a JWT payload without verification (just base64url → JSON). */
@@ -19,7 +20,13 @@ function decodeJwtPayload(token: string): { exp?: number } | null {
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Allow public paths through unconditionally
+  // Proxy /api/* requests to the core backend (needed for standalone/Docker mode)
+  if (pathname.startsWith("/api/")) {
+    const url = new URL(pathname + request.nextUrl.search, CORE_BACKEND);
+    return NextResponse.rewrite(url);
+  }
+
+  // Allow other public paths through unconditionally
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
