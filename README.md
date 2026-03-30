@@ -16,7 +16,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="AGPL-3.0" /></a>
   <a href="https://github.com/tomastruben/Talome/stargazers"><img src="https://img.shields.io/github/stars/tomastruben/Talome" alt="GitHub Stars" /></a>
-  <a href="https://discord.gg/HK7gFaVRJ"><img src="https://img.shields.io/discord/PLACEHOLDER?label=Discord&logo=discord&color=5865F2" alt="Discord" /></a>
+  <a href="https://discord.gg/HK7gFaVRJ"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
   <img src="https://img.shields.io/badge/status-public%20alpha-orange" alt="Public Alpha" />
 </p>
 
@@ -30,12 +30,6 @@
 
 ```bash
 curl -fsSL https://get.talome.dev | bash
-```
-
-**Windows (PowerShell):**
-
-```powershell
-irm https://get.talome.dev/install.ps1 | iex
 ```
 
 <p align="center">
@@ -73,41 +67,19 @@ No YAML. No config files. No SSH. One message away.
 curl -fsSL https://get.talome.dev | bash
 ```
 
-**Windows (PowerShell):**
+The installer downloads Node.js, clones the repo, builds, and starts Talome as a native service. Open `http://localhost:3000` when it's done.
 
-```powershell
-irm https://get.talome.dev/install.ps1 | iex
-```
-
-The installer detects your OS, installs Docker if needed, generates a secret key, and starts Talome. Open `http://localhost:3000` when it's done.
-
-**Requirements:** Linux, macOS, or Windows 10+. 2GB RAM, 5GB disk. Docker is installed automatically if missing. Bring your own [Anthropic API key](https://console.anthropic.com/).
+**Requirements:** macOS or Linux. 2GB RAM, 5GB disk. Docker (for managed apps — OrbStack recommended on Mac). Bring your own [Anthropic API key](https://console.anthropic.com/).
 
 <details>
-<summary>Manual install / Docker Compose</summary>
-
-```yaml
-services:
-  talome:
-    image: ghcr.io/tomastruben/Talome:latest
-    container_name: talome
-    restart: unless-stopped
-    ports:
-      - "4000:4000"
-      - "3000:3000"
-    volumes:
-      - talome-data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - NODE_ENV=production
-      - TALOME_SECRET=<your-64-char-hex-string>
-
-volumes:
-  talome-data:
-```
+<summary>Manual install</summary>
 
 ```bash
-docker compose up -d
+git clone https://github.com/tomastruben/Talome.git ~/.talome/server
+cd ~/.talome/server
+pnpm install && pnpm build
+cp .env.example apps/core/.env  # edit with your TALOME_SECRET
+./apps/core/node_modules/.bin/tsx scripts/supervisor.ts
 ```
 
 </details>
@@ -126,7 +98,7 @@ curl -fsSL https://get.talome.dev | bash -s -- update
 - **Conversational control** — talk to your server in plain English. Install apps, read logs, manage downloads, troubleshoot problems. It remembers your preferences.
 - **Self-evolution** — reads its own TypeScript source, writes improvements, compiles, commits. Automatic rollback if anything breaks.
 - **Autonomous monitoring** — three-layer intelligence catches problems in <60s, triages, fixes, and sends you a morning summary.
-- **App store** — unified store combining Talome-native, CasaOS, Umbrel, and your own apps. One-click install.
+- **App store** — unified store combining CasaOS, Umbrel, and your own apps. One-click install.
 - **App creation** — describe what you want, get a complete Docker app (compose, config, manifest, optional web UI).
 - **Media management** — Continue Watching, cinema mode, inline Jellyfin player with seek thumbnails and chapter markers.
 - **Dashboard** — drag-and-drop widget grid, 20+ widgets, dark mode, fully responsive.
