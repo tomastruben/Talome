@@ -169,7 +169,7 @@ install_homebrew() {
   ask REPLY
   REPLY="${REPLY:-Y}"
   if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
-    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/tty
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/tty
     if [ -f /opt/homebrew/bin/brew ]; then
       eval "$(/opt/homebrew/bin/brew shellenv)"
     fi
