@@ -131,6 +131,7 @@ import { searchContainerLogsTool } from "./tools/log-tools.js";
 // ── App blueprint tool ───────────────────────────────────────────────────────
 import { designAppBlueprintTool } from "./tools/blueprint-tool.js";
 import { getSettingsTool, setSettingTool, revertSettingTool, listConfiguredAppsTool } from "./tools/settings-tools.js";
+import { isSecretSettingKey, decryptSetting } from "../utils/crypto.js";
 import { sendNotificationTool, getNotificationsTool } from "./tools/notification-tools.js";
 // ── Phase 18: Arr tools ───────────────────────────────────────────────────────
 import {
@@ -317,7 +318,10 @@ function getSetting(key: string): string | undefined {
       .from(schema.settings)
       .where(eq(schema.settings.key, key))
       .get();
-    return row?.value || undefined;
+    if (!row?.value) return undefined;
+    // Decrypt secret settings (API keys, tokens) that are encrypted at rest
+    if (isSecretSettingKey(key)) return decryptSetting(row.value);
+    return row.value;
   } catch {
     return undefined;
   }
