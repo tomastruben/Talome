@@ -2,6 +2,7 @@
 FROM node:22-alpine AS dashboard-builder
 WORKDIR /app
 
+RUN apk add --no-cache python3 make g++ linux-headers
 RUN corepack enable
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
@@ -20,6 +21,7 @@ RUN pnpm --filter dashboard build
 FROM node:22-alpine AS core-builder
 WORKDIR /app
 
+RUN apk add --no-cache python3 make g++ linux-headers
 RUN corepack enable
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
@@ -50,7 +52,7 @@ COPY --from=dashboard-builder /app/apps/dashboard/.next/static ./dashboard/.next
 COPY --from=dashboard-builder /app/apps/dashboard/public ./dashboard/public
 
 # App store definitions
-COPY --from=core-builder /app/apps/core/app-store ./core/app-store 2>/dev/null || true
+COPY app-store ./core/app-store
 
 ENV CORE_PORT=4000
 ENV DASHBOARD_PORT=3000
