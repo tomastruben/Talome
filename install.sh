@@ -228,6 +228,28 @@ install_dmg() {
 }
 
 install_docker_mac() {
+  local ARCH_DL
+  if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then
+    ARCH_DL="arm64"
+  else
+    ARCH_DL="amd64"
+  fi
+
+  # Check if OrbStack or Docker Desktop is installed but docker CLI isn't in PATH
+  if [ -e "/Applications/OrbStack.app" ]; then
+    info "OrbStack is installed but Docker CLI not in PATH. Starting it..."
+    open -a OrbStack
+    DOCKER_RUNTIME="OrbStack"
+    wait_for_docker "OrbStack"
+    return
+  elif [ -e "/Applications/Docker.app" ]; then
+    info "Docker Desktop is installed but Docker CLI not in PATH. Starting it..."
+    open -a Docker
+    DOCKER_RUNTIME="Docker Desktop"
+    wait_for_docker "Docker Desktop"
+    return
+  fi
+
   echo ""
   info "Docker is required to run Talome. Pick your runtime:"
   echo ""
@@ -237,13 +259,6 @@ install_docker_mac() {
   printf "  ${ARROW} Choose ${BOLD}[1/2]${RESET}: "
   ask CHOICE
   CHOICE="${CHOICE:-1}"
-
-  local ARCH_DL
-  if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then
-    ARCH_DL="arm64"
-  else
-    ARCH_DL="amd64"
-  fi
 
   case "${CHOICE}" in
     1)
