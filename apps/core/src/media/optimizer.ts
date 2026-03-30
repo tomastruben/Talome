@@ -835,10 +835,15 @@ function cleanupOldJobs(): void {
     AND completed_at IS NOT NULL AND completed_at < ${cutoff}`);
 }
 
-// Run recovery immediately on module load (server restart)
-recoverOrphanedJobs();
-// Kick the queue in case there are pending jobs from before the restart
-scheduleProcessQueue();
+// Run recovery on module load (server restart) — defer to allow migrations to complete
+setTimeout(() => {
+  try {
+    recoverOrphanedJobs();
+    scheduleProcessQueue();
+  } catch {
+    // Table may not exist on first boot — migrations haven't run yet
+  }
+}, 2_000);
 
 // ── Process watchdog — detect dead ffmpeg every 60s + auto-cleanup ───────
 
