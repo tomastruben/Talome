@@ -162,21 +162,16 @@ success "Port ${TERMINAL_PORT} ${DIM}(Terminal)${RESET} available"
 # ── Docker check ──────────────────────────────────────────────────────────────
 step "Checking Docker"
 
-install_homebrew() {
-  echo ""
-  info "Homebrew is the standard macOS package manager."
-  printf "  ${ARROW} Install Homebrew? ${BOLD}[Y/n]${RESET} "
-  ask REPLY
-  REPLY="${REPLY:-Y}"
-  if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/tty
+ensure_brew() {
+  # Try to find Homebrew if it exists but isn't in PATH
+  if ! command -v brew &>/dev/null; then
     if [ -f /opt/homebrew/bin/brew ]; then
       eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -f /usr/local/bin/brew ]; then
+      eval "$(/usr/local/bin/brew shellenv)"
     fi
-    success "Homebrew installed"
-  else
-    fatal "Homebrew is required to install Docker on macOS. Install it manually: https://brew.sh"
   fi
+  command -v brew &>/dev/null
 }
 
 wait_for_docker() {
@@ -197,39 +192,17 @@ wait_for_docker() {
 }
 
 install_docker_mac() {
-  if ! command -v brew &>/dev/null; then
-    install_homebrew
-  fi
-
   echo ""
-  info "Docker is required to run apps. Pick your runtime:"
+  info "Docker is required to run apps managed by Talome."
   echo ""
   echo -e "    ${BOLD}1)${RESET} OrbStack  ${DIM}— fast, lightweight, native Apple Silicon ${GREEN}(recommended)${RESET}"
-  echo -e "    ${BOLD}2)${RESET} Docker Desktop  ${DIM}— official Docker runtime${RESET}"
+  echo -e "       ${DIM}https://orbstack.dev/download${RESET}"
   echo ""
-  printf "  ${ARROW} Choose ${BOLD}[1/2]${RESET}: "
-  ask CHOICE
-  CHOICE="${CHOICE:-1}"
-
-  case "${CHOICE}" in
-    1)
-      info "Installing OrbStack..."
-      brew install --cask orbstack
-      info "Opening OrbStack..."
-      open -a OrbStack
-      wait_for_docker "OrbStack"
-      ;;
-    2)
-      info "Installing Docker Desktop..."
-      brew install --cask docker
-      info "Opening Docker Desktop..."
-      open -a Docker
-      wait_for_docker "Docker Desktop"
-      ;;
-    *)
-      fatal "Invalid choice. Re-run the installer."
-      ;;
-  esac
+  echo -e "    ${BOLD}2)${RESET} Docker Desktop  ${DIM}— official Docker runtime${RESET}"
+  echo -e "       ${DIM}https://docker.com/products/docker-desktop${RESET}"
+  echo ""
+  info "Install one of the above, start it, then re-run this installer."
+  exit 1
 }
 
 install_docker_linux() {
@@ -283,17 +256,33 @@ check_node_version() {
 
 if ! check_node_version; then
   if [ "${OS}" = "Darwin" ]; then
-    if ! command -v brew &>/dev/null; then
-      install_homebrew
+    # Try Homebrew first if available
+    if ensure_brew; then
+      info "Installing Node.js ${MIN_NODE} via Homebrew..."
+      brew install node@${MIN_NODE}
+      brew link --overwrite node@${MIN_NODE} 2>/dev/null || true
+    else
+      # Direct binary install — no Homebrew, no sudo
+      info "Installing Node.js ${MIN_NODE}..."
+      local NODE_ARCH="arm64"
+      [ "${ARCH}" = "x86_64" ] && NODE_ARCH="x64"
+      local NODE_URL="https://nodejs.org/dist/v${MIN_NODE}.0.0/node-v${MIN_NODE}.0.0-darwin-${NODE_ARCH}.tar.gz"
+      local NODE_INSTALL="${TALOME_DIR}/node"
+      mkdir -p "${NODE_INSTALL}"
+      curl -fsSL "${NODE_URL}" | tar xz -C "${NODE_INSTALL}" --strip-components=1
+      export PATH="${NODE_INSTALL}/bin:${PATH}"
+      success "Node.js installed to ${NODE_INSTALL}"
     fi
-    info "Installing Node.js ${MIN_NODE}..."
-    brew install node@${MIN_NODE}
-    # Link if not default
-    brew link --overwrite node@${MIN_NODE} 2>/dev/null || true
   elif [ "${OS}" = "Linux" ]; then
-    info "Installing Node.js ${MIN_NODE} via NodeSource..."
-    curl -fsSL https://deb.nodesource.com/setup_${MIN_NODE}.x | sudo -E bash -
-    sudo apt-get install -y nodejs || sudo dnf install -y nodejs || sudo pacman -S --noconfirm nodejs npm
+    info "Installing Node.js ${MIN_NODE}..."
+    local NODE_ARCH="x64"
+    [ "${ARCH}" = "aarch64" ] || [ "${ARCH}" = "arm64" ] && NODE_ARCH="arm64"
+    local NODE_URL="https://nodejs.org/dist/v${MIN_NODE}.0.0/node-v${MIN_NODE}.0.0-linux-${NODE_ARCH}.tar.xz"
+    local NODE_INSTALL="${TALOME_DIR}/node"
+    mkdir -p "${NODE_INSTALL}"
+    curl -fsSL "${NODE_URL}" | tar xJ -C "${NODE_INSTALL}" --strip-components=1
+    export PATH="${NODE_INSTALL}/bin:${PATH}"
+    success "Node.js installed to ${NODE_INSTALL}"
   fi
 fi
 
@@ -307,21 +296,28 @@ success "Node.js ${NODE_VER}"
 # ── pnpm check / install ────────────────────────────────────────────────────
 if ! command -v pnpm &>/dev/null; then
   info "Installing pnpm..."
-  corepack enable 2>/dev/null || npm install -g pnpm
+  corepack enable 2>/dev/null || npm install -g pnpm 2>/dev/null || {
+    curl -fsSL https://get.pnpm.io/install.sh | sh -
+    export PNPM_HOME="${HOME}/.local/share/pnpm"
+    export PATH="${PNPM_HOME}:${PATH}"
+  }
 fi
 success "pnpm $(pnpm -v)"
 
 # ── Git check ────────────────────────────────────────────────────────────────
 if ! command -v git &>/dev/null; then
   if [ "${OS}" = "Darwin" ]; then
-    # xcode-select triggers git install on macOS
-    info "Installing Git (Xcode Command Line Tools)..."
+    # macOS ships git with Xcode CLT — trigger install if needed
+    info "Git not found. macOS will prompt to install Xcode Command Line Tools..."
     xcode-select --install 2>/dev/null || true
+    # Wait for it
+    until command -v git &>/dev/null; do sleep 3; done
   elif [ "${OS}" = "Linux" ]; then
+    info "Installing Git..."
     sudo apt-get install -y git 2>/dev/null || sudo dnf install -y git 2>/dev/null || sudo pacman -S --noconfirm git 2>/dev/null
   fi
 fi
-command -v git &>/dev/null || fatal "Git is required but could not be installed."
+command -v git &>/dev/null || fatal "Git is required. Install it and re-run."
 success "Git $(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
 
 # ── Clone or update Talome ──────────────────────────────────────────────────
@@ -434,7 +430,7 @@ elif [ "${OS}" = "Darwin" ]; then
     <key>NODE_ENV</key>
     <string>production</string>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>${TALOME_DIR}/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
   <key>StandardOutPath</key>
   <string>${TALOME_DIR}/logs/talome.log</string>
