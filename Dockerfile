@@ -35,16 +35,21 @@ COPY packages ./packages
 
 RUN pnpm --filter @talome/core build
 
+# Deploy: create a self-contained directory with production deps only
+RUN pnpm deploy --filter @talome/core --prod --legacy /app/core-deploy
+
 # ── Stage 3: runtime ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
 WORKDIR /app
 
 RUN apk add --no-cache docker-cli tini curl
 
-# Core compiled output + production deps
+# Core: self-contained deploy with all production deps resolved
+COPY --from=core-builder /app/core-deploy ./core
 COPY --from=core-builder /app/apps/core/dist ./core/dist
-COPY --from=core-builder /app/apps/core/package.json ./core/
-COPY --from=core-builder /app/apps/core/node_modules ./core/node_modules
+
+# Core prompts (needed at runtime for AI)
+COPY --from=core-builder /app/apps/core/prompts ./core/prompts
 
 # Dashboard standalone build
 COPY --from=dashboard-builder /app/apps/dashboard/.next/standalone ./dashboard
@@ -57,13 +62,10 @@ COPY app-store ./core/app-store
 ENV CORE_PORT=4000
 ENV DASHBOARD_PORT=3000
 ENV NODE_ENV=production
-# In production, Docker/compose restart policy handles crash recovery.
-# Setting TALOME_WATCHDOG=true tells apply_change that a safety net is active.
 ENV TALOME_WATCHDOG=true
 
 EXPOSE 4000 3000
 
-# Use tini as PID 1 for proper signal handling
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "core/dist/index.js"]
 
