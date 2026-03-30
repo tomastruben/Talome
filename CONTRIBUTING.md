@@ -14,7 +14,7 @@ Thanks for your interest in contributing to Talome! Whether it's a bug fix, new 
 
 ```bash
 # Clone the repo
-git clone https://github.com/talomehq/talome.git
+git clone https://github.com/tomastruben/Talome.git
 cd talome
 
 # Install dependencies
@@ -100,7 +100,7 @@ When reporting a bug, please include:
 ## Getting Help
 
 - **Discord:** [discord.gg/HK7gFaVRJ](https://discord.gg/HK7gFaVRJ)
-- **Discussions:** [GitHub Discussions](https://github.com/talomehq/talome/discussions)
+- **Discussions:** [GitHub Discussions](https://github.com/tomastruben/Talome/discussions)
 
 ## License
 

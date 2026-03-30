@@ -9,7 +9,7 @@ const pillars = [
   },
   {
     title: "Fully open source",
-    desc: "MIT licensed. Read every line, fork it, modify it, contribute back. The entire codebase is yours to inspect and extend.",
+    desc: "AGPL-3.0 licensed. Read every line, fork it, modify it, contribute back. The entire codebase is yours to inspect and extend.",
   },
   {
     title: "Private by design",

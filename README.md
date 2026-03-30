@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="AGPL-3.0" /></a>
-  <a href="https://github.com/talomehq/talome/stargazers"><img src="https://img.shields.io/github/stars/talomehq/talome" alt="GitHub Stars" /></a>
+  <a href="https://github.com/tomastruben/Talome/stargazers"><img src="https://img.shields.io/github/stars/tomastruben/Talome" alt="GitHub Stars" /></a>
   <a href="https://discord.gg/HK7gFaVRJ"><img src="https://img.shields.io/discord/PLACEHOLDER?label=Discord&logo=discord&color=5865F2" alt="Discord" /></a>
   <img src="https://img.shields.io/badge/status-public%20alpha-orange" alt="Public Alpha" />
 </p>
@@ -75,7 +75,7 @@ The installer detects your OS, installs Docker if needed, generates a secret key
 ```yaml
 services:
   talome:
-    image: ghcr.io/talomehq/talome:latest
+    image: ghcr.io/tomastruben/Talome:latest
     container_name: talome
     restart: unless-stopped
     ports:
@@ -135,14 +135,14 @@ curl -fsSL https://get.talome.dev | bash -s -- update
 
 ```
 apps/core/          Hono backend — AI agent, 230+ tools, Docker API, SQLite
-apps/dashboard/     Next.js 15 frontend — dashboard, chat, app store
+apps/dashboard/     Next.js 16 frontend — dashboard, chat, app store
 apps/web/           Documentation and marketing website
 packages/types/     Shared TypeScript types
 ```
 
 | Layer | Stack |
 |---|---|
-| Frontend | Next.js 15, React 19, Tailwind CSS 4, shadcn/ui |
+| Frontend | Next.js 16, React 19, Tailwind CSS 4, shadcn/ui |
 | Backend | Hono, Vercel AI SDK, Anthropic Claude |
 | Database | SQLite + Drizzle ORM |
 | Validation | Zod everywhere |
@@ -174,7 +174,7 @@ Talome includes a Model Context Protocol server. Claude Code sessions get full a
 
 ```bash
 # Clone and install
-git clone https://github.com/talomehq/talome.git
+git clone https://github.com/tomastruben/Talome.git
 cd talome
 pnpm install
 
@@ -233,7 +233,7 @@ Talome is open source and contributions are welcome. See [CONTRIBUTING.md](CONTR
 ## Community
 
 - **Discord:** [discord.gg/HK7gFaVRJ](https://discord.gg/HK7gFaVRJ) — bug reports, feature requests, show off your setup
-- **Discussions:** [GitHub Discussions](https://github.com/talomehq/talome/discussions)
+- **Discussions:** [GitHub Discussions](https://github.com/tomastruben/Talome/discussions)
 
 ## License
 
@@ -246,6 +246,6 @@ All product names, logos, and trademarks shown in screenshots and demo videos be
 ---
 
 <p align="center">
-  Built by <a href="https://github.com/tomast">Tomas Truben</a>.<br/>
+  Built by <a href="https://github.com/tomastruben">Tomas Truben</a>.<br/>
   <strong>Your server, one message away.</strong>
 </p>

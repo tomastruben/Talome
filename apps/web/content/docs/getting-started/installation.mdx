@@ -48,7 +48,7 @@ This single command does the following:
 1. **Detects your OS and architecture** — Linux (amd64/arm64) or macOS
 2. **Installs Docker** if not present (Linux only, via official Docker repository)
 3. **Generates a 64-character hex secret** for session encryption
-4. **Pulls the Talome container image** from `ghcr.io/talomehq/talome`
+4. **Pulls the Talome container image** from `ghcr.io/tomastruben/talome`
 5. **Creates a Docker Compose file** at `~/.talome/docker-compose.yml`
 6. **Starts Talome** with persistent storage, Docker socket access, and restart policy
 7. **Prints the dashboard URL** — `http://localhost:3000`
@@ -68,7 +68,7 @@ If you prefer full control over the deployment, create the compose file yourself
 ```yaml title="docker-compose.yml"
 services:
   talome:
-    image: ghcr.io/talomehq/talome:latest
+    image: ghcr.io/tomastruben/talome:latest
     container_name: talome
     restart: unless-stopped
     ports:
@@ -308,7 +308,7 @@ docker volume rm talome-data
 rm -rf ~/.talome
 
 # Remove the container image
-docker rmi ghcr.io/talomehq/talome:latest
+docker rmi ghcr.io/tomastruben/talome:latest
 ```
 
 <Callout type="warn">

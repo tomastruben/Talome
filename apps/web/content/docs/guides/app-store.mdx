@@ -1,9 +1,9 @@
 ---
 title: App Store
-description: Unified app store — four sources, one install pipeline, AI-powered management.
+description: Unified app store — multiple sources, one install pipeline, AI-powered management.
 ---
 
-Talome's app store unifies four sources into a single browsable, searchable interface. Whether an app was built for Talome, CasaOS, or Umbrel, the install experience is identical — one click or one message.
+Talome's app store unifies multiple sources into a single browsable, searchable interface. Whether an app comes from CasaOS or Umbrel, the install experience is identical — one click or one message. You can also create your own apps by describing what you need.
 
 <ScreenshotPlaceholder description="App store grid showing apps from Talome, CasaOS, and Umbrel sources with colored source badges" />
 
@@ -11,14 +11,13 @@ Talome's app store unifies four sources into a single browsable, searchable inte
 
 Most home server platforms lock you into their app store. If CasaOS has the app but Umbrel doesn't, you're stuck manually writing Docker Compose files. Talome solves this by normalizing every source into a common manifest format. You get the combined catalog of all three ecosystems, plus anything you build yourself.
 
-Four sources ship out of the box:
+Three sources ship out of the box:
 
 | Source | Description |
 |--------|-------------|
-| **Talome Native** | Curated apps with deep AI integration, optimized compose files, and healthchecks |
 | **CasaOS** | Full CasaOS app store catalog, imported and normalized |
 | **Umbrel** | Full Umbrel app store catalog, imported and normalized |
-| **My Creations** | Apps you've built with the app creation system |
+| **Your Creations** | Apps you've built with the AI app creation system — describe what you need and Talome generates a complete Docker app |
 
 ## Multi-Source Architecture
 
@@ -48,7 +47,7 @@ During sync, each adapter clones or pulls its upstream repository, parses every 
 
 ### Dashboard UI
 
-The app store page displays a grid of app cards. Each card shows the app icon, name, tagline, category, and a **source badge** indicating where it came from (Talome, CasaOS, Umbrel, or My Creations).
+The app store page displays a grid of app cards. Each card shows the app icon, name, tagline, category, and a **source badge** indicating where it came from (Talome, CasaOS, Umbrel, or Your Creations).
 
 You can filter by:
 

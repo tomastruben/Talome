@@ -16,7 +16,7 @@ Users install, configure, and manage self-hosted apps through a chat interface. 
 
 ```
 apps/core/          — Hono backend: AI agent, tools, Docker API, DB, MCP server
-apps/dashboard/     — Next.js 15 frontend: dashboard, chat UI, app store
+apps/dashboard/     — Next.js 16 frontend: dashboard, chat UI, app store
 packages/types/     — Shared TypeScript types
 ```
 
@@ -40,7 +40,7 @@ Key frontend paths:
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 15 App Router, React 19, Tailwind CSS 4 |
+| Frontend | Next.js 16 App Router, React 19, Tailwind CSS 4 |
 | UI components | shadcn/ui (all primitives are already installed) |
 | Backend | Hono (TypeScript), Vercel AI SDK |
 | Database | SQLite via Drizzle ORM + better-sqlite3 |

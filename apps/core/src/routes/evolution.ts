@@ -509,7 +509,7 @@ evolution.post("/bug-hunt", async (c) => {
 
 The codebase is a TypeScript monorepo:
 - apps/core/ — Hono backend (AI agent, Docker API, tools, DB)
-- apps/dashboard/ — Next.js 15 frontend (React 19, Tailwind, shadcn/ui)
+- apps/dashboard/ — Next.js 16 frontend (React 19, Tailwind, shadcn/ui)
 - packages/types/ — shared types
 
 The user has described a bug in their own words. Your job is to:

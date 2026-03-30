@@ -1,6 +1,6 @@
 services:
   talome:
-    image: ghcr.io/talomehq/talome:latest
+    image: ghcr.io/tomastruben/talome:latest
     container_name: talome
     restart: unless-stopped
     ports:

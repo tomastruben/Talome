@@ -3,7 +3,7 @@ title: App Creation
 description: Create any Docker app by describing it in plain English — from single-service tools to multi-container stacks with custom UIs.
 ---
 
-Describe what you want. Talome generates a complete Docker stack — compose file, manifest, health checks, environment variables, volumes, and optionally a full web UI. The app appears in your "My Creations" store and installs with one click, identical to any app from the public store.
+Describe what you want. Talome generates a complete Docker stack — compose file, manifest, health checks, environment variables, volumes, and optionally a full web UI. The app appears in your "Your Creations" store and installs with one click, identical to any app from the public store.
 
 No Dockerfile knowledge required. No YAML editing. No manual port allocation. Describe the app, review the blueprint, and it exists.
 
@@ -57,9 +57,9 @@ The generation prioritizes **source reuse**. Before writing anything from scratc
 2. Public compose examples from the image's documentation
 3. Official Docker Hub templates
 
-### Stage 4: Publish to My Creations
+### Stage 4: Publish to Your Creations
 
-The generated app is saved to `~/.talome/user-apps/` and immediately appears in the "My Creations" section of your app store. No build step, no deployment — it's available instantly.
+The generated app is saved to `~/.talome/user-apps/` and immediately appears in the "Your Creations" section of your app store. No build step, no deployment — it's available instantly.
 
 ### Stage 5: Install and Test
 
@@ -112,7 +112,7 @@ AI: I'll design a blueprint for your bookmark manager.
 
     [Claude Code scaffolds the workspace]
 
-    Done. "Linkmark" is now in My Creations with:
+    Done. "Linkmark" is now in Your Creations with:
     - docker-compose.yml (2 services, healthchecks, restart policies)
     - manifest.json (store metadata)
     - .env.example
@@ -197,9 +197,9 @@ AI: [design_app_blueprint: ...]
 
 Generated UIs use the same component primitives, color palette, and spacing scale as Talome's own dashboard. They look like they belong next to existing Talome pages on first render.
 
-## Publishing to My Creations
+## Publishing to Your Creations
 
-Generated apps automatically appear in your "My Creations" store section. Each app gets:
+Generated apps automatically appear in your "Your Creations" store section. Each app gets:
 
 - A store card with icon, name, description, and category
 - An install button that works identically to public store apps

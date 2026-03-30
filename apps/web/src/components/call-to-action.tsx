@@ -75,7 +75,7 @@ export default function CallToAction() {
                 variant="outline"
                 className="h-12 rounded-full border-border/30 px-8 text-base text-muted-foreground hover:text-foreground"
               >
-                <Link href="https://github.com/talomehq/talome">
+                <Link href="https://github.com/tomastruben/Talome">
                   <span>Star on GitHub</span>
                 </Link>
               </Button>

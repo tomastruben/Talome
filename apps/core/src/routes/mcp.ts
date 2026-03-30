@@ -11,7 +11,7 @@ import { allTools } from "../ai/agent.js";
 // agent — same names, same descriptions, same schemas, same execute logic.
 
 export function createMcpServer(): McpServer {
-  const server = new McpServer({ name: "talome", version: "1.0.0" });
+  const server = new McpServer({ name: "talome", version: "0.1.0" });
 
   for (const [toolName, toolDef] of Object.entries(allTools)) {
     const t = toolDef as {

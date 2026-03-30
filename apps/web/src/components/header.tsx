@@ -11,7 +11,7 @@ const menuItems = [
   { name: "Features", href: "#features" },
   { name: "Apps", href: "#apps" },
   { name: "Docs", href: "/docs" },
-  { name: "GitHub", href: "https://github.com/talomehq/talome" },
+  { name: "GitHub", href: "https://github.com/tomastruben/Talome" },
 ];
 
 const EASE = [0.2, 0.8, 0.2, 1] as const;
