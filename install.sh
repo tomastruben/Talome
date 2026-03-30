@@ -88,7 +88,29 @@ case "${OS}" in
       . /etc/os-release
       OS_PRETTY="${PRETTY_NAME:-Linux}"
     fi
-    DOCKER_RUNTIME="Docker Engine"
+    # Detect WSL
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+      IS_WSL=true
+      OS_PRETTY="${OS_PRETTY} (WSL2)"
+      DOCKER_RUNTIME="Docker Desktop"
+    else
+      DOCKER_RUNTIME="Docker Engine"
+    fi
+    ;;
+  MINGW*|MSYS*|CYGWIN*)
+    echo ""
+    warn "You're running this from Git Bash / MSYS on Windows."
+    info "Use the PowerShell installer instead:"
+    echo ""
+    echo -e "    ${BOLD}irm https://get.talome.dev/install.ps1 | iex${RESET}"
+    echo ""
+    info "Or run this script from WSL2 (Ubuntu):"
+    echo ""
+    echo -e "    ${BOLD}wsl --install${RESET}  ${DIM}(if WSL2 is not set up yet)${RESET}"
+    echo -e "    ${BOLD}wsl${RESET}"
+    echo -e "    ${BOLD}curl -fsSL https://get.talome.dev | bash${RESET}"
+    echo ""
+    exit 1
     ;;
   *)
     OS_PRETTY="${OS}"
@@ -245,7 +267,19 @@ install_docker_mac() {
 }
 
 if ! check_docker; then
-  if [ "${OS}" = "Darwin" ]; then
+  if [ "${IS_WSL:-false}" = true ]; then
+    echo ""
+    warn "Docker not found in WSL2."
+    info "Install Docker Desktop on Windows with WSL2 integration enabled:"
+    echo ""
+    echo -e "    ${BOLD}1.${RESET} Download from ${CYAN}https://docs.docker.com/desktop/install/windows/${RESET}"
+    echo -e "    ${BOLD}2.${RESET} In Settings → Resources → WSL Integration, enable your distro"
+    echo -e "    ${BOLD}3.${RESET} Re-run this installer"
+    echo ""
+    info "Or use the PowerShell installer: ${BOLD}irm https://get.talome.dev/install.ps1 | iex${RESET}"
+    echo ""
+    exit 1
+  elif [ "${OS}" = "Darwin" ]; then
     install_docker_mac
   elif [ "${OS}" = "Linux" ]; then
     install_docker_linux

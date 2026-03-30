@@ -1,9 +1,9 @@
 ---
 title: Installation
-description: Install Talome on Linux or macOS in under 60 seconds. One command, zero dependencies.
+description: Install Talome on Linux, macOS, or Windows in under 60 seconds. One command, zero dependencies.
 ---
 
-Talome runs as a Docker container on any Linux or macOS machine. The installer handles everything — Docker, secrets, networking — so you can go from bare metal to a running dashboard in a single command.
+Talome runs as a Docker container on Linux, macOS, or Windows. The installer handles everything — Docker, secrets, networking — so you can go from bare metal to a running dashboard in a single command.
 
 ## System Requirements
 
@@ -16,6 +16,7 @@ Talome runs as a Docker container on any Linux or macOS machine. The installer h
 | Fedora | 38+ | Fully supported |
 | Arch Linux | Rolling | Fully supported |
 | macOS | 12 Monterey+ | Supported (OrbStack or Docker Desktop) |
+| Windows | 10 21H2+ / 11 | Supported (Docker Desktop + WSL2) |
 | Raspberry Pi OS | Bookworm (64-bit) | Supported (ARM64) |
 
 Talome requires a 64-bit OS. 32-bit ARM is not supported.
@@ -33,19 +34,27 @@ Disk requirements are for Talome itself plus Docker images. Your media, app data
 
 ### Docker
 
-Docker 20.10+ is required. The installer checks for Docker and installs it automatically on Linux if missing. On macOS, install [OrbStack](https://orbstack.dev) (recommended) or [Docker Desktop](https://www.docker.com/products/docker-desktop/) before running the installer.
+Docker 20.10+ is required. The installer checks for Docker and installs it automatically if missing — via the official Docker repository on Linux, or by downloading OrbStack/Docker Desktop directly on macOS and Windows.
 
 ---
 
 ## Quick Install
 
+**Linux / macOS:**
+
 ```bash
 curl -fsSL https://get.talome.dev | bash
 ```
 
+**Windows (PowerShell):**
+
+```powershell
+irm https://get.talome.dev/install.ps1 | iex
+```
+
 This single command does the following:
 
-1. **Detects your OS and architecture** — Linux (amd64/arm64) or macOS
+1. **Detects your OS and architecture** — Linux (amd64/arm64), macOS, or Windows
 2. **Installs Docker** if not present (Linux only, via official Docker repository)
 3. **Generates a 64-character hex secret** for session encryption
 4. **Pulls the Talome container image** from `ghcr.io/tomastruben/talome`
