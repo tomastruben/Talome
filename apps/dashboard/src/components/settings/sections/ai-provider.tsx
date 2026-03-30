@@ -255,7 +255,10 @@ export function AiProviderSection() {
               : "border-border/40 hover:border-border/60"
           }`}
         >
-          <p className="text-sm font-medium mb-1.5">OpenAI</p>
+          <div className="flex items-center gap-2 mb-1.5">
+            <p className="text-sm font-medium">OpenAI</p>
+            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Experimental</span>
+          </div>
           <p className="text-xs text-muted-foreground">GPT models. Pay-per-use API key. Alternative option.</p>
         </button>
         <button
@@ -267,7 +270,10 @@ export function AiProviderSection() {
               : "border-border/40 hover:border-border/60"
           }`}
         >
-          <p className="text-sm font-medium mb-1.5">Ollama</p>
+          <div className="flex items-center gap-2 mb-1.5">
+            <p className="text-sm font-medium">Ollama</p>
+            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Experimental</span>
+          </div>
           <p className="text-xs text-muted-foreground">Free and private. Runs on your hardware. Requires setup.</p>
         </button>
       </div>
@@ -378,11 +384,17 @@ export function AiProviderSection() {
           onEdit={() => { setAnthropicEditing(true); setAnthropicKey(""); }}
           onChange={setAnthropicKey}
         />
+        <SettingsRow className="bg-muted/30 justify-end py-3">
+          <Button size="sm" onClick={saveKeys} disabled={saving} className="h-7 text-xs px-4">
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </SettingsRow>
       </SettingsGroup>
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">OpenAI</p>
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Experimental</span>
           {activeProvider === "openai" && (
             <Badge variant="secondary" className="ml-2 text-xs gap-1">
               <HugeiconsIcon icon={Tick01Icon} size={10} />
@@ -446,6 +458,7 @@ export function AiProviderSection() {
       <SettingsGroup>
         <SettingsRow className="py-2.5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Ollama</p>
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Experimental</span>
           {activeProvider === "ollama" && (
             <Badge variant="secondary" className="ml-2 text-xs gap-1">
               <HugeiconsIcon icon={Tick01Icon} size={10} />
