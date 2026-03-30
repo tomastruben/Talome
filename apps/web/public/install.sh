@@ -264,10 +264,10 @@ if ! check_node_version; then
     else
       # Direct binary install — no Homebrew, no sudo
       info "Installing Node.js ${MIN_NODE}..."
-      local NODE_ARCH="arm64"
+      NODE_ARCH="arm64"
       [ "${ARCH}" = "x86_64" ] && NODE_ARCH="x64"
-      local NODE_URL="https://nodejs.org/dist/v${MIN_NODE}.0.0/node-v${MIN_NODE}.0.0-darwin-${NODE_ARCH}.tar.gz"
-      local NODE_INSTALL="${TALOME_DIR}/node"
+      NODE_URL="https://nodejs.org/dist/v${MIN_NODE}.0.0/node-v${MIN_NODE}.0.0-darwin-${NODE_ARCH}.tar.gz"
+      NODE_INSTALL="${TALOME_DIR}/node"
       mkdir -p "${NODE_INSTALL}"
       curl -fsSL "${NODE_URL}" | tar xz -C "${NODE_INSTALL}" --strip-components=1
       export PATH="${NODE_INSTALL}/bin:${PATH}"
@@ -275,10 +275,10 @@ if ! check_node_version; then
     fi
   elif [ "${OS}" = "Linux" ]; then
     info "Installing Node.js ${MIN_NODE}..."
-    local NODE_ARCH="x64"
+    NODE_ARCH="x64"
     [ "${ARCH}" = "aarch64" ] || [ "${ARCH}" = "arm64" ] && NODE_ARCH="arm64"
-    local NODE_URL="https://nodejs.org/dist/v${MIN_NODE}.0.0/node-v${MIN_NODE}.0.0-linux-${NODE_ARCH}.tar.xz"
-    local NODE_INSTALL="${TALOME_DIR}/node"
+    NODE_URL="https://nodejs.org/dist/v${MIN_NODE}.0.0/node-v${MIN_NODE}.0.0-linux-${NODE_ARCH}.tar.xz"
+    NODE_INSTALL="${TALOME_DIR}/node"
     mkdir -p "${NODE_INSTALL}"
     curl -fsSL "${NODE_URL}" | tar xJ -C "${NODE_INSTALL}" --strip-components=1
     export PATH="${NODE_INSTALL}/bin:${PATH}"
