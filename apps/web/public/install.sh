@@ -266,7 +266,7 @@ if ! check_node_version; then
       info "Installing Node.js ${MIN_NODE}..."
       NODE_ARCH="arm64"
       [ "${ARCH}" = "x86_64" ] && NODE_ARCH="x64"
-      NODE_URL="https://nodejs.org/dist/v${MIN_NODE}.0.0/node-v${MIN_NODE}.0.0-darwin-${NODE_ARCH}.tar.gz"
+      NODE_URL="https://nodejs.org/dist/v22.22.2/node-v22.22.2-darwin-${NODE_ARCH}.tar.gz"
       NODE_INSTALL="${TALOME_DIR}/node"
       mkdir -p "${NODE_INSTALL}"
       curl -fsSL "${NODE_URL}" | tar xz -C "${NODE_INSTALL}" --strip-components=1
@@ -277,7 +277,7 @@ if ! check_node_version; then
     info "Installing Node.js ${MIN_NODE}..."
     NODE_ARCH="x64"
     [ "${ARCH}" = "aarch64" ] || [ "${ARCH}" = "arm64" ] && NODE_ARCH="arm64"
-    NODE_URL="https://nodejs.org/dist/v${MIN_NODE}.0.0/node-v${MIN_NODE}.0.0-linux-${NODE_ARCH}.tar.xz"
+    NODE_URL="https://nodejs.org/dist/v22.22.2/node-v22.22.2-linux-${NODE_ARCH}.tar.xz"
     NODE_INSTALL="${TALOME_DIR}/node"
     mkdir -p "${NODE_INSTALL}"
     curl -fsSL "${NODE_URL}" | tar xJ -C "${NODE_INSTALL}" --strip-components=1
