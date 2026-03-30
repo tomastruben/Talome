@@ -198,11 +198,11 @@ wait_for_docker() {
   info "Waiting for ${label} to start..."
   local i=0
   while ! docker info &>/dev/null 2>&1; do
-    i=$(( WAITED / 2 % 10 ))
-    printf "\r  ${CYAN}${SPINNER:$i:1}${RESET} Starting ${label}...  " >&2
+    local spin_idx=$(( i / 2 % 10 ))
+    printf "\r  ${CYAN}${SPINNER:$spin_idx:1}${RESET} Starting ${label}...  " >&2
     sleep 2
-    WAITED=$((WAITED+2))
-    if [ $WAITED -ge 90 ]; then
+    i=$((i+2))
+    if [ $i -ge 90 ]; then
       printf "\r                              \r" >&2
       fatal "${label} didn't start within 90 seconds. Start it manually and re-run."
     fi

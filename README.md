@@ -32,6 +32,12 @@
 curl -fsSL https://get.talome.dev | bash
 ```
 
+**Windows (PowerShell):**
+
+```powershell
+irm https://get.talome.dev/install.ps1 | iex
+```
+
 <p align="center">
   <img src="apps/web/public/hero-preview.gif" alt="Talome dashboard demo" width="720" />
 </p>
@@ -61,13 +67,21 @@ No YAML. No config files. No SSH. One message away.
 
 ## Install
 
+**Linux / macOS:**
+
 ```bash
 curl -fsSL https://get.talome.dev | bash
 ```
 
+**Windows (PowerShell):**
+
+```powershell
+irm https://get.talome.dev/install.ps1 | iex
+```
+
 The installer detects your OS, installs Docker if needed, generates a secret key, and starts Talome. Open `http://localhost:3000` when it's done.
 
-**Requirements:** Linux or macOS. 2GB RAM, 5GB disk. Docker is installed automatically if missing. Bring your own [Anthropic API key](https://console.anthropic.com/).
+**Requirements:** Linux, macOS, or Windows 10+. 2GB RAM, 5GB disk. Docker is installed automatically if missing. Bring your own [Anthropic API key](https://console.anthropic.com/).
 
 <details>
 <summary>Manual install / Docker Compose</summary>
