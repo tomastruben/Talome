@@ -180,7 +180,11 @@ install_homebrew() {
   if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
     info "Homebrew needs administrator access (you'll be asked once)."
     sudo -v </dev/tty
+    # Keep sudo alive in the background while Homebrew installs
+    while true; do sudo -n true; sleep 50; done 2>/dev/null &
+    SUDO_KEEPALIVE_PID=$!
     NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    kill "${SUDO_KEEPALIVE_PID}" 2>/dev/null
     # Add Homebrew to PATH for Apple Silicon
     if [ -f /opt/homebrew/bin/brew ]; then
       eval "$(/opt/homebrew/bin/brew shellenv)"
