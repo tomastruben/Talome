@@ -3,6 +3,7 @@ import { stream } from "hono/streaming";
 import { z } from "zod";
 import { generateObject, generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
 import { eq, desc } from "drizzle-orm";
 import { readEvolutionLog } from "../ai/tools/claude-code-tool.js";
 import { PROJECT_ROOT } from "../ai/tools/claude-code-tool.js";
@@ -22,6 +23,7 @@ import { homedir } from "node:os";
 import { execSync } from "node:child_process";
 import { existsSync, renameSync, rmSync, cpSync } from "node:fs";
 import { createLogger } from "../utils/logger.js";
+import { getSetting } from "../utils/settings.js";
 
 const log = createLogger("evolution");
 
@@ -332,20 +334,45 @@ const SCOPE_DIRS: Record<string, string> = {
 
 const TERMINAL_DAEMON_PORT = Number(process.env.TERMINAL_DAEMON_PORT) || 4001;
 
-// ── Bug Hunt — Haiku-augmented bug description ──────────────────────────────
+// ── Bug Hunt — lightweight model for augmentation ────────────────────────────
 
-const BUG_HUNT_MODEL = "claude-haiku-4-5-20251001";
+type AiProvider = "anthropic" | "openai" | "ollama";
 
-function getApiKey(): string | undefined {
-  try {
-    const row = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, "anthropic_key"))
-      .get();
-    return row?.value || process.env.ANTHROPIC_API_KEY;
-  } catch {
-    return process.env.ANTHROPIC_API_KEY;
+const LIGHTWEIGHT_MODELS: Record<AiProvider, string> = {
+  anthropic: "claude-haiku-4-5-20251001",
+  openai: "gpt-4o-mini",
+  ollama: "",
+};
+
+function getActiveProvider(): AiProvider {
+  const stored = getSetting("ai_provider");
+  if (stored === "anthropic" || stored === "openai" || stored === "ollama") return stored;
+  return "anthropic";
+}
+
+/** Create a lightweight model instance using the user's configured provider. */
+function createLightweightModel() {
+  const provider = getActiveProvider();
+  const modelId = getSetting("ai_model") || LIGHTWEIGHT_MODELS[provider] || LIGHTWEIGHT_MODELS.anthropic;
+
+  switch (provider) {
+    case "anthropic": {
+      const apiKey = getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) return null;
+      return { model: createAnthropic({ apiKey })(modelId), modelId };
+    }
+    case "openai": {
+      const apiKey = getSetting("openai_key") || process.env.OPENAI_API_KEY;
+      if (!apiKey) return null;
+      return { model: createOpenAI({ apiKey })(modelId), modelId };
+    }
+    case "ollama": {
+      const url = getSetting("ollama_url");
+      if (!url) return null;
+      return { model: createOpenAI({ baseURL: `${url}/v1`, apiKey: "ollama" })(modelId), modelId };
+    }
+    default:
+      return null;
   }
 }
 
@@ -367,13 +394,12 @@ function extractFallbackName(taskPrompt: string, suggestionTitle?: string): stri
 async function generateSessionDisplayName(taskPrompt: string, suggestionTitle?: string): Promise<string> {
   const fallback = extractFallbackName(taskPrompt, suggestionTitle);
 
-  const apiKey = getApiKey();
-  if (!apiKey) return fallback;
+  const lm = createLightweightModel();
+  if (!lm) return fallback;
 
   try {
-    const anthropic = createAnthropic({ apiKey });
     const result = await generateText({
-      model: anthropic(BUG_HUNT_MODEL),
+      model: lm.model,
       prompt: `Generate a concise 2-4 word label for this task. Use Title Case. No quotes, no punctuation, no articles. Examples: "Docker Config Fix", "Memory Leak Debug", "Network Setup", "Terminal UI Polish", "Auth Middleware Rewrite".
 
 Task: "${taskPrompt.slice(0, 300)}"
@@ -383,7 +409,7 @@ Label:`,
     });
 
     logAiUsage({
-      model: BUG_HUNT_MODEL,
+      model: lm.modelId,
       tokensIn: result.usage?.inputTokens ?? 0,
       tokensOut: result.usage?.outputTokens ?? 0,
       context: "session_name_gen",
@@ -461,9 +487,9 @@ evolution.post("/bug-hunt", async (c) => {
 
   const body = bodySchema.parse(await c.req.json());
 
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    return c.json({ error: "No API key configured" }, 400);
+  const lm = createLightweightModel();
+  if (!lm) {
+    return c.json({ error: "No AI provider configured" }, 400);
   }
 
   // Save screenshots if provided
@@ -496,14 +522,12 @@ evolution.post("/bug-hunt", async (c) => {
     : "";
 
   try {
-    const anthropic = createAnthropic({ apiKey });
-
     const screenshotContext = screenshotPaths.length > 0
       ? `\n\nThe user also attached ${screenshotPaths.length} screenshot(s) showing the bug.`
       : "";
 
     const result = await generateObject({
-      model: anthropic(BUG_HUNT_MODEL),
+      model: lm.model,
       schema: bugReportSchema,
       prompt: `You are a senior software engineer helping triage a bug report for Talome, an AI-first home server management platform.
 
@@ -528,7 +552,7 @@ Be specific in the taskPrompt — mention likely files, components, or systems i
     });
 
     logAiUsage({
-      model: BUG_HUNT_MODEL,
+      model: lm.modelId,
       tokensIn: result.usage?.inputTokens ?? 0,
       tokensOut: result.usage?.outputTokens ?? 0,
       context: "bug_hunt_augment",
