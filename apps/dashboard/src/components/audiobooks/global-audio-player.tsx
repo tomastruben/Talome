@@ -12,6 +12,7 @@ import {
   HugeiconsIcon,
   PlayIcon,
   PauseIcon,
+  Cancel01Icon,
 } from "@/components/icons";
 
 /**
@@ -25,7 +26,7 @@ export function GlobalAudioPlayer() {
 
   const book = useAtomValue(audioPlayerBookAtom);
   const state = useAtomValue(audioPlayerStateAtom);
-  const { togglePlay } = useAudiobookPlayer();
+  const { togglePlay, stop } = useAudiobookPlayer();
   const pathname = usePathname();
 
   const isOnBookPage = book ? pathname === `/dashboard/audiobooks/${book.bookId}` : false;
@@ -64,18 +65,27 @@ export function GlobalAudioPlayer() {
             <p className="text-xs font-medium truncate min-w-0">{book.title}</p>
           </Link>
 
-          {/* Play/pause only */}
-          <button
-            onClick={togglePlay}
-            className="size-10 rounded-full flex items-center justify-center active:bg-foreground/[0.06] transition-colors mr-1"
-            aria-label={state.isPlaying ? "Pause" : "Play"}
-          >
-            <HugeiconsIcon
-              icon={state.isPlaying ? PauseIcon : PlayIcon}
-              size={18}
-              className="text-foreground"
-            />
-          </button>
+          {/* Play/pause + close */}
+          <div className="flex items-center shrink-0 mr-1">
+            <button
+              onClick={togglePlay}
+              className="size-10 rounded-full flex items-center justify-center active:bg-foreground/[0.06] transition-colors"
+              aria-label={state.isPlaying ? "Pause" : "Play"}
+            >
+              <HugeiconsIcon
+                icon={state.isPlaying ? PauseIcon : PlayIcon}
+                size={18}
+                className="text-foreground"
+              />
+            </button>
+            <button
+              onClick={stop}
+              className="size-10 rounded-full flex items-center justify-center active:bg-foreground/[0.06] transition-colors"
+              aria-label="Close player"
+            >
+              <HugeiconsIcon icon={Cancel01Icon} size={14} className="text-muted-foreground" />
+            </button>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>
