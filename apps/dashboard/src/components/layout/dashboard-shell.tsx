@@ -62,7 +62,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               Skip to main content
             </a>
             <AppSidebar />
-            <SidebarInset className="overflow-hidden flex flex-col">
+            <SidebarInset className="overflow-hidden flex flex-col pt-[env(safe-area-inset-top)] md:pt-0">
               {!hideHeader && <SiteHeader />}
               <SystemHealthBanner />
               <main id="main-content" className={`flex-1 min-h-0 min-w-0 overflow-hidden relative flex flex-col ${hideHeader ? "" : "[container-type:inline-size]"}`}>
