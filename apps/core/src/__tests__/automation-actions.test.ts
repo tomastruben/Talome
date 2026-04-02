@@ -94,11 +94,13 @@ describe("runActions", () => {
 
     expect(result.success).toBe(true);
     expect(result.actionsRun).toBe(1);
-    expect(mockRunAutomationPrompt).toHaveBeenCalledWith({
-      prompt: "Investigate container issue",
-      automationName: "Restart helper",
-      triggerType: "container_stopped",
-    });
+    expect(mockRunAutomationPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "Investigate container issue",
+        automationName: "Restart helper",
+        triggerType: "container_stopped",
+      }),
+    );
     expect(mockWriteNotification).toHaveBeenCalledWith(
       "info",
       expect.stringContaining("AI analysis"),

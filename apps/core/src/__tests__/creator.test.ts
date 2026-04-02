@@ -67,6 +67,7 @@ vi.mock("../creator/source-discovery.js", () => ({
 
 vi.mock("../creator/workspace-executor.js", () => ({
   executeWorkspaceGeneration: mockExecuteWorkspaceGeneration,
+  prepareWorkspace: vi.fn(),
 }));
 
 vi.mock("../stores/creator.js", () => ({
