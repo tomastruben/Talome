@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalEnv": ["TALOME_SECRET"],
   "tasks": {
     "dev": {
       "persistent": true,
