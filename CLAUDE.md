@@ -300,6 +300,30 @@ The MCP server auto-syncs from `activeTools` in `apps/core/src/ai/agent.ts`. It 
 
 Full tool listing with descriptions: **`docs/tools-reference.md`**
 
+---
+
+## Gotchas
+
+Common error patterns specific to this codebase. Read before making changes to avoid known pitfalls.
+
+1. **Buffer in Response** — Node.js 22's `Buffer` isn't assignable to `BodyInit`. Always wrap with `new Uint8Array(buffer)` when passing to `new Response()`.
+
+2. **Encrypted settings** — API keys stored via the settings API are encrypted at rest. When reading them for use (e.g., passing to AI providers), always use `decryptSetting()` from `utils/crypto.ts`, not raw DB reads.
+
+3. **Top-level DB queries** — ES modules execute imports before the importing module's body. Never query the database at module top-level — migrations haven't run yet. Use `setTimeout()` or lazy initialization.
+
+4. **Secure cookies over HTTP** — Don't set `secure: true` on cookies based on `NODE_ENV=production`. Self-hosted instances run over HTTP on LAN. The `secure` flag silently drops cookies in browsers over HTTP.
+
+5. **Turbo env passthrough** — Turbo filters environment variables by default. Add required env vars to `globalEnv` in `turbo.json` or they won't reach sub-processes (tests, builds).
+
+6. **Next.js 16 proxy.ts** — Next.js 16 replaced `middleware.ts` with `proxy.ts`. Both cannot coexist — if both files exist, the build fails. API rewrites from `next.config.ts` don't work in standalone builds — use `NextResponse.rewrite()` in proxy.ts instead.
+
+7. **pnpm deploy** — In pnpm 10, `pnpm deploy` requires `--legacy` flag unless `inject-workspace-packages=true` is set. Without it, Docker builds fail.
+
+8. **Docker COPY || true** — Shell tricks like `COPY ... 2>/dev/null || true` don't work in Dockerfiles. The `COPY` instruction doesn't support shell redirects.
+
+---
+
 ### When to use MCP tools
 
 - Verifying your changes work against a live running instance (check container status, read logs)
