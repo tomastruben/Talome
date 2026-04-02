@@ -27,6 +27,46 @@ DASHBOARD_PORT="${TALOME_DASHBOARD_PORT:-3000}"
 TERMINAL_PORT="4001"
 INSTALL_DIR="${TALOME_DIR}/server"
 
+# ── Uninstall subcommand ──────────────────────────────────────────────────────
+if [ "${1:-}" = "uninstall" ]; then
+  echo ""
+  echo -e "  ${BOLD}Uninstalling Talome${RESET}"
+  echo ""
+  printf "  ${ARROW} This will remove all Talome files and data. Continue? ${BOLD}[y/N]${RESET} "
+  ask REPLY
+  REPLY="${REPLY:-N}"
+  if [[ ! "${REPLY}" =~ ^[Yy]$ ]]; then
+    info "Cancelled."
+    exit 0
+  fi
+
+  OS="$(uname -s)"
+
+  # Stop and remove service
+  if [ "${OS}" = "Darwin" ]; then
+    launchctl bootout gui/$(id -u)/dev.talome 2>/dev/null || true
+    rm -f "${HOME}/Library/LaunchAgents/dev.talome.plist"
+    success "Removed launchd service"
+  elif [ "${OS}" = "Linux" ] && command -v systemctl &>/dev/null; then
+    sudo systemctl stop talome 2>/dev/null || true
+    sudo systemctl disable talome 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/talome.service
+    sudo systemctl daemon-reload
+    success "Removed systemd service"
+  fi
+
+  # Remove files
+  if [ -d "${TALOME_DIR}" ]; then
+    rm -rf "${TALOME_DIR}"
+    success "Removed ${TALOME_DIR}"
+  fi
+
+  echo ""
+  success "Talome has been uninstalled."
+  echo ""
+  exit 0
+fi
+
 # ── Update subcommand ─────────────────────────────────────────────────────────
 if [ "${1:-}" = "update" ]; then
   echo ""
