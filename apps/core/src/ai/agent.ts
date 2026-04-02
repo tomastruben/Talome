@@ -1189,13 +1189,13 @@ function getResolvedSystemPrompt(pageContext?: string): string {
 }
 
 // ── Tool access ─────────────────────────────────────────────────────────────
-// allTools: every tool from every domain — used by MCP server (Claude Code gets everything)
-// getActiveTools(): only tools from configured domains — used by dashboard chat
+// activeTools: only tools from configured domains — used by MCP server + dashboard chat
+// getAllRegisteredTools(): full set — only for builtin-name registration
 
-export const allTools = getAllRegisteredTools();
+export const activeTools = getActiveRegisteredTools();
 
-// Register built-in tool names so custom tools cannot shadow them
-setBuiltinToolNames(Object.keys(allTools));
+// Register built-in tool names so custom tools cannot shadow them (needs full set)
+setBuiltinToolNames(Object.keys(getAllRegisteredTools()));
 
 const TOOL_TIERS = getAllTiers();
 

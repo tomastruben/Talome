@@ -27,11 +27,15 @@ vi.mock("../db/memories.js", () => ({
   getTopMemories: vi.fn().mockResolvedValue([]),
 }));
 
-import { allTools } from "../ai/agent.js";
+import { getAllRegisteredTools } from "../ai/tool-registry.js";
+
+// Import agent.js to trigger domain registrations
+import "../ai/agent.js";
 
 // ── Tool registration completeness test ───────────────────────────────────────
+// Uses getAllRegisteredTools() because the test verifies registration, not active filtering.
 describe("allTools registration", () => {
-  const toolNames = Object.keys(allTools);
+  const toolNames = Object.keys(getAllRegisteredTools());
 
   it("has more than 70 tools registered", () => {
     expect(toolNames.length).toBeGreaterThan(70);
@@ -156,7 +160,7 @@ describe("allTools registration", () => {
   });
 
   it("every tool has an execute function", () => {
-    for (const [name, toolDef] of Object.entries(allTools)) {
+    for (const [name, toolDef] of Object.entries(getAllRegisteredTools())) {
       expect(typeof (toolDef as Record<string, unknown>).execute, `${name}.execute`).toBe("function");
     }
   });

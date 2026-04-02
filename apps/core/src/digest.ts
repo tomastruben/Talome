@@ -1,7 +1,7 @@
 import { generateText, stepCountIs } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { spawn } from "node:child_process";
-import { allTools } from "./ai/agent.js";
+import { activeTools } from "./ai/agent.js";
 import { db, schema } from "./db/index.js";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -82,7 +82,7 @@ Keep it focused, honest, and under 300 words. No fluff. Lead with anything criti
         model: createAnthropic({ apiKey })(DIGEST_MODEL),
         system: DIGEST_PROMPT,
         messages: [{ role: "user", content: "Generate this week's server digest." }],
-        tools: allTools,
+        tools: activeTools,
         stopWhen: stepCountIs(6),
       });
       logAiUsage({

@@ -258,7 +258,7 @@ Tools are organized into **domains** — groups of tools that belong to a specif
 
 **How it works:**
 - **Dashboard chat** (`getActiveTools`) — only loads tools for domains whose settings are configured (e.g. arr tools only if `sonarr_url` or `radarr_url` exist). This keeps tool count low for better LLM selection.
-- **MCP server** (Claude Code) — always gets the full tool set via `allTools` / `getAllRegisteredTools()`. Each tool gracefully fails if the app isn't configured.
+- **MCP server** (Claude Code) — uses `activeTools` / `getActiveRegisteredTools()`, same domain filtering as dashboard chat. Only tools for configured apps are exposed.
 
 **Current domains:**
 
@@ -296,7 +296,7 @@ pnpm install
 
 ### Available MCP Tools
 
-The MCP server auto-syncs from `allTools` in `apps/core/src/ai/agent.ts`. Every tool the dashboard assistant has is also available via MCP — Docker, system, apps, media, arr, qBittorrent, Jellyfin, Overseerr, Home Assistant, Pi-hole, Vaultwarden, compose/config, universal app interaction, backup/restore, log search, filesystem, widgets, automations, memories, settings, notifications, self-improvement, and app creation.
+The MCP server auto-syncs from `activeTools` in `apps/core/src/ai/agent.ts`. It uses the same domain filtering as dashboard chat — only tools for configured apps are exposed. Core tools (Docker, system, apps, filesystem, widgets, automations, memories, settings, notifications, self-improvement, app creation) are always available.
 
 Full tool listing with descriptions: **`docs/tools-reference.md`**
 

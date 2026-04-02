@@ -4,16 +4,16 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { randomUUID } from "node:crypto";
 import { hashToken, verifyBearerToken } from "../middleware/auth.js";
 import { writeAuditEntry } from "../db/audit.js";
-import { allTools } from "../ai/agent.js";
+import { activeTools } from "../ai/agent.js";
 
 // ── MCP Server factory ─────────────────────────────────────────────────────────
-// Auto-registers every tool from allTools so MCP always stays in sync with the
-// agent — same names, same descriptions, same schemas, same execute logic.
+// Auto-registers tools from active domains so MCP stays in sync with the agent
+// and only exposes tools for configured apps (same filtering as dashboard chat).
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({ name: "talome", version: "0.1.0" });
 
-  for (const [toolName, toolDef] of Object.entries(allTools)) {
+  for (const [toolName, toolDef] of Object.entries(activeTools)) {
     const t = toolDef as {
       description?: string;
       inputSchema?: Record<string, unknown>;
