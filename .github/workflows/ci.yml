@@ -10,6 +10,8 @@ jobs:
   ci:
     name: Typecheck, Test & Build
     runs-on: ubuntu-latest
+    env:
+      TALOME_SECRET: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
     steps:
       - uses: actions/checkout@v4
@@ -31,8 +33,6 @@ jobs:
 
       - name: Test
         run: pnpm test
-        env:
-          TALOME_SECRET: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
       - name: Build
         run: pnpm build

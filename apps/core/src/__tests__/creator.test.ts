@@ -67,7 +67,12 @@ vi.mock("../creator/source-discovery.js", () => ({
 
 vi.mock("../creator/workspace-executor.js", () => ({
   executeWorkspaceGeneration: mockExecuteWorkspaceGeneration,
-  prepareWorkspace: vi.fn(),
+  prepareWorkspace: vi.fn().mockReturnValue({
+    taskPrompt: "test prompt",
+    workspaceRoot: "/tmp/test-workspace",
+    scaffoldPath: "/tmp/test-workspace/generated-app",
+    sourceSnapshots: [],
+  }),
 }));
 
 vi.mock("../stores/creator.js", () => ({
