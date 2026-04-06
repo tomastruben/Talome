@@ -213,13 +213,27 @@ function getMimeType(filePath: string): string {
 
 // ── Transmux: remux MKV/AVI → MP4 for Safari compatibility ───────────────
 
-/** Resolve ffmpeg binary — prefer jellyfin-ffmpeg (has tonemapx for HDR) over stock. */
+/** Resolve ffmpeg binary — prefer jellyfin-ffmpeg (has tonemapx for HDR) over stock.
+ *  Also checks common install paths (Homebrew on macOS) when ffmpeg isn't in PATH. */
 let cachedFfmpegBin: string | null = null;
 function getFfmpegBin(): string {
   if (cachedFfmpegBin) return cachedFfmpegBin;
+  // 1. Prefer jellyfin-ffmpeg (has tonemapx for HDR→SDR)
   const jfPath = join(process.env.HOME ?? "/tmp", ".local", "bin", "jellyfin-ffmpeg");
   try { execSync(`"${jfPath}" -version`, { stdio: "ignore" }); cachedFfmpegBin = jfPath; }
-  catch { cachedFfmpegBin = "ffmpeg"; }
+  catch {
+    // 2. Try ffmpeg from PATH
+    try { execSync("ffmpeg -version", { stdio: "ignore" }); cachedFfmpegBin = "ffmpeg"; }
+    catch {
+      // 3. Check common install locations (launchd/cron don't inherit shell PATH)
+      const commonPaths = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"];
+      for (const p of commonPaths) {
+        try { execSync(`"${p}" -version`, { stdio: "ignore" }); cachedFfmpegBin = p; break; }
+        catch { /* not here */ }
+      }
+      if (!cachedFfmpegBin) cachedFfmpegBin = "ffmpeg"; // will fail gracefully in hasFfmpeg()
+    }
+  }
   console.log(`[hls] using ffmpeg: ${cachedFfmpegBin}`);
   return cachedFfmpegBin;
 }
@@ -278,8 +292,13 @@ export type { ProbeResult, ProbeAudioTrack, ProbeSubTrack };
 
 export function probeFile(filePath: string): ProbeResult {
   try {
+    // Derive ffprobe path from resolved ffmpeg binary (same directory)
+    const ffmpegBin = getFfmpegBin();
+    const ffprobeBin = ffmpegBin.endsWith("ffmpeg")
+      ? ffmpegBin.replace(/ffmpeg$/, "ffprobe")
+      : "ffprobe";
     const out = execSync(
-      `ffprobe -v error -print_format json -show_format -show_streams "${filePath}"`,
+      `"${ffprobeBin}" -v error -print_format json -show_format -show_streams "${filePath}"`,
       { encoding: "utf-8", timeout: 15_000 },
     );
     const data = JSON.parse(out);
@@ -621,7 +640,7 @@ let cachedHwEncoder: string | null | undefined;
 function detectHwEncoder(): string | null {
   if (cachedHwEncoder !== undefined) return cachedHwEncoder;
   try {
-    const out = execSync("ffmpeg -encoders 2>&1", { encoding: "utf-8", timeout: 5_000 });
+    const out = execSync(`"${getFfmpegBin()}" -encoders 2>&1`, { encoding: "utf-8", timeout: 5_000 });
     if (out.includes("hevc_videotoolbox")) cachedHwEncoder = "hevc_videotoolbox";
     else if (out.includes("h264_videotoolbox")) cachedHwEncoder = "h264_videotoolbox";
     else if (out.includes("hevc_vaapi")) cachedHwEncoder = "hevc_vaapi";
@@ -686,7 +705,7 @@ function buildVideoArgs(videoCodec: string, transcodeVideo = false, colorTransfe
     }
     // Non-HEVC legacy codecs (MPEG4, MPEG2) — hardware encode if available
     try {
-      const out = execSync("ffmpeg -encoders 2>&1", { encoding: "utf-8", timeout: 5_000 });
+      const out = execSync(`"${getFfmpegBin()}" -encoders 2>&1`, { encoding: "utf-8", timeout: 5_000 });
       if (out.includes("h264_videotoolbox")) {
         return [
           "-hwaccel", "videotoolbox",

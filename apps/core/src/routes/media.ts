@@ -2584,17 +2584,18 @@ media.post("/jellyfin-playback", async (c) => {
     return c.json({ available: false, reason: "jellyfin not configured" });
   }
 
-  // Resolve arr container path → host path → extract basename for Jellyfin matching
-  const hostPath = await resolveMediaFilePath(filePath);
-  if (!hostPath) return c.json({ available: false, reason: "path not resolved" });
-
+  // Resolve arr container path → host path → extract basename for Jellyfin matching.
+  // Even if host path resolution fails (e.g. Docker mounts not accessible), we can
+  // still search Jellyfin by the raw filename — don't bail out early.
   const { basename, dirname } = await import("node:path");
-  const fileName = basename(hostPath);
+  const hostPath = await resolveMediaFilePath(filePath);
+  const resolvedPath = hostPath ?? filePath;
+  const fileName = basename(resolvedPath);
 
   // Extract search term from folder structure
-  let folderName = basename(dirname(hostPath));
+  let folderName = basename(dirname(resolvedPath));
   if (/^season\s+\d+$/i.test(folderName)) {
-    folderName = basename(dirname(dirname(hostPath)));
+    folderName = basename(dirname(dirname(resolvedPath)));
   }
   const searchTerm = folderName.replace(/\s*\(\d{4}\)\s*$/, "").trim();
 
@@ -2785,7 +2786,7 @@ media.post("/jellyfin-playback", async (c) => {
     }
 
     // Build quality variants — always available for the frontend quality selector.
-    const sourceHeight = (source.MediaStreams ?? []).find((s) => s.Type === "Video")?.Height ?? 1080;
+    const sourceHeight = (source.MediaStreams ?? []).find((s) => s.Type === "Video")?.Height || 1080;
     const transcodeQualities: Array<{ label: string; height: number; bitrate: number; url: string }> = [];
     const qualityPresets = [
       { label: "1080p", height: 1080, maxWidth: 1920, bitrate: 8_000_000 },
@@ -2794,11 +2795,23 @@ media.post("/jellyfin-playback", async (c) => {
       { label: "360p",  height: 360,  maxWidth: 640,  bitrate: 800_000 },
     ].filter((p) => p.height <= sourceHeight);
 
+    // Ensure at least 480p and 720p are always available for the quality selector
+    if (qualityPresets.length === 0) {
+      qualityPresets.push(
+        { label: "720p", height: 720, maxWidth: 1280, bitrate: 4_000_000 },
+        { label: "480p", height: 480, maxWidth: 854, bitrate: 1_500_000 },
+      );
+    }
+
     if (source.TranscodingUrl) {
       // Modify the existing transcode URL's bitrate/resolution params
       for (const preset of qualityPresets) {
         let url = source.TranscodingUrl;
-        url = url.replace(/VideoBitrate=\d+/, `VideoBitrate=${preset.bitrate}`);
+        if (url.includes("VideoBitrate=")) {
+          url = url.replace(/VideoBitrate=\d+/, `VideoBitrate=${preset.bitrate}`);
+        } else {
+          url += `${url.includes("?") ? "&" : "?"}VideoBitrate=${preset.bitrate}`;
+        }
         if (url.includes("MaxWidth=")) {
           url = url.replace(/MaxWidth=\d+/, `MaxWidth=${preset.maxWidth}`);
         } else {

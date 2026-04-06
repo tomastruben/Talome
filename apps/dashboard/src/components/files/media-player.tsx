@@ -275,9 +275,13 @@ export function VideoPlayer({
                   setPlaybackMode("jellyfin-hls");
                   // Select the first Jellyfin quality preset if available, otherwise default
                   setCurrentQuality(jf.transcodeQualities?.length ? 100 : -1);
+                } else {
+                  // Neither direct play nor transcode available — fall through to Talome probe
                 }
 
-                return; // Jellyfin handles playback — skip Talome pipeline
+                if (useDirectPlay || jf.transcodeUrl) {
+                  return; // Jellyfin handles playback — skip Talome pipeline
+                }
               }
             }
           } catch { /* Jellyfin unavailable — fall through to Talome pipeline */ }
@@ -287,7 +291,11 @@ export function VideoPlayer({
           `${apiBase}/probe?path=${encodeURIComponent(filePath)}`,
           { credentials: "include" },
         );
-        if (!res.ok || cancelled) return;
+        if (!res.ok || cancelled) {
+          // Probe failed (e.g. no ffmpeg on host) — show error instead of staying in "deciding"
+          if (!cancelled) setError(true);
+          return;
+        }
         const data = await res.json();
         if (cancelled) return;
         if (data.audio) setAudioTracks(data.audio);
@@ -351,7 +359,10 @@ export function VideoPlayer({
             setProbedVideoCodec(vCodec);
           }
         }
-      } catch { /* non-critical */ }
+      } catch {
+        // Entire probe/Jellyfin flow failed — show error instead of staying in "deciding"
+        if (!cancelled) setError(true);
+      }
     })();
 
     return () => { cancelled = true; };
