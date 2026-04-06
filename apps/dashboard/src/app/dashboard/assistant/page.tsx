@@ -753,50 +753,51 @@ export default function AssistantPage() {
       placeholder="Ask Talome anything..."
       extraTools={
         <>
-          {modelOptions.length > 1 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const idx = modelOptions.findIndex((o) => o.id === model);
-                    const next = modelOptions[(idx + 1) % modelOptions.length];
-                    if (next) setModel(next.id);
-                  }}
-                  className={`inline-flex items-center justify-center h-8 rounded-md px-2 text-xs font-medium transition-colors duration-150 hover:bg-accent ${
-                    modelOptions.findIndex((o) => o.id === model) > 0
-                      ? "text-foreground"
-                      : "text-dim-foreground"
-                  }`}
-                >
-                  {modelOptions.find((o) => o.id === model)?.name ?? model.split("/").pop()?.split("-")[0] ?? "Model"}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="text-xs">
-                {(() => {
+          {/* Always render Tooltip components to keep the React tree shape stable
+              between server and client — conditional mounting shifts Radix's useId()
+              counter and causes hydration ID mismatches. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => {
                   const idx = modelOptions.findIndex((o) => o.id === model);
                   const next = modelOptions[(idx + 1) % modelOptions.length];
-                  return `Switch to ${next?.name ?? "next model"}`;
-                })()}
-              </TooltipContent>
-            </Tooltip>
-          )}
-          {keyboard.showToggle && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={keyboard.toggle}
-                  className={`inline-flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent ${keyboard.mode === "virtual" ? "text-foreground" : "text-dim-foreground"}`}
-                >
-                  <HugeiconsIcon icon={KeyboardIcon} size={16} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="text-xs">
-                {keyboard.mode === "virtual" ? "Virtual keyboard on" : "Virtual keyboard off"}
-              </TooltipContent>
-            </Tooltip>
-          )}
+                  if (next) setModel(next.id);
+                }}
+                className={`inline-flex items-center justify-center h-8 rounded-md px-2 text-xs font-medium transition-colors duration-150 hover:bg-accent ${
+                  modelOptions.findIndex((o) => o.id === model) > 0
+                    ? "text-foreground"
+                    : "text-dim-foreground"
+                }`}
+                hidden={modelOptions.length <= 1}
+              >
+                {modelOptions.find((o) => o.id === model)?.name ?? model.split("/").pop()?.split("-")[0] ?? "Model"}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              {(() => {
+                const idx = modelOptions.findIndex((o) => o.id === model);
+                const next = modelOptions[(idx + 1) % modelOptions.length];
+                return `Switch to ${next?.name ?? "next model"}`;
+              })()}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={keyboard.toggle}
+                className={`inline-flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent ${keyboard.mode === "virtual" ? "text-foreground" : "text-dim-foreground"}`}
+                hidden={!keyboard.showToggle}
+              >
+                <HugeiconsIcon icon={KeyboardIcon} size={16} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              {keyboard.mode === "virtual" ? "Virtual keyboard on" : "Virtual keyboard off"}
+            </TooltipContent>
+          </Tooltip>
         </>
       }
     />

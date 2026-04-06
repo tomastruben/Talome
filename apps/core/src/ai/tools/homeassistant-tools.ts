@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { getSetting } from "../../utils/settings.js";
+import { truncateList } from "../../utils/tool-helpers.js";
 
 interface HassConfig {
   baseUrl: string;
@@ -77,7 +78,7 @@ export const hassListEntitiesTool = tool({
       state: e.state,
       friendly_name: (e.attributes as Record<string, unknown>)?.friendly_name,
     }));
-    return { success: true, count: trimmed.length, entities: trimmed };
+    return { success: true, count: trimmed.length, totalCount: entities.length, truncated: trimmed.length < entities.length, entities: trimmed };
   },
 });
 
@@ -117,8 +118,9 @@ export const hassGetHistoryTool = tool({
     const start = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
     const result = await hassFetch(`/history/period/${start}?filter_entity_id=${entityId}&minimal_response`);
     if (!result.success) return result;
-    const history = (result.data as Array<Array<Record<string, unknown>>>)[0] ?? [];
-    return { success: true, entityId, hours, count: history.length, history };
+    const rawHistory = (result.data as Array<Array<Record<string, unknown>>>)[0] ?? [];
+    const { items: history, totalCount, truncated } = truncateList(rawHistory, 200);
+    return { success: true, entityId, hours, count: history.length, totalCount, truncated, history };
   },
 });
 

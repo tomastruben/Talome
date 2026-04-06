@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { parseContainerFormat } from "../../utils/media-format.js";
 import { getSetting } from "../../utils/settings.js";
+import { summarizeList, truncateList } from "../../utils/tool-helpers.js";
 
 interface ArrConfig {
   baseUrl: string;
@@ -54,6 +55,9 @@ interface ArrQueueRecord {
 
 interface ArrPaginatedResponse {
   records?: ArrQueueRecord[];
+  page?: number;
+  pageSize?: number;
+  totalRecords?: number;
 }
 
 interface IndexerSchemaItem {
@@ -169,7 +173,11 @@ export const arrListRootFoldersTool = tool({
   execute: async ({ app }) => {
     const result = await arrFetch(app, "/rootfolder");
     if (!result.success) return result;
-    return { success: true, app, rootFolders: result.data };
+    const { items: rootFolders, totalCount, truncated } = summarizeList(
+      (result.data as Array<Record<string, unknown>>) ?? [],
+      (f) => ({ id: f.id, path: f.path, freeSpace: f.freeSpace }),
+    );
+    return { success: true, app, rootFolders, totalCount, truncated };
   },
 });
 
@@ -201,7 +209,11 @@ export const arrListDownloadClientsTool = tool({
   execute: async ({ app }) => {
     const result = await arrFetch(app, "/downloadclient");
     if (!result.success) return result;
-    return { success: true, app, downloadClients: result.data };
+    const { items: downloadClients, totalCount, truncated } = summarizeList(
+      (result.data as Array<Record<string, unknown>>) ?? [],
+      (c) => ({ id: c.id, name: c.name, implementation: c.implementation, enable: c.enable, protocol: c.protocol }),
+    );
+    return { success: true, app, downloadClients, totalCount, truncated };
   },
 });
 
@@ -277,7 +289,11 @@ export const arrListIndexersTool = tool({
   execute: async ({ app }) => {
     const result = await arrFetch(app, "/indexer");
     if (!result.success) return result;
-    return { success: true, app, indexers: result.data };
+    const { items: indexers, totalCount, truncated } = summarizeList(
+      (result.data as Array<Record<string, unknown>>) ?? [],
+      (i) => ({ id: i.id, name: i.name, implementation: i.implementation, protocol: i.protocol, enable: i.enable, priority: i.priority }),
+    );
+    return { success: true, app, indexers, totalCount, truncated };
   },
 });
 
@@ -559,7 +575,17 @@ export const arrGetQueueDetailsTool = tool({
     }
     const result = await arrFetch(app, `/queue/details?${params.toString()}`);
     if (!result.success) return result;
-    return { success: true, app, records: result.data };
+    const { items: records, totalCount, truncated } = summarizeList(
+      (result.data as Array<Record<string, unknown>>) ?? [],
+      (r) => ({
+        id: r.id, title: r.title, status: r.status, trackedDownloadStatus: r.trackedDownloadStatus,
+        trackedDownloadState: r.trackedDownloadState, size: r.size, sizeleft: r.sizeleft,
+        errorMessage: r.errorMessage,
+        series: r.series ? { title: (r.series as Record<string, unknown>).title } : undefined,
+        movie: r.movie ? { title: (r.movie as Record<string, unknown>).title } : undefined,
+      }),
+    );
+    return { success: true, app, records, totalCount, truncated };
   },
 });
 
@@ -632,7 +658,9 @@ export const arrGetHistoryTool = tool({
       if (eventType) params.set("eventType", eventType);
       const result = await arrFetch(app, `/history?${params.toString()}`);
       if (!result.success) return result;
-      return { success: true, app, ...(result.data as object) };
+      const data = result.data as ArrPaginatedResponse;
+      const { items: records, totalCount, truncated } = truncateList((data.records ?? []) as unknown[], 50);
+      return { success: true, app, page: data.page, pageSize: data.pageSize, totalRecords: data.totalRecords, records, totalCount, truncated };
     }
     // Sonarr: use /history/series if seriesId provided, Radarr: use /history/movie if movieId provided
     if (app === "sonarr" && seriesId) {
@@ -640,14 +668,16 @@ export const arrGetHistoryTool = tool({
       if (eventType) params.set("eventType", eventType);
       const result = await arrFetch(app, `/history/series?${params.toString()}`);
       if (!result.success) return result;
-      return { success: true, app, records: result.data };
+      const { items: records, totalCount, truncated } = truncateList((result.data as unknown[]) ?? [], 50);
+      return { success: true, app, records, totalCount, truncated };
     }
     if (app === "radarr" && movieId) {
       const params = new URLSearchParams({ movieId: String(movieId) });
       if (eventType) params.set("eventType", eventType);
       const result = await arrFetch(app, `/history/movie?${params.toString()}`);
       if (!result.success) return result;
-      return { success: true, app, records: result.data };
+      const { items: records, totalCount, truncated } = truncateList((result.data as unknown[]) ?? [], 50);
+      return { success: true, app, records, totalCount, truncated };
     }
     // General paginated history
     const params = new URLSearchParams({
@@ -663,7 +693,9 @@ export const arrGetHistoryTool = tool({
     }
     const result = await arrFetch(app, `/history?${params.toString()}`);
     if (!result.success) return result;
-    return { success: true, app, ...(result.data as object) };
+    const data = result.data as ArrPaginatedResponse;
+    const { items: records, totalCount, truncated } = truncateList((data.records ?? []) as unknown[], 50);
+    return { success: true, app, page: data.page, pageSize: data.pageSize, totalRecords: data.totalRecords, records, totalCount, truncated };
   },
 });
 
@@ -990,34 +1022,51 @@ export const prowlarrManageIndexersTool = tool({
   description:
     "Manage indexers in Prowlarr: list available schemas (to see what indexer types can be added), add a new indexer, update an existing one, delete one, or test one.",
   inputSchema: z.object({
-    action: z.enum(["list_schemas", "add", "update", "delete", "test", "test_all"]).describe(
-      "list_schemas: get all available indexer implementation types. add: add a new indexer. update: edit an existing indexer. delete: remove an indexer. test: test a specific indexer. test_all: test all indexers."
+    action: z.enum(["list_schemas", "get_schema", "add", "update", "delete", "test", "test_all"]).describe(
+      "list_schemas: get all available indexer types (names only). get_schema: get full schema for one indexer type by implementation name (includes fields). add: add a new indexer. update: edit an existing indexer. delete: remove an indexer. test: test a specific indexer. test_all: test all indexers."
     ),
+    implementation: z.string().optional().describe("Implementation name for get_schema (e.g. 'Newznab', 'Torznab', '1337x'). Get from list_schemas first."),
     indexerId: z.number().int().positive().optional().describe("Indexer ID (required for update, delete, test)"),
     indexerConfig: z.object({}).passthrough().optional().describe(
-      "Full indexer config object for add/update. Get the schema from list_schemas first, then fill in the fields. Must include: name, implementation, configContract, fields array."
+      "Full indexer config object for add/update. Get the schema from get_schema first, then fill in the fields. Must include: name, implementation, configContract, fields array."
     ),
   }),
-  execute: async ({ action, indexerId, indexerConfig }) => {
+  execute: async ({ action, implementation: implName, indexerId, indexerConfig }) => {
     if (action === "list_schemas") {
       const result = await arrFetch("prowlarr", "/indexer/schema");
       if (!result.success) return result;
-      // Return simplified schemas — just name, implementation, and required fields
+      // Return only names — use get_schema for full field definitions
       const schemas = ((result.data as IndexerSchemaItem[]) ?? []).map((s) => ({
         implementation: s.implementation ?? null,
         implementationName: s.implementationName ?? null,
         configContract: s.configContract ?? null,
         protocol: s.protocol ?? null,
-        fields: ((s.fields ?? []) as IndexerSchemaField[])
-          .filter((f) => !f.advanced)
-          .map((f) => ({
-            name: f.name,
-            label: f.label,
-            type: f.type,
-            value: f.value,
-          })),
       }));
-      return { success: true, app: "prowlarr", schemasCount: schemas.length, schemas };
+      return { success: true, app: "prowlarr", schemasCount: schemas.length, schemas, hint: "Use get_schema with an implementation name to get field definitions for a specific indexer type." };
+    }
+
+    if (action === "get_schema") {
+      if (!implName) return { success: false as const, error: "implementation is required for get_schema (e.g. 'Newznab', 'Torznab')" };
+      const result = await arrFetch("prowlarr", "/indexer/schema");
+      if (!result.success) return result;
+      const match = ((result.data as IndexerSchemaItem[]) ?? []).find(
+        (s) => (s.implementation ?? "").toLowerCase() === implName.toLowerCase()
+          || (s.implementationName ?? "").toLowerCase() === implName.toLowerCase(),
+      );
+      if (!match) return { success: false as const, error: `No schema found for implementation '${implName}'. Use list_schemas to see available types.` };
+      return {
+        success: true,
+        app: "prowlarr",
+        schema: {
+          implementation: match.implementation,
+          implementationName: match.implementationName,
+          configContract: match.configContract,
+          protocol: match.protocol,
+          fields: ((match.fields ?? []) as IndexerSchemaField[])
+            .filter((f) => !f.advanced)
+            .map((f) => ({ name: f.name, label: f.label, type: f.type, value: f.value })),
+        },
+      };
     }
 
     if (action === "add") {

@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { getSetting } from "../../utils/settings.js";
+import { truncateList } from "../../utils/tool-helpers.js";
 
 interface QbtConfig {
   baseUrl: string;
@@ -210,7 +211,7 @@ export const qbtListTorrentsTool = tool({
   execute: async ({ filter }) => {
     const result = await qbtFetch(`/api/v2/torrents/info?filter=${filter}`);
     if (!result.success) return result;
-    const torrents = (result.data as Array<Record<string, unknown>>).map((t) => ({
+    const allTorrents = (result.data as Array<Record<string, unknown>>).map((t) => ({
       hash: t.hash,
       name: t.name,
       state: t.state,
@@ -220,6 +221,7 @@ export const qbtListTorrentsTool = tool({
       upspeed: t.upspeed,
       category: t.category,
     }));
-    return { success: true, filter, count: torrents.length, torrents };
+    const { items: torrents, totalCount, truncated } = truncateList(allTorrents);
+    return { success: true, filter, count: torrents.length, totalCount, truncated, torrents };
   },
 });
