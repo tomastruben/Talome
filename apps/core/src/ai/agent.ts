@@ -131,7 +131,7 @@ import { searchContainerLogsTool } from "./tools/log-tools.js";
 // ── App blueprint tool ───────────────────────────────────────────────────────
 import { designAppBlueprintTool } from "./tools/blueprint-tool.js";
 import { getSettingsTool, setSettingTool, revertSettingTool, listConfiguredAppsTool } from "./tools/settings-tools.js";
-import { isSecretSettingKey, decryptSetting } from "../utils/crypto.js";
+import { getSetting } from "../utils/settings.js";
 import { sendNotificationTool, getNotificationsTool } from "./tools/notification-tools.js";
 // ── Phase 18: Arr tools ───────────────────────────────────────────────────────
 import {
@@ -311,21 +311,7 @@ import {
 import { gateToolExecution, getSecurityMode } from "./tool-gateway.js";
 import { getFeatureStackStatus } from "../stacks/feature-stacks.js";
 
-function getSetting(key: string): string | undefined {
-  try {
-    const row = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, key))
-      .get();
-    if (!row?.value) return undefined;
-    // Decrypt secret settings (API keys, tokens) that are encrypted at rest
-    if (isSecretSettingKey(key)) return decryptSetting(row.value);
-    return row.value;
-  } catch {
-    return undefined;
-  }
-}
+// getSetting imported from ../utils/settings.js
 
 function getAnthropicApiKey(): string | undefined {
   return getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;

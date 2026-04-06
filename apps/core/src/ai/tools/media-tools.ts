@@ -1,18 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { db, schema } from "../../db/index.js";
-import { eq } from "drizzle-orm";
-import { isSecretSettingKey, decryptSetting } from "../../utils/crypto.js";
-
-function getSetting(key: string): string | undefined {
-  try {
-    const row = db.select().from(schema.settings).where(eq(schema.settings.key, key)).get();
-    if (!row?.value) return undefined;
-    return isSecretSettingKey(key) ? decryptSetting(row.value) : row.value;
-  } catch {
-    return undefined;
-  }
-}
+import { getSetting } from "../../utils/settings.js";
 
 function getServiceUrl(service: string): string {
   const custom = getSetting(`${service}_url`);

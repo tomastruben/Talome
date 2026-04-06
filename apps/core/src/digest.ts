@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { logAiUsage, getBudgetZone } from "./agent-loop/budget.js";
 import { createLogger } from "./utils/logger.js";
+import { getSetting } from "./utils/settings.js";
 
 const log = createLogger("digest");
 
@@ -35,15 +36,6 @@ async function generateViaClaudeCode(prompt: string, cwd: string): Promise<strin
     proc.on("close", () => { clearTimeout(timeout); resolve(stdout.trim() || null); });
     proc.on("error", () => { clearTimeout(timeout); resolve(null); });
   });
-}
-
-function getSetting(key: string): string | undefined {
-  try {
-    const row = db.select().from(schema.settings).where(eq(schema.settings.key, key)).get();
-    return row?.value || undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 async function generateWeeklyDigest() {

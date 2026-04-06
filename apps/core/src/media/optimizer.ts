@@ -24,6 +24,7 @@ import { probeFile, hasFfmpeg } from "../routes/files.js";
 import { writeNotification } from "../db/notifications.js";
 import { hostToContainerPath, getArrMounts } from "../utils/media-paths.js";
 import { createLogger } from "../utils/logger.js";
+import { getSetting } from "../utils/settings.js";
 
 const log = createLogger("optimizer");
 import type { OptimizationConfig, FileAnalysis, OptimizationJob, ScanResult, LibraryHealthSummary } from "@talome/types";
@@ -70,11 +71,6 @@ function matchesMediaTypeFilter(filePath: string, mediaTypes: string): boolean {
   return cachedTaggedPaths
     .filter((t) => t.source === mediaTypes)
     .some((t) => filePath.startsWith(t.path));
-}
-
-function getSetting(key: string): string | undefined {
-  const row = db.get(sql`SELECT value FROM settings WHERE key = ${key}`) as { value: string } | undefined;
-  return row?.value;
 }
 
 export function getOptimizationConfig(): OptimizationConfig {

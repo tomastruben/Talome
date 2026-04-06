@@ -12,6 +12,7 @@ import { db, schema } from "../db/index.js";
 import { desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { logAiUsage, shouldRunService } from "../agent-loop/budget.js";
+import { getSetting } from "../utils/settings.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,15 +22,6 @@ interface Signal {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function getSetting(key: string): string | undefined {
-  try {
-    const row = db.select().from(schema.settings).where(eq(schema.settings.key, key)).get();
-    return row?.value || undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 function getApiKey(): string | undefined {
   return getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;

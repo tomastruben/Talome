@@ -9,23 +9,9 @@
 
 import { tool } from "ai";
 import { z } from "zod";
-import { db, schema } from "../../db/index.js";
-import { eq } from "drizzle-orm";
 import { APP_REGISTRY, type AppCapabilities } from "../../app-registry/index.js";
 import { listContainers } from "../../docker/client.js";
-import { isSecretSettingKey, decryptSetting } from "../../utils/crypto.js";
-
-// ── Settings helper ──────────────────────────────────────────────────────────
-
-function getSetting(key: string): string | undefined {
-  try {
-    const row = db.select().from(schema.settings).where(eq(schema.settings.key, key)).get();
-    if (!row?.value) return undefined;
-    return isSecretSettingKey(key) ? decryptSetting(row.value) : row.value;
-  } catch {
-    return undefined;
-  }
-}
+import { getSetting } from "../../utils/settings.js";
 
 // ── Auth patterns ────────────────────────────────────────────────────────────
 

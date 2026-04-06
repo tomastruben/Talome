@@ -1,15 +1,5 @@
 import { Hono } from "hono";
-import { db, schema } from "../db/index.js";
-import { eq } from "drizzle-orm";
-
-function getSetting(key: string): string | undefined {
-  try {
-    const row = db.select().from(schema.settings).where(eq(schema.settings.key, key)).get();
-    return row?.value || undefined;
-  } catch {
-    return undefined;
-  }
-}
+import { getSetting } from "../utils/settings.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

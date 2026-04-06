@@ -12,30 +12,13 @@ import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { db, schema } from "../db/index.js";
 import { sql } from "drizzle-orm";
+import { getSetting, setSetting } from "../utils/settings.js";
 import { docker, isOrbStack } from "../docker/client.js";
 import { getServerLanIp } from "./ip.js";
 import { ensureDnsRunning, stopDns, getDnsStatus, startIpMonitor } from "./dns.js";
 import { ensureCaddyRunning, writeCaddyfileAndReload, getCaddyStatus } from "./caddy.js";
 import { connectContainerToProxyNetwork } from "./network.js";
 import { ensureAvahiRunning, stopAvahi, getAvahiStatus } from "./mdns.js";
-
-/* ── Settings helpers ──────────────────────────────────────────────────────── */
-
-function getSetting(key: string): string | undefined {
-  try {
-    const row = db.select().from(schema.settings).where(sql`key = ${key}`).get();
-    return row?.value || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function setSetting(key: string, value: string): void {
-  db.insert(schema.settings)
-    .values({ key, value })
-    .onConflictDoUpdate({ target: schema.settings.key, set: { value } })
-    .run();
-}
 
 /* ── Proxy route creation for all apps ─────────────────────────────────────── */
 

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import os from "node:os";
 import { db } from "../db/index.js";
 import { sql } from "drizzle-orm";
+import { getSetting } from "../utils/settings.js";
 import { docker } from "../docker/client.js";
 import { generateCaddyfile } from "./caddyfile.js";
 import { ensureProxyNetwork, connectContainerToProxyNetwork, PROXY_NETWORK } from "./network.js";
@@ -27,11 +28,6 @@ interface ProxyRouteRow {
 
 function loadRoutes(): ProxyRouteRow[] {
   return db.all(sql`SELECT * FROM proxy_routes WHERE enabled = 1`) as ProxyRouteRow[];
-}
-
-function getSetting(key: string): string | undefined {
-  const row = db.get(sql`SELECT value FROM settings WHERE key = ${key}`) as { value: string } | undefined;
-  return row?.value;
 }
 
 function loadAuthConfig(): { enabled: boolean; verifyUrl: string; bypassAppIds: string[] } | undefined {

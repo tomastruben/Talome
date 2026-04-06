@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getAppCapabilities } from "../../app-registry/index.js";
 import { db, schema } from "../../db/index.js";
 import { eq } from "drizzle-orm";
-import { isSecretSettingKey, decryptSetting } from "../../utils/crypto.js";
+import { getSetting } from "../../utils/settings.js";
 
 interface DiagnosticResult {
   check: string;
@@ -26,16 +26,6 @@ async function probeHttpHealth(url: string, apiKey?: string): Promise<{ ok: bool
     return { ok: res.ok, statusCode: res.status };
   } catch (err: unknown) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-function getSetting(key: string): string | undefined {
-  try {
-    const row = db.select().from(schema.settings).where(eq(schema.settings.key, key)).get();
-    if (!row?.value) return undefined;
-    return isSecretSettingKey(key) ? decryptSetting(row.value) : row.value;
-  } catch {
-    return undefined;
   }
 }
 

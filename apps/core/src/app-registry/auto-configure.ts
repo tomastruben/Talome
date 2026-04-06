@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { db, schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
 import { APP_REGISTRY, type AppCapabilities } from "./index.js";
-import { isSecretSettingKey, encryptSetting } from "../utils/crypto.js";
+import { getSetting, setSetting } from "../utils/settings.js";
 
 const APP_DATA_DIR = join(homedir(), ".talome", "app-data");
 
@@ -64,19 +64,6 @@ export async function extractApiKey(
 }
 
 // ── Settings save ──────────────────────────────────────────────────────────
-
-function setSetting(key: string, value: string): void {
-  const storedValue = isSecretSettingKey(key) ? encryptSetting(value) : value;
-  db.insert(schema.settings)
-    .values({ key, value: storedValue })
-    .onConflictDoUpdate({ target: schema.settings.key, set: { value: storedValue } })
-    .run();
-}
-
-function getSetting(key: string): string | undefined {
-  const row = db.select().from(schema.settings).where(eq(schema.settings.key, key)).get();
-  return row?.value ?? undefined;
-}
 
 /**
  * Save base URL and API key to settings. This activates the app's tool domain.

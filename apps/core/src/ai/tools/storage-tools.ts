@@ -2,21 +2,9 @@ import { tool } from "ai";
 import { z } from "zod";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { db, schema } from "../../db/index.js";
-import { eq } from "drizzle-orm";
-import { isSecretSettingKey, decryptSetting } from "../../utils/crypto.js";
+import { getSetting } from "../../utils/settings.js";
 
 const execAsync = promisify(exec);
-
-function getSetting(key: string): string | undefined {
-  try {
-    const row = db.select().from(schema.settings).where(eq(schema.settings.key, key)).get();
-    if (!row?.value) return undefined;
-    return isSecretSettingKey(key) ? decryptSetting(row.value) : row.value;
-  } catch {
-    return undefined;
-  }
-}
 
 function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
