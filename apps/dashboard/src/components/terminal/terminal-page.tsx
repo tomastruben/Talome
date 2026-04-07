@@ -17,16 +17,20 @@ const TerminalInner = dynamic(
   { ssr: false },
 );
 
-function buildClaudeCodeCommand(projectRoot: string, auto?: boolean, remote?: boolean): string {
+function buildClaudeCodeCommand(projectRoot: string, opts?: { auto?: boolean; remote?: boolean; resume?: boolean }): string {
   const unset = "unset CLAUDECODE;";
   const flags = [
-    "--continue",
-    auto ? "--dangerously-skip-permissions" : "",
-    remote ? "--remote-control" : "",
+    opts?.resume ? "--continue" : "",
+    opts?.auto ? "--dangerously-skip-permissions" : "",
+    opts?.remote ? "--remote-control" : "",
   ].filter(Boolean).join(" ");
   const flagStr = flags ? ` ${flags}` : "";
-  const tmuxCmd = `cd ${projectRoot} && tmux new-session -A -s talome-claude "claude${flagStr}"`;
-  const fallback = `cd ${projectRoot} && claude${flagStr}`;
+  const quoted = projectRoot.includes(" ") ? `"${projectRoot}"` : projectRoot;
+  const sessionName = opts?.resume ? "talome-claude" : `talome-claude-${Date.now()}`;
+  const tmuxCmd = opts?.resume
+    ? `cd ${quoted} && tmux new-session -A -s talome-claude "claude${flagStr}"`
+    : `cd ${quoted} && tmux new-session -s ${sessionName} "claude${flagStr}"`;
+  const fallback = `cd ${quoted} && claude${flagStr}`;
   return `${unset} if command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
 }
 
@@ -120,9 +124,9 @@ export function TerminalPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const launchClaudeCode = useCallback(() => {
+  const launchClaudeCode = useCallback((resume = true) => {
     if (!projectRoot) return;
-    termRef.current?.sendCommand(buildClaudeCodeCommand(projectRoot, autoMode, remote));
+    termRef.current?.sendCommand(buildClaudeCodeCommand(projectRoot, { auto: autoMode, remote, resume }));
   }, [projectRoot, autoMode, remote]);
 
   const handleCreateSession = useCallback(async (name?: string) => {

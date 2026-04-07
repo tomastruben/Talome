@@ -28,6 +28,7 @@ import { useAutomation } from "@/components/automations/automation-context";
 import { launchClaudeCodeAtom, terminalAutoAtom, terminalRemoteAtom, terminalRemoteActiveAtom } from "@/atoms/terminal";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { pageActionAtom } from "@/atoms/page-action";
 import { pageBackAtom } from "@/atoms/page-back";
@@ -278,21 +279,32 @@ function TerminalHeaderAction() {
             {remoteActive ? "Remote session active" : remote ? "Remote — next launch includes --remote-control" : "Enable remote access"}
           </TooltipContent>
         </Tooltip>
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(
-            "h-7 gap-1.5 px-2.5 text-xs rounded-l-none",
-            autoMode
-              ? "text-status-warning/80 hover:text-status-warning hover:bg-status-warning/10"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-          onClick={() => launchClaudeCode?.()}
-          disabled={!launchClaudeCode}
-        >
-          <HugeiconsIcon icon={SourceCodeCircleIcon} size={14} />
-          Claude Code
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-7 gap-1.5 px-2.5 text-xs rounded-l-none",
+                autoMode
+                  ? "text-status-warning/80 hover:text-status-warning hover:bg-status-warning/10"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              disabled={!launchClaudeCode}
+            >
+              <HugeiconsIcon icon={SourceCodeCircleIcon} size={14} />
+              Claude Code
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={6} className="min-w-40">
+            <DropdownMenuItem onClick={() => launchClaudeCode?.(true)}>
+              Continue session
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => launchClaudeCode?.(false)}>
+              New conversation
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
