@@ -1062,17 +1062,23 @@ export function VideoPlayer({
     setCurrentTime(0);
   }, []);
 
-  // ── onCanPlay: apply resume position ──────────────────────────────────
+  // ── onCanPlay: apply resume position + ensure playback starts ─────────
   const handleCanPlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
     if (resumePosition && !resumeApplied.current) {
       resumeApplied.current = true;
-      const v = videoRef.current;
-      if (v) {
-        v.currentTime = resumePosition;
-        setCurrentTime(resumePosition);
-      }
+      v.currentTime = resumePosition;
+      setCurrentTime(resumePosition);
     }
-  }, [resumePosition]);
+    // Ensure the video is actually playing — browsers may silently block
+    // autoplay or stall when the src changes (e.g. Talome stream → Jellyfin URL).
+    // The play() call here is safe because onCanPlay only fires after the
+    // browser has enough data to render frames.
+    if (v.paused && isMediaLibrary) {
+      v.play().catch(() => {});
+    }
+  }, [resumePosition, isMediaLibrary]);
 
   // ═══════════════════════════════════════════════════════════════════════
   // HLS.js SETUP
