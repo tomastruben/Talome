@@ -155,6 +155,8 @@ export interface VideoPlayerProps {
   previousLabel?: string;
   /** When true, prefer original/direct-play quality over transcoded streams. */
   preferOriginal?: boolean;
+  /** When true, skip Jellyfin and play directly via Talome's stream endpoint. */
+  preferDirect?: boolean;
 }
 
 export interface AudioPlayerProps {

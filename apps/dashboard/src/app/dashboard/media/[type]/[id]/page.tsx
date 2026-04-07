@@ -587,6 +587,7 @@ export default function MediaDetailPage() {
               apiBase={mediaApiBase}
               onEnded={handleVideoEnded}
               preferOriginal={selectedPreQuality === "original"}
+              preferDirect={selectedPreQuality === "direct"}
             />
 
             {/* Auto-advance overlay */}
@@ -646,9 +647,11 @@ export default function MediaDetailPage() {
                   <button className="absolute z-10 top-3 right-3 px-2 py-0.5 rounded bg-black/40 backdrop-blur-sm text-[11px] text-white/50 hover:text-white/80 transition-colors tabular-nums tracking-wide">
                     {selectedPreQuality === "original"
                       ? "Original"
-                      : selectedPreQuality === "local"
-                        ? "Local"
-                        : selectedPreQuality}
+                      : selectedPreQuality === "direct"
+                        ? "Direct"
+                        : selectedPreQuality === "local"
+                          ? "Local"
+                          : selectedPreQuality}
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" sideOffset={4} className="min-w-36">
@@ -662,9 +665,13 @@ export default function MediaDetailPage() {
                         <span className="ml-1.5 text-muted-foreground">{(q.bitrate / 1_000_000).toFixed(0)} Mbps</span>
                       </DropdownMenuRadioItem>
                     ))}
+                    <DropdownMenuRadioItem value="direct">
+                      Direct
+                      <span className="ml-1.5 text-muted-foreground">Talome</span>
+                    </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="local">
                       Local
-                      <span className="ml-1.5 text-muted-foreground">Talome</span>
+                      <span className="ml-1.5 text-muted-foreground">Talome HLS</span>
                     </DropdownMenuRadioItem>
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>

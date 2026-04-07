@@ -104,6 +104,7 @@ export function VideoPlayer({
   nextLabel,
   previousLabel,
   preferOriginal,
+  preferDirect,
 }: VideoPlayerProps) {
   // ── Assistant (for "Ask Talome" on error) ──────────────────────────────
   const { handleSubmit: assistantSubmit, openPaletteInChatMode } = useAssistant();
@@ -220,6 +221,12 @@ export function VideoPlayer({
       try {
         // For media library items (movies/TV), use Jellyfin PlaybackInfo.
         // Skip for file-browser items (audiobooks, raw files).
+        // When preferDirect is set, skip Jellyfin entirely and use Talome's stream.
+        if (preferDirect) {
+          setPlaybackMode("direct");
+          setHlsReady(true);
+          return;
+        }
         if (isMediaLibrary) {
           try {
             const jfRes = await fetch(`${apiBase}/jellyfin-playback`, {
