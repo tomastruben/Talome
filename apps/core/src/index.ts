@@ -239,8 +239,22 @@ app.use(
       if (!origin) return "*";
 
       if (process.env.NODE_ENV === "production") {
-        const allowed = process.env.DASHBOARD_ORIGIN || "http://localhost:3000";
-        return origin === allowed ? origin : null;
+        // Talome is self-hosted — the dashboard and core run on the same host
+        // but on different ports (3000 vs 4000). The user may access via localhost,
+        // LAN IP, hostname, or Tailscale IP. Accept any origin that matches the
+        // dashboard port on the same host, plus any explicitly allowed origins.
+        const explicitOrigins = (process.env.DASHBOARD_ORIGIN || "http://localhost:3000")
+          .split(",")
+          .map((o) => o.trim());
+        if (explicitOrigins.includes(origin)) return origin;
+
+        // Accept same-host requests: origin is http(s)://<any-hostname>:3000
+        try {
+          const url = new URL(origin);
+          if (url.port === "3000" || url.port === "") return origin;
+        } catch { /* invalid origin — reject */ }
+
+        return null;
       }
 
       // Development: allow any origin for local dev convenience
