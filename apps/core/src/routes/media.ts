@@ -2555,12 +2555,21 @@ const BROWSER_DEVICE_PROFILE = {
   ],
 };
 
-/** Replace localhost in Jellyfin URL with the requester's hostname for LAN access. */
+/** Replace localhost in Jellyfin URL with the requester's hostname for LAN access.
+ *  When requests come through the Next.js proxy, the Host header is 127.0.0.1:4000
+ *  (the proxy target), not the browser's hostname. Check X-Forwarded-Host and Origin
+ *  first to get the real client hostname. */
 function jellyfinFrontendUrl(jellyfinUrl: string, requestHost: string): string {
   try {
     const jf = new URL(jellyfinUrl);
     if (jf.hostname === "localhost" || jf.hostname === "127.0.0.1") {
-      jf.hostname = requestHost.split(":")[0];
+      const host = requestHost.split(":")[0];
+      // If host is still loopback (proxied request), it won't help the browser
+      if (host === "localhost" || host === "127.0.0.1") {
+        jf.hostname = "localhost";
+      } else {
+        jf.hostname = host;
+      }
     }
     return jf.origin;
   } catch { return jellyfinUrl; }
@@ -2745,7 +2754,13 @@ media.post("/jellyfin-playback", async (c) => {
     const source = pbData.MediaSources?.[0];
     if (!source) return c.json({ available: false, reason: "no media source" });
 
-    const baseUrl = jellyfinFrontendUrl(jellyfinUrl, c.req.header("host") ?? "localhost");
+    // Prefer X-Forwarded-Host (set by Next.js proxy) over Host header,
+    // since Host is 127.0.0.1:4000 when proxied but we need the browser's hostname.
+    const clientHost = c.req.header("x-forwarded-host")
+      ?? c.req.header("origin")?.replace(/^https?:\/\//, "")
+      ?? c.req.header("host")
+      ?? "localhost";
+    const baseUrl = jellyfinFrontendUrl(jellyfinUrl, clientHost);
     const playSessionId = pbData.PlaySessionId ?? "";
     const mediaSourceId = source.Id;
 

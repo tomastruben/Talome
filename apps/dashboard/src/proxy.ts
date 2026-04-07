@@ -23,7 +23,12 @@ export function proxy(request: NextRequest) {
   // Proxy /api/* requests to the core backend (needed for standalone/Docker mode)
   if (pathname.startsWith("/api/")) {
     const url = new URL(pathname + request.nextUrl.search, CORE_BACKEND);
-    return NextResponse.rewrite(url);
+    const headers = new Headers(request.headers);
+    // Forward the original hostname so the backend can build correct Jellyfin URLs
+    if (!headers.has("x-forwarded-host")) {
+      headers.set("x-forwarded-host", request.headers.get("host") ?? "localhost");
+    }
+    return NextResponse.rewrite(url, { request: { headers } });
   }
 
   // Allow other public paths through unconditionally

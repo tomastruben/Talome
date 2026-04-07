@@ -974,7 +974,8 @@ export function VideoPlayer({
   }, []);
 
   // ── Quality change handler ────────────────────────────────────────────
-  // Values: -1 = auto/default Jellyfin HLS, -2 = direct play, -3 = talome hls
+  // Values: -1 = auto/default Jellyfin HLS, -2 = jellyfin direct play,
+  //         -3 = talome hls, -4 = talome direct (stream endpoint)
   // Positive values >= 100: index into jfQualities (value - 100)
   // Positive values < 100: HLS.js level index
   const handleQualityChange = useCallback((index: number) => {
@@ -983,6 +984,12 @@ export function VideoPlayer({
       setPlaybackMode("jellyfin");
       setHlsReady(true);
       setCurrentQuality(-2);
+      return;
+    }
+    if (index === -4) {
+      setPlaybackMode("direct");
+      setHlsReady(true);
+      setCurrentQuality(-4);
       return;
     }
     if (index === -3) {
@@ -1925,7 +1932,7 @@ export function VideoPlayer({
                       <button className={cn("flex items-center justify-center gap-1 transition-colors", btnSizeSm, btnHover, "text-white/50 hover:text-white")}>
                         <HugeiconsIcon icon={Settings01Icon} size={iconSm} />
                         <span className={cn("tabular-nums", cinemaMode ? "text-sm text-white/60" : "text-sm text-white/50")}>
-                          {currentQuality === -2 ? "Original" : currentQuality === -3 ? "Local" : currentQuality >= 100 ? jfQualities[currentQuality - 100]?.label ?? "" : currentQuality >= 0 ? `${qualityLevels.find((l) => l.index === currentQuality)?.height ?? ""}p` : "Auto"}
+                          {currentQuality === -2 ? "Original" : currentQuality === -4 ? "Direct" : currentQuality === -3 ? "Local" : currentQuality >= 100 ? jfQualities[currentQuality - 100]?.label ?? "" : currentQuality >= 0 ? `${qualityLevels.find((l) => l.index === currentQuality)?.height ?? ""}p` : "Auto"}
                         </span>
                       </button>
                     </DropdownMenuTrigger>
@@ -1949,6 +1956,12 @@ export function VideoPlayer({
                             <span className="ml-1.5 text-muted-foreground">{(level.bitrate / 1_000_000).toFixed(1)} Mbps</span>
                           </DropdownMenuRadioItem>
                         ))}
+                        {isMediaLibrary && (
+                          <DropdownMenuRadioItem value="-4">
+                            Direct
+                            <span className="ml-1.5 text-muted-foreground">Talome</span>
+                          </DropdownMenuRadioItem>
+                        )}
                         <DropdownMenuRadioItem value="-3">
                           Local
                           <span className="ml-1.5 text-muted-foreground">Talome HLS</span>
@@ -2052,7 +2065,10 @@ export function VideoPlayer({
                         {[...qualityLevels].sort((a, b) => b.height - a.height).map((level) => (
                           <DropdownMenuRadioItem key={level.index} value={String(level.index)}>{level.height}p</DropdownMenuRadioItem>
                         ))}
-                        <DropdownMenuRadioItem value="-3">Local <span className="text-muted-foreground ml-1">Talome</span></DropdownMenuRadioItem>
+                        {isMediaLibrary && (
+                          <DropdownMenuRadioItem value="-4">Direct <span className="text-muted-foreground ml-1">Talome</span></DropdownMenuRadioItem>
+                        )}
+                        <DropdownMenuRadioItem value="-3">Local <span className="text-muted-foreground ml-1">Talome HLS</span></DropdownMenuRadioItem>
                       </DropdownMenuRadioGroup>
                       <DropdownMenuSeparator />
                     </>
