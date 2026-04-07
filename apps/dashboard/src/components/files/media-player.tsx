@@ -37,6 +37,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getDirectCoreUrl } from "@/lib/constants";
+import { useAssistant } from "@/components/assistant/assistant-context";
 import type { IconSvgElement } from "@/components/icons";
 
 // ── Types (from extracted module) ────────────────────────────────────────
@@ -104,6 +105,9 @@ export function VideoPlayer({
   previousLabel,
   preferOriginal,
 }: VideoPlayerProps) {
+  // ── Assistant (for "Ask Talome" on error) ──────────────────────────────
+  const { handleSubmit: assistantSubmit, openPaletteInChatMode } = useAssistant();
+
   // ── Playback mode ──────────────────────────────────────────────────────
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("deciding");
   const hlsRequired = playbackMode === "hls" || playbackMode === "jellyfin-hls";
@@ -892,12 +896,38 @@ export function VideoPlayer({
   }, [hlsRequired, hlsSeekOffset, playbackMode, transmuxReady, stopCurrentTransmux]);
 
   const handleError = useCallback(() => {
-    if (playbackMode === "direct") {
+    // Auto-cascade through all playback modes before showing the error screen.
+    // The user should never have to pick a technical fallback — we try everything.
+    if (playbackMode === "direct" || playbackMode === "direct-mkv") {
+      // Direct failed → try Jellyfin transcode if available, else Talome transmux
+      if (jfTranscodeUrl.current) {
+        setHlsSrc(jfTranscodeUrl.current);
+        setPlaybackMode("jellyfin-hls");
+        return;
+      }
       setPlaybackMode("transmux");
       return;
     }
-    if (playbackMode === "direct-mkv") {
-      setPlaybackMode("transmux");
+    if (playbackMode === "jellyfin" && jfTranscodeUrl.current) {
+      // Jellyfin direct play failed → try Jellyfin transcode
+      setHlsSrc(jfTranscodeUrl.current);
+      setPlaybackMode("jellyfin-hls");
+      return;
+    }
+    if (playbackMode === "jellyfin-hls" && hlsRetryCount.current < 1) {
+      // Jellyfin HLS failed → retry once, then fall through to local HLS
+      hlsRetryCount.current += 1;
+      setHlsRetry((n) => n + 1);
+      return;
+    }
+    if (playbackMode === "jellyfin-hls") {
+      // Jellyfin HLS exhausted → try Talome's local transcode
+      setPlaybackMode("hls");
+      return;
+    }
+    if (playbackMode === "transmux") {
+      // Transmux failed → try local HLS
+      setPlaybackMode("hls");
       return;
     }
     if (hlsRequired && hlsRetryCount.current < 1) {
@@ -905,6 +935,7 @@ export function VideoPlayer({
       setHlsRetry((n) => n + 1);
       return;
     }
+    // Everything failed — show the error screen
     setError(true);
   }, [hlsRequired, playbackMode]);
 
@@ -1342,16 +1373,26 @@ export function VideoPlayer({
   }
 
   if (error) {
-    // Determine what recovery options are available
-    const canTryJellyfinHls = jfTranscodeUrl.current && playbackMode !== "jellyfin-hls";
-    const canTryLocalHls = playbackMode !== "hls";
-    const canTryDirectPlay = jfDirectPlayUrl.current && playbackMode !== "jellyfin";
-    const jellyfinWebUrl = jfSessionRef.current
-      ? `${jfSessionRef.current.jellyfinBaseUrl}/web/#/details?id=${jfSessionRef.current.itemId}`
-      : null;
+    const askTalome = () => {
+      const context = [
+        `File: ${fileName}`,
+        `Path: ${filePath}`,
+        probedVideoCodec ? `Codec: ${probedVideoCodec}` : null,
+        `Last mode: ${playbackMode}`,
+        hasJfSession ? "Jellyfin: connected" : "Jellyfin: no session",
+        jfDirectPlayUrl.current ? "DirectPlay URL: available" : "DirectPlay URL: none",
+        jfTranscodeUrl.current ? "Transcode URL: available" : "Transcode URL: none",
+      ].filter(Boolean).join(", ");
+
+      assistantSubmit(
+        `I'm trying to play \`${fileName}\` but playback failed after trying all modes. ` +
+        `Can you diagnose what's wrong? Context: ${context}`,
+      );
+      openPaletteInChatMode();
+    };
 
     return (
-      <div className="flex flex-col items-center justify-center gap-5 p-8 text-center w-full h-full bg-black">
+      <div className="flex flex-col items-center justify-center gap-6 p-8 text-center w-full h-full bg-black">
         {cinemaMode && onBack && (
           <button
             onClick={onBack}
@@ -1361,84 +1402,49 @@ export function VideoPlayer({
             Back
           </button>
         )}
-        <div className="size-16 rounded-full bg-white/5 flex items-center justify-center">
-          <HugeiconsIcon icon={PlayIcon} size={24} className="text-white/30" />
+        <div className="size-14 rounded-full bg-white/5 flex items-center justify-center">
+          <HugeiconsIcon icon={PlayIcon} size={22} className="text-white/20" />
         </div>
         <div>
-          <p className={cn("font-medium text-white/70", cinemaMode ? "text-lg" : "text-sm")}>
-            Playback failed
+          <p className={cn("font-medium text-white/60", cinemaMode ? "text-lg" : "text-sm")}>
+            This video couldn&rsquo;t be played
           </p>
-          <p className={cn("text-white/30 mt-1", cinemaMode ? "text-base" : "text-xs")}>
-            {probedVideoCodec ? `${probedVideoCodec.toUpperCase()} couldn\u2019t be decoded` : "This format couldn\u2019t be played"} in the current mode.
+          <p className={cn("text-white/25 mt-1.5 max-w-xs", cinemaMode ? "text-base" : "text-xs")}>
+            All playback methods were attempted automatically.
           </p>
         </div>
-        <div className={cn("flex flex-col gap-2", cinemaMode ? "min-w-52" : "min-w-40")}>
-          {canTryJellyfinHls && (
-            <Button
-              variant="outline"
-              size={cinemaMode ? "default" : "sm"}
-              className="gap-1.5 w-full justify-center"
-              onClick={() => {
-                setError(false);
-                setHlsSrc(jfTranscodeUrl.current);
-                setPlaybackMode("jellyfin-hls");
-              }}
-            >
-              Try Jellyfin transcode
-            </Button>
-          )}
-          {canTryLocalHls && (
-            <Button
-              variant="outline"
-              size={cinemaMode ? "default" : "sm"}
-              className="gap-1.5 w-full justify-center"
-              onClick={() => {
-                setError(false);
-                setPlaybackMode("hls");
-              }}
-            >
-              Try local transcode
-            </Button>
-          )}
-          {canTryDirectPlay && (
-            <Button
-              variant="outline"
-              size={cinemaMode ? "default" : "sm"}
-              className="gap-1.5 w-full justify-center"
-              onClick={() => {
-                setError(false);
-                setJellyfinSrc(jfDirectPlayUrl.current);
-                setPlaybackMode("jellyfin");
-                setHlsReady(true);
-              }}
-            >
-              Try direct play
-            </Button>
-          )}
-          {jellyfinWebUrl && (
-            <Button
-              variant="outline"
-              size={cinemaMode ? "default" : "sm"}
-              className="gap-1.5 w-full justify-center"
-              onClick={() => window.open(jellyfinWebUrl, "_blank")}
-            >
-              Open in Jellyfin
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size={cinemaMode ? "default" : "sm"}
-            className="gap-1.5 w-full justify-center text-white/30 hover:text-white/50"
+        <Button
+          variant="outline"
+          size={cinemaMode ? "default" : "sm"}
+          className={cn("gap-2", cinemaMode ? "min-w-52" : "min-w-40")}
+          onClick={askTalome}
+        >
+          <HugeiconsIcon icon={InformationCircleIcon} size={cinemaMode ? 16 : 14} />
+          Ask Talome to fix it
+        </Button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              setError(false);
+              setPlaybackMode("deciding");
+              hlsRetryCount.current = 0;
+            }}
+            className={cn("text-white/20 hover:text-white/40 transition-colors", cinemaMode ? "text-sm" : "text-xs")}
+          >
+            Try again
+          </button>
+          <span className="text-white/10">·</span>
+          <button
             onClick={() => {
               const a = document.createElement("a");
               a.href = src;
               a.download = fileName;
               a.click();
             }}
+            className={cn("text-white/20 hover:text-white/40 transition-colors", cinemaMode ? "text-sm" : "text-xs")}
           >
-            <HugeiconsIcon icon={Download01Icon} size={cinemaMode ? 16 : 12} />
-            Download file
-          </Button>
+            Download
+          </button>
         </div>
       </div>
     );
