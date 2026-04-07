@@ -53,14 +53,24 @@ function pickPrimary(containers: Container[]): Container {
 
 type CatalogRow = (typeof import("../db/schema.js"))["appCatalog"]["$inferSelect"];
 
+/** Generic image/service name segments that cause false catalog matches.
+ *  Many apps use "server", "web", "app" etc. as their image name last segment
+ *  (e.g. owncloud/server, goauthentik/server, vaultwarden/server). These must
+ *  not be used as catalog lookup keys or compose service name matches. */
+const GENERIC_IMAGE_SEGMENTS = new Set([
+  "server", "app", "web", "api", "backend", "frontend", "client",
+  "worker", "proxy", "gateway", "service", "core", "main", "base",
+]);
+
 /** Try to resolve a catalog row for a container via multiple heuristics. */
 function matchCatalog(
   container: Container,
   catalogByKey: Map<string, CatalogRow>,
 ): CatalogRow | undefined {
-  // 1. Try compose service label (e.g., "sonarr" from media-server compose)
+  // 1. Try compose service label (e.g., "sonarr" from media-server compose).
+  //    Skip generic names that would false-match unrelated catalog entries.
   const service = container.labels["com.docker.compose.service"];
-  if (service) {
+  if (service && !GENERIC_IMAGE_SEGMENTS.has(service.toLowerCase())) {
     const hit = catalogByKey.get(service.toLowerCase());
     if (hit) return hit;
   }
@@ -161,6 +171,8 @@ function buildStacks(containers: Container[]): ServiceStack[] {
   }
 
   // 4. Build a multi-key → catalog row map for heuristic matching.
+  //    Skip overly generic image name segments that cause false matches
+  //    (e.g. "server" from owncloud/server, goauthentik/server, vaultwarden/server).
   const catalogByKey = new Map<string, CatalogRow>();
   for (const row of catalog) {
     const dominated = (key: string) => {
@@ -173,7 +185,9 @@ function buildStacks(containers: Container[]): ServiceStack[] {
       const img = normalizeImageName(row.image);
       if (dominated(img)) catalogByKey.set(img, row);
       const seg = img.split("/").pop();
-      if (seg && seg !== img && dominated(seg)) catalogByKey.set(seg, row);
+      if (seg && seg !== img && !GENERIC_IMAGE_SEGMENTS.has(seg) && dominated(seg)) {
+        catalogByKey.set(seg, row);
+      }
     }
   }
 

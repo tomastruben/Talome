@@ -78,7 +78,7 @@ auth.post("/login", async (c) => {
     setCookie(c, SESSION_COOKIE, token, {
       httpOnly: true,
       secure: false,
-      sameSite: "Strict",
+      sameSite: "Lax",
       path: "/",
       maxAge: 60 * 60 * 24 * 7,
     });
@@ -109,7 +109,7 @@ auth.post("/login", async (c) => {
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     secure: false,
-    sameSite: "Strict",
+    sameSite: "Lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
   });
@@ -230,7 +230,7 @@ auth.post("/recover", async (c) => {
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     secure: false,
-    sameSite: "Strict",
+    sameSite: "Lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
   });
