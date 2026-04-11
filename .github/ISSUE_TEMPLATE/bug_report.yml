@@ -1,0 +1,81 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill out the fields below so we can reproduce and fix the issue quickly.
+
+        Before you submit, please check:
+        - The [FAQ](https://talome.dev/docs/faq) and existing [issues](https://github.com/tomastruben/Talome/issues?q=is%3Aissue).
+        - You are on the latest version (`curl -fsSL https://get.talome.dev | bash -s -- update`).
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected to happen instead.
+      placeholder: When I click Install on an app, the container starts but the dashboard shows "unhealthy" forever...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps someone else can follow to reproduce the bug.
+      placeholder: |
+        1. Fresh install of Talome on Ubuntu 24.04
+        2. Open the dashboard at http://localhost:3000
+        3. Go to the app store and install Jellyfin
+        4. Observe the "unhealthy" badge
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Talome version
+      description: Find this in Settings → About, or run `git log -1 --oneline` in `~/.talome/server`.
+      placeholder: "v1.0.0 or commit 6aac067"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: false
+      options:
+        - Linux (x86_64)
+        - Linux (arm64)
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Windows (WSL2)
+        - Windows (native)
+        - Docker
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS version
+      placeholder: "Ubuntu 24.04, macOS 14.5, Windows 11 23H2..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste any error messages, console output, or server logs. These are in `~/.talome/logs/` by default.
+      render: shell
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Screenshots, related issues, or anything else that might help.

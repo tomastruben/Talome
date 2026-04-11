@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest a new feature or improvement
+labels: ["feature", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping shape Talome. Please describe the feature you would like and the problem it solves.
+
+        For open-ended ideas, the [Discussions](https://github.com/tomastruben/Talome/discussions) board is a better fit — use this form when you have a concrete, actionable request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the pain point. What are you trying to accomplish today that is hard, slow, or impossible?
+      placeholder: When I run a backup automation, I cannot tell which containers were excluded...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like Talome to do? Be as specific as you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about, and why they would not work as well.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Mockups, references to how other tools handle this, or related issues.
