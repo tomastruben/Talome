@@ -27,8 +27,10 @@ export async function isClaudeCodeAvailable(): Promise<boolean> {
       let stdout = "";
       const proc = spawn("claude", ["--version"], { shell: false });
       proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-      proc.on("close", (code) => resolve({ code: code ?? 1, stdout }));
-      proc.on("error", () => resolve({ code: 1, stdout: "" }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+      const p = proc as any;
+      p.on("close", (code: number | null) => resolve({ code: code ?? 1, stdout }));
+      p.on("error", () => resolve({ code: 1, stdout: "" }));
     });
     _claudeAvailable = result.code === 0 && result.stdout.trim().length > 0;
     if (_claudeAvailable) _claudeVersion = result.stdout.trim().split("\n")[0];
@@ -71,8 +73,10 @@ export function spawnProcess(
     proc.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
-    proc.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
-    proc.on("error", (err) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+    const p2 = proc as any;
+    p2.on("close", (code: number | null) => resolve({ code: code ?? 1, stdout, stderr }));
+    p2.on("error", (err: Error) =>
       resolve({ code: 1, stdout, stderr: `${stderr}\n${err.message}`.trim() }),
     );
   });
@@ -166,7 +170,9 @@ export function spawnClaudeStreaming(
       stderr += chunk.toString();
     });
 
-    proc.on("close", (code) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+    const p3 = proc as any;
+    p3.on("close", (code: number | null) => {
       // Flush any remaining buffer
       if (lineBuffer.trim()) {
         try {
@@ -181,7 +187,7 @@ export function spawnClaudeStreaming(
       resolve({ code: code ?? 1, stdout: resultText, stderr });
     });
 
-    proc.on("error", (err) =>
+    p3.on("error", (err: Error) =>
       resolve({ code: 1, stdout: resultText, stderr: `${stderr}\n${err.message}`.trim() }),
     );
   });

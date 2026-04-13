@@ -367,6 +367,7 @@ async function installAppInner(
     void executeHook("postInstall", appId, app.hooks, { composePath, env });
 
     void fireTrigger("app_installed", { appId });
+    void import("../setup/triggers.js").then((m) => m.onAppInstalled(appId)).catch(() => {});
     writeNotification("info", `${app.name} installed`, "App is up and running", appId);
 
     // Auto-register proxy route
@@ -764,11 +765,11 @@ async function rollbackUpdateInner(appId: string): Promise<{ success: boolean; e
   }
 }
 
-export function updateApp(appId: string): Promise<{ success: boolean; error?: string }> {
+export function updateApp(appId: string): Promise<{ success: boolean; error?: string; verified?: boolean }> {
   return withAppLock(appId, () => updateAppInner(appId));
 }
 
-async function updateAppInner(appId: string): Promise<{ success: boolean; error?: string }> {
+async function updateAppInner(appId: string): Promise<{ success: boolean; error?: string; verified?: boolean }> {
   const installed = getInstalledApp(appId);
   if (!installed) return { success: false, error: "App is not installed" };
 
@@ -856,6 +857,26 @@ async function updateAppInner(appId: string): Promise<{ success: boolean; error?
 
     const containers = await discoverContainers(appId);
 
+    // Post-update health verification: wait up to 60s for containers to be running
+    const verifyDeadline = Date.now() + 60_000;
+    let allHealthy = false;
+    while (Date.now() < verifyDeadline) {
+      try {
+        const live = await listContainers();
+        const appContainers = live.filter((c) => containers.includes(c.id));
+        allHealthy = appContainers.length > 0 && appContainers.every((c) => c.status === "running");
+        if (allHealthy) break;
+      } catch {
+        // Transient Docker error — keep trying
+      }
+      await new Promise((r) => setTimeout(r, 3_000));
+    }
+
+    if (!allHealthy) {
+      log.warn(`Post-update health check failed for ${appId} — containers not all running after 60s`);
+      writeNotification("warning", `${app.name} update: containers slow to start`, "The update completed but not all containers are running yet. Check the app status.", appId);
+    }
+
     try {
       const latestSnapshot = db
         .select()
@@ -876,7 +897,7 @@ async function updateAppInner(appId: string): Promise<{ success: boolean; error?
 
     db.update(schema.installedApps)
       .set({
-        status: "running",
+        status: allHealthy ? "running" : "error",
         containerIds: JSON.stringify(containers),
         version: app.version,
         updatedAt: new Date().toISOString(),
@@ -886,8 +907,10 @@ async function updateAppInner(appId: string): Promise<{ success: boolean; error?
 
     pinImageDigest(appId, effectiveCompose);
 
-    writeNotification("info", `${app.name} updated`, `Updated to version ${app.version}`, appId);
-    return { success: true };
+    if (allHealthy) {
+      writeNotification("info", `${app.name} updated`, `Updated to version ${app.version}`, appId);
+    }
+    return { success: true, verified: allHealthy };
   } catch (err: any) {
     const errorDetail = err?.stderr || err.message;
     recordInstallError(appId, `docker compose up -d (update)`, err, effectiveCompose, env);

@@ -6,6 +6,7 @@ import { DEFAULT_AGENT_LOOP_CONFIG } from "../agent-loop/types.js";
 import { getUsageSummary } from "../agent-loop/budget.js";
 import { runAgentCycleOnce } from "../agent-loop/index.js";
 import { getDedupSnapshot } from "../agent-loop/event-dedup.js";
+import { recordGracefulError } from "../middleware/request-logger.js";
 
 export const agentLoop = new Hono();
 
@@ -75,7 +76,7 @@ agentLoop.get("/status", (c) => {
       recentRemediations,
     });
   } catch (err) {
-    console.error("[agent-loop] GET /status error:", err);
+    recordGracefulError(c, err, { endpoint: "agent-loop/status" });
     return c.json({
       config: DEFAULT_AGENT_LOOP_CONFIG,
       evolutionConfig: { autoScan: true, autoExecutePolicy: "low", executionMode: "headless" },

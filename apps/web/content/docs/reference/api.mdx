@@ -67,7 +67,8 @@ curl http://localhost:4000/api/containers \
 | POST | `/api/apps/:id/stop` | Stop all containers for an installed app. |
 | POST | `/api/apps/:id/restart` | Restart all containers for an installed app. |
 | POST | `/api/apps/:id/update` | Update an app to its latest version. |
-| GET | `/api/apps/updates` | Check for available updates across all installed apps. |
+| GET | `/api/updates` | Check for available updates across all installed apps. |
+| GET | `/api/updates/:appId` | Get detailed update info for a specific app. |
 | POST | `/api/apps/bulk` | Bulk action on multiple apps. Body: `{ action, appIds }`. |
 
 ---

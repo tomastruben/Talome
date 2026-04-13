@@ -96,8 +96,10 @@ function runGitIn(args: string[]): Promise<{ code: number; stdout: string; stder
     const proc = spawn("git", args, { cwd: PROJECT_ROOT, env: process.env });
     proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
     proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
-    proc.on("close", (code) => resolve({ code: code ?? 1, stdout: stdout.trim(), stderr: stderr.trim() }));
-    proc.on("error", (err) => resolve({ code: 1, stdout: "", stderr: err.message }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+    const p = proc as any;
+    p.on("close", (code: number | null) => resolve({ code: code ?? 1, stdout: stdout.trim(), stderr: stderr.trim() }));
+    p.on("error", (err: Error) => resolve({ code: 1, stdout: "", stderr: err.message }));
   });
 }
 

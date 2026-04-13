@@ -70,8 +70,9 @@ export interface ClaudeRunResult {
 
 function buildTmuxCommand(projectRoot: string): string {
   const unset = "unset CLAUDECODE;";
-  const tmuxCmd = `tmux new-session -A -s talome-claude -c ${projectRoot} "claude --continue"`;
-  const fallback = `cd ${projectRoot} && claude --continue`;
+  const quoted = projectRoot.includes(" ") ? `"${projectRoot}"` : projectRoot;
+  const tmuxCmd = `tmux new-session -A -s talome-claude -c ${quoted} "claude --continue"`;
+  const fallback = `cd ${quoted} && claude --continue`;
   return `${unset} if command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
 }
 

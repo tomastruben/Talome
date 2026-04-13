@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { db, schema } from "../db/index.js";
 import { desc } from "drizzle-orm";
+import { serverError } from "../middleware/request-logger.js";
 
 const TALOME_DIR = join(homedir(), ".talome");
 
@@ -96,8 +97,8 @@ supervisor.post("/restart", async (c) => {
       }
     }
     return c.json({ ok: true, restarted: "all" });
-  } catch {
-    return c.json({ error: "Supervisor not running" }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Supervisor not running" });
   }
 });
 

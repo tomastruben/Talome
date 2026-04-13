@@ -15,8 +15,10 @@ const RESERVED_PORTS = new Set([DASHBOARD_PORT, CORE_PORT]);
 export function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const srv = createServer();
-    srv.once("error", () => resolve(false));
-    srv.once("listening", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Server type lacks .once() in newer @types/node
+    const s = srv as any;
+    s.once("error", () => resolve(false));
+    s.once("listening", () => {
       srv.close(() => resolve(true));
     });
     srv.listen(port, "0.0.0.0");

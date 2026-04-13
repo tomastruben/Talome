@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { createChatStream } from "../ai/agent.js";
 import { checkDailyCap, getDailyCapUsd, getTodayCostUsd } from "../agent-loop/budget.js";
+import { serverError } from "../middleware/request-logger.js";
 
 const chat = new Hono();
 
@@ -85,7 +86,6 @@ chat.post("/", async (c) => {
     return createUIMessageStreamResponse({ stream: uiStream });
   } catch (err: any) {
     const message = err?.message || "";
-    console.error("[chat] error:", err);
 
     if (message.includes("AI_PROVIDER_NOT_CONFIGURED") || message.includes("ANTHROPIC_API_KEY_MISSING")) {
       const providerMsg = message.includes(":")
@@ -97,8 +97,7 @@ chat.post("/", async (c) => {
       );
     }
 
-    const errorText = extractErrorMessage(err);
-    return c.json({ error: errorText }, 500);
+    return serverError(c, err, { message: extractErrorMessage(err), context: { endpoint: "chat" } });
   }
 });
 

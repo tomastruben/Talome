@@ -110,7 +110,14 @@ function AppsPageContent() {
   const { data: stacksData } = useSWR<{ stacks: StackListItem[] }>(
     `${CORE_URL}/api/stacks`, jsonFetcher, swrOpts,
   );
+  const { data: updatesData = [] } = useSWR<{ appId: string; hasUpdate: boolean }[]>(
+    `${CORE_URL}/api/updates`, jsonFetcher, { ...swrOpts, refreshInterval: 5 * 60 * 1000 },
+  );
   const stacks = stacksData?.stacks ?? [];
+  const appsWithUpdates = useMemo(
+    () => new Set(updatesData.filter((u) => u.hasUpdate).map((u) => u.appId)),
+    [updatesData],
+  );
   const loading = !apps.length && !appsError;
   const fetchError = appsError && !apps.length ? "Failed to load apps. Check that the Talome server is running." : null;
 
@@ -380,6 +387,7 @@ function AppsPageContent() {
                 priority={i < 12}
                 eager={i < PAGE_CHUNK}
                 onDelete={tab === "user-created" ? handleDeleteUserApp : undefined}
+                hasUpdate={appsWithUpdates.has(app.id)}
               />
             ))}
             {search && !isInstalled && filtered.length < 3 && (

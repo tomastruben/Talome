@@ -8,6 +8,7 @@ import { getSetting } from "../utils/settings.js";
 import { docker } from "../docker/client.js";
 import { generateCaddyfile } from "./caddyfile.js";
 import { ensureProxyNetwork, connectContainerToProxyNetwork, PROXY_NETWORK } from "./network.js";
+import { getDockerHostAddress } from "../platform/index.js";
 
 const CADDY_DIR = join(os.homedir(), ".talome", "caddy");
 const CADDY_CONTAINER_NAME = "talome-caddy";
@@ -36,7 +37,7 @@ function loadAuthConfig(): { enabled: boolean; verifyUrl: string; bypassAppIds: 
 
   // The verify URL points to the Talome core API — accessible from the Caddy container
   // via the proxy network. Use the container name + internal port.
-  const coreHost = getSetting("proxy_auth_core_host") || "host.docker.internal:4000";
+  const coreHost = getSetting("proxy_auth_core_host") || `${getDockerHostAddress()}:4000`;
   const bypassRaw = getSetting("proxy_auth_bypass_apps");
   const bypassAppIds = bypassRaw ? bypassRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
 

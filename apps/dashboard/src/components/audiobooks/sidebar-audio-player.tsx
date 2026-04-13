@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useAtomValue } from "jotai";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
@@ -12,10 +13,28 @@ import {
   PlayIcon,
   PauseIcon,
   Cancel01Icon,
+  HeadphonesIcon,
 } from "@/components/icons";
 import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+
+/** Cover thumbnail with fallback icon when no cover art exists */
+function CoverThumb({ url, alt, size, children }: { url: string; alt: string; size: number; children?: React.ReactNode }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className={`size-${size} rounded-md bg-muted overflow-hidden relative`}>
+      {!failed ? (
+        <Image src={url} alt={`${alt} cover`} className="object-cover" fill onError={() => setFailed(true)} />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <HugeiconsIcon icon={HeadphonesIcon} size={Math.round(size * 2.5)} className="text-dim-foreground" />
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
 
 /**
  * Mini audio player in the sidebar footer.
@@ -49,16 +68,14 @@ export function SidebarAudioPlayer() {
               {/* Collapsed icon mode: cover with progress ring */}
               <div className="hidden group-data-[collapsible=icon]:flex items-center justify-center">
                 <Link href={`/dashboard/audiobooks/${book.bookId}`} className="relative">
-                  <div className="size-8 rounded-md bg-muted overflow-hidden relative">
-                    <Image src={book.coverUrl} alt={`${book.title} cover`} className="object-cover" fill />
-                    {/* Progress at bottom of cover */}
+                  <CoverThumb url={book.coverUrl} alt={book.title} size={8}>
                     <div className="absolute bottom-0 left-0 right-0 h-px bg-foreground/[0.08]">
                       <div
                         className="h-full bg-foreground/50 transition-[width] duration-1000 ease-linear"
                         style={{ width: `${Math.min(100, progressPct)}%` }}
                       />
                     </div>
-                  </div>
+                  </CoverThumb>
                 </Link>
               </div>
 
@@ -69,8 +86,7 @@ export function SidebarAudioPlayer() {
                   href={`/dashboard/audiobooks/${book.bookId}`}
                   className="shrink-0 relative"
                 >
-                  <div className="size-9 rounded-md bg-muted overflow-hidden relative">
-                    <Image src={book.coverUrl} alt={`${book.title} cover`} className="object-cover" fill />
+                  <CoverThumb url={book.coverUrl} alt={book.title} size={9}>
                     {/* Progress line at bottom of cover */}
                     <div className="absolute bottom-0 left-0 right-0 h-px bg-foreground/[0.08]">
                       <div
@@ -78,7 +94,7 @@ export function SidebarAudioPlayer() {
                         style={{ width: `${Math.min(100, progressPct)}%` }}
                       />
                     </div>
-                  </div>
+                  </CoverThumb>
                 </Link>
 
                 <div className="flex-1 min-w-0">

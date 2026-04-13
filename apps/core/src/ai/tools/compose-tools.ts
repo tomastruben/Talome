@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,13 +17,18 @@ export const REPO_ROOT =
 const BACKUP_DIR = join(process.env.HOME || "/tmp", ".talome", "backups", "compose");
 
 function safePath(userPath: string): string {
-  const resolved = resolve(userPath);
-  // Allow absolute paths that exist on the filesystem (compose files can be anywhere)
-  // but prevent path traversal attacks using ".."
+  // Reject explicit traversal in the raw input
   if (userPath.includes("..")) {
     throw new Error(`Path "${userPath}" contains path traversal. Access denied.`);
   }
-  return resolved;
+  const resolved = resolve(userPath);
+  // Resolve symlinks to prevent symlink-based traversal
+  try {
+    return realpathSync(resolved);
+  } catch {
+    // File may not exist yet (e.g. backup target) — use resolved path
+    return resolved;
+  }
 }
 
 function getInstalledAppComposePath(appId: string): string | null {

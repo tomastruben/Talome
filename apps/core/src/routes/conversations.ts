@@ -5,6 +5,7 @@ import { eq, desc, and, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { serverError } from "../middleware/request-logger.js";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("conversations");
@@ -105,8 +106,7 @@ conversations.get("/", (c) => {
     }
     return c.json(rows);
   } catch (err) {
-    log.error("GET / error", err);
-    return c.json({ error: "Failed to load conversations" }, 500);
+    return serverError(c, err, { message: "Failed to load conversations" });
   }
 });
 
@@ -141,8 +141,7 @@ conversations.post("/", async (c) => {
       updatedAt: now,
     });
   } catch (err) {
-    log.error("POST / error", err);
-    return c.json({ error: "Failed to create conversation" }, 500);
+    return serverError(c, err, { message: "Failed to create conversation" });
   }
 });
 
@@ -166,8 +165,7 @@ conversations.get("/by-external/:platform/:externalId", (c) => {
     if (!row) return c.json({ error: "Not found" }, 404);
     return c.json(row);
   } catch (err) {
-    log.error("GET /by-external error", err);
-    return c.json({ error: "Failed to look up conversation" }, 500);
+    return serverError(c, err, { message: "Failed to look up conversation", context: { platform: c.req.param("platform"), externalId: c.req.param("externalId") } });
   }
 });
 
@@ -181,8 +179,7 @@ conversations.get("/:id/messages", (c) => {
       .all();
     return c.json(rows);
   } catch (err) {
-    log.error("GET /:id/messages error", err);
-    return c.json({ error: "Failed to load messages" }, 500);
+    return serverError(c, err, { message: "Failed to load messages", context: { conversationId: c.req.param("id") } });
   }
 });
 
@@ -233,8 +230,7 @@ conversations.post("/:id/messages", async (c) => {
 
     return c.json({ id, conversationId, role, content, createdAt: now });
   } catch (err) {
-    log.error("POST /:id/messages error", err);
-    return c.json({ error: "Failed to save message" }, 500);
+    return serverError(c, err, { message: "Failed to save message", context: { conversationId: c.req.param("id") } });
   }
 });
 
@@ -335,8 +331,7 @@ conversations.delete("/:id", (c) => {
 
     return c.json({ ok: true });
   } catch (err) {
-    log.error("DELETE /:id error", err);
-    return c.json({ error: "Failed to delete conversation" }, 500);
+    return serverError(c, err, { message: "Failed to delete conversation", context: { conversationId: c.req.param("id") } });
   }
 });
 

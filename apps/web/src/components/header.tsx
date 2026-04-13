@@ -12,6 +12,7 @@ const menuItems = [
   { name: "Apps", href: "#apps" },
   { name: "Docs", href: "/docs" },
   { name: "GitHub", href: "https://github.com/tomastruben/Talome" },
+  { name: "Discord", href: "https://discord.gg/HK7gFaVRJ" },
 ];
 
 const EASE = [0.2, 0.8, 0.2, 1] as const;

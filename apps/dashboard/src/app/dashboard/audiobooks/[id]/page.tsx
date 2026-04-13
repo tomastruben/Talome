@@ -15,10 +15,12 @@ import type { AudioPlayerBook } from "@/atoms/audio-player";
 import {
   HugeiconsIcon,
   BookOpen01Icon,
+  Delete02Icon,
 } from "@/components/icons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 /** Lazy-load DOMPurify — only needed on this detail page */
 let _purify: { sanitize: (dirty: string) => string } | null = null;
 function sanitizeHtml(dirty: string): string {
@@ -112,6 +114,7 @@ export default function AudiobookDetailPage() {
   const setPageBack = useSetAtom(pageBackAtom);
 
   const [imgFailed, setImgFailed] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const activeChapterRef = useRef<HTMLDivElement>(null);
 
   // Global player state
@@ -394,6 +397,37 @@ export default function AudiobookDetailPage() {
     </div>
   );
 
+  async function handleDeleteItem() {
+    if (!confirm("Remove this audiobook from your library? The files will be deleted.")) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`${CORE_URL}/api/audiobooks/items/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success("Removed from library");
+        router.push("/dashboard/audiobooks");
+      } else {
+        toast.error(data.error ?? "Failed to remove");
+      }
+    } catch {
+      toast.error("Failed to remove audiobook");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const removeButton = (
+    <button
+      type="button"
+      onClick={handleDeleteItem}
+      disabled={deleting}
+      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground/50 hover:text-destructive transition-colors disabled:opacity-50 cursor-pointer"
+    >
+      <HugeiconsIcon icon={Delete02Icon} size={12} />
+      {deleting ? "Removing..." : "Remove from library"}
+    </button>
+  );
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -446,6 +480,8 @@ export default function AudiobookDetailPage() {
             </ScrollArea>
           </div>
         )}
+
+        <div className="w-full flex justify-center pt-4">{removeButton}</div>
       </div>
 
       {/* ─────────────────── DESKTOP ────────────────────── */}
@@ -487,6 +523,7 @@ export default function AudiobookDetailPage() {
                 {meta.genres.map((g) => <span key={g} className="media-genre-pill">{g}</span>)}
               </div>
             )}
+            <div className="pt-4">{removeButton}</div>
           </div>
         </ScrollArea>
 

@@ -17,6 +17,10 @@ import { writeAuditEntry } from "../db/audit.js";
 import { db, schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
 import { getLastErrorWithVariables, getStartupFailures } from "../services/docker.js";
+import { serverError } from "../middleware/request-logger.js";
+import { createLogger } from "../utils/logger.js";
+
+const log = createLogger("containers");
 import type { Container, ServiceStack } from "@talome/types";
 
 const containers = new Hono();
@@ -146,7 +150,7 @@ function buildStacks(containers: Container[]): ServiceStack[] {
     installed = db.select().from(schema.installedApps).all();
     catalog = db.select().from(schema.appCatalog).all();
   } catch (err) {
-    console.error("[containers] buildStacks DB error:", err);
+    log.error("buildStacks DB error", err);
     // Fall back to basic stacks without app metadata
     return containers.map((c) => makeStack(c.id, c.name, "standalone", [c]));
   }
@@ -316,7 +320,7 @@ containers.get("/", async (c) => {
 
     return c.json(withStats);
   } catch (err) {
-    return c.json({ error: "Failed to list containers" }, 500);
+    return serverError(c, err, { message: "Failed to list containers" });
   }
 });
 
@@ -327,7 +331,7 @@ containers.post("/:id/start", async (c) => {
     writeAuditEntry("Started", "modify", id);
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: "Failed to start container" }, 500);
+    return serverError(c, err, { message: "Failed to start container", context: { containerId: c.req.param("id") } });
   }
 });
 
@@ -338,7 +342,7 @@ containers.post("/:id/stop", async (c) => {
     writeAuditEntry("Stopped", "modify", id);
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: "Failed to stop container" }, 500);
+    return serverError(c, err, { message: "Failed to stop container", context: { containerId: c.req.param("id") } });
   }
 });
 
@@ -349,7 +353,7 @@ containers.post("/:id/restart", async (c) => {
     writeAuditEntry("Restarted", "modify", id);
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: "Failed to restart container" }, 500);
+    return serverError(c, err, { message: "Failed to restart container", context: { containerId: c.req.param("id") } });
   }
 });
 
@@ -360,7 +364,7 @@ containers.delete("/:id", async (c) => {
     writeAuditEntry("Removed", "destructive", id);
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: "Failed to remove container" }, 500);
+    return serverError(c, err, { message: "Failed to remove container", context: { containerId: c.req.param("id") } });
   }
 });
 
@@ -370,7 +374,7 @@ containers.get("/:id/logs", async (c) => {
     const logs = await getContainerLogs(c.req.param("id"), tail);
     return c.text(logs);
   } catch (err) {
-    return c.json({ error: "Failed to get container logs" }, 500);
+    return serverError(c, err, { message: "Failed to get container logs", context: { containerId: c.req.param("id") } });
   }
 });
 
@@ -379,7 +383,7 @@ containers.get("/:id/stats", async (c) => {
     const stats = await getContainerStats(c.req.param("id"));
     return c.json(stats);
   } catch (err) {
-    return c.json({ error: "Failed to get container stats" }, 500);
+    return serverError(c, err, { message: "Failed to get container stats", context: { containerId: c.req.param("id") } });
   }
 });
 
@@ -390,7 +394,7 @@ containers.get("/:id/last-error", async (c) => {
     if (!result) return c.json({ error: "No install error found" }, 404);
     return c.json(result);
   } catch (err) {
-    return c.json({ error: "Failed to retrieve error details" }, 500);
+    return serverError(c, err, { message: "Failed to retrieve error details", context: { containerId: c.req.param("id") } });
   }
 });
 
@@ -400,7 +404,7 @@ containers.get("/:id/startup-errors", async (c) => {
     const failures = getStartupFailures(appId, 5);
     return c.json({ appId, failures });
   } catch (err) {
-    return c.json({ error: "Failed to retrieve startup errors" }, 500);
+    return serverError(c, err, { message: "Failed to retrieve startup errors", context: { containerId: c.req.param("id") } });
   }
 });
 
@@ -411,7 +415,7 @@ containers.get("/networks", async (c) => {
     const networks = await listNetworks();
     return c.json({ networks });
   } catch (err) {
-    return c.json({ error: "Failed to list networks" }, 500);
+    return serverError(c, err, { message: "Failed to list networks" });
   }
 });
 
@@ -423,7 +427,7 @@ containers.post("/networks", async (c) => {
     writeAuditEntry(`Created network: ${name}`, "modify", `Driver: ${driver ?? "bridge"}`);
     return c.json({ ok: true, id: result.id });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "Failed to create network" }, 500);
+    return serverError(c, err, { message: "Failed to create network" });
   }
 });
 
@@ -434,7 +438,7 @@ containers.delete("/networks/:name", async (c) => {
     writeAuditEntry(`Removed network: ${name}`, "destructive");
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "Failed to remove network" }, 500);
+    return serverError(c, err, { message: "Failed to remove network" });
   }
 });
 
@@ -446,7 +450,7 @@ containers.post("/networks/:name/connect", async (c) => {
     await connectContainerToNetwork(name, container);
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "Failed to connect" }, 500);
+    return serverError(c, err, { message: "Failed to connect to network" });
   }
 });
 
@@ -458,7 +462,7 @@ containers.post("/networks/:name/disconnect", async (c) => {
     await disconnectContainerFromNetwork(name, container);
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "Failed to disconnect" }, 500);
+    return serverError(c, err, { message: "Failed to disconnect from network" });
   }
 });
 

@@ -5,7 +5,7 @@ const CORE_BACKEND = process.env.NEXT_PUBLIC_CORE_URL || "http://127.0.0.1:4000"
 const nextConfig: NextConfig = {
   output: "standalone",
   images: { unoptimized: true },
-  allowedDevOrigins: ["*.local", "*.orb.local", "*.ts.net", "100.67.194.97", "192.168.1.26"],
+  allowedDevOrigins: ["*.local", "*.orb.local", "*.ts.net"],
   experimental: {
     optimizePackageImports: ["@hugeicons/core-free-icons", "@hugeicons/react"],
   },

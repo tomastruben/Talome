@@ -3,6 +3,7 @@ import { readFile, readdir, writeFile, unlink, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getCustomTools, loadCustomTools } from "../ai/custom-tools.js";
+import { serverError } from "../middleware/request-logger.js";
 
 const CUSTOM_TOOLS_DIR = join(
   process.env.HOME || "/tmp",
@@ -61,7 +62,7 @@ tools.get("/list", async (c) => {
     const activeTools = Object.keys(getCustomTools());
     return c.json({ files: result, activeTools, directory: CUSTOM_TOOLS_DIR });
   } catch (err) {
-    return c.json({ error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to list custom tools" });
   }
 });
 
@@ -92,7 +93,7 @@ tools.post("/install", async (c) => {
     const loaded = await loadCustomTools();
     return c.json({ ok: true, activeTools: Object.keys(loaded) });
   } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to install custom tool" });
   }
 });
 
@@ -114,7 +115,7 @@ tools.delete("/:filename", async (c) => {
     return c.json({ ok: true, activeTools: Object.keys(loaded) });
   } catch (err: any) {
     if (err.code === "ENOENT") return c.json({ ok: false, error: "File not found" }, 404);
-    return c.json({ ok: false, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to delete custom tool" });
   }
 });
 
@@ -183,7 +184,7 @@ tools.post("/publish", async (c) => {
 
     return c.json({ ok: true, url: gist.html_url, rawUrl, gistId: gist.id });
   } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to share tool" });
   }
 });
 
@@ -247,6 +248,6 @@ tools.post("/install-from-url", async (c) => {
     const loaded = await loadCustomTools();
     return c.json({ ok: true, filename, activeTools: Object.keys(loaded) });
   } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to install tool from URL" });
   }
 });

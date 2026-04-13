@@ -27,6 +27,7 @@ import { users } from "./routes/users.js";
 import { stacks } from "./routes/stacks.js";
 import { creator } from "./routes/creator.js";
 import { evolution } from "./routes/evolution.js";
+import { setupRoutes } from "./routes/setup.js";
 import { agentLoop as agentLoopRoute } from "./routes/agent-loop.js";
 import { tools as toolsRoute } from "./routes/tools.js";
 import { widgets } from "./routes/widgets.js";
@@ -64,7 +65,9 @@ import { eq } from "drizzle-orm";
 import { startTelegramBot } from "./messaging/telegram.js";
 // discord-bot.js is imported dynamically below to avoid loading discord.js at startup
 import { checkDockerConnection, startPeriodicPrune } from "./docker/client.js";
-import { safeRoute, rateLimit, requireSession, requireRole, requirePermission } from "./middleware/index.js";
+import { safeRoute, rateLimit, requireSession, requireRole, requirePermission, requestLogger } from "./middleware/index.js";
+import { errorTracker } from "./middleware/error-tracker.js";
+import { getRequestId, getRequestStart } from "./middleware/request-logger.js";
 import { randomUUID } from "node:crypto";
 import { loadCustomTools } from "./ai/custom-tools.js";
 import { migrateSettingsEncryption } from "./utils/crypto.js";
@@ -264,6 +267,7 @@ app.use(
   }),
 );
 app.use("*", safeRoute);
+app.use("/api/*", requestLogger);
 
 // ── Security headers ──────────────────────────────────────────────────────────
 app.use("*", async (c, next) => {
@@ -386,7 +390,7 @@ app.route("/api/proxy", proxy);
 app.route("/api/mdns", mdnsRoute);
 app.route("/api/network", network);
 app.route("/api/backups", backupsRoute);
-app.route("/api/apps/updates", updatesRoute);
+app.route("/api/updates", updatesRoute);
 app.route("/api/webhooks", webhooks);
 app.route("/api/ollama", ollamaRoute);
 app.route("/api/ai", aiModelsRoute);
@@ -413,13 +417,35 @@ app.route("/api/automations", automations);
   app.route("/api/stacks", stacks);
   app.route("/api/apps", creator);
   app.route("/api/evolution", evolution);
+  app.route("/api/setup", setupRoutes);
   app.route("/api/agent-loop", agentLoopRoute);
   app.route("/api/tools", toolsRoute);
 
 // ── Global error handler ──────────────────────────────────────────────────────
 app.onError((err, c) => {
-  const errorId = randomUUID().slice(0, 8);
+  // Reuse the request-level ID if available, otherwise generate one
+  const errorId = getRequestId(c) || randomUUID().slice(0, 8);
+  const startMs = getRequestStart(c);
+  const durationMs = startMs ? Date.now() - startMs : -1;
+
   errorLog.error(`Unhandled error ${errorId}`, err);
+
+  // Record to the in-memory error tracker for the diagnostics endpoint
+  const url = new URL(c.req.url);
+  errorTracker.record({
+    errorId,
+    timestamp: new Date().toISOString(),
+    method: c.req.method,
+    path: url.pathname,
+    query: url.search,
+    status: 500,
+    durationMs,
+    errorType: err.constructor?.name || "Error",
+    errorMessage: err.message || String(err),
+    stack: err.stack,
+    userId: (c.get("sessionUser" as never) as string) || undefined,
+  });
+
   return c.json(
     {
       error: "An unexpected error occurred",

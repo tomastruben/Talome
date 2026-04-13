@@ -649,6 +649,90 @@ export function IntelligenceSection() {
         </SettingsGroup>
       </section>
 
+      {/* ── Auto-Setup ────────────────────────────────────────────── */}
+      <AutoSetupSection />
+
     </div>
+  );
+}
+
+// ── Auto-Setup sub-section ──────────────────────────────────────────────────
+
+function AutoSetupSection() {
+  const { data: config, mutate } = useSWR<{
+    autoConfigureEnabled: boolean;
+    excludedApps: string[];
+  }>(`${CORE_URL}/api/setup/config`, fetcher, { revalidateOnFocus: false });
+
+  const { data: health } = useSWR<{
+    apps: Array<{ appId: string; name: string; score: number }>;
+  }>(`${CORE_URL}/api/setup/health-score`, fetcher, { revalidateOnFocus: false });
+
+  async function toggleAutoConfig(enabled: boolean) {
+    await fetch(`${CORE_URL}/api/setup/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoConfigureEnabled: enabled }),
+    });
+    void mutate();
+  }
+
+  async function toggleExclusion(appId: string) {
+    if (!config) return;
+    const excluded = new Set(config.excludedApps);
+    if (excluded.has(appId)) excluded.delete(appId);
+    else excluded.add(appId);
+    await fetch(`${CORE_URL}/api/setup/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ excludedApps: [...excluded] }),
+    });
+    void mutate();
+  }
+
+  if (!config) return null;
+
+  return (
+    <section>
+      <SectionLabel>Auto-Setup</SectionLabel>
+      <SettingsGroup>
+        <SettingsRow>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">Auto-configure apps</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Automatically configure newly installed apps — extract API keys, set URLs, wire services
+            </p>
+          </div>
+          <Switch
+            checked={config.autoConfigureEnabled}
+            onCheckedChange={toggleAutoConfig}
+          />
+        </SettingsRow>
+        {health && health.apps.length > 0 && (
+          <div className="px-4 py-3">
+            <p className="text-xs text-muted-foreground mb-2">Exclude apps from auto-setup:</p>
+            <div className="flex flex-wrap gap-1.5">
+              {health.apps.map((app) => {
+                const isExcluded = config.excludedApps.includes(app.appId);
+                return (
+                  <button
+                    key={app.appId}
+                    onClick={() => toggleExclusion(app.appId)}
+                    className={cn(
+                      "text-xs px-2.5 py-1 rounded-md transition-colors",
+                      isExcluded
+                        ? "bg-muted/50 text-muted-foreground line-through"
+                        : "bg-foreground/[0.06] text-foreground",
+                    )}
+                  >
+                    {app.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </SettingsGroup>
+    </section>
   );
 }

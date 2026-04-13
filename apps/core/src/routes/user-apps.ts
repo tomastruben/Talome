@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { serverError } from "../middleware/request-logger.js";
 import { createUserApp, listUserApps, deleteUserApp } from "../stores/creator.js";
 import { exportApp, exportAppAsBundle } from "../stores/export.js";
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
@@ -241,8 +242,7 @@ userApps.get("/:appId/config", async (c) => {
     const parsed = parseYaml(content);
     return c.json({ appId, composePath: row.overrideComposePath, config: parsed });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return c.json({ error: msg }, 500);
+    return serverError(c, err, { context: { appId } });
   }
 });
 
@@ -320,8 +320,7 @@ userApps.patch("/:appId/config", async (c) => {
 
     return c.json({ ok: true, appId, message: "Config updated. Recreate the container to apply changes." });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return c.json({ error: msg }, 500);
+    return serverError(c, err, { context: { appId } });
   }
 });
 

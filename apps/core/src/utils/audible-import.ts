@@ -256,7 +256,7 @@ export async function importAudibleBook(
       });
 
       const trackedStream = downloadRes.body.pipeThrough(progressStream);
-      const nodeStream = Readable.fromWeb(trackedStream as import("stream/web").ReadableStream);
+      const nodeStream = Readable.fromWeb(trackedStream as any);
       const fileStream = createWriteStream(aaxcPath);
       await pipeline(nodeStream, fileStream);
 
@@ -322,7 +322,9 @@ export async function importAudibleBook(
 
         proc.stdout?.on("data", () => { /* drain */ });
 
-        proc.on("close", (code) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ChildProcessByStdio lacks .on() in newer @types/node
+        const p = proc as any;
+        p.on("close", (code: number | null) => {
           if (code === 0) {
             resolve();
           } else {
@@ -332,7 +334,7 @@ export async function importAudibleBook(
           }
         });
 
-        proc.on("error", (err) => {
+        p.on("error", (err: Error) => {
           reject(new Error(`FFmpeg spawn error: ${err.message}`));
         });
       });

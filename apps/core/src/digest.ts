@@ -17,8 +17,10 @@ async function isClaudeCodeAvailable(): Promise<boolean> {
   try {
     _claudeAvailable = await new Promise<boolean>((resolve) => {
       const proc = spawn("claude", ["--version"], { shell: false });
-      proc.on("close", (code) => resolve(code === 0));
-      proc.on("error", () => resolve(false));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+      const p = proc as any;
+      p.on("close", (code: number | null) => resolve(code === 0));
+      p.on("error", () => resolve(false));
     });
   } catch { _claudeAvailable = false; }
   return _claudeAvailable;
@@ -33,8 +35,10 @@ async function generateViaClaudeCode(prompt: string, cwd: string): Promise<strin
     });
     const timeout = setTimeout(() => { proc.kill("SIGTERM"); resolve(null); }, 120_000);
     proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    proc.on("close", () => { clearTimeout(timeout); resolve(stdout.trim() || null); });
-    proc.on("error", () => { clearTimeout(timeout); resolve(null); });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+    const p2 = proc as any;
+    p2.on("close", () => { clearTimeout(timeout); resolve(stdout.trim() || null); });
+    p2.on("error", () => { clearTimeout(timeout); resolve(null); });
   });
 }
 

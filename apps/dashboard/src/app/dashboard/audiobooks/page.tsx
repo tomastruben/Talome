@@ -123,6 +123,7 @@ interface DownloadRecord {
   addedOn: number;
   completionOn: number;
   savePath: string;
+  category: string;
 }
 
 interface AudibleItem {
@@ -383,13 +384,16 @@ function AudiobookReleaseCard({
 function DownloadRow({
   record,
   onRemove,
+  onImport,
 }: {
   record: DownloadRecord;
   onRemove: (hash: string) => void;
+  onImport: (hash: string) => void;
 }) {
   const isActive = record.state === "downloading" || record.state === "stalledDL" || record.state === "metaDL";
   const isCompleted = record.progress >= 100;
   const isSeeding = record.state === "uploading" || record.state === "stalledUP";
+  const [importing, setImporting] = useState(false);
 
   const formatSpeed = (bps: number) => {
     if (bps <= 0) return "";
@@ -417,6 +421,7 @@ function DownloadRow({
         <p className="text-sm font-medium truncate leading-tight">{record.name}</p>
         <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
           <span>{formatSize(record.size)}</span>
+          {record.category && <span className="text-dim-foreground">{record.category}</span>}
           {!isCompleted && record.dlspeed > 0 && <span>{formatSpeed(record.dlspeed)}</span>}
           {!isCompleted && record.eta > 0 && <span>{formatEta(record.eta)}</span>}
         </div>
@@ -429,11 +434,18 @@ function DownloadRow({
             <span className="text-xs tabular-nums text-muted-foreground w-8 text-right">{record.progress}%</span>
           </>
         )}
-        {stateLabel && (
-          <span className={cn(
-            "text-xs",
-            isCompleted ? "text-status-healthy/60" : "text-muted-foreground",
-          )}>{stateLabel}</span>
+        {isCompleted && (
+          <button
+            type="button"
+            onClick={() => { setImporting(true); onImport(record.hash); }}
+            disabled={importing}
+            className="text-xs text-primary hover:text-primary/80 transition-colors cursor-pointer disabled:opacity-50"
+          >
+            {importing ? "Importing..." : "Add to library"}
+          </button>
+        )}
+        {stateLabel && !isCompleted && (
+          <span className="text-xs text-muted-foreground">{stateLabel}</span>
         )}
         <button
           type="button"
@@ -848,7 +860,12 @@ export default function AudiobooksPage() {
       const res = await fetch(`${CORE_URL}/api/audiobooks/search/download`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ downloadUrl: url, title: release.title }),
+        body: JSON.stringify({
+          downloadUrl: url,
+          title: release.title,
+          libraryName: libraries?.find((l) => l.id === lastRealLibrary)?.name ?? undefined,
+          libraryId: lastRealLibrary ?? undefined,
+        }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -866,6 +883,23 @@ export default function AudiobooksPage() {
         next.delete(url);
         return next;
       });
+    }
+  }
+
+  async function handleImportDownload(hash: string) {
+    try {
+      const res = await fetch(`${CORE_URL}/api/audiobooks/downloads/${hash}/import`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success(`Imported to ${data.library ?? "library"}`);
+        void mutateDownloads();
+      } else {
+        toast.error(data.error ?? "Import failed");
+      }
+    } catch {
+      toast.error("Failed to import audiobook");
     }
   }
 
@@ -1364,9 +1398,10 @@ export default function AudiobooksPage() {
                       </p>
                     )}
 
-                    <div className="grid gap-1.5">
+                    <div className="grid gap-1.5 overflow-hidden">
                       {searchResults.map((release, i) => (
                         <motion.div
+                          className="min-w-0"
                           key={`${release.guid ?? release.title}-${i}`}
                           initial={{ opacity: 0, y: 4 }}
                           animate={{ opacity: 1, y: 0 }}
@@ -1422,12 +1457,13 @@ export default function AudiobooksPage() {
                   <p className="text-xs text-muted-foreground">
                     Content downloaded via connected services is your responsibility.
                   </p>
-                  <div className="grid gap-2">
+                  <div className="grid gap-2 [&>*]:min-w-0">
                     {downloadsData!.records.map((record) => (
                       <DownloadRow
                         key={record.hash}
                         record={record}
                         onRemove={handleRemoveDownload}
+                        onImport={handleImportDownload}
                       />
                     ))}
                   </div>

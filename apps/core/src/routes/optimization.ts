@@ -24,6 +24,7 @@ import {
   reprocessFailedJobs,
 } from "../media/optimizer.js";
 import { hasFfmpeg } from "./files.js";
+import { recordGracefulError, serverError } from "../middleware/request-logger.js";
 import { resolveMediaFilePath } from "../utils/media-paths.js";
 import type { OptimizationConfig } from "@talome/types";
 import { statSync } from "node:fs";
@@ -45,7 +46,7 @@ function validatePath(path: string): boolean {
 optimization.post("/analyze", async (c) => {
   const body = await c.req.json<{ path: string }>().catch(() => ({ path: "" }));
   if (!body.path) return c.json({ error: "path required" }, 400);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   // Resolve container path → host path if needed
   let resolvedPath = body.path;
@@ -64,7 +65,7 @@ optimization.post("/analyze", async (c) => {
 optimization.post("/queue", async (c) => {
   const body = await c.req.json<{ paths: string[]; keepOriginal?: boolean; priority?: number }>().catch(() => ({ paths: [] as string[], keepOriginal: undefined as boolean | undefined, priority: undefined as number | undefined }));
   if (!body.paths || body.paths.length === 0) return c.json({ error: "paths required" }, 400);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   const keepOrig = body.keepOriginal;
   const priority = body.priority;
@@ -144,7 +145,7 @@ optimization.post("/scan", async (c) => {
   const body = await c.req.json().catch((err) => { log.debug("scan body parse failed", err); return {}; }) as { path?: string; paths?: string[]; queueJobs?: boolean };
   const paths = body.paths ?? (body.path ? [body.path] : []);
   if (paths.length === 0) return c.json({ error: "path or paths required" }, 400);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   try {
     let totalScanned = 0, totalQueued = 0, totalSkipped = 0;
@@ -169,7 +170,7 @@ optimization.post("/scan", async (c) => {
       lastScanAt: new Date().toISOString(),
     });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "Scan failed" }, 500);
+    return serverError(c, err, { message: "Scan failed" });
   }
 });
 
@@ -195,7 +196,8 @@ optimization.get("/scan-paths", async (c) => {
     const tagged = await getTaggedMediaRootPaths();
     // Return both tagged and flat paths for backwards compat
     return c.json({ paths: tagged.map((t) => t.path), tagged });
-  } catch {
+  } catch (err) {
+    recordGracefulError(c, err, { endpoint: "optimization/scan-paths" });
     return c.json({ paths: [], tagged: [] });
   }
 });

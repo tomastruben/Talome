@@ -61,8 +61,10 @@ function runCommand(
     proc.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
-    proc.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
-    proc.on("error", (error) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+    const p = proc as any;
+    p.on("close", (code: number | null) => resolve({ code: code ?? 1, stdout, stderr }));
+    p.on("error", (error: Error) =>
       resolve({ code: 1, stdout, stderr: `${stderr}\n${error.message}`.trim() }),
     );
   });

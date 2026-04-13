@@ -20,8 +20,10 @@ async function isClaudeCodeAvailable(): Promise<boolean> {
   try {
     const result = await new Promise<{ code: number }>((resolve) => {
       const proc = spawn("claude", ["--version"], { shell: false });
-      proc.on("close", (code) => resolve({ code: code ?? 1 }));
-      proc.on("error", () => resolve({ code: 1 }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ChildProcess type lacks .on() in newer @types/node
+      const p = proc as any;
+      p.on("close", (code: number | null) => resolve({ code: code ?? 1 }));
+      p.on("error", () => resolve({ code: 1 }));
     });
     _claudeAvailable = result.code === 0;
   } catch {
@@ -128,11 +130,13 @@ async function diagnoseViaClaudeCode(
 
     proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-    proc.on("close", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ChildProcess type lacks .on() in newer @types/node
+    const p2 = proc as any;
+    p2.on("close", () => {
       clearTimeout(timeout);
       resolve({ text: stdout || stderr, model: "claude-code", costUsd: 0 });
     });
-    proc.on("error", () => {
+    p2.on("error", () => {
       clearTimeout(timeout);
       resolve({ text: stderr || "Claude Code process error", model: "claude-code", costUsd: 0 });
     });

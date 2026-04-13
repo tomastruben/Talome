@@ -4,6 +4,7 @@ import { db, schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
 import { startTelegramBot, stopTelegramBot, getTelegramBotStatus } from "../messaging/telegram.js";
 import { startDiscordBot, stopDiscordBot, getDiscordBotStatus } from "../messaging/discord-bot.js";
+import { serverError } from "../middleware/request-logger.js";
 import { generateMcpToken } from "./mcp.js";
 
 const integrations = new Hono();
@@ -53,7 +54,7 @@ integrations.post("/telegram/restart", async (c) => {
     }
     return c.json({ ok: true, username: result.username });
   } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to restart Telegram bot" });
   }
 });
 
@@ -62,7 +63,7 @@ integrations.post("/telegram/stop", async (c) => {
     await stopTelegramBot();
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to stop Telegram bot" });
   }
 });
 
@@ -101,7 +102,7 @@ integrations.post("/discord/restart", async (c) => {
     }
     return c.json({ ok: true, username: result.username });
   } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to restart Discord bot" });
   }
 });
 
@@ -110,7 +111,7 @@ integrations.post("/discord/stop", async (c) => {
     await stopDiscordBot();
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to stop Discord bot" });
   }
 });
 
@@ -129,7 +130,7 @@ integrations.get("/mcp/tokens", (c) => {
       .all();
     return c.json(tokens);
   } catch (err) {
-    return c.json({ error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to list MCP tokens" });
   }
 });
 
@@ -146,7 +147,7 @@ integrations.post("/mcp/tokens", async (c) => {
 
     return c.json({ ok: true, id, name, token: plaintext });
   } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to create MCP token" });
   }
 });
 
@@ -156,7 +157,7 @@ integrations.delete("/mcp/tokens/:id", (c) => {
     db.delete(schema.mcpTokens).where(eq(schema.mcpTokens.id, id)).run();
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to delete MCP token", context: { tokenId: c.req.param("id") } });
   }
 });
 

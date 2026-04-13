@@ -13,6 +13,7 @@ import {
   publishCreatorDraft,
 } from "../creator/orchestrator.js";
 import { writeAuditEntry } from "../db/audit.js";
+import { captureRouteError, serverError } from "../middleware/request-logger.js";
 
 const creator = new Hono();
 
@@ -60,8 +61,8 @@ creator.post("/create", async (c) => {
     }
 
     return c.json({ ok: true, draft });
-  } catch (err: any) {
-    return c.json({ error: err.message || "Generation failed" }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "App generation failed" });
   }
 });
 
@@ -244,11 +245,12 @@ creator.post("/create/complete", async (c) => {
       republishError,
       duration,
     });
-  } catch (err: any) {
+  } catch (err) {
+    captureRouteError(c, err, { endpoint: "creator/complete", appId });
     return c.json({
       ok: false,
       appId,
-      error: err.message || "Validation failed",
+      error: err instanceof Error ? err.message : "Validation failed",
       filesGenerated: [],
       fileCount: 0,
       hasCompose: false,
@@ -282,8 +284,8 @@ creator.post("/create/publish", async (c) => {
       storeId: result.storeId,
       workspacePath: parsed.data.draft.workspace?.rootPath,
     });
-  } catch (err: any) {
-    return c.json({ error: err.message || "Publish failed" }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "App publish failed" });
   }
 });
 

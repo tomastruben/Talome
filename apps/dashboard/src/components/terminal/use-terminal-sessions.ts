@@ -59,6 +59,12 @@ function deriveSessionName(id: string, displayName?: string): string {
     return `App: ${creatorMatch[1].replace(/-/g, " ")}`;
   }
 
+  // Setup sessions: show "Setup: configure" instead of raw ID
+  const setupMatch = id.match(/^sess_setup-(.+)/);
+  if (setupMatch) {
+    return `Setup: ${setupMatch[1].replace(/-/g, " ")}`;
+  }
+
   return id.replace(/^sess_/, "").replace(/-/g, " ");
 }
 
@@ -67,6 +73,7 @@ function classifySession(id: string): SessionCategory {
   if (
     id.startsWith("sess_evolution-") ||
     id.startsWith("sess_creator-") ||
+    id.startsWith("sess_setup-") ||
     id === "sess_talome-claude"
   ) {
     return "system";

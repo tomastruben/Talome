@@ -36,9 +36,10 @@ When listing containers with exposed TCP ports, include direct markdown links us
         .filter((p, i, arr) => arr.indexOf(p) === i);
       const webUrls = tcpPorts.map((port) => `http://localhost:${port}`);
       return {
-        ...container,
+        name: container.name,
+        image: container.image,
+        status: container.status,
         tcpPorts,
-        webUrls,
         primaryWebUrl: webUrls[0] ?? null,
       };
     });

@@ -25,6 +25,10 @@ export interface AppCapabilities {
   configFilePath?: string;
   /** XML tag containing the API key (e.g. "ApiKey") */
   apiKeyXPath?: string;
+  /** How the setup loop can discover this app's API key */
+  apiKeyDiscoveryMethod?: "config_xml" | "create" | "default_creds" | "user";
+  /** Apps that must be configured before this one */
+  setupDependsOn?: string[];
 }
 
 export const APP_REGISTRY: Record<string, AppCapabilities> = {
@@ -47,6 +51,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     relatesTo: ["qbittorrent", "prowlarr", "jellyfin"],
     configFilePath: "config/config.xml",
     apiKeyXPath: "ApiKey",
+    apiKeyDiscoveryMethod: "config_xml",
+    setupDependsOn: ["prowlarr"],
   },
   radarr: {
     id: "radarr",
@@ -67,6 +73,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     relatesTo: ["qbittorrent", "prowlarr", "jellyfin"],
     configFilePath: "config/config.xml",
     apiKeyXPath: "ApiKey",
+    apiKeyDiscoveryMethod: "config_xml",
+    setupDependsOn: ["prowlarr"],
   },
   prowlarr: {
     id: "prowlarr",
@@ -85,6 +93,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     relatesTo: ["sonarr", "radarr", "readarr"],
     configFilePath: "config/config.xml",
     apiKeyXPath: "ApiKey",
+    apiKeyDiscoveryMethod: "config_xml",
+    setupDependsOn: [],
   },
   jellyfin: {
     id: "jellyfin",
@@ -101,6 +111,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     setupGuideUrl: "https://jellyfin.org/docs",
     talomeToolPrefix: "jellyfin_",
     relatesTo: ["overseerr"],
+    apiKeyDiscoveryMethod: "create",
+    setupDependsOn: [],
   },
   qbittorrent: {
     id: "qbittorrent",
@@ -115,6 +127,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     setupGuideUrl: "https://github.com/qbittorrent/qBittorrent/wiki",
     talomeToolPrefix: "qbt_",
     relatesTo: ["sonarr", "radarr"],
+    apiKeyDiscoveryMethod: "default_creds",
+    setupDependsOn: [],
   },
   overseerr: {
     id: "overseerr",
@@ -129,6 +143,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     setupGuideUrl: "https://docs.overseerr.dev",
     talomeToolPrefix: "overseerr_",
     relatesTo: ["jellyfin", "sonarr", "radarr"],
+    apiKeyDiscoveryMethod: "user",
+    setupDependsOn: ["jellyfin", "sonarr", "radarr"],
   },
   homeassistant: {
     id: "homeassistant",
@@ -143,6 +159,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     setupGuideUrl: "https://www.home-assistant.io/docs",
     talomeToolPrefix: "hass_",
     relatesTo: [],
+    apiKeyDiscoveryMethod: "user",
+    setupDependsOn: [],
   },
   pihole: {
     id: "pihole",
@@ -157,6 +175,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     setupGuideUrl: "https://docs.pi-hole.net",
     talomeToolPrefix: "pihole_",
     relatesTo: [],
+    apiKeyDiscoveryMethod: "user",
+    setupDependsOn: [],
   },
   vaultwarden: {
     id: "vaultwarden",
@@ -171,6 +191,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     setupGuideUrl: "https://github.com/dani-garcia/vaultwarden/wiki",
     talomeToolPrefix: "vaultwarden_",
     relatesTo: [],
+    apiKeyDiscoveryMethod: "user",
+    setupDependsOn: [],
   },
   audiobookshelf: {
     id: "audiobookshelf",
@@ -187,6 +209,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     setupGuideUrl: "https://www.audiobookshelf.org/docs",
     talomeToolPrefix: "audiobookshelf_",
     relatesTo: ["readarr"],
+    apiKeyDiscoveryMethod: "user",
+    setupDependsOn: [],
   },
   readarr: {
     id: "readarr",
@@ -207,6 +231,8 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
     relatesTo: ["qbittorrent", "prowlarr", "audiobookshelf"],
     configFilePath: "config/config.xml",
     apiKeyXPath: "ApiKey",
+    apiKeyDiscoveryMethod: "config_xml",
+    setupDependsOn: ["prowlarr"],
   },
 };
 

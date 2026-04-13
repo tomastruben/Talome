@@ -8,12 +8,30 @@ import { AnimatePresence, motion } from "framer-motion";
 import { audioPlayerBookAtom, audioPlayerStateAtom } from "@/atoms/audio-player";
 import { useAudioEngine } from "@/hooks/use-audio-engine";
 import { useAudiobookPlayer } from "@/hooks/use-audiobook-player";
+import { useState } from "react";
 import {
   HugeiconsIcon,
   PlayIcon,
   PauseIcon,
   Cancel01Icon,
+  HeadphonesIcon,
 } from "@/components/icons";
+
+/** Cover thumbnail with fallback icon when no cover art exists */
+function CoverThumb({ url, alt, size }: { url: string; alt: string; size: number }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className={`size-${size} rounded-md bg-muted overflow-hidden shrink-0 relative`}>
+      {!failed ? (
+        <Image src={url} alt={`${alt} cover`} className="object-cover" fill onError={() => setFailed(true)} />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <HugeiconsIcon icon={HeadphonesIcon} size={size * 2} className="text-dim-foreground" />
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Layout-level component:
@@ -59,9 +77,7 @@ export function GlobalAudioPlayer() {
             href={`/dashboard/audiobooks/${book.bookId}`}
             className="flex items-center gap-2.5 flex-1 min-w-0 pl-3 active:opacity-70 transition-opacity"
           >
-            <div className="size-8 rounded-md bg-muted overflow-hidden shrink-0 relative">
-              <Image src={book.coverUrl} alt={`${book.title} cover`} className="object-cover" fill />
-            </div>
+            <CoverThumb url={book.coverUrl} alt={book.title} size={8} />
             <p className="text-xs font-medium truncate min-w-0">{book.title}</p>
           </Link>
 

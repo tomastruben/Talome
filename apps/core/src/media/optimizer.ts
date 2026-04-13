@@ -1168,7 +1168,9 @@ async function runConversion(jobId: string): Promise<void> {
         }
       });
 
-      proc.on("close", (code) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+      const p = proc as any;
+      p.on("close", (code: number | null) => {
         runningProcesses.delete(jobId);
         exitCode = code ?? 1;
         if (code === 0) {
@@ -1179,7 +1181,7 @@ async function runConversion(jobId: string): Promise<void> {
         }
       });
 
-      proc.on("error", (err) => {
+      p.on("error", (err: Error) => {
         runningProcesses.delete(jobId);
         reject(err);
       });

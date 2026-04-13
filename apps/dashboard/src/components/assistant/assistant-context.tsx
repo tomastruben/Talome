@@ -340,6 +340,32 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     },
   });
 
+  // Auto-approve tool calls when autoMode is enabled.
+  // Scans the last assistant message for pending approvals and approves them.
+  const autoApprovedRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!autoMode) return;
+    const lastMsg = messages.at(-1);
+    if (!lastMsg || lastMsg.role !== "assistant") return;
+    for (const part of lastMsg.parts) {
+      if (
+        part != null &&
+        typeof part === "object" &&
+        "state" in part &&
+        part.state === "approval-requested" &&
+        "approval" in part
+      ) {
+        const approval = (part as Record<string, unknown>).approval as
+          | { id: string }
+          | undefined;
+        if (approval?.id && !autoApprovedRef.current.has(approval.id)) {
+          autoApprovedRef.current.add(approval.id);
+          addToolApprovalResponse({ id: approval.id, approved: true });
+        }
+      }
+    }
+  }, [autoMode, messages, addToolApprovalResponse]);
+
   // Auto-retry on network error (e.g. server restarted mid-stream while a
   // tool was running). Wait for the server to come back up, then regenerate.
   useEffect(() => {

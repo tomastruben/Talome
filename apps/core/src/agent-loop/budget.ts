@@ -108,7 +108,7 @@ export function isInStartupGrace(): boolean {
 
 export type BudgetZone = "green" | "yellow" | "orange" | "red" | "exhausted";
 
-export type ServiceType = "triage" | "remediation" | "evolution_scan" | "activity_summary" | "self_healing";
+export type ServiceType = "triage" | "remediation" | "evolution_scan" | "activity_summary" | "self_healing" | "setup_loop";
 
 /** Compute the current budget zone based on today's spend vs. daily cap. */
 export function getBudgetZone(): BudgetZone {
@@ -155,6 +155,8 @@ export function shouldRunService(
         return { allowed: false, reason: "Budget reduced — non-essential services paused" };
       if (service === "remediation" && eventSeverity !== "critical")
         return { allowed: false, reason: "Budget reduced — non-critical remediation deferred" };
+      if (service === "setup_loop")
+        return { allowed: false, reason: "Budget reduced — setup loop deferred" };
       return { allowed: true };
 
     case "red":

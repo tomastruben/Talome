@@ -4,6 +4,7 @@ import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { db, schema } from "../db/index.js";
 import { eq, desc } from "drizzle-orm";
+import { serverError } from "../middleware/request-logger.js";
 import { writeMemory, deleteMemory, clearAllMemories } from "../db/memories.js";
 
 const memories = new Hono();
@@ -39,7 +40,7 @@ memories.get("/", (c) => {
       .all();
     return c.json(rows);
   } catch (err) {
-    return c.json({ error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to list memories" });
   }
 });
 
@@ -52,7 +53,7 @@ memories.post("/", async (c) => {
     await writeMemory(type, content);
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to create memory" });
   }
 });
 
@@ -74,7 +75,7 @@ memories.put("/:id", async (c) => {
       .run();
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to update memory", context: { memoryId: c.req.param("id") } });
   }
 });
 
@@ -85,7 +86,7 @@ memories.delete("/:id", async (c) => {
     await deleteMemory(id);
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to delete memory", context: { memoryId: c.req.param("id") } });
   }
 });
 
@@ -97,7 +98,7 @@ memories.delete("/", async (c) => {
     await clearAllMemories();
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to clear all memories" });
   }
 });
 
@@ -128,7 +129,7 @@ memories.post("/enabled", async (c) => {
       .run();
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to toggle memory enabled" });
   }
 });
 

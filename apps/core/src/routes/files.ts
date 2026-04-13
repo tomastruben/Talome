@@ -6,6 +6,7 @@ import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { execSync, spawn } from "node:child_process";
 import { Readable } from "node:stream";
 import { getSetting, setSetting } from "../utils/settings.js";
+import { serverError } from "../middleware/request-logger.js";
 import { db, schema } from "../db/index.js";
 import type { TranscodingConfig } from "@talome/types";
 import {
@@ -134,7 +135,7 @@ files.get("/list", async (c) => {
       allowedRoots: getAllowedRoots().filter((r: string) => existsSync(r)),
     });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to list directory" });
   }
 });
 
@@ -157,7 +158,7 @@ files.get("/read", async (c) => {
     const content = await readFile(abs, "utf-8");
     return c.json({ path: abs, name: basename(abs), size: s.size, modified: s.mtime.toISOString(), content });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to read file" });
   }
 });
 
@@ -185,7 +186,7 @@ files.get("/download", async (c) => {
       },
     });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to download file" });
   }
 });
 
@@ -226,7 +227,7 @@ function getFfmpegBin(): string {
     try { execSync("ffmpeg -version", { stdio: "ignore" }); cachedFfmpegBin = "ffmpeg"; }
     catch {
       // 3. Check common install locations (launchd/cron don't inherit shell PATH)
-      const commonPaths = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"];
+      const commonPaths = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"];
       for (const p of commonPaths) {
         try { execSync(`"${p}" -version`, { stdio: "ignore" }); cachedFfmpegBin = p; break; }
         catch { /* not here */ }
@@ -357,7 +358,7 @@ files.get("/probe", async (c) => {
 
   const abs = sanitizePath(filePath);
   if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   return c.json(probeFile(abs));
 });
@@ -370,7 +371,7 @@ files.get("/subtitle", async (c) => {
 
   const abs = sanitizePath(filePath);
   if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   const subIndex = parseInt(indexStr ?? "0", 10);
 
@@ -389,11 +390,13 @@ files.get("/subtitle", async (c) => {
     const chunks: Buffer[] = [];
     proc.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
     proc.stderr.on("data", () => { /* drain */ });
-    proc.on("close", (code) => resolve(code === 0 && chunks.length > 0 ? Buffer.concat(chunks) : null));
-    proc.on("error", () => resolve(null));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+    const p = proc as any;
+    p.on("close", (code: number | null) => resolve(code === 0 && chunks.length > 0 ? Buffer.concat(chunks) : null));
+    p.on("error", () => resolve(null));
   });
 
-  if (!vtt) return c.json({ error: "Failed to extract subtitle" }, 500);
+  if (!vtt) return serverError(c, "Failed to extract subtitle");
 
   return new Response(vtt.toString("utf-8"), {
     headers: {
@@ -856,14 +859,16 @@ export function startHls(srcPath: string, audioTrack = 0, seekTo = 0, videoCodec
       });
       proc.stdout?.on("data", () => { /* drain */ });
 
-      proc.on("close", (code) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+      const p2 = proc as any;
+      p2.on("close", (code: number | null) => {
         job.done = true;
         job.proc = null;
         if (code === 0) console.log("[hls] done:", outDir);
         else if (code !== null) console.error("[hls] failed, code:", code, "\n", stderrTail);
         res();
       });
-      proc.on("error", (e) => { job.done = true; job.proc = null; console.error("[hls] spawn error:", e.message); res(); });
+      p2.on("error", (e: Error) => { job.done = true; job.proc = null; console.error("[hls] spawn error:", e.message); res(); });
     });
   })();
 
@@ -877,7 +882,7 @@ files.get("/hls-start", async (c) => {
 
   const abs = sanitizePath(filePath);
   if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   const audioTrack = parseInt(c.req.query("audioTrack") ?? "0", 10);
   const seekTo = parseFloat(c.req.query("seekTo") ?? "0");
@@ -1067,7 +1072,9 @@ export function startTransmux(srcPath: string, videoCodec: string, durationSecs 
         }
       });
 
-      proc.on("close", (code) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
+      const p3 = proc as any;
+      p3.on("close", (code: number | null) => {
         job.proc = null;
         if (code === 0) {
           job.done = true;
@@ -1080,7 +1087,7 @@ export function startTransmux(srcPath: string, videoCodec: string, durationSecs 
         }
         res();
       });
-      proc.on("error", (e) => {
+      p3.on("error", (e: Error) => {
         job.proc = null;
         job.error = true;
         job.done = true;
@@ -1123,7 +1130,7 @@ files.get("/transmux-start", async (c) => {
 
   const abs = sanitizePath(filePath);
   if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   const probe = probeFile(abs);
   const primaryAudioCodec = probe.audio[0]?.codec ?? "";
@@ -1252,7 +1259,7 @@ files.get("/stream", async (c) => {
   try {
     return await buildStreamResponse(abs, c.req.header("range"));
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to stream file" });
   }
 });
 
@@ -1278,7 +1285,7 @@ files.delete("/", async (c) => {
     }
     return c.json({ ok: true, deleted: abs });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to delete file" });
   }
 });
 
@@ -1299,7 +1306,7 @@ files.post("/rename", async (c) => {
     await rename(absOld, absNew);
     return c.json({ ok: true, oldPath: absOld, newPath: absNew });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to rename file" });
   }
 });
 
@@ -1379,7 +1386,7 @@ files.post("/mkdir", async (c) => {
     await mkdir(abs, { recursive: true });
     return c.json({ ok: true, created: abs });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to create directory" });
   }
 });
 
@@ -1520,7 +1527,7 @@ files.get("/transcode-decision", async (c) => {
 
   const abs = sanitizePath(filePath);
   if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   const smartEnabled = getSetting("transcoding_smart_detection") !== "false";
   const probe = probeFile(abs);

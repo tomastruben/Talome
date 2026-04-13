@@ -69,6 +69,7 @@ import {
 } from "./tools/optimization-tools.js";
 import { rememberTool, recallTool, forgetTool, updateMemoryTool, listMemoriesTool } from "./tools/memory-tools.js";
 import { trackIssueTool, listIssuesTool } from "./tools/evolution-tools.js";
+import { checkSetupStatusTool, startSetupTool } from "./tools/setup-tools.js";
 import { runShellTool } from "./tools/shell-tool.js";
 import { queryDocsTool } from "./tools/docs-tool.js";
 import {
@@ -973,6 +974,24 @@ registerDomain({
   },
 });
 
+// ── Setup domain — always available ─────────────────────────────────────────
+registerDomain({
+  name: "setup",
+  settingsKeys: [],
+  tools: {
+    check_setup_status: checkSetupStatusTool,
+    start_setup: startSetupTool,
+  },
+  tiers: {
+    check_setup_status: "read",
+    start_setup: "modify",
+  },
+  categories: {
+    check_setup_status: "system",
+    start_setup: "system",
+  },
+});
+
 const DEFAULT_SYSTEM_PROMPT = `You are Talome, the AI that powers an agentic home server OS. You help users monitor system health, manage containers, browse and install apps from multiple store ecosystems (CasaOS, Umbrel, Talome-native), create custom apps, configure apps automatically, and troubleshoot issues.
 
 The app store aggregates apps from multiple sources:
@@ -1373,6 +1392,14 @@ Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive
     .join(" ") ?? "";
   const activeTools = getActiveTools(lastUserText || undefined);
 
+  // Inject domain knowledge when user asks about setup, configuration, or troubleshooting
+  const setupKeywords = ["setup", "configure", "connect", "wire", "api key", "not working",
+    "can't connect", "troubleshoot", "install", "settings", "port", "how do i", "set up"];
+  if (setupKeywords.some((kw) => lastUserText.toLowerCase().includes(kw))) {
+    const { getSetupGuide } = await import("./knowledge/setup-guide.js");
+    dynamicParts.push(getSetupGuide());
+  }
+
   // Auto-extract image attachments from the last user message and save them
   // to disk so the agent can reference their paths in apply_change calls.
   if (lastUserMessage) {
@@ -1416,7 +1443,16 @@ Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive
     tools,
     abortSignal,
     stopWhen: stepCountIs(10),
-    onStepFinish: ({ toolCalls }) => {
+    onStepFinish: ({ toolCalls, toolResults }) => {
+      // Warn about oversized tool results that burn tokens
+      if (toolResults) {
+        for (const r of toolResults) {
+          const size = JSON.stringify(r).length;
+          if (size > 8000) {
+            console.warn(`[ai] Large tool result: ${r.toolName} → ${size} chars (~${Math.round(size / 4)} tokens)`);
+          }
+        }
+      }
       if (!toolCalls) return;
       for (const call of toolCalls) {
         const tier = TOOL_TIERS[call.toolName] ?? "read";

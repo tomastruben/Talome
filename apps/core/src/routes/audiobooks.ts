@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import sharp from "sharp";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { join, basename } from "node:path";
 import { homedir } from "node:os";
+import { serverError } from "../middleware/request-logger.js";
 import { getSetting } from "../utils/settings.js";
 
 const COVER_CACHE_DIR = join(homedir(), ".talome", "cache", "covers");
@@ -106,6 +107,7 @@ async function qbtFetch(path: string, init?: RequestInit): Promise<Response> {
 
   let res = await doFetch();
   if (res.status === 403) {
+    qbtCookie = null;
     await qbtLogin();
     res = await doFetch();
   }
@@ -129,20 +131,6 @@ interface ProwlarrRelease {
   categories?: Array<{ id?: number; name?: string }>;
 }
 
-interface QBitTorrent {
-  hash?: string;
-  name?: string;
-  state?: string;
-  progress?: number;
-  total_size?: number;
-  size?: number;
-  downloaded?: number;
-  dlspeed?: number;
-  eta?: number;
-  added_on?: number;
-  completion_on?: number;
-  save_path?: string;
-}
 
 /* ── Libraries ─────────────────────────────────────────── */
 
@@ -151,8 +139,8 @@ audiobooks.get("/libraries", async (c) => {
     const res = await absFetch("/api/libraries");
     const data = await res.json() as { libraries: unknown[] };
     return c.json(data.libraries ?? []);
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to fetch audiobook libraries" });
   }
 });
 
@@ -172,8 +160,8 @@ audiobooks.get("/library/:id", async (c) => {
     const res = await absFetch(`/api/libraries/${id}/items?${params}`);
     const data = await res.json();
     return c.json(data);
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to fetch library items", context: { libraryId: c.req.param("id") } });
   }
 });
 
@@ -185,8 +173,8 @@ audiobooks.get("/library/:id/personalized", async (c) => {
     const res = await absFetch(`/api/libraries/${id}/personalized`);
     const data = await res.json();
     return c.json(data);
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to fetch personalized shelves", context: { libraryId: c.req.param("id") } });
   }
 });
 
@@ -198,8 +186,8 @@ audiobooks.get("/item/:id", async (c) => {
     const res = await absFetch(`/api/items/${id}?expanded=1`);
     const data = await res.json();
     return c.json(data);
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to fetch audiobook item", context: { itemId: c.req.param("id") } });
   }
 });
 
@@ -214,8 +202,8 @@ audiobooks.get("/search", async (c) => {
     const res = await absFetch(`/api/libraries/${libraryId}/search?${params}`);
     const data = await res.json();
     return c.json(data);
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to search audiobooks" });
   }
 });
 
@@ -253,8 +241,8 @@ audiobooks.patch("/progress/:id", async (c) => {
     } catch {
       return c.json({ ok: true });
     }
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to update audiobook progress", context: { itemId: id } });
   }
 });
 
@@ -327,8 +315,8 @@ audiobooks.get("/stream/:id", async (c) => {
     }));
 
     return c.json({ tracks });
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to fetch audiobook stream info", context: { itemId: id } });
   }
 });
 
@@ -462,27 +450,63 @@ audiobooks.get("/search/releases", async (c) => {
       .sort((a, b) => (b.seeders ?? 0) - (a.seeders ?? 0));
 
     return c.json({ releases, totalFound: raw.length, languageFilter: langFilter });
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err), releases: [] }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to search audiobook releases", extra: { releases: [] } });
   }
 });
 
-/* ── Download a release via qBittorrent ────────────────────── */
+/* ── Download a release via qBittorrent (server-side proxy) ── */
 
 audiobooks.post("/search/download", async (c) => {
-  const body = await c.req.json().catch(() => ({})) as { downloadUrl?: string; title?: string };
+  const body = await c.req.json().catch(() => ({})) as {
+    downloadUrl?: string;
+    title?: string;
+    libraryName?: string;
+    libraryId?: string;
+  };
   const { downloadUrl, title } = body;
   if (!downloadUrl) return c.json({ error: "downloadUrl required" }, 400);
+  const category = body.libraryName || "audiobooks";
+  // Track this category for future polling
+  AUDIOBOOK_CATEGORIES.add(category.toLowerCase());
 
   try {
-    const formData = new URLSearchParams();
-    formData.set("urls", downloadUrl);
-    formData.set("category", "audiobooks");
+    // Prowlarr download URLs point to localhost which qBittorrent (inside a VPN
+    // container) can't reach. Fetch the torrent file server-side and upload it
+    // as raw bytes so qBittorrent never needs to contact Prowlarr directly.
+    const torrentRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(30000) });
+    if (!torrentRes.ok) throw new Error(`Failed to fetch torrent: ${torrentRes.status}`);
+    const torrentBuf = Buffer.from(await torrentRes.arrayBuffer());
+
+    const boundary = `----TalomeBoundary${Date.now()}`;
+    const parts: Buffer[] = [];
+
+    // torrents field — the actual .torrent file
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="torrents"; filename="download.torrent"\r\nContent-Type: application/x-bittorrent\r\n\r\n`
+    ));
+    parts.push(torrentBuf);
+    parts.push(Buffer.from("\r\n"));
+
+    // category field — uses the target library name
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="category"\r\n\r\n${category}\r\n`
+    ));
+
+    // Auto-create category in qBittorrent (ignore if already exists)
+    await qbtFetch("/api/v2/torrents/createCategory", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `category=${encodeURIComponent(category)}`,
+    }).catch(() => {});
+
+    parts.push(Buffer.from(`--${boundary}--\r\n`));
+    const multipartBody = Buffer.concat(parts);
 
     const res = await qbtFetch("/api/v2/torrents/add", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: formData.toString(),
+      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+      body: new Uint8Array(multipartBody),
     });
 
     if (!res.ok) {
@@ -491,20 +515,181 @@ audiobooks.post("/search/download", async (c) => {
     }
 
     return c.json({ ok: true, title: title ?? "Download started" });
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to start audiobook download" });
   }
 });
 
 /* ── Active audiobook downloads from qBittorrent ───────────── */
 
+interface QBitTorrent {
+  hash?: string;
+  name?: string;
+  state?: string;
+  progress?: number;
+  total_size?: number;
+  size?: number;
+  downloaded?: number;
+  dlspeed?: number;
+  eta?: number;
+  added_on?: number;
+  completion_on?: number;
+  save_path?: string;
+  category?: string;
+  content_path?: string;
+}
+
+/** Known audiobook library categories — used to filter qBittorrent torrents */
+const AUDIOBOOK_CATEGORIES = new Set(["audiobooks", "audioknihy"]);
+
+/** Hashes already imported — prevents re-importing on subsequent polls */
+const importedHashes = new Set<string>();
+
+/** Resolve an Audiobookshelf library name to its host folder path */
+async function resolveLibraryHostPath(libraryName: string): Promise<{ hostPath: string; libraryId: string } | null> {
+  try {
+    const res = await absFetch("/api/libraries");
+    const data = await res.json() as { libraries?: Array<{ id: string; name: string; folders?: Array<{ fullPath: string }> }> };
+    const lib = (data.libraries ?? []).find((l) => l.name.toLowerCase() === libraryName.toLowerCase());
+    if (!lib || !lib.folders?.[0]) return null;
+
+    // Map ABS container path → host path using known Docker mounts
+    const containerPath = lib.folders[0].fullPath; // e.g. "/audiobooks"
+    const absConfig = getConfig();
+    if (!absConfig) return null;
+
+    // Derive host path: inspect the audiobookshelf container mounts
+    // For robustness, try Docker inspect first, fall back to convention
+    try {
+      const inspectRes = await fetch("http://localhost:2375/containers/audiobookshelf/json", {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (inspectRes.ok) {
+        const inspect = await inspectRes.json() as { Mounts?: Array<{ Source: string; Destination: string }> };
+        const mount = inspect.Mounts?.find((m) => m.Destination === containerPath);
+        if (mount) return { hostPath: mount.Source, libraryId: lib.id };
+      }
+    } catch { /* Docker API not available via HTTP — use socket-based fallback */ }
+
+    // Fallback: try resolving via volume mount settings
+    // Users configure audiobook_host_path in settings to map container→host paths
+    const audiobookHostPath = getSetting("audiobook_library_host_path");
+    if (audiobookHostPath) {
+      return { hostPath: audiobookHostPath, libraryId: lib.id };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Auto-import completed audiobook torrents into the target Audiobookshelf library */
+async function autoImportCompleted(torrents: QBitTorrent[]): Promise<void> {
+  for (const t of torrents) {
+    const hash = t.hash;
+    if (!hash || importedHashes.has(hash)) continue;
+    if ((t.progress ?? 0) < 1) continue; // not complete
+    if (!t.category) continue;
+
+    const category = t.category.toLowerCase();
+    if (!AUDIOBOOK_CATEGORIES.has(category)) continue;
+
+    const resolved = await resolveLibraryHostPath(t.category);
+    if (!resolved) continue;
+
+    const { hostPath, libraryId } = resolved;
+    const sourcePath = t.content_path ?? t.save_path;
+    if (!sourcePath) continue;
+
+    try {
+      // Determine the actual source on the host
+      // qBittorrent's save_path/content_path is a container path (/downloads/...)
+      // Host equivalent configured via qbittorrent_download_host_path setting
+      const qbtDownloadRoot = "/downloads";
+      const hostDownloadRoot = getSetting("qbittorrent_download_host_path");
+      if (!hostDownloadRoot) continue; // Host download path not configured
+
+      let hostSourcePath: string;
+      if (sourcePath.startsWith(qbtDownloadRoot)) {
+        hostSourcePath = sourcePath.replace(qbtDownloadRoot, hostDownloadRoot);
+      } else {
+        // Might already be a host path or unknown mapping — skip
+        continue;
+      }
+
+      // Check source exists
+      const srcStat = await stat(hostSourcePath).catch(() => null);
+      if (!srcStat) continue;
+
+      // Audiobookshelf requires audiobooks in subdirectories, not bare files
+      let destPath: string;
+      if (srcStat.isDirectory()) {
+        destPath = join(hostPath, basename(hostSourcePath));
+      } else {
+        // Single file — wrap in a directory named after the file (without extension)
+        const fileName = basename(hostSourcePath);
+        const dirName = fileName.replace(/\.[^.]+$/, "");
+        destPath = join(hostPath, dirName);
+        await mkdir(destPath, { recursive: true });
+        destPath = join(destPath, fileName); // actual file destination
+      }
+
+      const destDir = srcStat.isDirectory() ? destPath : join(hostPath, basename(hostSourcePath).replace(/\.[^.]+$/, ""));
+      const destExists = await stat(destDir).catch(() => null);
+      if (destExists && srcStat.isDirectory()) {
+        // Already exists at destination — mark as imported and clean up torrent
+        importedHashes.add(hash);
+        continue;
+      }
+
+      // Copy to library (cp + rm is safer than rename across volumes)
+      await cp(hostSourcePath, destPath, { recursive: srcStat.isDirectory() });
+
+      // Verify copy succeeded
+      const copiedStat = await stat(destPath).catch(() => null);
+      if (!copiedStat) continue;
+
+      // Remove source
+      await rm(hostSourcePath, { recursive: true, force: true }).catch(() => {});
+
+      // Remove torrent from qBittorrent (files already moved)
+      await qbtFetch("/api/v2/torrents/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `hashes=${hash}&deleteFiles=true`,
+      }).catch(() => {});
+
+      // Trigger Audiobookshelf scan
+      await absFetch(`/api/libraries/${libraryId}/scan`, { method: "POST" }).catch(() => {});
+
+      importedHashes.add(hash);
+    } catch {
+      // Import failed — will retry on next poll
+    }
+  }
+}
+
 audiobooks.get("/downloads", async (c) => {
   try {
-    const res = await qbtFetch("/api/v2/torrents/info?category=audiobooks");
-    if (!res.ok) throw new Error(`qBittorrent ${res.status}`);
-    const torrents = (await res.json()) as QBitTorrent[];
+    // Fetch torrents for all known audiobook categories
+    const categories = Array.from(AUDIOBOOK_CATEGORIES);
+    const allTorrents: QBitTorrent[] = [];
+    for (const cat of categories) {
+      const res = await qbtFetch(`/api/v2/torrents/info?category=${encodeURIComponent(cat)}`);
+      if (res.ok) {
+        const torrents = (await res.json()) as QBitTorrent[];
+        allTorrents.push(...torrents);
+      }
+    }
 
-    const records = torrents.map((t) => ({
+    // Auto-import completed downloads in the background (don't await — non-blocking)
+    autoImportCompleted(allTorrents).catch(() => {});
+
+    // Filter out already-imported torrents
+    const activeTorrents = allTorrents.filter((t) => !importedHashes.has(t.hash ?? ""));
+
+    const records = activeTorrents.map((t) => ({
       hash: t.hash,
       name: t.name ?? "Unknown",
       state: t.state ?? "unknown",
@@ -516,6 +701,7 @@ audiobooks.get("/downloads", async (c) => {
       addedOn: t.added_on ?? 0,
       completionOn: t.completion_on ?? 0,
       savePath: t.save_path ?? "",
+      category: t.category ?? "",
     }));
 
     // Sort: active downloads first, then by addedOn desc
@@ -530,8 +716,78 @@ audiobooks.get("/downloads", async (c) => {
       totalRecords: records.length,
       records,
     });
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err), totalRecords: 0, records: [] }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to fetch audiobook downloads", extra: { totalRecords: 0, records: [] } });
+  }
+});
+
+/* ── Manually import a completed download into Audiobookshelf ── */
+
+audiobooks.post("/downloads/:hash/import", async (c) => {
+  const hash = c.req.param("hash");
+
+  try {
+    // Get torrent info from qBittorrent
+    const res = await qbtFetch(`/api/v2/torrents/info?hashes=${hash}`);
+    if (!res.ok) throw new Error(`qBittorrent ${res.status}`);
+    const torrents = (await res.json()) as QBitTorrent[];
+    const torrent = torrents[0];
+    if (!torrent) return c.json({ error: "Torrent not found" }, 404);
+    if ((torrent.progress ?? 0) < 1) return c.json({ error: "Download not complete yet" }, 400);
+
+    const category = torrent.category || "audiobooks";
+    const resolved = await resolveLibraryHostPath(category);
+    if (!resolved) return c.json({ error: `Could not resolve library path for "${category}"` }, 400);
+
+    const { hostPath, libraryId } = resolved;
+    const sourcePath = torrent.content_path ?? torrent.save_path;
+    if (!sourcePath) return c.json({ error: "No source path found" }, 400);
+
+    const qbtDownloadRoot = "/downloads";
+    const hostDownloadRoot = getSetting("qbittorrent_download_host_path");
+    if (!hostDownloadRoot) return c.json({ error: "qbittorrent_download_host_path setting not configured" }, 400);
+    let hostSourcePath: string;
+    if (sourcePath.startsWith(qbtDownloadRoot)) {
+      hostSourcePath = sourcePath.replace(qbtDownloadRoot, hostDownloadRoot);
+    } else {
+      return c.json({ error: `Unexpected source path: ${sourcePath}` }, 400);
+    }
+
+    const srcStat = await stat(hostSourcePath).catch(() => null);
+    if (!srcStat) return c.json({ error: "Source files not found on disk" }, 404);
+
+    // Audiobookshelf requires audiobooks in subdirectories, not bare files
+    let destPath: string;
+    if (srcStat.isDirectory()) {
+      destPath = join(hostPath, basename(hostSourcePath));
+    } else {
+      const fileName = basename(hostSourcePath);
+      const dirName = fileName.replace(/\.[^.]+$/, "");
+      const destDir = join(hostPath, dirName);
+      await mkdir(destDir, { recursive: true });
+      destPath = join(destDir, fileName);
+    }
+    await cp(hostSourcePath, destPath, { recursive: srcStat.isDirectory() });
+
+    // Verify copy
+    const copiedStat = await stat(destPath).catch(() => null);
+    if (!copiedStat) return c.json({ error: "Copy failed" }, 500);
+
+    // Clean up source + torrent
+    await rm(hostSourcePath, { recursive: true, force: true }).catch(() => {});
+    await qbtFetch("/api/v2/torrents/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `hashes=${hash}&deleteFiles=true`,
+    }).catch(() => {});
+
+    // Trigger Audiobookshelf scan
+    await absFetch(`/api/libraries/${libraryId}/scan`, { method: "POST" }).catch(() => {});
+
+    importedHashes.add(hash);
+    return c.json({ ok: true, destination: destPath, library: category });
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to import audiobook", context: { hash } });
   }
 });
 
@@ -554,7 +810,24 @@ audiobooks.delete("/downloads/:hash", async (c) => {
 
     if (!res.ok) throw new Error(`qBittorrent ${res.status}`);
     return c.json({ ok: true });
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to remove audiobook download", context: { hash } });
+  }
+});
+
+/* ── Delete an audiobook from Audiobookshelf library ─────── */
+
+audiobooks.delete("/items/:id", async (c) => {
+  const id = c.req.param("id");
+
+  try {
+    const res = await absFetch(`/api/items/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `Audiobookshelf ${res.status}`);
+    }
+    return c.json({ ok: true });
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to delete audiobook", context: { id } });
   }
 });

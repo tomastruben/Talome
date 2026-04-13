@@ -13,7 +13,9 @@ import {
   Package01Icon,
   Layers01Icon,
   ArrowDown01Icon,
+  ArrowUp01Icon,
 } from "@/components/icons";
+import { useAvailableUpdates, type AppUpdateInfo } from "@/hooks/use-available-updates";
 import { Button } from "@/components/ui/button";
 import { Widget, WidgetHeader } from "./widget";
 import { WidgetList, WidgetListSkeleton, WidgetListState } from "./list-widget";
@@ -118,9 +120,11 @@ function getWebPorts(container: Container): number[] {
 function StackRow({
   stack,
   quickLook,
+  updateInfo,
 }: {
   stack: ServiceStack;
   quickLook: ReturnType<typeof useQuickLook>;
+  updateInfo?: AppUpdateInfo;
 }) {
   const [expanded, setExpanded] = useState(false);
   const isMulti = stack.containers.length > 1;
@@ -171,6 +175,14 @@ function StackRow({
               />
             ))}
           </div>
+        )}
+        {updateInfo && (
+          <span
+            className="flex items-center gap-0.5 text-xs text-status-warning shrink-0"
+            title={`Update: ${updateInfo.installedVersion} → ${updateInfo.availableVersion}`}
+          >
+            <HugeiconsIcon icon={ArrowUp01Icon} size={12} />
+          </span>
         )}
         {stack.memoryUsageMb > 0 && (
           <span className="text-xs text-muted-foreground tabular-nums shrink-0">
@@ -239,6 +251,7 @@ function StackRow({
 
 export function ServicesWidget() {
   const { stacks, isLoading, error, refresh } = useServiceStacks();
+  const { updateMap } = useAvailableUpdates();
   const { handleSubmit } = useAssistant();
   const quickLook = useQuickLook();
   const router = useRouter();
@@ -312,6 +325,7 @@ export function ServicesWidget() {
                 key={stack.id}
                 stack={stack}
                 quickLook={quickLook}
+                updateInfo={stack.appId ? updateMap.get(stack.appId) : undefined}
               />
             ))}
           </div>

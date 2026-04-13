@@ -4,6 +4,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { db, schema } from "../db/index.js";
 import { eq, desc } from "drizzle-orm";
 import { logAiUsage } from "../agent-loop/budget.js";
+import { recordGracefulError } from "../middleware/request-logger.js";
 
 const suggestions = new Hono();
 
@@ -161,7 +162,7 @@ Rules:
 
     return c.json({ suggestions: parsed, source: "personalized" });
   } catch (err) {
-    console.warn("[suggestions] generation failed:", (err as Error).message);
+    recordGracefulError(c, err, { endpoint: "suggestions/generate" });
     return c.json({ suggestions: FALLBACK_SUGGESTIONS, source: "fallback" });
   }
 });

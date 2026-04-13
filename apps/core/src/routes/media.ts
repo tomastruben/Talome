@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createLogger } from "../utils/logger.js";
 import { writeNotification } from "../db/notifications.js";
+import { serverError, recordGracefulError } from "../middleware/request-logger.js";
 
 const log = createLogger("media");
 import sharp from "sharp";
@@ -300,9 +301,6 @@ interface ArrWebhookPayload {
 }
 
 /** Helper: narrow unknown error to get message string */
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 const POSTER_CACHE_DIR = join(homedir(), ".talome", "cache", "posters");
 // Allowed widths to prevent cache-busting with arbitrary values
@@ -832,8 +830,7 @@ media.get("/library", async (c) => {
       },
     });
   } catch (err: unknown) {
-    console.error("[media/library]", err);
-    return c.json({ error: errMsg(err), tv: [], movies: [], sonarrAvailable: false, radarrAvailable: false, totals: { tvShows: 0, movies: 0 } }, 500);
+    return serverError(c, err, { context: { endpoint: "media/library" }, extra: { tv: [], movies: [], sonarrAvailable: false, radarrAvailable: false, totals: { tvShows: 0, movies: 0 } } });
   }
 });
 
@@ -884,11 +881,10 @@ media.get("/episodes", async (c) => {
 
     return c.json({ seriesId: Number(seriesId), seasons });
   } catch (err: unknown) {
-    console.error("[media/episodes]", errMsg(err));
     if (isNetworkError(err)) {
       return c.json({ seriesId: Number(seriesId), seasons: [], available: false });
     }
-    return c.json({ error: errMsg(err), seasons: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/episodes", seriesId }, extra: { seasons: [] } });
   }
 });
 
@@ -1031,8 +1027,7 @@ media.get("/downloads", async (c) => {
       torrents: unmatchedTorrents,
     });
   } catch (err: unknown) {
-    console.error("[media/downloads]", errMsg(err));
-    return c.json({ error: errMsg(err), queue: [], torrents: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/downloads" }, extra: { queue: [], torrents: [] } });
   }
 });
 
@@ -1075,8 +1070,7 @@ media.get("/calendar", async (c) => {
 
     return c.json({ episodes, movies });
   } catch (err: unknown) {
-    console.error("[media/calendar]", errMsg(err));
-    return c.json({ error: errMsg(err), episodes: [], movies: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/calendar" }, extra: { episodes: [], movies: [] } });
   }
 });
 
@@ -1090,7 +1084,7 @@ media.get("/quality-profiles", async (c) => {
     const qualityProfiles = (profiles as ArrQualityProfile[]).map((p) => ({ id: p.id, name: p.name ?? `Profile ${p.id}` }));
     return c.json({ app, qualityProfiles });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err), app, qualityProfiles: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/quality-profiles", app }, extra: { app, qualityProfiles: [] } });
   }
 });
 
@@ -1157,7 +1151,7 @@ media.post("/quality-profile/apply", async (c) => {
       message: `Applied quality profile ${qualityProfileId} to ${mediaIds.length} item(s).`,
     });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) || "Failed to apply quality profile" }, 500);
+    return serverError(c, err, { message: (err instanceof Error ? err.message : String(err)) || "Failed to apply quality profile" });
   }
 });
 
@@ -1208,11 +1202,10 @@ media.get("/wanted", async (c) => {
       records,
     });
   } catch (err: unknown) {
-    console.error(`[media/wanted] ${app}/${kind}:`, errMsg(err));
     if (isNetworkError(err)) {
       return c.json({ app, kind, page, pageSize, totalRecords: 0, records: [], available: false });
     }
-    return c.json({ error: errMsg(err), app, kind, records: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/wanted", app, kind }, extra: { app, kind, records: [] } });
   }
 });
 
@@ -1391,7 +1384,7 @@ media.get("/releases", async (c) => {
       },
     });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err), releases: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/releases" }, extra: { releases: [] } });
   }
 });
 
@@ -1466,7 +1459,7 @@ media.post("/releases/grab", async (c) => {
     }
     return c.json({ ok: true });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -1502,7 +1495,7 @@ media.get("/queue-details", async (c) => {
     }));
     return c.json({ app, records });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err), app, records: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/history", app }, extra: { app, records: [] } });
   }
 });
 
@@ -1522,7 +1515,7 @@ media.post("/queue/grab", async (c) => {
     if (!result.ok) throw new Error(`${app} API ${result.status}`);
     return c.json({ ok: true, app, id });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -1546,7 +1539,7 @@ media.delete("/queue/:id", async (c) => {
     if (!result.ok) throw new Error(`${app} API ${result.status}`);
     return c.json({ ok: true, app, id, removeFromClient, blocklist });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -1577,7 +1570,7 @@ media.get("/cleanup/dry-run", async (c) => {
     }));
     return c.json({ app, mode: "dry-run", candidates });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err), app, candidates: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/cleanup", app }, extra: { app, candidates: [] } });
   }
 });
 
@@ -1629,7 +1622,7 @@ media.get("/lookup", async (c) => {
 
     return c.json({ results: [...movies, ...tv] });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err), results: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/lookup" }, extra: { results: [] } });
   }
 });
 
@@ -1710,7 +1703,7 @@ media.post("/add", async (c) => {
       return c.json({ ok: true, serviceId: added?.id ?? null, type: "tv", qualityTier: tier, appliedQualityProfileId: profileResult.profileId, appliedQualityProfileName: profileResult.profileName, matchReason: profileResult.reason });
     }
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err, { context: { endpoint: "media/add" } });
   }
 });
 
@@ -1748,8 +1741,7 @@ media.get("/search", async (c) => {
 
     return c.json({ tv, movies });
   } catch (err: unknown) {
-    console.error("[media/search]", errMsg(err));
-    return c.json({ error: errMsg(err), tv: [], movies: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/search" }, extra: { tv: [], movies: [] } });
   }
 });
 
@@ -1785,11 +1777,10 @@ media.get("/requests", async (c) => {
 
     return c.json({ configured: true, results });
   } catch (err: unknown) {
-    console.error("[media/requests]", errMsg(err));
     if (isNetworkError(err)) {
       return c.json({ configured: true, available: false, results: [] });
     }
-    return c.json({ error: errMsg(err), results: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/requests" }, extra: { results: [] } });
   }
 });
 
@@ -1812,7 +1803,7 @@ media.post("/requests/:id/:action", async (c) => {
     if (!res.ok) throw new Error(`Overseerr ${action} failed: ${res.status}`);
     return c.json({ ok: true });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -1917,7 +1908,7 @@ media.post("/webhook", async (c) => {
 
     return c.json({ ok: true });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err, { context: { endpoint: "media/webhooks" } });
   }
 });
 
@@ -1991,11 +1982,10 @@ media.get("/plex/watching", async (c) => {
 
     return c.json({ configured: true, continueWatching, recentlyWatched });
   } catch (err: unknown) {
-    console.error("[media/plex/watching]", errMsg(err));
     if (isNetworkError(err)) {
       return c.json({ configured: true, available: false, continueWatching: [], recentlyWatched: [] });
     }
-    return c.json({ error: errMsg(err), configured: true, continueWatching: [], recentlyWatched: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/plex/watching" }, extra: { configured: true, continueWatching: [], recentlyWatched: [] } });
   }
 });
 
@@ -2042,11 +2032,10 @@ media.get("/plex/watch-status", async (c) => {
 
     return c.json({ configured: true, watchStatus });
   } catch (err: unknown) {
-    console.error("[media/plex/watch-status]", errMsg(err));
     if (isNetworkError(err)) {
       return c.json({ configured: true, available: false, watchStatus: {} });
     }
-    return c.json({ error: errMsg(err), configured: true, watchStatus: {} }, 500);
+    return serverError(c, err, { context: { endpoint: "media/plex/watch-status" }, extra: { configured: true, watchStatus: {} } });
   }
 });
 
@@ -2064,7 +2053,7 @@ media.post("/plex/scrobble", async (c) => {
     if (!res.ok) throw new Error(`Plex scrobble failed: ${res.status}`);
     return c.json({ ok: true });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -2132,7 +2121,7 @@ media.get("/plex/watchlist", async (c) => {
 
     return c.json({ configured: true, items });
   } catch (err: unknown) {
-    return c.json({ configured: true, items: [], error: errMsg(err) });
+    return c.json({ configured: true, items: [], error: err instanceof Error ? err.message : String(err) });
   }
 });
 
@@ -2187,7 +2176,7 @@ media.post("/add", async (c) => {
       return c.json({ ok: true, message: `Added "${title}" to Sonarr` });
     }
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err, { context: { endpoint: "media/add-from-tmdb" } });
   }
 });
 
@@ -2210,7 +2199,7 @@ media.delete("/episode-file/:episodeId", async (c) => {
     if (!res.ok) return c.json({ error: `Sonarr API error: ${res.status}` }, 502);
     return c.json({ ok: true });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -2231,7 +2220,7 @@ media.delete("/movie-file/:movieId", async (c) => {
     if (!res.ok) return c.json({ error: `Radarr API error: ${res.status}` }, 502);
     return c.json({ ok: true });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -2250,7 +2239,7 @@ media.delete("/movie/:movieId", async (c) => {
     }
     return c.json({ ok: true });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err, { context: { endpoint: "media/movie/delete", movieId } });
   }
 });
 
@@ -2267,7 +2256,7 @@ media.delete("/series/:seriesId", async (c) => {
     }
     return c.json({ ok: true });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err, { context: { endpoint: "media/series/delete", seriesId } });
   }
 });
 
@@ -2332,7 +2321,7 @@ media.get("/stream", async (c) => {
   try {
     return await buildStreamResponse(streamPath, c.req.header("range"));
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err) }, 500);
+    return serverError(c, err, { context: { endpoint: "media/stream" } });
   }
 });
 
@@ -2343,7 +2332,7 @@ media.get("/probe", async (c) => {
   const hostPath = await resolveMediaFilePath(filePath);
   if (!hostPath) return c.json({ error: "File not found" }, 404);
   if (!(await authorizeMediaPath(hostPath))) return c.json({ error: "Access denied" }, 403);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   // If an optimized MP4 exists (stream endpoint will serve it), probe that instead
   const optimizedPath = findOptimizedPath(hostPath);
@@ -2360,7 +2349,7 @@ media.get("/hls-start", async (c) => {
   const hostPath = await resolveMediaFilePath(filePath);
   if (!hostPath) return c.json({ error: "File not found" }, 404);
   if (!(await authorizeMediaPath(hostPath))) return c.json({ error: "Access denied" }, 403);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   const audioTrack = parseInt(c.req.query("audioTrack") ?? "0", 10);
   const seekTo = parseFloat(c.req.query("seekTo") ?? "0");
@@ -2446,7 +2435,7 @@ media.get("/transmux-start", async (c) => {
   const hostPath = await resolveMediaFilePath(filePath);
   if (!hostPath) return c.json({ error: "File not found" }, 404);
   if (!(await authorizeMediaPath(hostPath))) return c.json({ error: "Access denied" }, 403);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   const probe = probeFile(hostPath);
   const hash = startTransmux(hostPath, probe.videoCodec);
@@ -2494,7 +2483,7 @@ media.get("/subtitle", async (c) => {
   const hostPath = await resolveMediaFilePath(filePath);
   if (!hostPath) return c.json({ error: "File not found" }, 404);
   if (!(await authorizeMediaPath(hostPath))) return c.json({ error: "Access denied" }, 403);
-  if (!hasFfmpeg()) return c.json({ error: "ffmpeg not available" }, 500);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   const subIndex = parseInt(indexStr ?? "0", 10);
 
@@ -2507,7 +2496,9 @@ media.get("/subtitle", async (c) => {
     proc.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
     proc.stderr.on("data", () => { /* drain */ });
 
-    proc.on("close", (code) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ChildProcessByStdio lacks .on() in newer @types/node
+    const p = proc as any;
+    p.on("close", (code: number | null) => {
       if (code !== 0 || chunks.length === 0) {
         res(Response.json({ error: "Failed to extract subtitle" }, { status: 500 }));
         return;
@@ -2523,7 +2514,7 @@ media.get("/subtitle", async (c) => {
       }));
     });
 
-    proc.on("error", () => {
+    p.on("error", () => {
       res(Response.json({ error: "ffmpeg not available" }, { status: 500 }));
     });
   });
@@ -2963,7 +2954,7 @@ media.post("/jellyfin-playback", async (c) => {
       trickplay,
     });
   } catch (err) {
-    log.error("Jellyfin playback failed", err instanceof Error ? err.message : err);
+    recordGracefulError(c, err, { endpoint: "media/jellyfin-playback" });
     return c.json({ available: false, reason: "jellyfin error" });
   }
 });
@@ -3037,7 +3028,7 @@ media.get("/related", async (c) => {
 
     return c.json({ results });
   } catch (err: unknown) {
-    return c.json({ error: errMsg(err), results: [] }, 500);
+    return serverError(c, err, { context: { endpoint: "media/tmdb-lookup" }, extra: { results: [] } });
   }
 });
 

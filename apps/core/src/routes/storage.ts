@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { serverError } from "../middleware/request-logger.js";
 
 const execAsync = promisify(exec);
 
@@ -48,7 +49,7 @@ storage.get("/docker-usage", async (c) => {
     }).filter(Boolean);
     return c.json(usage);
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to get Docker disk usage" });
   }
 });
 

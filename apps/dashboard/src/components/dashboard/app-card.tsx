@@ -2,7 +2,7 @@ import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import type { CatalogApp } from "@talome/types";
-import { HugeiconsIcon, Delete02Icon, AiChat02Icon } from "@/components/icons";
+import { HugeiconsIcon, Delete02Icon, AiChat02Icon, ArrowUp01Icon } from "@/components/icons";
 
 const SOURCE_LABELS: Record<string, string> = {
   talon: "Talome",
@@ -19,7 +19,7 @@ function isRemoteUrl(url: string | undefined): url is string {
   return !!url && !url.startsWith("file://");
 }
 
-export function AppCard({ app, onDelete, priority = false, eager = false }: { app: CatalogApp; onDelete?: (appId: string) => void; priority?: boolean; eager?: boolean }) {
+export function AppCard({ app, onDelete, priority = false, eager = false, hasUpdate = false }: { app: CatalogApp; onDelete?: (appId: string) => void; priority?: boolean; eager?: boolean; hasUpdate?: boolean }) {
   const [coverFailed, setCoverFailed] = useState(false);
   const [iconFailed, setIconFailed] = useState(false);
 
@@ -60,6 +60,12 @@ export function AppCard({ app, onDelete, priority = false, eager = false }: { ap
           aria-hidden="true"
           style={coverUrl ? { display: "none" } : undefined}
         />
+        {isInstalled && hasUpdate && (
+          <span className="absolute top-2.5 left-2.5 z-[2] flex items-center gap-1 rounded-full bg-foreground/90 px-2 py-0.5 text-[10px] font-medium text-background backdrop-blur-sm">
+            <HugeiconsIcon icon={ArrowUp01Icon} size={10} />
+            Update
+          </span>
+        )}
         {isInstalled ? (
           <span className="app-card-installed-badge" data-status={status || "unknown"}>
             {statusLabel}

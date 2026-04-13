@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { getSetting } from "../../utils/settings.js";
+import { truncateList } from "../../utils/tool-helpers.js";
 
 function getServiceUrl(service: string): string {
   const custom = getSetting(`${service}_url`);
@@ -189,12 +190,18 @@ export const getLibraryTool = tool({
       movies = movies.filter((m) => m.title.toLowerCase().includes(q));
     }
 
+    const sortedTv = tv.sort((a, b) => (b.added ?? "").localeCompare(a.added ?? ""));
+    const sortedMovies = movies.sort((a, b) => (b.added ?? "").localeCompare(a.added ?? ""));
+
+    const { items: tvList, totalCount: tvTotal, truncated: tvTruncated } = truncateList(sortedTv, 50);
+    const { items: movieList, totalCount: movieTotal, truncated: moviesTruncated } = truncateList(sortedMovies, 50);
+
     return {
-      tv: tv.sort((a, b) => (b.added ?? "").localeCompare(a.added ?? "")),
-      movies: movies.sort((a, b) =>
-        (b.added ?? "").localeCompare(a.added ?? "")
-      ),
-      totals: { tvShows: tv.length, movies: movies.length },
+      tv: tvList,
+      movies: movieList,
+      totals: { tvShows: tvTotal, movies: movieTotal },
+      truncated: tvTruncated || moviesTruncated,
+      ...(tvTruncated || moviesTruncated ? { hint: "Results truncated. Use the 'search' parameter to filter by title." } : {}),
     };
   },
 });

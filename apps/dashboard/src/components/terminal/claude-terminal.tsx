@@ -143,8 +143,9 @@ export function ClaudeTerminal({
   const handleLaunchClaudeCode = useCallback(() => {
     if (!projectRoot) return;
     const unset = "unset CLAUDECODE;";
-    const tmuxCmd = `cd ${projectRoot} && tmux new-session -A -s talome-claude "claude --continue"`;
-    const fallback = `cd ${projectRoot} && claude --continue`;
+    const quoted = projectRoot.includes(" ") ? `"${projectRoot}"` : projectRoot;
+    const tmuxCmd = `cd ${quoted} && tmux new-session -A -s talome-claude "claude --continue"`;
+    const fallback = `cd ${quoted} && claude --continue`;
     const cmd = `${unset} if command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
     termRef.current?.sendCommand(cmd);
   }, [projectRoot]);

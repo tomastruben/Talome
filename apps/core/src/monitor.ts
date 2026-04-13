@@ -7,6 +7,7 @@ import { fireTrigger } from "./automation/engine.js";
 import { maybeCheckUpdates } from "./stores/update-checker.js";
 import { generateSuggestions } from "./evolution/suggest.js";
 import { maybeAutoExecute } from "./evolution/auto-execute.js";
+import { maybeRunScheduledSetup } from "./setup/triggers.js";
 import { getSetting, setSetting } from "./utils/settings.js";
 import { db } from "./db/index.js";
 import { sql } from "drizzle-orm";
@@ -489,6 +490,8 @@ async function runChecks() {
   void maybeRunEvolutionScan();
   // Auto-execute eligible suggestions (checks its own settings + cadence)
   void maybeAutoExecute();
+  // Setup loop — auto-configure newly installed or unconfigured apps
+  void maybeRunScheduledSetup();
 }
 
 export function startMonitor(intervalMs = 60_000) {

@@ -16,9 +16,9 @@
     "test": "turbo test"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
+    "@playwright/test": "^1.59.1",
     "@types/sharp": "^0.32.0",
-    "turbo": "^2.8.12"
+    "turbo": "^2.9.6"
   },
   "dependencies": {
     "qrcode.react": "^4.2.0",

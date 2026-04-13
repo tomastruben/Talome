@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { checkInterContainerConnectivity, type ContainerPair } from "../docker/client.js";
+import { errorTracker } from "../middleware/error-tracker.js";
+import { serverError } from "../middleware/request-logger.js";
 
 const health = new Hono();
 
@@ -48,7 +50,7 @@ health.get("/container-connectivity", async (c) => {
     const report = await checkInterContainerConnectivity(pairs);
     return c.json(report);
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "Failed to check connectivity" }, 500);
+    return serverError(c, err, { message: "Failed to check connectivity" });
   }
 });
 
@@ -69,8 +71,56 @@ health.post("/container-connectivity", async (c) => {
     const report = await checkInterContainerConnectivity(pairs);
     return c.json(report);
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "Failed to check connectivity" }, 500);
+    return serverError(c, err, { message: "Failed to check connectivity" });
   }
+});
+
+/**
+ * GET /api/health/diagnostics
+ *
+ * Combined health + error diagnostics endpoint.
+ * Returns the count and list of recent 5xx errors (last 10 minutes by default)
+ * so users can quickly see what's failing.
+ *
+ * Query params:
+ *   - window: time window in minutes (default 10, max 60)
+ *   - limit:  max errors to return (default 20, max 100)
+ */
+health.get("/diagnostics", (c) => {
+  const windowMin = Math.min(Math.max(Number(c.req.query("window")) || 10, 1), 60);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
+  const windowMs = windowMin * 60 * 1000;
+
+  const summary = errorTracker.getSummary(windowMs);
+  const topEndpoints = errorTracker.getTopEndpoints(windowMs, 10);
+
+  const recentErrors = summary.errors
+    .slice(-limit)
+    .reverse()
+    .map((e) => ({
+      errorId: e.errorId,
+      timestamp: e.timestamp,
+      method: e.method,
+      path: e.path,
+      status: e.status,
+      durationMs: e.durationMs,
+      errorType: e.errorType,
+      errorMessage: e.errorMessage,
+      userId: e.userId,
+      context: e.context,
+    }));
+
+  return c.json({
+    status: summary.count === 0 ? "healthy" : "errors_detected",
+    windowMinutes: windowMin,
+    errorCount: summary.count,
+    bufferSize: errorTracker.size,
+    topEndpoints,
+    byErrorType: summary.byErrorType,
+    recentErrors,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 export { health };

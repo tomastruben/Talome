@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { streamSSE } from "hono/streaming";
+import { serverError } from "../middleware/request-logger.js";
 import { db, schema } from "../db/index.js";
 import { eq, and, like, or, sql, inArray, type SQL } from "drizzle-orm";
 import {
@@ -231,8 +232,7 @@ apps.get("/", (c) => {
 
     return c.json(results.filter(isArchCompatible));
   } catch (err) {
-    console.error("[apps] GET / error:", err);
-    return c.json({ error: "Failed to load apps" }, 500);
+    return serverError(c, err, { message: "Failed to load apps" });
   }
 });
 
@@ -260,8 +260,7 @@ apps.get("/installed", (c) => {
 
     return c.json(results);
   } catch (err) {
-    console.error("[apps] GET /installed error:", err);
-    return c.json({ error: "Failed to load installed apps" }, 500);
+    return serverError(c, err, { message: "Failed to load installed apps" });
   }
 });
 
@@ -276,8 +275,7 @@ apps.get("/categories", (c) => {
     const categories = rows.map((r) => r.category).sort();
     return c.json(categories);
   } catch (err) {
-    console.error("[apps] GET /categories error:", err);
-    return c.json({ error: "Failed to load categories" }, 500);
+    return serverError(c, err, { message: "Failed to load categories" });
   }
 });
 

@@ -15,7 +15,7 @@ import { getSetting } from "../../utils/settings.js";
 
 // ── Auth patterns ────────────────────────────────────────────────────────────
 
-type AuthStyle =
+export type AuthStyle =
   | { type: "x-api-key"; header: string; value: string }
   | { type: "bearer"; header: string; value: string }
   | { type: "mediabrowser"; header: string; value: string }
@@ -36,7 +36,7 @@ const AUTH_PATTERNS: Record<string, (apiKey: string) => AuthStyle> = {
   readarr: (k) => ({ type: "x-api-key", header: "X-Api-Key", value: k }),
 };
 
-function resolveAppConnection(appId: string): {
+export function resolveAppConnection(appId: string): {
   baseUrl: string;
   apiKey?: string;
   auth: AuthStyle;
@@ -74,7 +74,7 @@ function resolveAppConnection(appId: string): {
   return { baseUrl: baseUrl.replace(/\/$/, ""), apiKey, auth };
 }
 
-function buildHeaders(auth: AuthStyle): Record<string, string> {
+export function buildHeaders(auth: AuthStyle): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (auth.type === "x-api-key" || auth.type === "bearer" || auth.type === "mediabrowser") {
     headers[auth.header] = auth.value;

@@ -8,6 +8,7 @@ import {
   getMarketplaces,
 } from "../utils/audible-auth.js";
 import { getSetting } from "../utils/settings.js";
+import { serverError } from "../middleware/request-logger.js";
 import {
   importAudibleBook,
   getImportJobs,
@@ -37,8 +38,7 @@ audible.post("/auth/start", async (c) => {
 
     return c.json(result);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return c.json({ error: message }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -67,8 +67,7 @@ audible.post("/auth/complete", async (c) => {
       customerId: tokens.customerId ?? null,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return c.json({ error: message }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -121,9 +120,7 @@ audible.get("/library", async (c) => {
       totalResults: response.total_results ?? null,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("[audible] library error:", message);
-    return c.json({ error: message }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -143,8 +140,7 @@ audible.get("/book/:asin", async (c) => {
 
     return c.json(data);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return c.json({ error: message }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -178,8 +174,7 @@ audible.post("/import", async (c) => {
     const importId = await importAudibleBook(asin, title, author, typeof libraryId === "string" ? libraryId : undefined);
     return c.json({ importId });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return c.json({ error: message }, 500);
+    return serverError(c, err);
   }
 });
 
@@ -239,8 +234,7 @@ audible.post("/remove-import", async (c) => {
 
     return c.json({ ok: true });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return c.json({ error: message }, 500);
+    return serverError(c, err);
   }
 });
 

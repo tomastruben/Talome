@@ -49,6 +49,27 @@ export function getAppMemoryUsed(): number | null {
   }
 }
 
+// ── Docker host address ──────────────────────────────────────────────────
+
+/**
+ * Get the address that a Docker container can use to reach the host machine.
+ * macOS (Docker Desktop / OrbStack): always supports `host.docker.internal`.
+ * Linux (native Docker): `host.docker.internal` only works with Docker Desktop;
+ * native installs need the bridge gateway IP (typically 172.17.0.1).
+ */
+export function getDockerHostAddress(): string {
+  if (isDarwin) return "host.docker.internal";
+  try {
+    const out = execSync("ip route show default 2>/dev/null | awk '{print $3}'", {
+      encoding: "utf-8",
+      timeout: 3000,
+    });
+    const gateway = out.trim();
+    if (gateway && /^\d+\.\d+\.\d+\.\d+$/.test(gateway)) return gateway;
+  } catch { /* not available — fall through */ }
+  return "host.docker.internal"; // Docker Desktop for Linux supports this
+}
+
 // ── Network sampling ──────────────────────────────────────────────────────
 
 /**

@@ -6,6 +6,7 @@ import { eq, desc, inArray, sql } from "drizzle-orm";
 import { fireTrigger } from "../automation/engine.js";
 import type { AutomationTrigger, AutomationAction, AutomationStep } from "../automation/engine.js";
 import { getAutomationSafeTools } from "../ai/automation-safe-tools.js";
+import { serverError } from "../middleware/request-logger.js";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("automations");
@@ -107,8 +108,7 @@ automations.get("/", (c) => {
 
     return c.json({ automations: enriched });
   } catch (err) {
-    log.error("GET / error", err);
-    return c.json({ error: "Failed to list automations" }, 500);
+    return serverError(c, err, { message: "Failed to list automations" });
   }
 });
 
@@ -119,8 +119,7 @@ automations.get("/:id", (c) => {
     if (!row) return c.json({ error: "Not found" }, 404);
     return c.json({ automation: row });
   } catch (err) {
-    log.error("GET /:id error", err);
-    return c.json({ error: "Failed to fetch automation" }, 500);
+    return serverError(c, err, { message: "Failed to fetch automation", context: { automationId: id } });
   }
 });
 
@@ -162,8 +161,7 @@ automations.post("/", async (c) => {
 
     return c.json({ id }, 201);
   } catch (err) {
-    log.error("POST / error", err);
-    return c.json({ error: "Failed to create automation" }, 500);
+    return serverError(c, err, { message: "Failed to create automation" });
   }
 });
 
@@ -203,8 +201,7 @@ automations.put("/:id", async (c) => {
 
     return c.json({ ok: true });
   } catch (err) {
-    log.error("PUT /:id error", err);
-    return c.json({ error: "Failed to update automation" }, 500);
+    return serverError(c, err, { message: "Failed to update automation", context: { automationId: id } });
   }
 });
 
@@ -217,8 +214,7 @@ automations.delete("/:id", (c) => {
     db.delete(schema.automations).where(eq(schema.automations.id, id)).run();
     return c.json({ ok: true });
   } catch (err) {
-    log.error("DELETE /:id error", err);
-    return c.json({ error: "Failed to delete automation" }, 500);
+    return serverError(c, err, { message: "Failed to delete automation", context: { automationId: id } });
   }
 });
 
@@ -242,8 +238,7 @@ automations.post("/:id/run", async (c) => {
 
     return c.json({ ok: true });
   } catch (err) {
-    log.error("POST /:id/run error", err);
-    return c.json({ error: "Failed to run automation" }, 500);
+    return serverError(c, err, { message: "Failed to run automation", context: { automationId: id } });
   }
 });
 
@@ -276,8 +271,7 @@ automations.get("/:id/runs", (c) => {
 
     return c.json({ runs: runsWithSteps });
   } catch (err) {
-    log.error("GET /:id/runs error", err);
-    return c.json({ error: "Failed to fetch runs" }, 500);
+    return serverError(c, err, { message: "Failed to fetch runs", context: { automationId: id } });
   }
 });
 
@@ -310,8 +304,7 @@ automations.post("/:id/simulate", async (c) => {
 
     return c.json({ preview });
   } catch (err) {
-    log.error("POST /:id/simulate error", err);
-    return c.json({ error: "Failed to simulate automation" }, 500);
+    return serverError(c, err, { message: "Failed to simulate automation", context: { automationId: id } });
   }
 });
 

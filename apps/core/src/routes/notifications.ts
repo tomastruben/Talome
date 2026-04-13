@@ -1,9 +1,8 @@
 import { Hono } from "hono";
 import { db, schema } from "../db/index.js";
 import { eq, desc, sql } from "drizzle-orm";
-import { createLogger } from "../utils/logger.js";
+import { recordGracefulError, serverError } from "../middleware/request-logger.js";
 
-const log = createLogger("notifications");
 const notifications = new Hono();
 
 /**
@@ -122,7 +121,7 @@ notifications.get("/", (c) => {
       .all();
     return c.json(rows);
   } catch (err) {
-    log.error("GET / error", err);
+    recordGracefulError(c, err, { endpoint: "notifications/list" });
     return c.json([]);
   }
 });
@@ -136,7 +135,7 @@ notifications.get("/unread-count", (c) => {
       .get();
     return c.json({ count: row?.count ?? 0 });
   } catch (err) {
-    log.error("GET /unread-count error", err);
+    recordGracefulError(c, err, { endpoint: "notifications/unread-count" });
     return c.json({ count: 0 });
   }
 });
@@ -150,7 +149,7 @@ notifications.get("/mute-status", (c) => {
       .get();
     return c.json({ muted: row?.value === "true" });
   } catch (err) {
-    log.error("GET /mute-status error", err);
+    recordGracefulError(c, err, { endpoint: "notifications/mute-status" });
     return c.json({ muted: false });
   }
 });
@@ -168,8 +167,7 @@ notifications.post("/toggle-mute", async (c) => {
       .run();
     return c.json({ ok: true, muted });
   } catch (err) {
-    log.error("POST /toggle-mute error", err);
-    return c.json({ error: "Failed to toggle mute" }, 500);
+    return serverError(c, err, { message: "Failed to toggle mute" });
   }
 });
 
@@ -183,8 +181,7 @@ notifications.post("/:id/read", (c) => {
       .run();
     return c.json({ ok: true });
   } catch (err) {
-    log.error("POST /:id/read error", err);
-    return c.json({ error: "Failed to mark notification as read" }, 500);
+    return serverError(c, err, { message: "Failed to mark notification as read" });
   }
 });
 
@@ -196,8 +193,7 @@ notifications.post("/read-all", (c) => {
       .run();
     return c.json({ ok: true });
   } catch (err) {
-    log.error("POST /read-all error", err);
-    return c.json({ error: "Failed to mark all notifications as read" }, 500);
+    return serverError(c, err, { message: "Failed to mark all notifications as read" });
   }
 });
 
@@ -210,8 +206,7 @@ notifications.delete("/:id", (c) => {
       .run();
     return c.json({ ok: true });
   } catch (err) {
-    log.error("DELETE /:id error", err);
-    return c.json({ error: "Failed to delete notification" }, 500);
+    return serverError(c, err, { message: "Failed to delete notification" });
   }
 });
 

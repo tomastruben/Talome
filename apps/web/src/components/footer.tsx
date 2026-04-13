@@ -1,5 +1,6 @@
 import { Logo } from "@/components/logo";
 import Link from "next/link";
+import packageJson from "../../package.json";
 
 const productLinks = [
   { title: "Features", href: "#features" },
@@ -11,6 +12,7 @@ const communityLinks = [
   { title: "GitHub", href: "https://github.com/tomastruben/Talome" },
   { title: "Discord", href: "https://discord.gg/HK7gFaVRJ" },
   { title: "Docs", href: "/docs" },
+  { title: "X / Twitter", href: "https://x.com/talomedev" },
 ];
 
 const legalLinks = [
@@ -51,7 +53,7 @@ export default function FooterSection() {
             <div className="flex items-center gap-3 text-[11px] tracking-wide text-muted-foreground/25">
               <span>AGPL-3.0</span>
               <span className="text-muted-foreground/10">·</span>
-              <span>v0.1.0</span>
+              <span>v{packageJson.version}</span>
               <span className="text-muted-foreground/10">·</span>
               <span>Public Alpha</span>
             </div>

@@ -9,6 +9,7 @@ import { writeAuditEntry } from "../db/audit.js";
 import { listContainers, execInContainer } from "../docker/client.js";
 import { getUsageSummary, getTodayCostUsd, getDailyCapUsd, getBudgetZone } from "../agent-loop/budget.js";
 import { isClaudeCodeAvailable, getClaudeCodeVersion } from "../ai/claude-process.js";
+import { serverError } from "../middleware/request-logger.js";
 
 const settings = new Hono();
 
@@ -72,8 +73,8 @@ settings.post("/", async (c) => {
     });
     writeAuditEntry("settings_changed", "modify", Object.keys(body).join(", "));
     return c.json({ ok: true });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to update settings" });
   }
 });
 
@@ -356,8 +357,8 @@ settings.get("/ai-cost", async (c) => {
         version: claudeCodeVersion,
       },
     });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to load AI cost data" });
   }
 });
 
@@ -390,8 +391,8 @@ settings.get("/export-config", (c) => {
     }
     const code = Buffer.from(JSON.stringify(exported)).toString("base64url");
     return c.json({ code, keyCount: Object.keys(exported).length });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to export config" });
   }
 });
 
@@ -473,8 +474,8 @@ settings.post("/:key/revert", async (c) => {
       restoredValue: isSecretSettingKey(key) ? "****" : restoreValue,
       status: "ok",
     });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 500);
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to revert setting", context: { key } });
   }
 });
 

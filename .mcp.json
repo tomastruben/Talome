@@ -2,8 +2,8 @@
   "mcpServers": {
     "talome": {
       "type": "stdio",
-      "command": "apps/core/node_modules/.bin/tsx",
-      "args": ["apps/core/src/mcp-stdio.ts"],
+      "command": "apps/core/mcp-launch.sh",
+      "args": [],
       "env": {
         "DATABASE_PATH": "apps/core/data/talome.db",
         "NODE_ENV": "production"

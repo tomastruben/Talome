@@ -4,6 +4,7 @@ import { db } from "../db/index.js";
 import { sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { testEmailChannel, type EmailConfig } from "../notifications/email.js";
+import { serverError } from "../middleware/request-logger.js";
 
 const notificationChannels = new Hono();
 
@@ -64,7 +65,7 @@ notificationChannels.post("/", async (c) => {
     );
     return c.json({ ok: true, id });
   } catch (err) {
-    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to add notification channel" });
   }
 });
 
@@ -93,7 +94,7 @@ notificationChannels.patch("/:id", async (c) => {
 
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to update notification channel" });
   }
 });
 
@@ -104,7 +105,7 @@ notificationChannels.delete("/:id", (c) => {
     db.run(sql`DELETE FROM notification_channels WHERE id = ${id}`);
     return c.json({ ok: true });
   } catch (err) {
-    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to delete notification channel" });
   }
 });
 
@@ -155,7 +156,7 @@ notificationChannels.post("/:id/test", async (c) => {
         return c.json({ ok: false, error: `Unsupported type: ${channel.type}` });
     }
   } catch (err) {
-    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+    return serverError(c, err, { message: "Failed to test notification channel" });
   }
 });
 

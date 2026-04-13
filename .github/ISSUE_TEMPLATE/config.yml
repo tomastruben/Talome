@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & Discussion
+    url: https://github.com/tomastruben/Talome/discussions
+    about: Ask questions and share ideas in Discussions
+  - name: Discord Community
+    url: https://discord.gg/HK7gFaVRJ
+    about: Get help from the community on Discord
+  - name: Security Vulnerability
+    url: https://github.com/tomastruben/Talome/security/advisories/new
+    about: Report security issues privately via Security Advisory

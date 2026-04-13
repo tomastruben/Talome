@@ -10,7 +10,7 @@ import { pageTitleAtom } from "@/atoms/page-title";
 import { toast } from "sonner";
 import useSWR from "swr";
 import { motion, AnimatePresence } from "framer-motion";
-import { HugeiconsIcon, Cancel01Icon, AiChat02Icon, CloudUploadIcon, Edit02Icon, Share04Icon } from "@/components/icons";
+import { HugeiconsIcon, Cancel01Icon, AiChat02Icon, CloudUploadIcon, Edit02Icon, Share04Icon, ArrowUp01Icon, SystemUpdate01Icon, Refresh01Icon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -264,6 +264,7 @@ export default function AppDetailPage() {
   const [editingPorts, setEditingPorts] = useState(false);
   const [draftPorts, setDraftPorts] = useState<Record<string, string>>({});
   const [savingPatch, setSavingPatch] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
   const quickLook = useQuickLook();
   const sseRef = useRef<EventSource | null>(null);
 
@@ -291,6 +292,18 @@ export default function AppDetailPage() {
       },
       revalidateOnFocus: false,
     },
+  );
+
+  // Fetch available update info for this app
+  const { data: updateInfo, mutate: mutateUpdateInfo } = useSWR<{
+    currentVersion: string;
+    availableVersion: string;
+    hasUpdate: boolean;
+    releaseNotes: string | null;
+  }>(
+    app?.installed ? `${CORE_URL}/api/updates/${appId}` : null,
+    fetcher,
+    { refreshInterval: 5 * 60 * 1000, revalidateOnFocus: false },
   );
 
   // Set title synchronously from URL, update when SWR data arrives.
@@ -644,6 +657,37 @@ export default function AppDetailPage() {
             </span>
           )}
         </div>
+
+        {/* Update available banner */}
+        {updateInfo?.hasUpdate && status !== "updating" && (
+          <div className="w-full max-w-sm rounded-xl border border-border bg-muted/30 px-4 py-3 grid gap-2">
+            <div className="flex items-center gap-2.5">
+              <HugeiconsIcon icon={SystemUpdate01Icon} size={16} className="text-muted-foreground shrink-0" />
+              <p className="text-sm">
+                <span className="text-muted-foreground">Update available: </span>
+                <span className="font-medium">v{updateInfo.currentVersion}</span>
+                <span className="text-muted-foreground"> → </span>
+                <span className="font-medium">v{updateInfo.availableVersion}</span>
+              </p>
+            </div>
+            {updateInfo.releaseNotes && (
+              <p className="text-xs text-muted-foreground leading-relaxed pl-[26px] line-clamp-2">
+                {updateInfo.releaseNotes}
+              </p>
+            )}
+            <div className="pl-[26px]">
+              <Button
+                size="sm"
+                variant="secondary"
+                className="h-7 text-xs gap-1.5"
+                onClick={() => runAction("update")}
+                disabled={!!actionLoading}
+              >
+                {actionLoading === "update" ? "Updating..." : "Update Now"}
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Primary action */}
         <div className="w-full max-w-xs grid gap-2 pt-1 place-items-center">
@@ -1088,15 +1132,41 @@ export default function AppDetailPage() {
               )}
             </button>
             <button
-              onClick={() => runAction("update")}
-              disabled={!!actionLoading}
+              onClick={async () => {
+                setCheckingUpdates(true);
+                try {
+                  const fresh = await mutateUpdateInfo();
+                  if (fresh?.hasUpdate) {
+                    toast(`Update available: v${fresh.currentVersion} → v${fresh.availableVersion}`);
+                  } else {
+                    toast("Already on the latest version");
+                  }
+                } catch {
+                  toast.error("Failed to check for updates");
+                } finally {
+                  setCheckingUpdates(false);
+                }
+              }}
+              disabled={!!actionLoading || checkingUpdates}
               className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
             >
-              <span>Check for Update</span>
-              {actionLoading === "update" && (
-                <span className="text-muted-foreground text-xs">Updating...</span>
+              <span>Check for Updates</span>
+              {checkingUpdates && (
+                <span className="text-muted-foreground text-xs">Checking...</span>
               )}
             </button>
+            {updateInfo?.hasUpdate && (
+              <button
+                onClick={() => runAction("update")}
+                disabled={!!actionLoading}
+                className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
+              >
+                <span>Update to v{updateInfo.availableVersion}</span>
+                {actionLoading === "update" && (
+                  <span className="text-muted-foreground text-xs">Updating...</span>
+                )}
+              </button>
+            )}
             {isRunning ? (
               <button
                 onClick={() => runAction("stop")}

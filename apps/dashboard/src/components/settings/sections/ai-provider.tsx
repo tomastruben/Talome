@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import useSWR from "swr";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -12,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { HugeiconsIcon, Delete01Icon, LinkSquare01Icon, Tick01Icon, CheckmarkCircle02Icon, AlertCircleIcon } from "@/components/icons";
+import { HugeiconsIcon, Delete01Icon, LinkSquare01Icon, CheckmarkCircle02Icon, AlertCircleIcon, ArrowRight01Icon } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
 import { SettingsGroup, SettingsRow, SecretRow, TextRow } from "@/components/settings/settings-primitives";
@@ -48,10 +47,10 @@ interface OllamaModel {
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
-const PROVIDER_LABELS: Record<AiProvider, string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  ollama: "Ollama",
+const PROVIDER_META: Record<AiProvider, { label: string; hint: string; badge?: string }> = {
+  anthropic: { label: "Anthropic", hint: "Claude models", badge: "Recommended" },
+  openai: { label: "OpenAI", hint: "GPT models" },
+  ollama: { label: "Ollama", hint: "Local models" },
 };
 
 function formatSize(bytes: number): string {
@@ -61,6 +60,69 @@ function formatSize(bytes: number): string {
 }
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
+
+/* ── Provider card ────────────────────────────────────────────────────────── */
+
+function ProviderCard({
+  provider,
+  configured,
+  isActive,
+  onClick,
+}: {
+  provider: AiProvider;
+  configured: boolean;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  const meta = PROVIDER_META[provider];
+
+  // Three states: active, configured (ready), unconfigured
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group relative rounded-xl border p-4 text-left transition-all duration-150 ${
+        isActive
+          ? "border-foreground/25 bg-foreground/[0.05] ring-1 ring-foreground/10"
+          : configured
+            ? "border-border/50 hover:border-foreground/20 hover:bg-foreground/[0.02]"
+            : "border-border/30 opacity-70 hover:opacity-100 hover:border-border/50"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <p className={`text-sm font-medium ${isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"}`}>
+          {meta.label}
+        </p>
+
+        {/* Status indicator: single source of truth */}
+        {isActive ? (
+          <span className="flex items-center gap-1 rounded-full bg-status-healthy/15 text-status-healthy px-1.5 py-0.5 text-[10px] font-medium">
+            <span className="size-1 rounded-full bg-current" />
+            Active
+          </span>
+        ) : configured ? (
+          <span className="flex items-center gap-1 rounded-full bg-foreground/5 text-muted-foreground px-1.5 py-0.5 text-[10px] font-medium">
+            <span className="size-1 rounded-full bg-status-healthy" />
+            Ready
+          </span>
+        ) : meta.badge ? (
+          <span className="rounded-full bg-foreground/5 text-muted-foreground px-1.5 py-0.5 text-[10px] font-medium">{meta.badge}</span>
+        ) : null}
+      </div>
+
+      <p className="text-xs text-muted-foreground mt-1">{meta.hint}</p>
+
+      {/* Subtle arrow for non-active cards */}
+      {!isActive && configured && (
+        <HugeiconsIcon
+          icon={ArrowRight01Icon}
+          size={12}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/0 group-hover:text-muted-foreground/60 transition-all duration-150"
+        />
+      )}
+    </button>
+  );
+}
 
 /* ── Main section ─────────────────────────────────────────────────────────── */
 
@@ -118,21 +180,31 @@ export function AiProviderSection() {
   const availableModels = providerData?.models ?? [];
   const isConfigured = providerData?.configured ?? false;
 
-  const saveKeys = async () => {
+  const saveKeys = async (providerScope?: AiProvider) => {
     setSaving(true);
     try {
-      const body: Record<string, string> = { ollama_url: ollamaUrl };
-      if (anthropicEditing || !anthropicKey) body.anthropic_key = anthropicKey;
-      if (openaiEditing || !openaiKey) body.openai_key = openaiKey;
+      const body: Record<string, string> = {};
+      if (!providerScope || providerScope === "anthropic") {
+        if (anthropicEditing || !anthropicKey) body.anthropic_key = anthropicKey;
+      }
+      if (!providerScope || providerScope === "openai") {
+        if (openaiEditing || !openaiKey) body.openai_key = openaiKey;
+      }
+      if (!providerScope || providerScope === "ollama") {
+        body.ollama_url = ollamaUrl;
+      }
+      if (Object.keys(body).length === 0) {
+        setSaving(false);
+        return;
+      }
       await fetch(`${CORE_URL}/api/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      setAnthropicEditing(false);
-      setOpenaiEditing(false);
+      if (providerScope === "anthropic" || !providerScope) setAnthropicEditing(false);
+      if (providerScope === "openai" || !providerScope) setOpenaiEditing(false);
       toast.success("Saved");
-      // Refresh models after saving keys (provider configured state may change)
       mutateModels();
     } catch {
       toast.error("Failed to save");
@@ -149,7 +221,7 @@ export function AiProviderSection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ai_provider: provider, ai_model: model }),
       });
-      toast.success(`Active model: ${PROVIDER_LABELS[provider]} / ${model || "(default)"}`);
+      toast.success(`Switched to ${PROVIDER_META[provider].label}`);
       mutateModels();
     } catch {
       toast.error("Failed to save model selection");
@@ -160,7 +232,6 @@ export function AiProviderSection() {
 
   const handleProviderChange = useCallback((provider: AiProvider) => {
     setActiveProvider(provider);
-    // Pick the first available model for this provider
     const models = modelsData?.providers.find((p) => p.provider === provider)?.models ?? [];
     const firstModel = models[0]?.id ?? "";
     setActiveModel(firstModel);
@@ -209,6 +280,11 @@ export function AiProviderSection() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
 
+  // Reset test result when provider changes
+  useEffect(() => {
+    setTestResult(null);
+  }, [activeProvider]);
+
   const testConnection = async () => {
     setTesting(true);
     setTestResult(null);
@@ -223,320 +299,267 @@ export function AiProviderSection() {
     }
   };
 
+  // Helper: which providers are configured
+  const getConfigured = (p: AiProvider) =>
+    modelsData?.providers.find((pd) => pd.provider === p)?.configured ?? false;
+
   return (
-    <div className="grid gap-6">
-      <p className="text-sm text-muted-foreground leading-relaxed">
-        The assistant needs at least one AI provider. Pick the one that fits your setup.
-      </p>
+    <div className="grid gap-8">
 
-      {/* ── Provider recommendation ──────────────────────── */}
-      <div className="grid sm:grid-cols-3 gap-3">
-        <button
-          type="button"
-          onClick={() => handleProviderChange("anthropic")}
-          className={`rounded-xl border p-4 text-left transition-all duration-150 ${
-            activeProvider === "anthropic"
-              ? "border-foreground/20 bg-foreground/[0.04]"
-              : "border-border/40 hover:border-border/60"
-          }`}
-        >
-          <div className="flex items-center gap-2 mb-1.5">
-            <p className="text-sm font-medium">Anthropic</p>
-            <span className="rounded-full bg-status-healthy/15 text-status-healthy px-1.5 py-0.5 text-[10px] font-medium">Recommended</span>
-          </div>
-          <p className="text-xs text-muted-foreground">Best quality. Pay-per-use API key. Claude models.</p>
-        </button>
-        <button
-          type="button"
-          onClick={() => handleProviderChange("openai")}
-          className={`rounded-xl border p-4 text-left transition-all duration-150 ${
-            activeProvider === "openai"
-              ? "border-foreground/20 bg-foreground/[0.04]"
-              : "border-border/40 hover:border-border/60"
-          }`}
-        >
-          <div className="flex items-center gap-2 mb-1.5">
-            <p className="text-sm font-medium">OpenAI</p>
-            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Experimental</span>
-          </div>
-          <p className="text-xs text-muted-foreground">GPT models. Pay-per-use API key. Alternative option.</p>
-        </button>
-        <button
-          type="button"
-          onClick={() => handleProviderChange("ollama")}
-          className={`rounded-xl border p-4 text-left transition-all duration-150 ${
-            activeProvider === "ollama"
-              ? "border-foreground/20 bg-foreground/[0.04]"
-              : "border-border/40 hover:border-border/60"
-          }`}
-        >
-          <div className="flex items-center gap-2 mb-1.5">
-            <p className="text-sm font-medium">Ollama</p>
-            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Experimental</span>
-          </div>
-          <p className="text-xs text-muted-foreground">Free and private. Runs on your hardware. Requires setup.</p>
-        </button>
-      </div>
+      {/* ── Step 1: Choose provider ────────────────────────── */}
+      <section className="grid gap-3">
+        <p className="text-sm text-muted-foreground">
+          Choose an AI provider. You can configure multiple and switch anytime.
+        </p>
 
-      {/* ── Active model selection ──────────────────────── */}
-      <SettingsGroup>
-        <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Active Model</p>
-        </SettingsRow>
+        <div className="grid sm:grid-cols-3 gap-3">
+          {(["anthropic", "openai", "ollama"] as const).map((p) => (
+            <ProviderCard
+              key={p}
+              provider={p}
+              configured={getConfigured(p)}
+              isActive={activeProvider === p}
+              onClick={() => handleProviderChange(p)}
+            />
+          ))}
+        </div>
+      </section>
 
-        <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-3">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium">Provider</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Which AI service to use for the assistant</p>
-          </div>
-          <div className="flex gap-1 p-0.5 rounded-lg bg-muted/50 shrink-0">
-            {(["anthropic", "openai", "ollama"] as const).map((p) => {
-              const pData = modelsData?.providers.find((pd) => pd.provider === p);
-              const configured = pData?.configured ?? false;
-              const isActive = activeProvider === p;
-              return (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => handleProviderChange(p)}
-                  disabled={savingModel}
-                  className={`relative px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-150 ${
-                    isActive
-                      ? "bg-background text-foreground shadow-sm"
-                      : configured
-                        ? "text-muted-foreground hover:text-foreground"
-                        : "text-dim-foreground hover:text-muted-foreground"
-                  }`}
-                >
-                  {PROVIDER_LABELS[p]}
-                  {configured && !isActive && (
-                    <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-status-healthy" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </SettingsRow>
-
-        {!isConfigured && (
-          <SettingsRow>
-            <p className="text-xs text-status-warning">
-              {activeProvider === "ollama"
-                ? "Ollama URL not configured — add it below and pull a model."
-                : `No ${PROVIDER_LABELS[activeProvider]} API key configured — add it below.`}
-            </p>
-          </SettingsRow>
+      {/* ── Step 2: Configure the active provider ─────────── */}
+      <section className="grid gap-3">
+        {activeProvider === "anthropic" && (
+          <SettingsGroup>
+            <SettingsRow className="py-2.5">
+              <div className="flex items-center gap-2 flex-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Anthropic</p>
+                {getConfigured("anthropic") && (
+                  <span className="flex items-center gap-1 text-[10px] text-status-healthy font-medium">
+                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={10} />
+                    Connected
+                  </span>
+                )}
+              </div>
+              <a
+                href="https://console.anthropic.com/settings/keys"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <HugeiconsIcon icon={LinkSquare01Icon} size={12} />
+                Get key
+              </a>
+            </SettingsRow>
+            <SecretRow
+              label="API Key" hint="Required for Claude models"
+              id="anthropic-key" placeholder="sk-ant-..."
+              storedValue={anthropicKey} isEditing={anthropicEditing}
+              onEdit={() => { setAnthropicEditing(true); setAnthropicKey(""); }}
+              onChange={setAnthropicKey}
+            />
+            <SettingsRow className="bg-muted/30 justify-end py-3">
+              <Button size="sm" onClick={() => saveKeys("anthropic")} disabled={saving} className="h-7 text-xs px-4">
+                {saving ? "Saving..." : "Save"}
+              </Button>
+            </SettingsRow>
+          </SettingsGroup>
         )}
 
-        <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-3">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium">Model</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {activeProvider === "ollama" ? "Locally installed models" : "Available models from this provider"}
-            </p>
-          </div>
-          <Select
-            value={activeModel}
-            onValueChange={handleModelChange}
-            disabled={savingModel || availableModels.length === 0}
-          >
-            <SelectTrigger className="w-full sm:w-72 h-8 text-xs">
-              <SelectValue placeholder={availableModels.length === 0 ? "No models available" : "Select a model"} />
-            </SelectTrigger>
-            <SelectContent>
-              {availableModels.map((m) => (
-                <SelectItem key={m.id} value={m.id} className="text-xs">
-                  <span className="font-medium">{m.name}</span>
-                  {m.description && (
-                    <span className="text-muted-foreground ml-2">{m.description}</span>
-                  )}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </SettingsRow>
-      </SettingsGroup>
+        {activeProvider === "openai" && (
+          <SettingsGroup>
+            <SettingsRow className="py-2.5">
+              <div className="flex items-center gap-2 flex-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">OpenAI</p>
+                {getConfigured("openai") && (
+                  <span className="flex items-center gap-1 text-[10px] text-status-healthy font-medium">
+                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={10} />
+                    Connected
+                  </span>
+                )}
+              </div>
+              <a
+                href="https://platform.openai.com/api-keys"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <HugeiconsIcon icon={LinkSquare01Icon} size={12} />
+                Get key
+              </a>
+            </SettingsRow>
+            <SecretRow
+              label="API Key" hint="Required for GPT models"
+              id="openai-key" placeholder="sk-..."
+              storedValue={openaiKey} isEditing={openaiEditing}
+              onEdit={() => { setOpenaiEditing(true); setOpenaiKey(""); }}
+              onChange={setOpenaiKey}
+            />
+            <SettingsRow className="bg-muted/30 justify-end py-3">
+              <Button size="sm" onClick={() => saveKeys("openai")} disabled={saving} className="h-7 text-xs px-4">
+                {saving ? "Saving..." : "Save"}
+              </Button>
+            </SettingsRow>
+          </SettingsGroup>
+        )}
 
-      {/* ── Cloud providers ─────────────────────────────── */}
-      <SettingsGroup>
-        <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Anthropic</p>
-          {activeProvider === "anthropic" && (
-            <Badge variant="secondary" className="ml-2 text-xs gap-1">
-              <HugeiconsIcon icon={Tick01Icon} size={10} />
-              Active
-            </Badge>
-          )}
-          <a
-            href="https://console.anthropic.com/settings/keys"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <HugeiconsIcon icon={LinkSquare01Icon} size={12} />
-            Get key
-          </a>
-        </SettingsRow>
-        <SecretRow
-          label="API Key" hint="Claude models — recommended"
-          id="anthropic-key" placeholder="sk-ant-..."
-          storedValue={anthropicKey} isEditing={anthropicEditing}
-          onEdit={() => { setAnthropicEditing(true); setAnthropicKey(""); }}
-          onChange={setAnthropicKey}
-        />
-        <SettingsRow className="bg-muted/30 justify-end py-3">
-          <Button size="sm" onClick={saveKeys} disabled={saving} className="h-7 text-xs px-4">
-            {saving ? "Saving..." : "Save"}
-          </Button>
-        </SettingsRow>
-      </SettingsGroup>
+        {activeProvider === "ollama" && (
+          <SettingsGroup>
+            <SettingsRow className="py-2.5">
+              <div className="flex items-center gap-2 flex-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Ollama</p>
+                {getConfigured("ollama") && (
+                  <span className="flex items-center gap-1 text-[10px] text-status-healthy font-medium">
+                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={10} />
+                    Connected
+                  </span>
+                )}
+                {ollamaModels.length > 0 && (
+                  <span className="text-[10px] text-muted-foreground font-medium tabular-nums">
+                    {ollamaModels.length} model{ollamaModels.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+              <a
+                href="https://ollama.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <HugeiconsIcon icon={LinkSquare01Icon} size={12} />
+                ollama.com
+              </a>
+            </SettingsRow>
 
-      <SettingsGroup>
-        <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">OpenAI</p>
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Experimental</span>
-          {activeProvider === "openai" && (
-            <Badge variant="secondary" className="ml-2 text-xs gap-1">
-              <HugeiconsIcon icon={Tick01Icon} size={10} />
-              Active
-            </Badge>
-          )}
-          <a
-            href="https://platform.openai.com/api-keys"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <HugeiconsIcon icon={LinkSquare01Icon} size={12} />
-            Get key
-          </a>
-        </SettingsRow>
-        <SecretRow
-          label="API Key" hint="GPT models — alternative"
-          id="openai-key" placeholder="sk-..."
-          storedValue={openaiKey} isEditing={openaiEditing}
-          onEdit={() => { setOpenaiEditing(true); setOpenaiKey(""); }}
-          onChange={setOpenaiKey}
-        />
+            <TextRow
+              label="Server URL" hint="Ollama must be running at this address"
+              id="ollama-url" placeholder="http://localhost:11434"
+              value={ollamaUrl} onChange={setOllamaUrl}
+            />
 
-        <SettingsRow className="bg-muted/30 justify-end py-3">
-          <Button size="sm" onClick={saveKeys} disabled={saving} className="h-7 text-xs px-4">
-            {saving ? "Saving..." : "Save"}
-          </Button>
-        </SettingsRow>
-      </SettingsGroup>
+            {ollamaModels.map((m) => (
+              <SettingsRow key={m.name}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium font-mono truncate">{m.name}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {formatSize(m.size)}
+                    {m.details?.parameter_size && ` · ${m.details.parameter_size}`}
+                    {m.details?.quantization_level && ` · ${m.details.quantization_level}`}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                  onClick={() => removeModel(m.name)}
+                >
+                  <HugeiconsIcon icon={Delete01Icon} size={14} />
+                </Button>
+              </SettingsRow>
+            ))}
 
-      <div className="flex items-center gap-3 px-1">
-        <p className="text-xs text-muted-foreground flex-1">
-          Cloud providers charge per token. Create an account, generate an API key, and paste it above.
-        </p>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 text-xs px-3 shrink-0 gap-1.5"
-          onClick={testConnection}
-          disabled={testing}
-        >
-          {testing ? "Testing..." : testResult?.ok ? (
-            <>
-              <HugeiconsIcon icon={CheckmarkCircle02Icon} size={12} className="text-status-healthy" />
-              Connected
-            </>
-          ) : testResult && !testResult.ok ? (
-            <>
-              <HugeiconsIcon icon={AlertCircleIcon} size={12} className="text-destructive" />
-              Failed
-            </>
-          ) : "Test connection"}
-        </Button>
-      </div>
-      {testResult && !testResult.ok && (
-        <p className="text-xs text-destructive/70 px-1">{testResult.error}</p>
+            <SettingsRow className="gap-2">
+              <Input
+                placeholder="Pull a model — e.g. llama3.2, mistral, gemma2"
+                value={pullName}
+                onChange={(e) => setPullName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void pullModel(); }}
+                className="h-8 text-sm flex-1 font-mono"
+              />
+              <Button
+                size="sm"
+                variant="secondary"
+                className="h-8 text-xs px-3 shrink-0"
+                disabled={pulling || !pullName.trim()}
+                onClick={() => void pullModel()}
+              >
+                {pulling ? "Pulling..." : "Pull"}
+              </Button>
+            </SettingsRow>
+
+            <SettingsRow className="bg-muted/30 justify-end py-3">
+              <Button size="sm" onClick={() => saveKeys("ollama")} disabled={saving} className="h-7 text-xs px-4">
+                {saving ? "Saving..." : "Save"}
+              </Button>
+            </SettingsRow>
+          </SettingsGroup>
+        )}
+      </section>
+
+      {/* ── Step 3: Model selection (only when configured) ── */}
+      {isConfigured && availableModels.length > 0 && (
+        <section className="grid gap-3">
+          <SettingsGroup>
+            <SettingsRow className="py-2.5">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Model</p>
+            </SettingsRow>
+            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium">
+                  {PROVIDER_META[activeProvider].label} model
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {activeProvider === "ollama" ? "Locally installed models" : "Choose which model powers the assistant"}
+                </p>
+              </div>
+              <Select
+                value={activeModel}
+                onValueChange={handleModelChange}
+                disabled={savingModel}
+              >
+                <SelectTrigger className="w-full sm:w-72 h-8 text-xs">
+                  <SelectValue placeholder="Select a model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableModels.map((m) => (
+                    <SelectItem key={m.id} value={m.id} className="text-xs">
+                      <span className="font-medium">{m.name}</span>
+                      {m.description && (
+                        <span className="text-muted-foreground ml-2">{m.description}</span>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsRow>
+          </SettingsGroup>
+        </section>
       )}
 
-      {/* ── Ollama ──────────────────────────────────────── */}
-      <SettingsGroup>
-        <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Ollama</p>
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Experimental</span>
-          {activeProvider === "ollama" && (
-            <Badge variant="secondary" className="ml-2 text-xs gap-1">
-              <HugeiconsIcon icon={Tick01Icon} size={10} />
-              Active
-            </Badge>
-          )}
-          {ollamaModels.length > 0 && (
-            <Badge variant="secondary" className="ml-2 text-xs tabular-nums">
-              {ollamaModels.length} model{ollamaModels.length !== 1 ? "s" : ""}
-            </Badge>
-          )}
-          <a
-            href="https://ollama.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <HugeiconsIcon icon={LinkSquare01Icon} size={12} />
-            ollama.com
-          </a>
-        </SettingsRow>
+      {/* ── Not configured hint ────────────────────────────── */}
+      {!isConfigured && (
+        <p className="text-xs text-status-warning px-1">
+          {activeProvider === "ollama"
+            ? "Add the Ollama server URL above and pull a model to get started."
+            : `Add your ${PROVIDER_META[activeProvider].label} API key above to get started.`}
+        </p>
+      )}
 
-        <TextRow
-          label="Server URL" hint="Ollama must be running at this address"
-          id="ollama-url" placeholder="http://localhost:11434"
-          value={ollamaUrl} onChange={setOllamaUrl}
-        />
-
-        {ollamaModels.map((m) => (
-          <SettingsRow key={m.name}>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium font-mono truncate">{m.name}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {formatSize(m.size)}
-                {m.details?.parameter_size && ` · ${m.details.parameter_size}`}
-                {m.details?.quantization_level && ` · ${m.details.quantization_level}`}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-              onClick={() => removeModel(m.name)}
-            >
-              <HugeiconsIcon icon={Delete01Icon} size={14} />
-            </Button>
-          </SettingsRow>
-        ))}
-
-        <SettingsRow className="gap-2">
-          <Input
-            placeholder="Pull a model — e.g. llama3.2, mistral, gemma2"
-            value={pullName}
-            onChange={(e) => setPullName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void pullModel(); }}
-            className="h-8 text-sm flex-1 font-mono"
-          />
+      {/* ── Test connection ────────────────────────────────── */}
+      {isConfigured && (
+        <div className="flex items-center gap-3 px-1">
           <Button
             size="sm"
-            variant="secondary"
-            className="h-8 text-xs px-3 shrink-0"
-            disabled={pulling || !pullName.trim()}
-            onClick={() => void pullModel()}
+            variant="outline"
+            className="h-7 text-xs px-3 shrink-0 gap-1.5"
+            onClick={testConnection}
+            disabled={testing}
           >
-            {pulling ? "Pulling..." : "Pull"}
+            {testing ? "Testing..." : testResult?.ok ? (
+              <>
+                <HugeiconsIcon icon={CheckmarkCircle02Icon} size={12} className="text-status-healthy" />
+                Connected
+              </>
+            ) : testResult && !testResult.ok ? (
+              <>
+                <HugeiconsIcon icon={AlertCircleIcon} size={12} className="text-destructive" />
+                Failed
+              </>
+            ) : "Test connection"}
           </Button>
-        </SettingsRow>
-
-        <SettingsRow className="bg-muted/30 justify-end py-3">
-          <Button size="sm" onClick={saveKeys} disabled={saving} className="h-7 text-xs px-4">
-            {saving ? "Saving..." : "Save"}
-          </Button>
-        </SettingsRow>
-      </SettingsGroup>
-
-      <p className="text-xs text-muted-foreground px-1">
-        Ollama runs open-source models locally — free, private, no account needed. Install it, start the server, and pull a model above.
-      </p>
+          {testResult && !testResult.ok && (
+            <p className="text-xs text-destructive/70 truncate">{testResult.error}</p>
+          )}
+        </div>
+      )}
 
       <ConfigureWithAI prompt="I'd like to review my AI provider configuration" />
     </div>

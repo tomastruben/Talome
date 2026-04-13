@@ -42,6 +42,7 @@ import { ActiveTasksWidget } from "./components/active-tasks-widget";
 import { InsightsWidget, SuggestionsWidget } from "./components/intelligence-widget";
 import { ActivityLogWidget } from "./components/activity-log-widget";
 import { AiOverviewWidget } from "./components/ai-overview-widget";
+import { SetupWidget } from "./components/setup-widget";
 
 import type { AuditLogEntry } from "@talome/types";
 import {
@@ -898,6 +899,9 @@ export default function ActivityPage() {
           usage={agentStatus?.usage}
         />
       )}
+
+      {/* ── Zone 2b: Server setup health ────────────────────────── */}
+      {isAdmin && <SetupWidget />}
 
       {/* ── Zone 3: Attention (problems + active tasks) ────────── */}
       {isAdmin && hasProblems && (

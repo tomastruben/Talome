@@ -822,6 +822,41 @@ export function runMigrations() {
     // Column already exists — ignore
   }
 
+  // ── Setup loop tables ──────────────────────────────────────────────────
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS setup_runs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'running',
+      trigger TEXT NOT NULL,
+      health_score_before REAL,
+      health_score_after REAL,
+      apps_targeted TEXT NOT NULL DEFAULT '[]',
+      attempts_count INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      error TEXT
+    )
+  `);
+
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS setup_attempts (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES setup_runs(id),
+      app_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      approach TEXT NOT NULL,
+      status TEXT NOT NULL,
+      result TEXT,
+      error TEXT,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      settings_changed TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL
+    )
+  `);
+
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_attempts_run_id ON setup_attempts(run_id)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_runs_status ON setup_runs(status)`);
+
   // ── Record schema versions ─────────────────────────────────────────────
   recordMigration(1, "Initial schema: users, conversations, messages, settings, audit_log");
   recordMigration(2, "App store: store_sources, app_catalog, installed_apps");
@@ -837,6 +872,7 @@ export function runMigrations() {
   recordMigration(12, "DB optimizations: schema_versions, N+1 fix, query limits, pragmas, new indexes");
   recordMigration(13, "Optimization jobs: ai_diagnosis column for AI-first error handling");
   recordMigration(14, "Installed apps: display_name column for user-defined app names");
+  recordMigration(15, "Setup loop: setup_runs and setup_attempts for autonomous app configuration");
 
   console.log("Database migrations complete");
 }

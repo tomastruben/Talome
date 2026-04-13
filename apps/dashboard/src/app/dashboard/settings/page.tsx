@@ -28,6 +28,7 @@ import {
   FileVideoIcon,
   Shield01Icon,
   AlertCircleIcon,
+  SystemUpdate01Icon,
   CpuIcon,
   LayoutGridIcon,
   ComputerTerminal01Icon,
@@ -65,6 +66,7 @@ const INFRASTRUCTURE_ITEMS: SettingsLink[] = [
   { slug: "backups", icon: ArchiveIcon, title: "Backups", description: "Scheduled backups and restore history" },
   { slug: "file-manager", icon: HardDriveIcon, title: "File Manager", description: "Control which external drives are accessible", adminOnly: true },
   { slug: "media-player", icon: FileVideoIcon, title: "Media Player", description: "HLS transcode cache and playback settings" },
+  { slug: "updates", icon: SystemUpdate01Icon, title: "App Updates", description: "Available updates and auto-update policies", adminOnly: true },
 ];
 
 const CONNECTIONS_ITEMS: SettingsLink[] = [
@@ -354,7 +356,7 @@ export default function SettingsPage() {
       <SettingsCategory label="Legal" items={LEGAL_ITEMS} isAdmin={isAdmin} />
       <LogoutButton />
       <p className="text-center text-xs text-muted-foreground/30 pt-2">
-        Designed and built by Tomas Truben &middot; Open source under MIT
+        Designed and built by Tomas Truben &middot; AGPL-3.0
       </p>
     </div>
   );

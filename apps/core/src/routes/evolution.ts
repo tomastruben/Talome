@@ -13,6 +13,7 @@ import { reapDeadWorkers } from "../evolution/auto-execute.js";
 import { getChangedFiles, runTypecheck, stashRollback, spawnProcess } from "../ai/claude-process.js";
 import { saveScreenshots } from "../ai/claude-runner.js";
 import { logAiUsage } from "../agent-loop/budget.js";
+import { recordGracefulError, serverError } from "../middleware/request-logger.js";
 import { writeNotification } from "../db/notifications.js";
 import { writeAuditEntry } from "../db/audit.js";
 import { db, schema } from "../db/index.js";
@@ -81,7 +82,7 @@ evolution.get("/server-mode", async (c) => {
     const managed = process.env.TALOME_MANAGED === "1";
     return c.json({ mode, active: isLive ? "dev" : "build", managed });
   } catch (err) {
-    console.error("[evolution] GET /server-mode error:", err);
+    recordGracefulError(c, err, { endpoint: "evolution/server-mode" });
     return c.json({ mode: "build", active: "build", managed: false });
   }
 });
@@ -105,8 +106,7 @@ evolution.post("/server-mode", async (c) => {
       execSync("pnpm exec tsc", { cwd: typesDir, encoding: "utf8", timeout: 30_000, stdio: "pipe" });
       execSync("pnpm exec tsc", { cwd: coreDir, encoding: "utf8", timeout: 60_000, stdio: "pipe" });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return c.json({ error: "Compilation failed — mode not switched", details: msg.slice(0, 500) }, 500);
+      return serverError(c, err, { message: "Compilation failed — mode not switched" });
     }
   }
 
@@ -127,8 +127,7 @@ evolution.get("/history", async (c) => {
     const entries = await readEvolutionLog(Math.min(limit, 200));
     return c.json({ entries, count: entries.length });
   } catch (err) {
-    console.error("[evolution] GET /history error:", err);
-    return c.json({ entries: [], count: 0, error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to fetch evolution history", extra: { entries: [], count: 0 } });
   }
 });
 
@@ -150,8 +149,7 @@ evolution.get("/runs/:id", (c) => {
 
     return c.json({ ...run, filesChanged });
   } catch (err) {
-    console.error("[evolution] GET /runs/:id error:", err);
-    return c.json({ error: "Failed to load run" }, 500);
+    return serverError(c, err, { message: "Failed to load run", context: { runId: c.req.param("id") } });
   }
 });
 
@@ -231,7 +229,7 @@ evolution.get("/git-head", async (c) => {
     const { stdout } = await spawnProcess("git", ["rev-parse", "HEAD"], PROJECT_ROOT);
     return c.json({ hash: stdout.trim() });
   } catch (err) {
-    console.error("[evolution] GET /git-head error:", err);
+    recordGracefulError(c, err, { endpoint: "evolution/git-head" });
     return c.json({ hash: null });
   }
 });
@@ -265,8 +263,7 @@ evolution.get("/suggestions", (c) => {
       })),
     });
   } catch (err) {
-    console.error("[evolution] GET /suggestions error:", err);
-    return c.json({ suggestions: [], error: String(err) }, 500);
+    return serverError(c, err, { message: "Failed to fetch suggestions", extra: { suggestions: [] } });
   }
 });
 
@@ -276,8 +273,7 @@ evolution.post("/suggestions/generate", async (c) => {
     const result = await generateSuggestions();
     return c.json(result);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return c.json({ error: msg }, 500);
+    return serverError(c, err, { message: "Failed to generate suggestions" });
   }
 });
 
@@ -299,8 +295,7 @@ evolution.put("/suggestions/:id", async (c) => {
 
     return c.json({ ok: true });
   } catch (err) {
-    console.error("[evolution] PUT /suggestions/:id error:", err);
-    return c.json({ error: "Failed to update suggestion" }, 500);
+    return serverError(c, err, { message: "Failed to update suggestion", context: { suggestionId: c.req.param("id") } });
   }
 });
 
@@ -563,8 +558,7 @@ Be specific in the taskPrompt — mention likely files, components, or systems i
       screenshotPaths,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return c.json({ error: msg }, 500);
+    return serverError(c, err, { message: "Failed to process bug report" });
   }
 });
 
@@ -1066,7 +1060,7 @@ evolution.post("/rebuild-dashboard", async (c) => {
     }
     const stderr = err instanceof Error ? (err as { stderr?: string }).stderr ?? err.message : String(err);
     const duration = Date.now() - startTime;
-    return c.json({ ok: false, buildError: stderr.slice(0, 2000), duration }, 500);
+    return serverError(c, err, { message: "Dashboard build failed", extra: { ok: false, buildError: stderr.slice(0, 2000), duration } });
   } finally {
     rebuildInProgress = false;
   }

@@ -27,6 +27,7 @@ import { MediaPlayerSection } from "@/components/settings/sections/media-player"
 import { LegalSection } from "@/components/settings/sections/legal";
 import { NotificationsSection } from "@/components/settings/sections/notifications";
 import { SecuritySection } from "@/components/settings/sections/security";
+import { UpdatesSection } from "@/components/settings/sections/updates";
 
 import type { ComponentType } from "react";
 
@@ -58,6 +59,7 @@ const SECTIONS: Record<string, SectionDef> = {
   "file-manager":    { component: FileManagerSection,     title: "File Manager", adminOnly: true },
   "media-player":    { component: MediaPlayerSection,    title: "Media Player" },
   "legal":           { component: LegalSection,           title: "Legal & Disclaimer" },
+  "updates":         { component: UpdatesSection,         title: "App Updates", adminOnly: true },
 };
 
 export default function SettingsSectionPage() {
