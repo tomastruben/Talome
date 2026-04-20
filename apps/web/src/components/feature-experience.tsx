@@ -17,7 +17,7 @@ const features = [
     label: "Intelligence",
     title: "It observes. It improves.",
     description:
-      "Talome watches your services around the clock. It reads logs, spots anomalies, and surfaces improvement suggestions ranked by impact. Click one, and it delegates to Claude Code with full context \u2014 the right tools loaded via internal MCP servers, the exact files to touch, and a supervisor that validates each change compiles cleanly before saving. Fully autonomous or user-triggered. At 3\u202FAM when your media server runs out of memory, it detects, diagnoses, and resolves it before you wake up. Every change is logged and reversible.",
+      "Talome watches your services around the clock. It reads logs, spots anomalies, and ranks improvement suggestions by impact. Click one; it delegates to Claude Code with full context \u2014 the right tools loaded via internal MCP servers, the exact files to touch, and a supervisor that refuses to save a change that won\u2019t compile. At 3\u202FAM when your media server runs out of memory, it diagnoses and fixes it before you wake up. Every change is logged. Every change is reversible. You can go back to bed.",
     videoSlug: "intelligence-dashboard",
     videoCaption:
       "Screen recording: open the Intelligence page, see a suggestion from Jellyfin log analysis, click to execute, watch Claude Code edit the code, compiler passes, change saved",
@@ -35,7 +35,7 @@ const features = [
     label: "Conversation",
     title: "One conversation. Fully configured.",
     description:
-      "\u2018Set up a media server.\u2019 Five apps installed. Downloads, media management, and search all wired together automatically. Health verified, URLs ready to go. A full orchestration engine with 230+ purpose-built tools. It remembers your preferences, your setup, your file paths. Ask once, and it remembers forever.",
+      "\u2018Set up a media server.\u2019 Five apps installed. Downloads, media management, and search wired together automatically. Health verified, URLs ready to go. 220 purpose-built tools behind the chat box doing the unglamorous work. It remembers your preferences, your setup, your file paths. Ask once. You\u2019re done asking.",
     videoSlug: "conversational-intelligence",
     videoCaption:
       "Screen recording: type \u2018set up a media server with automatic downloads\u2019 in the chat, watch tools fire in sequence installing Jellyfin, Sonarr, Radarr, qBittorrent, wiring them together, and returning live URLs",
@@ -89,7 +89,7 @@ const features = [
     label: "Everywhere",
     title: "Your server in your pocket.",
     description:
-      "Fully responsive dashboard that works on any screen. Add Talome to your home screen on iOS or Android for an app-like experience. Open the terminal from your phone and you have a full coding session \u2014 persistent, resumable, right in your pocket. Or message your server directly through Telegram or Discord \u2014 install apps, check status, get alerts, and troubleshoot issues from the same apps you use every day. Your server becomes a contact in your messaging app.",
+      "Fully responsive dashboard that works on any screen. Add Talome to your home screen on iOS or Android for an app-like experience. Open the terminal from your phone and you have a full coding session \u2014 persistent, resumable, right next to your grocery list app. Or message your server on Telegram like it\u2019s a colleague: install apps, check status, get alerts. It replies. Politely. Usually.",
     videoSlug: "mobile-messaging",
     videoCaption:
       "Screen recording: open Talome on a phone, browse the dashboard, then switch to Telegram and send a message asking for server status \u2014 Talome replies with container health and disk usage",

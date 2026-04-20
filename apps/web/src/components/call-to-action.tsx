@@ -32,8 +32,8 @@ export default function CallToAction() {
             Ready in 60 seconds
           </h2>
           <p className="mx-auto mt-4 max-w-md text-center text-muted-foreground">
-            Just your server and a single command. You'll be up and running
-            before your coffee gets cold.
+            Probably less. We timed it. Just your server and a single
+            command — up and running before your coffee gets cold.
           </p>
         </Reveal>
 

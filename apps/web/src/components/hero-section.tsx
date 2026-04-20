@@ -11,12 +11,9 @@ export default function HeroSection() {
       <main className="overflow-x-hidden">
         <section className="relative">
           <div className="relative z-10 mx-auto max-w-7xl px-6 pb-24 pt-44 text-center lg:px-12 lg:pt-56 lg:pb-32">
-            <div className="mb-4">
+            <div className="mb-8">
               <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-primary">Public Alpha</span>
             </div>
-            <p className="mb-6 text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/50">
-              The first AI-native home server
-            </p>
 
             <h1 className="gradient-heading mx-auto max-w-4xl text-balance text-5xl font-medium leading-[1.06] tracking-tight md:text-6xl lg:text-7xl">
               Install apps. Fix problems.
@@ -25,10 +22,11 @@ export default function HeroSection() {
             </h1>
 
             <p className="mx-auto mt-8 max-w-2xl text-balance text-lg leading-relaxed text-muted-foreground">
-              A reasoning system that lives on your machine. 230+
-              purpose-built tools, 12 deep integrations, autonomous
-              monitoring around the clock, and the ability to rewrite its
-              own source code. A new category of home server.
+              A reasoning system that lives on your machine. 220 tools,
+              17 deep integrations, autonomous monitoring, and — we checked
+              twice — the ability to rewrite its own source code.
+              Your hardware. Your house. Still a bit of a weird sentence
+              to type.
             </p>
 
             <div className="mt-12 space-y-6">

@@ -83,13 +83,14 @@ export default function AppEcosystem() {
         <Reveal>
           <div className="text-center">
             <h2 className="text-balance text-4xl font-medium tracking-tight lg:text-5xl">
-              Four stores. 300+ apps. One command.
+              Four stores. One search bar.
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-muted-foreground">
-              Talome, CasaOS, Umbrel, and your own creations. The largest
-              unified library for self-hosted software. Install featured stacks
-              with pre-configured bundles. Create custom apps with AI and
-              install them with one click.
+              Talome, CasaOS, Umbrel, and the apps you&rsquo;ll make up tonight
+              at 11&nbsp;PM. Install featured stacks with pre-configured
+              bundles. Describe a new app; watch it get built. Install with
+              one click. Also &mdash; and we can&rsquo;t stress this enough
+              &mdash; with one click.
             </p>
           </div>
         </Reveal>

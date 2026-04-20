@@ -5,15 +5,15 @@ import { Reveal } from "./reveal";
 const pillars = [
   {
     title: "Self-hosted",
-    desc: "Runs on your hardware. Your living room, your closet, your rack. Complete independence, complete control, always yours.",
+    desc: "Runs on your hardware. Your living room, your closet, the rack you built in a moment of weakness. Complete independence, complete control, always yours.",
   },
   {
     title: "Fully open source",
-    desc: "AGPL-3.0 licensed. Read every line, fork it, modify it, contribute back. The entire codebase is yours to inspect and extend.",
+    desc: "AGPL-3.0 licensed. Read every line, fork it, modify it, contribute back. The entire codebase is yours to inspect \u2014 including the parts that make us mildly embarrassed.",
   },
   {
     title: "Private by design",
-    desc: "Your server talks to you and only you. Every byte of data stays on your machine, always.",
+    desc: "Your server talks to you and only you. Every byte of data stays on your machine. No telemetry. No training set. No \u2018anonymous\u2019 analytics with a UUID that\u2019s somehow still you.",
   },
 ];
 
