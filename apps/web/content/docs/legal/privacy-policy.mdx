@@ -3,7 +3,7 @@ title: Privacy Policy
 description: How Talome handles your data. Short version — it stays on your machine.
 ---
 
-*Last updated: March 29, 2026*
+*Last updated: April 20, 2026*
 
 Talome is self-hosted software. It runs entirely on your hardware, under your control. This policy explains what data Talome handles and where it goes.
 
@@ -11,10 +11,10 @@ Talome is self-hosted software. It runs entirely on your hardware, under your co
 
 ## The short version
 
-- All your data stays on your machine
-- There is no telemetry, analytics, or phone-home
-- The only external calls are to AI providers you explicitly configure
-- If you use Ollama, nothing leaves your network
+- Talome does not collect telemetry, run analytics, or phone home
+- Your data stays on your machine
+- External network calls happen only when *you* opt in to a feature that needs them (your chosen AI provider, your Plex account if paired, your messaging bot if configured, etc.) — see "External network calls" below for the complete list
+- If you use Ollama and skip the optional integrations, nothing leaves your network
 
 ---
 
@@ -58,9 +58,23 @@ Talome uses a single session cookie for authentication when you log into the das
 
 There are no third-party cookies, no tracking cookies, and no advertising cookies.
 
-## Third-party services
+## External network calls
 
-Talome itself makes no calls to third-party services beyond the AI provider you configure. However, apps you install through Talome (Jellyfin, Sonarr, Pi-hole, etc.) are independent software with their own network behavior and privacy policies. Talome does not modify or monitor their external communications.
+This is the complete list of network calls Talome's own backend can make. Each one happens only when the corresponding feature is configured or used. None happen without your action.
+
+| Service | When | Purpose | Privacy policy |
+|---|---|---|---|
+| **Anthropic** (`api.anthropic.com`) | When chat is used and Anthropic is the active provider | Forwards conversation context for the AI to respond | [Anthropic](https://www.anthropic.com/privacy) |
+| **OpenAI** (`api.openai.com`) | When chat is used and OpenAI is the active provider | Same | [OpenAI](https://openai.com/privacy) |
+| **Anthropic / OpenAI `/v1/models`** | When you open Settings → AI Provider | Refresh the model dropdown so it shows what your account has access to | (same as above) |
+| **Telegram** (`api.telegram.org`) | When you configure a Telegram bot | Inbound and outbound messages to your bot | [Telegram](https://telegram.org/privacy) |
+| **Discord** (`discord.com`, gateway) | When you configure a Discord bot | Slash-command handler + outbound notifications | [Discord](https://discord.com/privacy) |
+| **Plex** (`plex.tv`, `metadata.provider.plex.tv`, `discover.provider.plex.tv`) | When you pair a Plex account | OAuth pin flow + watchlist/metadata fetch | [Plex](https://www.plex.tv/about/privacy-legal/privacy-policy/) |
+| **TMDb image CDN** (`image.tmdb.org`) | When the dashboard or media UI shows a poster | Fetches poster art lazily — same source Sonarr/Radarr/Jellyfin use | [TMDb](https://www.themoviedb.org/privacy-policy) |
+| **GitHub releases API** | When you click "Check for updates" or run the auto-update job | Compares your version against the latest release | [GitHub](https://docs.github.com/en/site-policy/privacy-policies) |
+| **GitHub Gists** (`api.github.com/gists`) | If you use Custom Tools "Share via Gist" (off by default) | Publishes a gist under your GitHub account | [GitHub](https://docs.github.com/en/site-policy/privacy-policies) |
+
+That's the complete list for Talome itself. Apps you install *through* Talome (Jellyfin, Sonarr, Pi-hole, etc.) are independent software with their own network behavior; Talome doesn't modify or monitor their external communications.
 
 ## Network exposure
 

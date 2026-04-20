@@ -36,14 +36,13 @@ The home page is a customizable grid of widgets. Each widget shows a focused sli
 
 ### Widget Categories
 
-Talome ships with **25+ built-in widgets** organized into four categories:
+Talome ships with **25 built-in widgets** organized into five categories. (Run `ls apps/dashboard/src/components/widgets/*-widget.tsx` if you want the canonical list — the doc below should match.)
 
 **System widgets** — real-time hardware monitoring
 - **CPU** — usage percentage with a sparkline history chart
 - **Memory** — used/total RAM with trend
 - **Disk** — per-mount usage bars with free space
 - **Network** — upload/download throughput graph
-- **GPU** — GPU utilization and VRAM (if available)
 - **System Health** — composite health score with status indicators
 - **System Info** — OS, kernel, uptime, Docker version
 - **System Status** — compact one-line health summary
@@ -53,10 +52,16 @@ Talome ships with **25+ built-in widgets** organized into four categories:
 - **Active Downloads** — currently downloading items from qBittorrent with progress bars
 - **Media Calendar** — upcoming releases from Sonarr and Radarr in a visual calendar
 - **Arr Status** — Sonarr/Radarr queue depth, warnings, and health
+- **Audiobooks** — Audiobookshelf library + listening progress
+- **Overseerr Requests** — pending and recent media requests
+- **Optimization** — transcoding queue + savings summary
 
 **Service widgets** — app and container overview
 - **Services** — grid of installed apps with health status indicators (green/amber/red)
 - **Quick Actions** — configurable buttons for common tasks (restart Plex, clear DNS cache, run backup)
+- **Backup Status** — last/next backup, recent failures
+- **Ollama Status** — local Ollama models + running processes
+- **Launcher** — pinned app shortcuts
 
 **Utility widgets**
 - **Activity** — recent AI conversations and tool executions
@@ -64,6 +69,7 @@ Talome ships with **25+ built-in widgets** organized into four categories:
 - **Stat Tile** — single-metric display (configurable: container count, uptime, etc.)
 - **List** — generic list widget (bookmarks, notes, links)
 - **Divider** — visual separator for layout organization
+- **Declarative** — generic AI-generated widget (data + chart spec from a tool result)
 
 ### Customizing the Grid
 
@@ -316,6 +322,6 @@ The assistant knows which page you are on. If you open the chat from the Media p
     Customize your dashboard widgets for system monitoring and alerting.
   </Card>
   <Card title="AI Assistant Guide" href="/docs/guides/ai-assistant">
-    Learn the full scope of what the AI can do — 220 tools across 17 domains.
+    Learn the full scope of what the AI can do — 219 tools across 17 domains.
   </Card>
 </Cards>

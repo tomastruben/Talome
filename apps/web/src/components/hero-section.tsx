@@ -22,7 +22,7 @@ export default function HeroSection() {
             </h1>
 
             <p className="mx-auto mt-8 max-w-2xl text-balance text-lg leading-relaxed text-muted-foreground">
-              A reasoning system that lives on your machine. 220 tools,
+              A reasoning system that lives on your machine. 219 tools,
               17 deep integrations, autonomous monitoring, and — we checked
               twice — the ability to rewrite its own source code.
               Your hardware. Your house. Still a bit of a weird sentence

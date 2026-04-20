@@ -64,15 +64,14 @@ This file is a short, high-signal summary of security-relevant and user-visible 
 - **Windows installer.** `install.ps1` previously attempted a Docker-based
   install that broke self-evolution. Replaced with a message pointing
   Windows users at WSL2 until a native Windows installer is available.
-- **Marketing landing page.** "230+ tools, 12 integrations" → "220 tools,
+- **Marketing landing page.** "230+ tools, 12 integrations" → "219 tools,
   17 integrations" (now matches the registered domain count in
-  `apps/core/src/ai/agent.ts`). Dropped the Discord bot claim since only
-  Telegram is implemented. Fixed a `Reveal` component bug where
+  `apps/core/src/ai/agent.ts`). Fixed a `Reveal` component bug where
   scroll-animated sections stayed at `opacity: 0` on deep-link /
   back-nav / direct-scroll entries.
 
 ---
 
-## 0.1.0 — Public Alpha
+## 0.1.0 — Public Alpha (planned)
 
-Initial public alpha release. See [talome.dev/docs/changelog](https://talome.dev/docs/changelog) for the full list of features shipped in 0.1.0.
+The initial public-alpha release. Not yet tagged on GitHub; until that tag exists, the only working install path is `curl -fsSL https://get.talome.dev | bash` (which pulls `main`). See [talome.dev/docs/changelog](https://talome.dev/docs/changelog) for the full list of features that will ship in 0.1.0.

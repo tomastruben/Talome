@@ -35,7 +35,7 @@ const features = [
     label: "Conversation",
     title: "One conversation. Fully configured.",
     description:
-      "\u2018Set up a media server.\u2019 Five apps installed. Downloads, media management, and search wired together automatically. Health verified, URLs ready to go. 220 purpose-built tools behind the chat box doing the unglamorous work. It remembers your preferences, your setup, your file paths. Ask once. You\u2019re done asking.",
+      "\u2018Set up a media server.\u2019 Five apps installed. Downloads, media management, and search wired together automatically. Health verified, URLs ready to go. 219 purpose-built tools behind the chat box doing the unglamorous work. It remembers your preferences, your setup, your file paths. Ask once. You\u2019re done asking.",
     videoSlug: "conversational-intelligence",
     videoCaption:
       "Screen recording: type \u2018set up a media server with automatic downloads\u2019 in the chat, watch tools fire in sequence installing Jellyfin, Sonarr, Radarr, qBittorrent, wiring them together, and returning live URLs",

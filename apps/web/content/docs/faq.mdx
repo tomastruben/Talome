@@ -5,7 +5,7 @@ description: Frequently asked questions about Talome.
 
 ## What is Talome?
 
-Talome is an AI-first, open-source home server management platform. It combines a Docker container orchestrator, a multi-source app store (Talome + CasaOS + Umbrel + custom), and an agentic AI assistant with 220 tools — all in a single self-hosted package. You install, configure, and manage apps through natural language conversations.
+Talome is an AI-first, open-source home server management platform. It combines a Docker container orchestrator, a multi-source app store (Talome + CasaOS + Umbrel + custom), and an agentic AI assistant with 219 tools — all in a single self-hosted package. You install, configure, and manage apps through natural language conversations.
 
 ## How is Talome different from CasaOS, Umbrel, or Coolify?
 
@@ -14,7 +14,7 @@ Talome is an AI-first, open-source home server management platform. It combines 
 | **Primary interface** | AI chat + dashboard | GUI dashboard | GUI dashboard | GUI dashboard |
 | **Interaction model** | Conversational — describe what you want | Click-to-install | Click-to-install | Git-push deploy |
 | **App store** | 300+ apps (native + CasaOS + Umbrel + custom) | ~70 apps | ~300 apps | 280+ one-click services |
-| **AI assistant** | 220 tools, autonomous care, self-improvement | None | None | None |
+| **AI assistant** | 219 tools, autonomous care, self-improvement | None | None | None |
 | **Target user** | Home server operators | Home server beginners | Home server / Bitcoin node | Web developers deploying apps |
 | **Multi-service wiring** | AI auto-configures connections between apps | Manual | Manual | Manual |
 | **Self-improvement** | Modifies its own source code with compiler validation | No | No | No |
@@ -33,9 +33,9 @@ All of their apps are available in Talome's unified store. You get their catalog
 
 Different tools for different problems. [OpenClaw](https://github.com/openclaw/openclaw) is a personal AI agent accessed through messaging apps (Signal, Telegram, Discord). It runs LLM-powered conversations and has 100+ "AgentSkills" for shell commands and web automation.
 
-Talome is a **home server platform** — it manages Docker containers, provides a multi-source app store, runs a dashboard with 25+ widgets, and has deep integrations with 16 self-hosted apps. The AI is embedded in the platform, not bolted on. It understands your running containers, storage paths, network configuration, and app relationships.
+Talome is a **home server platform** — it manages Docker containers, provides a multi-source app store, runs a dashboard with 25 built-in widgets, and has deep integrations with 12 self-hosted apps (Sonarr, Radarr, Prowlarr, Jellyfin, Plex, qBittorrent, Overseerr, Home Assistant, Pi-hole, Audiobookshelf, Vaultwarden, Ollama). The AI is embedded in the platform, not bolted on. It understands your running containers, storage paths, network configuration, and app relationships.
 
-The overlap is that both involve AI agents executing tasks on local infrastructure. The difference is scope: OpenClaw is a general-purpose chat agent. Talome is a purpose-built system with 220 domain-specific tools for home server management. And like OpenClaw, Talome also supports messaging — you can manage your server through Telegram, Discord, or other messaging platforms, not just the web dashboard.
+The overlap is that both involve AI agents executing tasks on local infrastructure. The difference is scope: OpenClaw is a general-purpose chat agent. Talome is a purpose-built system with 219 domain-specific tools for home server management. And like OpenClaw, Talome also supports messaging — you can manage your server through Telegram, Discord, or other messaging platforms, not just the web dashboard.
 
 ## Is Talome free?
 
@@ -46,20 +46,32 @@ Yes. Talome is fully open-source under the AGPL-3.0 license. The only cost is yo
 | Anthropic | Haiku | ~$0.01 - $0.05 |
 | Anthropic | Sonnet | ~$0.05 - $0.20 |
 | Anthropic | Opus | ~$0.20 - $1.00 |
-| OpenAI | GPT-5.3 | ~$0.01-0.10/conversation |
+| OpenAI | GPT-4o / GPT-4o-mini / o-series | ~$0.01-0.10/conversation |
 | Ollama | Any local model | Free |
 
 Haiku handles most day-to-day tasks well. Sonnet is the default and best balance of capability and cost. Heavy sessions with many tool calls (like setting up an entire media stack) cost more because of the back-and-forth.
 
 ## Is my data safe?
 
-All data stays on your server. Talome stores everything locally:
+All your data stays on your server. Talome stores everything locally:
 
 - **SQLite database** — settings, memories, automations, app metadata
 - **Docker volumes** — all app data lives in Docker volumes on your machine
 - **Backups** — stored in `~/.talome/backups/` on your filesystem
 
-There is no telemetry, no analytics, no cloud sync, and no phone-home. The only external call is to your chosen AI provider when you send a message in the chat. If you use Ollama, even that stays local.
+**No telemetry.** No analytics. No background phone-home. The Talome backend never calls a Talome-operated server.
+
+**External calls happen only when you opt in to a feature that needs them.** Specifically:
+
+- **Your AI provider.** Anthropic, OpenAI, or Ollama — whichever you configure. If you use Ollama locally, no external network call.
+- **Your messaging bot, if configured.** Telegram (`api.telegram.org`) and Discord (`discord.com`) APIs. Skip the integration, skip the call.
+- **Plex, if configured.** Plex's OAuth and metadata endpoints (`plex.tv`, `metadata.provider.plex.tv`) — only when you pair a Plex account.
+- **TMDb image CDN.** Movie/show poster art (`image.tmdb.org`) is fetched lazily when you browse a media library. Same as Sonarr/Radarr fetch.
+- **Anthropic / OpenAI model lists.** Talome calls each provider's `/v1/models` endpoint when you open Settings → AI Provider, so the dropdown reflects your account's actual models.
+- **Software updates.** When you click "Check for updates," Talome checks GitHub releases.
+- **GitHub Gists, if you use the Custom Tools share feature.** Disabled by default.
+
+That's the complete list. Read the [Privacy Policy](/docs/legal/privacy-policy) for the same information in legal-document form.
 
 ## Why does Talome need Docker socket access?
 
@@ -71,7 +83,7 @@ The Docker socket is **never exposed to the frontend**. All container operations
 
 Talome has multiple safety layers:
 
-**Tool boundaries** — The AI can only perform actions defined by its 220 tools. It cannot execute arbitrary code. All tool inputs are validated with Zod schemas. `eval()` is never used.
+**Tool boundaries** — The AI can only perform actions defined by its 219 tools. All tool inputs are validated with Zod schemas. `eval()` is never used. The agent does have a `run_shell` tool (so it can do real diagnostics on your behalf), but it's gated by Talome's three-mode security gateway: in *cautious* mode (the default for unattended operations) it's restricted to a vetted allowlist; in *locked* mode it's disabled entirely; in *permissive* mode every shell call is still audit-logged and surfaced to the user.
 
 **Confirmation for destructive operations** — Deleting containers, removing volumes, and uninstalling apps require explicit confirmation before execution.
 
@@ -96,7 +108,7 @@ The common failure: security as an opt-in afterthought. OpenClaw grants the agen
 
 Talome inverts this model. **Security is the architecture, not a configuration option.**
 
-- **No arbitrary execution** — the AI operates through a defined tool interface. Every action goes through a Zod-validated tool with explicit input schemas. There is no `eval()`, no shell passthrough, no raw command execution. The AI literally cannot run a command that isn't a predefined tool.
+- **No arbitrary execution** — the AI operates through a defined tool interface. Every action goes through a Zod-validated tool with explicit input schemas. There is no `eval()` and no raw command execution outside of a controlled `run_shell` tool, which is gated by the security mode (locked / cautious-allowlist / permissive-audit). The AI cannot invent a tool that isn't registered.
 - **Least privilege by design** — tools are scoped to their domain. Media tools can't modify network settings. Container tools can't read arbitrary host files. There is no "full access" mode.
 - **Confirmation cannot be bypassed** — destructive operations require explicit user confirmation. This gate is enforced in the backend, not the AI's prompt. No API call can disable it.
 - **No plugin marketplace** — Talome's tools are part of the verified codebase, not downloaded from an unmoderated marketplace. Custom tools go through the same TypeScript compilation and validation as built-in tools.
@@ -142,7 +154,7 @@ Yes. Beyond the mobile dashboard, you can communicate with Talome through messag
 | Provider | Models | Notes |
 |----------|--------|-------|
 | **Anthropic** | Claude Sonnet, Opus, Haiku | Recommended. Best tool-use capability. |
-| **OpenAI** | GPT-5.3, GPT-5.4 | Full tool support. |
+| **OpenAI** | GPT-4o, the GPT-4 series (GPT-4o, GPT-4o-mini) | Full tool support. |
 | **Ollama** | Llama, Mistral, Qwen, Gemma, and any other local model | Free, fully local, no internet required. |
 
 Set your provider and API key in the dashboard Settings page or via environment variables. You can switch models at any time — your memories and settings are preserved.
@@ -236,7 +248,7 @@ For integration-level tools (multiple tools for a new app), see [Adding Integrat
 
 ## What is the MCP server?
 
-MCP (Model Context Protocol) is an open standard for connecting AI models to tools. Talome's MCP server exposes all 220 tools to external AI clients — Claude Code, Cursor, Claude Desktop, or any MCP-compatible tool.
+MCP (Model Context Protocol) is an open standard for connecting AI models to tools. Talome's MCP server exposes all 219 tools to external AI clients — Claude Code, Cursor, Claude Desktop, or any MCP-compatible tool.
 
 The MCP server runs as a local stdio process. No HTTP server, no token, no environment variables needed for local use. It connects to the same database and Docker socket as the web dashboard.
 
@@ -253,7 +265,7 @@ It depends on the model and your hardware:
 | M2 Mac (16GB) | Mistral 7B | 1-4 seconds | Good for simple tasks |
 | Raspberry Pi 5 | Phi-3 Mini | 10-30 seconds | Basic tasks only |
 
-Cloud models (Claude Sonnet, GPT-5.3) respond in 1-3 seconds regardless of your hardware and handle complex multi-tool tasks better. For most users, the best setup is a cloud provider for daily use and Ollama as a free fallback.
+Cloud models (Claude Sonnet, GPT-4o) respond in 1-3 seconds regardless of your hardware and handle complex multi-tool tasks better. For most users, the best setup is a cloud provider for daily use and Ollama as a free fallback.
 
 ## How do I update Talome itself?
 

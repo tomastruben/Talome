@@ -1,9 +1,9 @@
 ---
 title: MCP Server
-description: Use all 220 Talome tools from Claude Code, Cursor, or Claude Desktop.
+description: Use all 219 Talome tools from Claude Code, Cursor, or Claude Desktop.
 ---
 
-Talome includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that exposes all 220 tools to external AI clients. Manage your entire home server from Claude Code, Cursor, Claude Desktop, or any MCP-compatible client — without opening the Talome dashboard.
+Talome includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that exposes all 219 tools to external AI clients. Manage your entire home server from Claude Code, Cursor, Claude Desktop, or any MCP-compatible client — without opening the Talome dashboard.
 
 ## How It Works
 
@@ -15,13 +15,11 @@ The MCP server runs as a **local stdio process**. It connects directly to:
 
 The MCP server is **independent of the Talome web dashboard**. It works whether or not the dashboard is running. This means you can use MCP tools from Claude Code even if you've stopped the Talome web server for maintenance.
 
-### Dashboard vs MCP Tool Loading
+### Tool Loading
 
-In the dashboard chat, tools are loaded dynamically based on which apps are configured. If you haven't set up Sonarr, the 27 arr tools don't load — this keeps the tool count low for better AI selection accuracy.
+The MCP server uses the **same dynamic tool filter** as the dashboard chat. Tools for an integration only load when that integration is configured (e.g. the 27 `arr_*` tools require `sonarr_url` or `radarr_url` to be set in Settings → AI Provider). The 112 core tools and the always-on domains (mDNS, Tailscale, Proxy, Ollama, Setup) are exposed unconditionally.
 
-Via MCP, **all tools are always loaded**. Every domain is available regardless of configuration. Tools for unconfigured apps will return a helpful error message ("Sonarr is not configured — set `sonarr_url` in settings") rather than being hidden.
-
-This means MCP clients always have the full 220 tool set available.
+This keeps the per-session tool count low — typically 50–120 tools instead of all 219 — and the AI's tool selection accurate.
 
 ## Setup
 
@@ -39,18 +37,25 @@ If tools aren't loading, run `pnpm install` in the Talome directory to ensure de
 
 ### Claude Code (Other Projects)
 
-To use Talome MCP tools from a different project, add this to the project's `.mcp.json`:
+To use Talome MCP tools from a different project, add this to the project's `.mcp.json`. Talome ships a launch script (`apps/core/mcp-launch.sh`) that sources `.env` for `TALOME_SECRET` and invokes the stdio entry point — point at it instead of running `npx tsx` directly so secrets resolve correctly.
 
 ```json title=".mcp.json"
 {
   "mcpServers": {
     "talome": {
-      "command": "npx",
-      "args": ["tsx", "/path/to/talome/apps/core/src/mcp-stdio.ts"]
+      "type": "stdio",
+      "command": "/Users/you/.talome/server/apps/core/mcp-launch.sh",
+      "args": [],
+      "env": {
+        "DATABASE_PATH": "/Users/you/.talome/data/talome.db",
+        "NODE_ENV": "production"
+      }
     }
   }
 }
 ```
+
+Adjust both paths to match where the installer placed `~/.talome/server/`.
 
 Replace `/path/to/talome` with the absolute path to your Talome installation.
 
@@ -104,31 +109,27 @@ No environment variables or auth tokens are required for local stdio connections
 
 ## Available Tools
 
-All 220 tools are organized by domain:
+All 219 tools are organized into 17 domains. The `core` domain is broken out by capability for readability — those are all part of the always-loaded core registration in `apps/core/src/ai/agent.ts`.
 
-| Domain | Count | Description | Example Tools |
+| Domain | Count | Description | Example tools |
 |--------|-------|-------------|---------------|
-| **Core** | ~40 | Container management, system stats, app lifecycle, settings, memories | `list_containers`, `install_app`, `get_system_stats`, `remember` |
-| **Arr** | 27 | Sonarr, Radarr, Readarr, and Prowlarr management | `arr_get_queue_details`, `arr_search_releases`, `arr_sync_indexers_from_prowlarr` |
-| **Media** | 5 | Cross-app media search, library health, optimization | `search_media`, `get_library`, `queue_optimization` |
-| **qBittorrent** | 6 | Torrent management and download configuration | `qbt_list_torrents`, `qbt_set_speed_limits`, `qbt_set_download_path` |
-| **Jellyfin** | 6 | Media server management, libraries, and scanning | `jellyfin_get_status`, `jellyfin_scan_library`, `jellyfin_add_library` |
-| **Overseerr** | 6 | Media request management and service configuration | `overseerr_list_requests`, `overseerr_approve_request`, `overseerr_configure_sonarr` |
-| **Home Assistant** | 5 | Smart home entity control and automation | `hass_list_entities`, `hass_call_service`, `hass_create_automation` |
-| **Pi-hole** | 5 | DNS ad-blocking management | `pihole_get_stats`, `pihole_enable`, `pihole_blacklist` |
-| **Audiobookshelf** | 13 | Audiobook library, playback progress, and audiobook download | `audiobookshelf_search`, `audiobookshelf_get_progress`, `audiobook_request`, `audiobook_download` |
-| **Vaultwarden** | 4 | Password vault management | `vaultwarden_get_status`, `vaultwarden_list_users`, `vaultwarden_invite_user` |
-| **Plex** | 5 | Plex media server status and watch history | `plex_get_status`, `plex_get_on_deck`, `plex_mark_watched` |
-| **Ollama** | 5 | Local LLM model management | `ollama_list_models`, `ollama_pull_model`, `ollama_ps` |
-| **Proxy** | 5 | Caddy reverse proxy management | `proxy_add_route`, `proxy_list_routes`, `proxy_configure_tls` |
-| **mDNS** | 4 | Local DNS advertisement | `mdns_enable`, `mdns_status`, `mdns_refresh` |
-| **Tailscale** | 3 | VPN remote access | `tailscale_setup`, `tailscale_status`, `tailscale_stop` |
-| **Files** | 6 | Sandboxed file management | `browse_files`, `read_user_file`, `create_directory` |
-| **Automations** | 5 | Scheduled workflow management | `create_automation`, `list_automations`, `list_automation_safe_tools` |
-| **Self-Improvement** | 5 | Codebase modification with safety nets | `plan_change`, `apply_change`, `rollback_change`, `list_changes` |
-| **App Creation** | 2 | Natural language app scaffolding | `design_app_blueprint`, `create_tool` |
-| **Notifications** | 4 | Multi-channel notifications | `send_notification`, `add_notification_channel`, `test_notification_channel` |
-| **Widgets** | 3 | Dashboard widget management | `create_widget_manifest`, `update_widget_manifest`, `list_widgets` |
+| **core** | 112 | Containers, system stats, app lifecycle, settings, memories, files, automations, notifications, widgets, self-improvement, app creation | `list_containers`, `install_app`, `get_system_stats`, `remember`, `browse_files`, `create_automation`, `send_notification`, `plan_change`, `apply_change`, `design_app_blueprint`, `create_widget_manifest` |
+| **media** | 5 | Cross-app media search, library health | `search_media`, `get_library`, `get_library_health`, `analyze_watched_media`, `get_calendar` |
+| **optimization** | 9 | Codec analysis, transcoding queue, FFmpeg pipeline | `scan_library_for_optimization`, `queue_optimization`, `cancel_optimization`, `analyze_media_file` |
+| **arr** | 27 | Sonarr, Radarr, Readarr, Prowlarr | `arr_get_queue_details`, `arr_search_releases`, `arr_sync_indexers_from_prowlarr` |
+| **qbittorrent** | 6 | Torrent management and download configuration | `qbt_list_torrents`, `qbt_set_speed_limits`, `qbt_set_download_path` |
+| **jellyfin** | 6 | Media server management, libraries, scanning | `jellyfin_get_status`, `jellyfin_scan_library`, `jellyfin_add_library` |
+| **audiobookshelf** | 9 | Library, items, listening progress, scanning | `audiobookshelf_search`, `audiobookshelf_get_progress`, `audiobookshelf_scan_library` |
+| **overseerr** | 7 | Media request management and service configuration | `overseerr_list_requests`, `overseerr_approve_request`, `overseerr_configure_sonarr` |
+| **plex** | 5 | Plex server status and watch history | `plex_get_status`, `plex_get_on_deck`, `plex_mark_watched` |
+| **homeassistant** | 5 | Smart home entity control and automation | `hass_list_entities`, `hass_call_service`, `hass_create_automation` |
+| **pihole** | 5 | DNS ad-blocking management | `pihole_get_stats`, `pihole_enable`, `pihole_blacklist` |
+| **vaultwarden** | 4 | Password vault management | `vaultwarden_get_status`, `vaultwarden_list_users`, `vaultwarden_invite_user` |
+| **proxy** | 5 | Caddy reverse proxy management | `proxy_add_route`, `proxy_list_routes`, `proxy_configure_tls` |
+| **tailscale** | 3 | Tailscale VPN remote access | `tailscale_setup`, `tailscale_status`, `tailscale_stop` |
+| **mdns** | 4 | mDNS local DNS advertisement | `mdns_enable`, `mdns_status`, `mdns_refresh` |
+| **ollama** | 5 | Local LLM model management | `ollama_list_models`, `ollama_pull_model`, `ollama_ps` |
+| **setup** | 2 | First-run setup wizard | `check_setup_status`, `start_setup` |
 
 For the complete tool listing with parameters and descriptions, see the [Tools Reference](/docs/reference/tools).
 
@@ -218,7 +219,7 @@ If the MCP server itself goes down (rare), reinitialize with `/mcp` in Claude Co
 
 <Cards>
   <Card title="Tools Reference" href="/docs/reference/tools">
-    Complete list of all 220 tools with parameters.
+    Complete list of all 219 tools with parameters.
   </Card>
   <Card title="Terminal" href="/docs/guides/terminal">
     Launch Claude Code from the Talome dashboard.

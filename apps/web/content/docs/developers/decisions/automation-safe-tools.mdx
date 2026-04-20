@@ -39,24 +39,29 @@ Every tool in Talome is tagged with one of three security tiers: `read`, `modify
 
 ### Curated Modify Subset
 
-Not all modify tools are safe for unattended execution. The automation engine maintains a curated allowlist of modify-tier tools:
+Not all modify tools are safe for unattended execution. The automation engine maintains a curated allowlist of modify-tier tools — see `ALLOWED_MODIFY_TOOLS` in [`apps/core/src/ai/automation-safe-tools.ts`](https://github.com/tomastruben/Talome/blob/main/apps/core/src/ai/automation-safe-tools.ts) for the canonical list.
 
-**Allowed in automations:**
-- `start_container`, `restart_container` -- container recovery after crashes
-- `start_app`, `restart_app` -- app recovery
-- `send_notification` -- alerting is always safe
-- `backup_app` -- creating backups is always safe
-- `cleanup_hls_cache` -- cache cleanup is safe and reversible
-- `set_setting` -- configuration changes for automation-driven tuning
-- `remember`, `update_memory` -- memory operations are low-risk
+**Allowed in automations** (current allowlist):
 
-**Blocked in automations (modify tier but excluded):**
-- `install_app` -- auto-installing apps without user intent is risky
-- `stop_app`, `stop_container` -- stopping services should be deliberate
-- `write_app_config_file` -- config changes can break apps silently
-- `apply_change` -- codebase changes must be human-reviewed
-- `set_app_env` -- environment variable changes can break apps
-- `upgrade_app_image` -- image upgrades can introduce breaking changes
+- `start_container`, `restart_container`, `stop_container` — container lifecycle
+- `start_app`, `restart_app`, `stop_app` — app lifecycle
+- `jellyfin_scan_library` — trigger a media library scan
+- `send_notification` — alerting is always safe
+- `backup_app` — creating backups is always safe
+- `remember` — write a memory
+- `set_app_env` — environment variable changes (typically used for automated tuning)
+- `arr_run_command` — trigger an arr command (e.g. force RSS sync, cutoff search)
+- `arr_set_monitoring` — toggle monitoring on a series/movie
+
+**Blocked in automations (modify tier but excluded by default):**
+
+- `install_app`, `uninstall_app` — install/remove decisions stay with the user
+- `write_app_config_file` — silent config changes can break apps
+- `apply_change`, `rollback_change` — codebase modifications need human review
+- `upgrade_app_image` — image upgrades can introduce breaking changes
+- `set_setting` — global settings changes (e.g. provider keys) require deliberate action
+- `update_memory`, `forget` — memory edits beyond the simple write
+- All `destructive` tier tools (delete, prune, force-stop) — always blocked
 
 ## Implementation
 

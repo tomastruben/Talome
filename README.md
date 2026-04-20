@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  220 purpose-built tools. 17 deep integrations. Autonomous monitoring that fixes problems at 3AM.<br/>
+  219 purpose-built AI tools across 17 domains. Autonomous monitoring that fixes problems at 3AM.<br/>
   The first home server that improves itself while you sleep.
 </p>
 
@@ -54,7 +54,7 @@ No YAML. No config files. No SSH. One message away.
 
 ## Why Talome?
 
-- **AI-native, not AI-bolted-on.** The agent isn't a chatbot wrapper — it has 220 tools with deep access to Docker, networking, media APIs, and the filesystem. It doesn't suggest commands for you to run. It runs them.
+- **AI-native, not AI-bolted-on.** The agent isn't a chatbot wrapper — it has 219 tools with deep access to Docker, networking, media APIs, and the filesystem. It doesn't suggest commands for you to run. It runs them.
 - **Self-improving.** Talome reads its own TypeScript source, identifies improvements, writes the code, compiles, tests, and commits. If anything breaks, it rolls back. No other server platform does this.
 - **Autonomous, not just reactive.** Three-layer monitoring catches problems in under 60 seconds, triages severity with a fast model, then dispatches a reasoning model to actually fix things. You wake up to a summary, not a page.
 - **Truly open source.** AGPL-3.0. Not "source available." Not "community edition with the good stuff locked behind a license." The whole thing.
@@ -114,17 +114,20 @@ curl -fsSL https://get.talome.dev | bash -s -- update
 
 ### Deep Integrations
 
+These are the apps Talome has dedicated, settings-aware tools for — i.e. asking the AI "is Sonarr healthy?" or "approve all pending Overseerr requests" works without explanation.
+
 | | | | |
 |---|---|---|---|
 | Plex | Jellyfin | Sonarr | Radarr |
 | Prowlarr | qBittorrent | Overseerr | Audiobookshelf |
 | Pi-hole | Vaultwarden | Home Assistant | Ollama |
-| Readarr | AdGuard Home | Memos | Dockge |
+
+Hundreds of additional apps are installable through the unified app store (Talome native + CasaOS + Umbrel + your own). Talome doesn't expose dedicated AI tools for them, but it can install, configure, restart, and inspect logs for any Docker container it manages.
 
 ## Architecture
 
 ```
-apps/core/          Hono backend — AI agent, 220 tools, Docker API, SQLite
+apps/core/          Hono backend — AI agent, 219 tools, Docker API, SQLite
 apps/dashboard/     Next.js 16 frontend — dashboard, chat, app store
 apps/web/           Documentation and marketing website
 packages/types/     Shared TypeScript types

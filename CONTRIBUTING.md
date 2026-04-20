@@ -6,16 +6,17 @@ Thanks for your interest in contributing to Talome! Whether it's a bug fix, new 
 
 ### Prerequisites
 
-- **Node.js** 20+
+- **Node.js** 22+ (matches the runtime — `install.sh` enforces this and `apps/core` will not build under older versions)
 - **pnpm** 10+
-- **Docker** (for running services locally)
+- **Docker** (for running services locally; OrbStack recommended on macOS)
+- **git** (required — Talome's self-evolution uses git stash/rollback for safety)
 
 ### Getting Started
 
 ```bash
 # Clone the repo
 git clone https://github.com/tomastruben/Talome.git
-cd talome
+cd Talome
 
 # Install dependencies
 pnpm install
@@ -76,7 +77,7 @@ Both must pass. CI will enforce this as well.
 ## Code Style
 
 - **TypeScript** is used throughout the entire codebase. Avoid `any` where possible.
-- **ESLint** handles linting. Run `pnpm lint` to check locally.
+- **ESLint** is configured for `apps/dashboard` (`pnpm --filter dashboard lint`). The Hono backend (`apps/core`) and marketing site (`apps/web`) rely on the TypeScript compiler for static checks.
 - **Functional patterns** are preferred — pure functions, immutability, composition over inheritance.
 - **shadcn/ui** is the component library for the dashboard. Use existing components before building custom ones.
 

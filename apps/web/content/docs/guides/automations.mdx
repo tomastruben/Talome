@@ -38,7 +38,7 @@ Data flows between steps. The output of Step 1 becomes the input context for Ste
 | **Schedule (cron)** | `expression`: a cron string | `0 3 * * *` — every day at 3 AM |
 | **Container stopped** | `container`: container name | Fires when `jellyfin` stops unexpectedly |
 | **Disk usage exceeds** | `threshold`: percentage | Fires when disk usage crosses 90% |
-| **Webhook** | `path`: URL path | Fires when POST hits `/api/webhooks/deploy` |
+| **Webhook** | *(none — uses the automation's ID)* | Fires when `POST /api/webhooks/<automationId>` is called. Optional HMAC-SHA256 signature via the `webhook_secret` setting. |
 | **App installed** | `appId`: optional filter | Fires when any (or a specific) app is installed |
 | **Manual** | *(none)* | Run on demand from the dashboard or API |
 
@@ -330,15 +330,15 @@ Redeploy an app when a webhook fires (e.g., from a CI pipeline or GitHub Actions
 <ChatSimulation>
   <UserMessage>When my deploy webhook fires, pull the latest image for my-custom-app and restart it</UserMessage>
   <AssistantMessage>
-    <ToolCall tool="create_automation" result="created: Deploy my-custom-app, webhook trigger, 3 steps" />
-    Automation created: "Deploy my-custom-app" -- triggered by webhook, upgrades the image, restarts the app, and sends a Telegram notification. Webhook URL: POST http://your-server:4000/api/webhooks/deploy/my-custom-app. Call this URL from your CI pipeline to trigger the deploy.
+    <ToolCall tool="create_automation" result="created automation auto_42 with webhook trigger and 3 steps" />
+    Automation created: "Deploy my-custom-app" — triggered by webhook, upgrades the image, restarts the app, and sends a Telegram notification. Webhook URL: `POST http://your-server:4000/api/webhooks/auto_42`. Call this URL from your CI pipeline to trigger the deploy. (For HMAC-signed webhooks, set `webhook_secret` in Settings and include `X-Hub-Signature-256` on the request.)
   </AssistantMessage>
 </ChatSimulation>
 
 ```json
 {
   "name": "Deploy my-custom-app",
-  "trigger": { "type": "webhook", "path": "/deploy/my-custom-app" },
+  "trigger": { "type": "webhook" },
   "steps": [
     { "type": "tool_action", "tool": "upgrade_app_image", "params": { "appId": "my-custom-app" } },
     { "type": "tool_action", "tool": "restart_app", "params": { "appId": "my-custom-app" } },
@@ -346,6 +346,8 @@ Redeploy an app when a webhook fires (e.g., from a CI pipeline or GitHub Actions
   ]
 }
 ```
+
+The webhook URL uses the automation's auto-generated ID (returned in the response from `create_automation` and visible on the Automations page). There is no per-automation custom path — the route is always `POST /api/webhooks/<automationId>`.
 
 ### 8. Conditional Restart on High Memory
 

@@ -9,7 +9,7 @@ Talome runs CasaOS apps natively. The CasaOS app store is one of Talome's built-
 
 | What You Keep | What You Gain |
 |-------------|-------------|
-| All running Docker containers | AI assistant with 220 tools |
+| All running Docker containers | AI assistant with 219 tools |
 | Volume data and configurations | Natural language app management |
 | CasaOS app store access | Multi-source app store (Talome + CasaOS + Umbrel + custom) |
 | Docker Compose files | Automatic app wiring and configuration |
@@ -44,16 +44,24 @@ Open the Talome dashboard at `http://your-server:3000` and ask the AI:
 
 Talome calls `list_containers` and displays every running container — including your CasaOS apps. They appear with their container names, images, ports, and health status.
 
-### 3. Import Apps into Talome Management
+### 3. Reinstall Apps via Talome
 
-For apps you want Talome to manage:
+Talome v0.1 doesn't yet auto-import an existing CasaOS container into its management database — that feature is on the roadmap. For each app you want Talome to fully manage (start/stop, AI integration, backups, updates), reinstall it through Talome's app store after stopping the CasaOS instance:
 
 ```
-"Import my running Jellyfin container"
-"Import all my CasaOS containers"
+"Stop the CasaOS Jellyfin container"
+"Install Jellyfin from the app store"
 ```
 
-Talome reads the container's configuration, generates a compose file, and adds the app to its management database. The container keeps running — no downtime.
+Talome's installer creates a fresh compose file in `~/.talome/app-data/jellyfin/` and starts the new container. To reuse your existing media library and config, mount the same host paths in the new compose file (the AI can do this for you):
+
+```
+"When you install Jellyfin, mount /DATA/AppData/jellyfin/config to /config and /DATA/Media to /media"
+```
+
+The original CasaOS container can sit dormant or be removed once you've verified the Talome-managed instance works.
+
+If you only want Talome to *observe* your existing container (read logs, check health, restart on crash) without taking it over, the `list_containers`, `get_container_logs`, and `restart_container` tools work on any container the Docker socket can see — no import needed.
 
 ### 4. Configure Integrations
 
@@ -100,7 +108,7 @@ Before removing CasaOS, make sure all your apps are properly imported into Talom
 | Updates | One-click per app | `"Update all apps"` with automatic rollback on failure |
 | Reverse proxy | Separate Nginx Proxy Manager | Built-in Caddy with automatic TLS |
 | Remote access | Manual Tailscale/WireGuard setup | `"Set up Tailscale"` — one message |
-| Monitoring | Basic CPU/memory/disk | 25+ widgets + AI-powered diagnostics + SMART monitoring |
+| Monitoring | Basic CPU/memory/disk | 25 built-in widgets + AI-powered diagnostics + SMART monitoring |
 | Automation | None | Cron-based automations with any tool |
 | App creation | Not available | Create new Docker apps from descriptions |
 | Self-improvement | Not available | Platform rewrites its own code |
@@ -130,7 +138,7 @@ Talome's adapter will parse them alongside the official CasaOS store.
 
 ### Volume Locations
 
-CasaOS stores app data in `/DATA/AppData/` by default. When importing containers, Talome detects the existing volume mounts and preserves them. You don't need to move any data.
+CasaOS stores app data in `/DATA/AppData/` by default. When you reinstall an app through Talome (per Step 3 above), tell the AI to mount the same host paths so your library and config are preserved without copying anything.
 
 If you later want to consolidate:
 
@@ -154,7 +162,7 @@ This enables container-to-container communication by name (e.g., Sonarr can reac
 **Imported container not showing in app list**
 - Check that the container is running: `"Is the Jellyfin container running?"`
 - Verify the import completed: `"List all managed apps"`
-- Try reimporting: `"Import the jellyfin container"`
+- Reinstall via the Talome app store and reuse the same host volume paths
 
 **API key not auto-discovered**
 - Some apps don't store API keys in accessible locations

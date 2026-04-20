@@ -19,7 +19,7 @@ The AI provider is the most important configuration choice. It determines the qu
 
 ### Anthropic (Recommended)
 
-Anthropic's Claude is Talome's default provider. All 220 tools are tested primarily against Claude models.
+Anthropic's Claude is Talome's default provider. All 219 tools are tested primarily against Claude models.
 
 **Setup:**
 1. Create an account at [console.anthropic.com](https://console.anthropic.com)
@@ -45,7 +45,7 @@ A typical session with 5-10 messages costs $0.01-0.05. Even heavy daily use rare
 2. Paste it into **Settings > AI Provider > OpenAI API Key**
 3. Set `DEFAULT_LLM_PROVIDER` to `openai` in your environment, or select OpenAI in Settings
 
-GPT-5.3 is the recommended model for a good balance of capability and cost. GPT-5.4 is available for heavier reasoning tasks. All Talome tools are compatible.
+GPT-4o is the recommended model for a good balance of capability and cost. the GPT-4 series (GPT-4o, GPT-4o-mini) is available for heavier reasoning tasks. All Talome tools are compatible.
 
 <Callout type="warn">
 The codebase default for OpenAI is `gpt-4o-mini`, which was retired. After selecting OpenAI as your provider, go to **Settings > AI Provider** and set the model to `gpt-5.3` or another current model.
@@ -58,10 +58,10 @@ For fully local AI with zero cloud dependency:
 **Setup:**
 1. Install Ollama: `curl -fsSL https://ollama.ai/install.sh | sh`
 2. Pull a model: `ollama pull llama3.1` (8B parameters, ~4.7GB)
-3. In Talome Settings, set **Ollama URL** to `http://host.docker.internal:11434`
+3. In Talome Settings, set **Ollama URL** to `http://localhost:11434`
 4. Select Ollama as the default provider
 
-**Important:** Use `host.docker.internal` (not `localhost`) because Talome runs inside a Docker container and needs to reach Ollama on the host machine.
+Talome ships as a native service (not a container), so `localhost:11434` reaches the Ollama you just installed. If you went out of your way to run Talome inside Docker (not supported — disables self-evolution), use `http://host.docker.internal:11434` instead.
 
 **Model recommendations:**
 
@@ -72,7 +72,7 @@ For fully local AI with zero cloud dependency:
 | `mistral:7b` | 8 GB | Fast, good for simple tasks |
 
 <Callout type="info">
-Local models handle single-tool tasks well (install an app, check status, read logs). Multi-step operations that require chaining 5+ tools may produce inconsistent results compared to Claude or GPT-5.3. Start with Anthropic if you want the best experience, then try Ollama once you are familiar with the system.
+Local models handle single-tool tasks well (install an app, check status, read logs). Multi-step operations that require chaining 5+ tools may produce inconsistent results compared to Claude or GPT-4o. Start with Anthropic if you want the best experience, then try Ollama once you are familiar with the system.
 </Callout>
 
 ### Cost Comparison
@@ -235,7 +235,7 @@ It will call `arr_get_status` and report the connection status, version, and any
 
 ## Data Storage
 
-All Talome state lives in a single SQLite database. By default it is stored at `/app/data/talome.db` inside the container, which maps to the `talome-data` Docker volume.
+All Talome state lives in a single SQLite database. On a native install (the supported path) it lives at `~/.talome/data/talome.db`. The exact path is configurable via the `DATABASE_PATH` env var in `~/.talome/server/apps/core/.env`.
 
 ### What is stored in SQLite
 
@@ -260,8 +260,18 @@ All Talome state lives in a single SQLite database. By default it is stored at `
 The simplest backup is copying the database file:
 
 ```bash
-docker cp talome:/app/data/talome.db ./talome-backup.db
+# Stop the service first so SQLite isn't mid-write
+sudo systemctl stop talome     # Linux
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/dev.talome.plist   # macOS
+
+cp ~/.talome/data/talome.db ~/talome-backup.db
+
+# Restart
+sudo systemctl start talome    # Linux
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.talome.plist  # macOS
 ```
+
+Talome also takes automatic snapshots into `~/.talome/backups/` once a day via the built-in self-backup service (see [Installation → Updating](/docs/getting-started/installation#updating) for the retention knobs).
 
 Or ask the AI:
 
@@ -381,7 +391,7 @@ Apps become reachable at `jellyfin.talome.local`, `sonarr.talome.local`, etc., w
 
 <Cards>
   <Card title="AI Assistant Guide" href="/docs/guides/ai-assistant">
-    Deep dive into the 220 tools, memory system, conversation patterns, and how dynamic tool loading works.
+    Deep dive into the 219 tools, memory system, conversation patterns, and how dynamic tool loading works.
   </Card>
   <Card title="Integrations" href="/docs/integrations">
     Per-app setup guides for all 12 supported integrations — Sonarr, Radarr, Jellyfin, and more.

@@ -1,9 +1,9 @@
 ---
 title: Tools Reference
-description: Complete reference for all 220 Talome AI tools across 17 domains.
+description: Complete reference for all 219 Talome AI tools across 17 domains.
 ---
 
-Talome's AI assistant has access to 220 tools organized into 17 domains. Each tool has a defined purpose, Zod-validated input parameters, and returns structured data. Tools are classified into three security tiers that determine when and how they can execute.
+Talome's AI assistant has access to 219 tools organized into 17 domains. Each tool has a defined purpose, Zod-validated input parameters, and returns structured data. Tools are classified into three security tiers that determine when and how they can execute.
 
 ## Security Tiers
 
@@ -36,7 +36,7 @@ Tools are organized into domains. Each domain declares `settingsKeys` -- the set
 
 ---
 
-## Core Domain (~113 tools)
+## Core Domain (112 tools)
 
 Always available, regardless of which integrations are configured. These tools are subdivided into categories.
 
@@ -374,7 +374,7 @@ Activates when `jellyfin_url` is configured.
 
 ---
 
-## Audiobookshelf Domain (13 tools)
+## Audiobookshelf Domain (9 tools)
 
 Activates when `audiobookshelf_url` is configured.
 
@@ -389,10 +389,6 @@ Activates when `audiobookshelf_url` is configured.
 | `audiobookshelf_get_progress` | read | Get listening progress for an item |
 | `audiobookshelf_update_progress` | modify | Update listening progress |
 | `audiobookshelf_scan_library` | modify | Force a library scan to detect new files |
-| `audiobook_search_releases` | read | Search for audiobook torrent releases across Prowlarr indexers |
-| `audiobook_download` | modify | Download an audiobook release via qBittorrent |
-| `audiobook_list_downloads` | read | List active and completed audiobook downloads from qBittorrent |
-| `audiobook_request` | modify | Search and auto-download the best audiobook release via Prowlarr and qBittorrent |
 
 ---
 
@@ -524,19 +520,22 @@ Activates when `ollama_url` is configured.
 
 | Domain | Tools | Activation Settings | Always Active |
 |--------|-------|-------------------|---------------|
-| core | ~113 | None | Yes |
+| core | 112 | None | Yes |
 | media | 5 | `sonarr_url`, `radarr_url` | No |
 | optimization | 9 | `sonarr_url`, `radarr_url` | No |
 | arr | 27 | `sonarr_url`, `radarr_url`, `readarr_url`, `prowlarr_url` | No |
 | qbittorrent | 6 | `qbittorrent_url` | No |
 | jellyfin | 6 | `jellyfin_url` | No |
-| audiobookshelf | 13 | `audiobookshelf_url` | No |
+| audiobookshelf | 9 | `audiobookshelf_url` | No |
 | overseerr | 7 | `overseerr_url` | No |
 | plex | 5 | `plex_url` | No |
 | homeassistant | 5 | `homeassistant_url` | No |
 | pihole | 5 | `pihole_url` | No |
 | vaultwarden | 4 | `vaultwarden_url` | No |
-| proxy | 5 | `proxy_enabled` | No |
-| tailscale | 3 | `tailscale_auth_key` | No |
+| proxy | 5 | None | Yes |
+| tailscale | 3 | None | Yes |
 | mdns | 4 | None | Yes |
-| ollama | 5 | `ollama_url` | No |
+| ollama | 5 | None | Yes (auto-detects local Ollama) |
+| setup | 2 | None | Yes (first-run wizard) |
+
+**Total: 219 registered tools across 17 domains.**

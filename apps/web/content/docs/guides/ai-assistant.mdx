@@ -3,7 +3,7 @@ title: AI Assistant
 description: How Talome's agentic AI works — architecture, tools, memory, security, and conversation patterns.
 ---
 
-This is not a chatbot. Talome's AI assistant is an autonomous agent with 220 purpose-built tools that plans multi-step operations, selects the right tools for each step, executes against your real infrastructure, and reasons about failures to recover. When you say "set up a media stack," it doesn't hand you a checklist — it installs five apps, wires their APIs together, syncs indexers, verifies health, and reports back with URLs.
+This is not a chatbot. Talome's AI assistant is an autonomous agent with 219 purpose-built tools that plans multi-step operations, selects the right tools for each step, executes against your real infrastructure, and reasons about failures to recover. When you say "set up a media stack," it doesn't hand you a checklist — it installs five apps, wires their APIs together, syncs indexers, verifies health, and reports back with URLs.
 
 The difference between a chatbot and an agent: a chatbot answers questions. An agent does work.
 
@@ -42,17 +42,17 @@ Before the AI sees your message, Talome injects live context into the conversati
 
 ### 3. Tool Selection (Keyword Routing + Domain Filtering)
 
-Not all 220 tools load for every message. The tool registry uses a two-layer filter:
+Not all 219 tools load for every message. The tool registry uses a two-layer filter:
 
 **Layer 1: Domain activation.** Each tool belongs to a domain. A domain's tools only load when the corresponding app is configured in Settings. If you haven't set up Jellyfin, the 6 Jellyfin tools don't exist in the AI's context.
 
 **Layer 2: Message keyword routing.** Even among active domains, tools are further filtered by scanning your message for domain-relevant keywords. If your message mentions "torrent" or "download speed," the qBittorrent domain loads. If it mentions "indexer" or "quality profile," the arr domain loads. If no optional domain matches (ambiguous message), all active tools load as a fallback.
 
-This keeps the per-message tool count low — typically 80-120 tools instead of 220 — which directly improves the AI's tool selection accuracy.
+This keeps the per-message tool count low — typically 80-120 tools instead of 219 — which directly improves the AI's tool selection accuracy.
 
 <Accordions>
 <Accordion title="Source">
-`apps/core/src/ai/agent.ts` — 16 `registerDomain()` calls starting at line 333 define all tool domains. The core domain alone registers ~113 tools (lines 336-448). The system prompt is defined at `DEFAULT_SYSTEM_PROMPT` (line 986), approximately 5,000 tokens, and is cached via `cacheControl: { type: "ephemeral" }` at line 1304. Keyword routing is implemented via the `DOMAIN_KEYWORDS` map in `apps/core/src/ai/tool-registry.ts` (lines 126-140), and `getToolsForMessage()` (line 148) performs the two-layer filtering.
+`apps/core/src/ai/agent.ts` — 17 `registerDomain()` calls starting at line 324 define all tool domains. The core domain alone registers 112 tools. Keyword routing is implemented via the `DOMAIN_KEYWORDS` map in `apps/core/src/ai/tool-registry.ts` and `getToolsForMessage()` performs the two-layer filtering. The system prompt is `DEFAULT_SYSTEM_PROMPT` (around line 995), approximately 5,000 tokens, and is cached via `cacheControl: { type: "ephemeral" }`. Specific line numbers drift as the agent grows — verify with `grep -n DEFAULT_SYSTEM_PROMPT apps/core/src/ai/agent.ts`.
 </Accordion>
 </Accordions>
 
@@ -86,26 +86,27 @@ The AI streams responses using the Vercel AI SDK's `streamText()` with a maximum
 
 ## Tool Domains
 
-All 220 tools are organized into 17 domains. Each domain activates when you configure the corresponding app in Settings:
+All 219 tools are organized into 17 domains. Each domain activates when you configure the corresponding app in Settings:
 
 | Domain | Tools | Activates When | What It Does |
 |--------|-------|---------------|-------------|
-| **Core** | ~113 | Always | Docker, system, apps, filesystem, groups, backups, memory, widgets, automations, self-improvement, compose, config files, notifications, settings, updates, shell, storage, GPU |
+| **Core** | 112 | Always | Docker, system, apps, filesystem, groups, backups, memory, widgets, automations, self-improvement, compose, config files, notifications, settings, updates, shell, storage, GPU |
 | **Media** | 5 | `sonarr_url` or `radarr_url` | Library browsing, search, downloads, calendar, media requests |
 | **Optimization** | 9 | `sonarr_url` or `radarr_url` | Media analysis, transcoding, library health, batch optimization |
 | **Arr** | 27 | `sonarr_url`, `radarr_url`, `readarr_url`, or `prowlarr_url` | Root folders, download clients, indexers, quality profiles, queue management, release search, monitoring |
 | **qBittorrent** | 6 | `qbittorrent_url` | Version, preferences, torrents, download paths, speed limits |
 | **Jellyfin** | 6 | `jellyfin_url` | Status, libraries, scanning, stats, API keys |
-| **Audiobookshelf** | 13 | `audiobookshelf_url` | Libraries, items, search, progress tracking, scanning, audiobook search, download, and request |
+| **Audiobookshelf** | 9 | `audiobookshelf_url` | Libraries, items, search, listening progress, scanning |
 | **Overseerr** | 7 | `overseerr_url` | Status, Jellyfin/Sonarr/Radarr configuration, requests, approval/decline |
 | **Plex** | 5 | `plex_url` | Status, on deck, recently watched, mark watched/unwatched |
 | **Home Assistant** | 5 | `homeassistant_url` | Status, entities, service calls, history, automations |
 | **Pi-hole** | 5 | `pihole_url` | Stats, enable/disable, whitelist/blacklist |
 | **Vaultwarden** | 4 | `vaultwarden_url` | Status, users, invitations, signup toggle |
-| **Proxy** | 5 | `proxy_enabled` | Routes, TLS, reload |
-| **Tailscale** | 3 | `tailscale_auth_key` | Setup, status, stop |
+| **Proxy** | 5 | Always | Caddy reverse-proxy routes, TLS, reload |
+| **Tailscale** | 3 | Always | Setup, status, stop |
 | **mDNS** | 4 | Always | Local DNS status, enable/disable, refresh |
-| **Ollama** | 5 | `ollama_url` | Models, pull/delete, model info, running processes |
+| **Ollama** | 5 | Always (auto-detects local Ollama) | Models, pull/delete, model info, running processes |
+| **Setup** | 2 | Always | First-run wizard status + start |
 
 The MCP server always loads all tools regardless of configuration — each tool fails gracefully with a clear error if its app isn't set up.
 
@@ -398,7 +399,7 @@ Talome supports three AI providers:
 | Provider | Default Model | Best For |
 |----------|--------------|----------|
 | **Anthropic** | Claude Haiku 4.5 | Best tool use, recommended default |
-| **OpenAI** | GPT-5.3 | Alternative cloud option |
+| **OpenAI** | GPT-4o | Alternative cloud option |
 | **Ollama** | Local models | Fully offline, privacy-first |
 
 Configure your provider in **Settings > AI Provider**. The system prompt and tool architecture work identically across all providers — only the model's reasoning quality varies.
@@ -437,7 +438,7 @@ Custom prompts are appended after the default system prompt and do not override 
 
 <Cards>
   <Card title="Tools Reference" href="/docs/reference/tools">
-    Browse all 220 tools with parameters and examples.
+    Browse all 219 tools with parameters and examples.
   </Card>
   <Card title="Media Stack Guide" href="/docs/guides/media-stack">
     The most popular AI-orchestrated workflow.

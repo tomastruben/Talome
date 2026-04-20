@@ -260,20 +260,27 @@ Tools are organized into **domains** — groups of tools that belong to a specif
 - **Dashboard chat** (`getActiveTools`) — only loads tools for domains whose settings are configured (e.g. arr tools only if `sonarr_url` or `radarr_url` exist). This keeps tool count low for better LLM selection.
 - **MCP server** (Claude Code) — uses `activeTools` / `getActiveRegisteredTools()`, same domain filtering as dashboard chat. Only tools for configured apps are exposed.
 
-**Current domains:**
+**Current domains** (17 total, 219 registered tools — verify with `grep "registerDomain({" apps/core/src/ai/agent.ts | wc -l`):
 
 | Domain | Settings Keys | Tool Count |
 |---|---|---|
-| `core` | *(always loaded)* | ~40 |
+| `core` | *(always loaded)* | 112 |
 | `media` | `sonarr_url`, `radarr_url` | 5 |
+| `optimization` | `sonarr_url`, `radarr_url` | 9 |
 | `arr` | `sonarr_url`, `radarr_url`, `readarr_url`, `prowlarr_url` | 27 |
 | `qbittorrent` | `qbittorrent_url` | 6 |
 | `jellyfin` | `jellyfin_url` | 6 |
-| `overseerr` | `overseerr_url` | 6 |
+| `audiobookshelf` | `audiobookshelf_url` | 9 |
+| `overseerr` | `overseerr_url` | 7 |
+| `plex` | `plex_url` | 5 |
 | `homeassistant` | `homeassistant_url` | 5 |
 | `pihole` | `pihole_url` | 5 |
-| `audiobookshelf` | `audiobookshelf_url` | 9 |
 | `vaultwarden` | `vaultwarden_url` | 4 |
+| `proxy` | *(always loaded)* | 5 |
+| `tailscale` | *(always loaded)* | 3 |
+| `mdns` | *(always loaded)* | 4 |
+| `ollama` | *(always loaded — auto-detects local Ollama)* | 5 |
+| `setup` | *(always loaded — first-run wizard)* | 2 |
 
 **Adding a new domain:** Create the tool file in `apps/core/src/ai/tools/`, import the tools in `agent.ts`, and add a `registerDomain()` call with the appropriate `settingsKeys`. The MCP server auto-syncs — no changes needed there.
 
