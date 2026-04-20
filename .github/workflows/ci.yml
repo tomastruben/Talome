@@ -40,6 +40,13 @@ jobs:
       - name: Shellcheck installer
         run: |
           sudo apt-get install -y shellcheck
-          # SC2086: word splitting is used intentionally for systemd env vars
-          # SC2046: command substitution in sudo calls
-          shellcheck -e SC2086,SC2046 install.sh
+          # Exclusions with rationale:
+          #  SC2086 — word splitting is used intentionally for systemd env vars
+          #  SC2046 — command substitution in sudo calls
+          #  SC2059 — printf format strings embed ANSI color constants
+          #           (${RED}, ${RESET}, etc.) by design
+          #  SC2015 — `A && B || C` shorthand is used where C is a literal
+          #           `true` and the pattern is equivalent to an if-else
+          #  SC1091 — `source /etc/os-release` isn't followed at lint time
+          #           because it's a runtime-only file
+          shellcheck -e SC2086,SC2046,SC2059,SC2015,SC1091 install.sh

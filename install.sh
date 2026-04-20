@@ -21,7 +21,6 @@ step() {
 
 TALOME_DIR="${HOME}/.talome"
 TALOME_VERSION="0.1.0"
-TALOME_REPO="https://github.com/tomastruben/Talome.git"
 API_PORT="${TALOME_API_PORT:-4000}"
 DASHBOARD_PORT="${TALOME_DASHBOARD_PORT:-3000}"
 TERMINAL_PORT="4001"
