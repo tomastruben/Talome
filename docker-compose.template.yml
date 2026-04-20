@@ -14,7 +14,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 services:
   talome:
-    image: ghcr.io/tomastruben/talome:${TALOME_VERSION:-v0.1.0}
+    # Tag format matches the release workflow's docker/metadata-action
+    # output: `v0.1.0` → published as `0.1.0` (semver pattern strips `v`).
+    # TALOME_VERSION may include or omit the `v` prefix; set it to the
+    # same string that appears on the Releases page.
+    image: ghcr.io/tomastruben/talome:${TALOME_VERSION:-0.1.0}
     container_name: talome
     # `restart: on-failure:5` is the Compose-standalone equivalent of a
     # bounded restart policy. `deploy.restart_policy` only applies in
