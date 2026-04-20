@@ -70,8 +70,8 @@ This is the complete list of network calls Talome's own backend can make. Each o
 | **Telegram** (`api.telegram.org`) | When you configure a Telegram bot | Inbound and outbound messages to your bot | [Telegram](https://telegram.org/privacy) |
 | **Discord** (`discord.com`, gateway) | When you configure a Discord bot | Slash-command handler + outbound notifications | [Discord](https://discord.com/privacy) |
 | **Plex** (`plex.tv`, `metadata.provider.plex.tv`, `discover.provider.plex.tv`) | When you pair a Plex account | OAuth pin flow + watchlist/metadata fetch | [Plex](https://www.plex.tv/about/privacy-legal/privacy-policy/) |
-| **TMDb image CDN** (`image.tmdb.org`) | When the dashboard or media UI shows a poster | Fetches poster art lazily — same source Sonarr/Radarr/Jellyfin use | [TMDb](https://www.themoviedb.org/privacy-policy) |
-| **GitHub releases API** | When you click "Check for updates" or run the auto-update job | Compares your version against the latest release | [GitHub](https://docs.github.com/en/site-policy/privacy-policies) |
+| **TMDb image CDN** (`image.tmdb.org`) | When the dashboard or media UI shows a movie/show poster | Fetches poster art lazily for watchlist items returned by Plex's metadata API | [TMDb](https://www.themoviedb.org/privacy-policy) |
+| **GitHub** (`github.com`, `raw.githubusercontent.com`) | When a third-party app store is enabled (CasaOS, Umbrel, BigBear) and on each store sync | Clones the public app-catalog repository so Talome can list those apps in its store | [GitHub](https://docs.github.com/en/site-policy/privacy-policies) |
 | **GitHub Gists** (`api.github.com/gists`) | If you use Custom Tools "Share via Gist" (off by default) | Publishes a gist under your GitHub account | [GitHub](https://docs.github.com/en/site-policy/privacy-policies) |
 
 That's the complete list for Talome itself. Apps you install *through* Talome (Jellyfin, Sonarr, Pi-hole, etc.) are independent software with their own network behavior; Talome doesn't modify or monitor their external communications.

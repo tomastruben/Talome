@@ -46,7 +46,7 @@ Yes. Talome is fully open-source under the AGPL-3.0 license. The only cost is yo
 | Anthropic | Haiku | ~$0.01 - $0.05 |
 | Anthropic | Sonnet | ~$0.05 - $0.20 |
 | Anthropic | Opus | ~$0.20 - $1.00 |
-| OpenAI | GPT-4o / GPT-4o-mini / o-series | ~$0.01-0.10/conversation |
+| OpenAI | GPT-5.3 / GPT-5.4 / GPT-5.4 mini | ~$0.01-0.10/conversation |
 | Ollama | Any local model | Free |
 
 Haiku handles most day-to-day tasks well. Sonnet is the default and best balance of capability and cost. Heavy sessions with many tool calls (like setting up an entire media stack) cost more because of the back-and-forth.
@@ -66,9 +66,9 @@ All your data stays on your server. Talome stores everything locally:
 - **Your AI provider.** Anthropic, OpenAI, or Ollama — whichever you configure. If you use Ollama locally, no external network call.
 - **Your messaging bot, if configured.** Telegram (`api.telegram.org`) and Discord (`discord.com`) APIs. Skip the integration, skip the call.
 - **Plex, if configured.** Plex's OAuth and metadata endpoints (`plex.tv`, `metadata.provider.plex.tv`) — only when you pair a Plex account.
-- **TMDb image CDN.** Movie/show poster art (`image.tmdb.org`) is fetched lazily when you browse a media library. Same as Sonarr/Radarr fetch.
+- **TMDb image CDN.** Poster art (`image.tmdb.org`) is fetched lazily for watchlist items returned by Plex's metadata API.
 - **Anthropic / OpenAI model lists.** Talome calls each provider's `/v1/models` endpoint when you open Settings → AI Provider, so the dropdown reflects your account's actual models.
-- **Software updates.** When you click "Check for updates," Talome checks GitHub releases.
+- **GitHub** (`github.com`, `raw.githubusercontent.com`), when a third-party app store is enabled. Talome clones public CasaOS / Umbrel / BigBear repositories on each store sync so it can list those apps. Disable a store and the sync stops.
 - **GitHub Gists, if you use the Custom Tools share feature.** Disabled by default.
 
 That's the complete list. Read the [Privacy Policy](/docs/legal/privacy-policy) for the same information in legal-document form.
@@ -154,7 +154,7 @@ Yes. Beyond the mobile dashboard, you can communicate with Talome through messag
 | Provider | Models | Notes |
 |----------|--------|-------|
 | **Anthropic** | Claude Sonnet, Opus, Haiku | Recommended. Best tool-use capability. |
-| **OpenAI** | GPT-4o, the GPT-4 series (GPT-4o, GPT-4o-mini) | Full tool support. |
+| **OpenAI** | GPT-5.3, GPT-5.4 | Full tool support. |
 | **Ollama** | Llama, Mistral, Qwen, Gemma, and any other local model | Free, fully local, no internet required. |
 
 Set your provider and API key in the dashboard Settings page or via environment variables. You can switch models at any time — your memories and settings are preserved.
@@ -265,7 +265,7 @@ It depends on the model and your hardware:
 | M2 Mac (16GB) | Mistral 7B | 1-4 seconds | Good for simple tasks |
 | Raspberry Pi 5 | Phi-3 Mini | 10-30 seconds | Basic tasks only |
 
-Cloud models (Claude Sonnet, GPT-4o) respond in 1-3 seconds regardless of your hardware and handle complex multi-tool tasks better. For most users, the best setup is a cloud provider for daily use and Ollama as a free fallback.
+Cloud models (Claude Sonnet 4.6, GPT-5.3) respond in 1-3 seconds regardless of your hardware and handle complex multi-tool tasks better. For most users, the best setup is a cloud provider for daily use and Ollama as a free fallback.
 
 ## How do I update Talome itself?
 

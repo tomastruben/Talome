@@ -45,11 +45,7 @@ A typical session with 5-10 messages costs $0.01-0.05. Even heavy daily use rare
 2. Paste it into **Settings > AI Provider > OpenAI API Key**
 3. Set `DEFAULT_LLM_PROVIDER` to `openai` in your environment, or select OpenAI in Settings
 
-GPT-4o is the recommended model for a good balance of capability and cost. the GPT-4 series (GPT-4o, GPT-4o-mini) is available for heavier reasoning tasks. All Talome tools are compatible.
-
-<Callout type="warn">
-The codebase default for OpenAI is `gpt-4o-mini`, which was retired. After selecting OpenAI as your provider, go to **Settings > AI Provider** and set the model to `gpt-5.3` or another current model.
-</Callout>
+GPT-5.3 is the recommended model for a good balance of capability and cost. GPT-5.4 is available for heavier reasoning tasks. `gpt-4o-mini` is also supported and still works (no sunset date) — it's the codebase default if you pick OpenAI without explicitly choosing a model. For newer releases, go to **Settings > AI Provider** and pick from the live model list (Talome fetches this from OpenAI's `/v1/models` endpoint, so it always reflects what your account has access to).
 
 ### Ollama (Local, Free, Private)
 
@@ -72,7 +68,7 @@ Talome ships as a native service (not a container), so `localhost:11434` reaches
 | `mistral:7b` | 8 GB | Fast, good for simple tasks |
 
 <Callout type="info">
-Local models handle single-tool tasks well (install an app, check status, read logs). Multi-step operations that require chaining 5+ tools may produce inconsistent results compared to Claude or GPT-4o. Start with Anthropic if you want the best experience, then try Ollama once you are familiar with the system.
+Local models handle single-tool tasks well (install an app, check status, read logs). Multi-step operations that require chaining 5+ tools may produce inconsistent results compared to Claude Sonnet or GPT-5.4. Start with Anthropic if you want the best experience, then try Ollama once you are familiar with the system.
 </Callout>
 
 ### Cost Comparison
