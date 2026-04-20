@@ -1,19 +1,53 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  NOT A SUPPORTED INSTALL METHOD.
+#
+#  Running Talome itself in a container breaks the self-evolution feature —
+#  the assistant can't rewrite its own source without a writable source tree
+#  and a real .git directory, neither of which survives a container restart.
+#
+#  This compose file exists for local development and CI builds only.
+#  Do NOT use it to install Talome. Use the installer instead:
+#
+#      curl -fsSL https://get.talome.dev | bash
+#
+#  See docs/getting-started/installation for the supported install path.
+# ─────────────────────────────────────────────────────────────────────────────
 services:
   talome:
-    image: ghcr.io/tomastruben/talome:latest
+    image: ghcr.io/tomastruben/talome:${TALOME_VERSION:-v0.1.0}
     container_name: talome
-    restart: unless-stopped
+    # `restart: on-failure:5` is the Compose-standalone equivalent of a
+    # bounded restart policy. `deploy.restart_policy` only applies in
+    # Swarm mode and is silently ignored by `docker compose up`.
+    restart: on-failure:5
     ports:
-      - "4000:4000"
-      - "4001:4001"
-      - "3000:3000"
+      - "127.0.0.1:4000:4000"
+      - "127.0.0.1:4001:4001"
+      - "127.0.0.1:3000:3000"
+    # Relative paths so builds / CI runs don't require a pre-existing host dir.
+    # Named volumes on a production install wouldn't survive evolution anyway.
     volumes:
       - talome-data:/app/data
+      - talome-backups:/app/backups
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - .env
     environment:
       - NODE_ENV=production
+    # Cap container log size so a chatty process can't fill the host disk.
+    # 50 MB × 5 files = 250 MB ceiling per container.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:4000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   talome-data:
+  talome-backups:

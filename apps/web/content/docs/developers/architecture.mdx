@@ -16,7 +16,7 @@ Talome is built as a TypeScript monorepo with three applications and a shared ty
         D --> F[Docker Client]
         D --> G[SQLite DB]
         E --> H[Tool Registry]
-        H --> I[230+ Tools]
+        H --> I[220 Tools]
         I --> F
         I --> G
     end
@@ -49,7 +49,7 @@ The backend is a Hono server written in TypeScript. It handles API requests, AI 
 | `src/ai/agent.ts` | System prompt definition and domain registrations. The central file that wires all tools to the AI. |
 | `src/ai/tool-registry.ts` | Dynamic tool loading engine. Manages domains, settings-based activation, keyword routing. |
 | `src/ai/tool-gateway.ts` | Security gateway. Enforces tier-based access control per security mode. |
-| `src/ai/tools/` | 37 tool files containing 230+ tool definitions across 16 domains. |
+| `src/ai/tools/` | 37 tool files containing 220 tool definitions across 17 domains. |
 | `src/ai/custom-tools.ts` | Runtime for user-created custom tools. |
 | `src/ai/claude-runner.ts` | Headless Claude Code executor for self-improvement and app creation. |
 | `src/routes/` | 47 Hono route files. Each exports a Hono router mounted at `/api/*`. |

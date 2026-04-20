@@ -13,6 +13,25 @@ const CUSTOM_TOOLS_DIR = join(
   "custom-tools",
 );
 
+/**
+ * Custom tools run user- or AI-authored TypeScript in-process via jiti,
+ * with no real sandbox. The regex-based validator in
+ * `validateTypeScriptSyntax` is not a security boundary — it can be
+ * bypassed with string concatenation, dynamic property access, or
+ * unicode escapes. Treat custom tools as code you are willingly
+ * executing on your server.
+ *
+ * Disabled by default. Set `TALOME_ENABLE_CUSTOM_TOOLS=true` to opt in.
+ * The opt-in user assumes full responsibility for what the AI writes
+ * into `~/.talome/custom-tools/`.
+ */
+const CUSTOM_TOOLS_ENABLED = process.env.TALOME_ENABLE_CUSTOM_TOOLS === "true";
+
+const DISABLED_RESPONSE = {
+  error:
+    "Custom tools are disabled for safety. They execute arbitrary TypeScript in-process with no sandbox. Set TALOME_ENABLE_CUSTOM_TOOLS=true in your environment to opt in and take responsibility for tool code.",
+} as const;
+
 const CORE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const jiti = createJiti(import.meta.url, {
@@ -79,6 +98,8 @@ function validateTypeScriptSyntax(code: string): { ok: boolean; error?: string }
 }
 
 export async function loadCustomTools(): Promise<LoadedTools> {
+  if (!CUSTOM_TOOLS_ENABLED) return {};
+
   await ensureDir();
 
   let files: string[];
@@ -159,6 +180,8 @@ export const createToolTool = tool({
       ),
   }),
   execute: async ({ filename, code }) => {
+    if (!CUSTOM_TOOLS_ENABLED) return DISABLED_RESPONSE;
+
     if (!filename.endsWith(".ts")) {
       return { error: "Filename must end in .ts" };
     }
@@ -200,6 +223,8 @@ export const reloadToolsTool = tool({
     "Reload all custom tools from ~/.talome/custom-tools/. Call this after create_tool to activate new tools.",
   inputSchema: z.object({}),
   execute: async () => {
+    if (!CUSTOM_TOOLS_ENABLED) return DISABLED_RESPONSE;
+
     try {
       const tools = await loadCustomTools();
       const names = Object.keys(tools);
@@ -223,6 +248,8 @@ export const listCustomToolsTool = tool({
     "List all custom tool files in ~/.talome/custom-tools/ and the tool names they export.",
   inputSchema: z.object({}),
   execute: async () => {
+    if (!CUSTOM_TOOLS_ENABLED) return DISABLED_RESPONSE;
+
     await ensureDir();
     try {
       const files = (await readdir(CUSTOM_TOOLS_DIR)).filter(

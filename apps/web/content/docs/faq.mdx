@@ -5,7 +5,7 @@ description: Frequently asked questions about Talome.
 
 ## What is Talome?
 
-Talome is an AI-first, open-source home server management platform. It combines a Docker container orchestrator, a multi-source app store (Talome + CasaOS + Umbrel + custom), and an agentic AI assistant with 230+ tools — all in a single self-hosted package. You install, configure, and manage apps through natural language conversations.
+Talome is an AI-first, open-source home server management platform. It combines a Docker container orchestrator, a multi-source app store (Talome + CasaOS + Umbrel + custom), and an agentic AI assistant with 220 tools — all in a single self-hosted package. You install, configure, and manage apps through natural language conversations.
 
 ## How is Talome different from CasaOS, Umbrel, or Coolify?
 
@@ -14,7 +14,7 @@ Talome is an AI-first, open-source home server management platform. It combines 
 | **Primary interface** | AI chat + dashboard | GUI dashboard | GUI dashboard | GUI dashboard |
 | **Interaction model** | Conversational — describe what you want | Click-to-install | Click-to-install | Git-push deploy |
 | **App store** | 300+ apps (native + CasaOS + Umbrel + custom) | ~70 apps | ~300 apps | 280+ one-click services |
-| **AI assistant** | 230+ tools, autonomous care, self-improvement | None | None | None |
+| **AI assistant** | 220 tools, autonomous care, self-improvement | None | None | None |
 | **Target user** | Home server operators | Home server beginners | Home server / Bitcoin node | Web developers deploying apps |
 | **Multi-service wiring** | AI auto-configures connections between apps | Manual | Manual | Manual |
 | **Self-improvement** | Modifies its own source code with compiler validation | No | No | No |
@@ -35,7 +35,7 @@ Different tools for different problems. [OpenClaw](https://github.com/openclaw/o
 
 Talome is a **home server platform** — it manages Docker containers, provides a multi-source app store, runs a dashboard with 25+ widgets, and has deep integrations with 16 self-hosted apps. The AI is embedded in the platform, not bolted on. It understands your running containers, storage paths, network configuration, and app relationships.
 
-The overlap is that both involve AI agents executing tasks on local infrastructure. The difference is scope: OpenClaw is a general-purpose chat agent. Talome is a purpose-built system with 230+ domain-specific tools for home server management. And like OpenClaw, Talome also supports messaging — you can manage your server through Telegram, Discord, or other messaging platforms, not just the web dashboard.
+The overlap is that both involve AI agents executing tasks on local infrastructure. The difference is scope: OpenClaw is a general-purpose chat agent. Talome is a purpose-built system with 220 domain-specific tools for home server management. And like OpenClaw, Talome also supports messaging — you can manage your server through Telegram, Discord, or other messaging platforms, not just the web dashboard.
 
 ## Is Talome free?
 
@@ -71,7 +71,7 @@ The Docker socket is **never exposed to the frontend**. All container operations
 
 Talome has multiple safety layers:
 
-**Tool boundaries** — The AI can only perform actions defined by its 230+ tools. It cannot execute arbitrary code. All tool inputs are validated with Zod schemas. `eval()` is never used.
+**Tool boundaries** — The AI can only perform actions defined by its 220 tools. It cannot execute arbitrary code. All tool inputs are validated with Zod schemas. `eval()` is never used.
 
 **Confirmation for destructive operations** — Deleting containers, removing volumes, and uninstalling apps require explicit confirmation before execution.
 
@@ -236,7 +236,7 @@ For integration-level tools (multiple tools for a new app), see [Adding Integrat
 
 ## What is the MCP server?
 
-MCP (Model Context Protocol) is an open standard for connecting AI models to tools. Talome's MCP server exposes all 230+ tools to external AI clients — Claude Code, Cursor, Claude Desktop, or any MCP-compatible tool.
+MCP (Model Context Protocol) is an open standard for connecting AI models to tools. Talome's MCP server exposes all 220 tools to external AI clients — Claude Code, Cursor, Claude Desktop, or any MCP-compatible tool.
 
 The MCP server runs as a local stdio process. No HTTP server, no token, no environment variables needed for local use. It connects to the same database and Docker socket as the web dashboard.
 

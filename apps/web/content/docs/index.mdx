@@ -1,6 +1,6 @@
 ---
 title: Talome Documentation
-description: Your server, one message away. AI-powered home server management with 230+ tools, a multi-source app store, and a self-improving codebase.
+description: Your server, one message away. AI-powered home server management with 220 tools, a multi-source app store, and a self-improving codebase.
 ---
 
 Self-hosting is a paradox. You get total control over your data, your media, your infrastructure — but you pay for it with an endless tax of YAML files, port conflicts, broken upgrades, and hours spent wiring services together that should just work. Every new app means another compose file, another reverse proxy entry, another set of credentials to manage. The tools exist to build something remarkable, but the friction stops most people from ever getting there.
@@ -27,7 +27,7 @@ One command. Open `http://localhost:3000`. Tell it what you want.
 
 ### AI-first, not AI-added
 
-Talome's assistant is not a chatbot bolted onto a dashboard. It is the primary interface. 230+ purpose-built tools across 16 domains give it deep, structured access to your system — Docker containers, app configurations, media libraries, network routing, storage health, and its own source code. It does not generate suggestions for you to follow. It executes.
+Talome's assistant is not a chatbot bolted onto a dashboard. It is the primary interface. 220 purpose-built tools across 17 domains give it deep, structured access to your system — Docker containers, app configurations, media libraries, network routing, storage health, and its own source code. It does not generate suggestions for you to follow. It executes.
 
 When you say "set up a media stack," the AI chains `search_apps` to find the right images, `install_app` five times in parallel, `wire_apps` to connect download clients, `arr_add_root_folder` to set media paths, and `arr_sync_indexers_from_prowlarr` to push indexers — then reports back with URLs. That is not autocomplete. That is an agent with real tools and real authority over your infrastructure.
 
@@ -64,7 +64,7 @@ The goal is that every app works on first launch, not after thirty minutes of ma
 
 <Accordions>
 <Accordion title="Source">
-`apps/core/src/ai/agent.ts` — 230+ tools across 16 domains registered via `registerDomain()` calls (lines 333-967). `apps/core/src/ai/tool-registry.ts` — dynamic tool loading with settings-based activation and keyword routing. `apps/core/src/ai/tool-gateway.ts` — security gateway enforcing three tier-based modes. `apps/core/src/stores/lifecycle.ts` — multi-stage install pipeline. `apps/core/src/app-registry/auto-configure.ts` — post-install auto-configuration with API key extraction.
+`apps/core/src/ai/agent.ts` — 220 tools across 17 domains registered via `registerDomain()` calls (lines 333-967). `apps/core/src/ai/tool-registry.ts` — dynamic tool loading with settings-based activation and keyword routing. `apps/core/src/ai/tool-gateway.ts` — security gateway enforcing three tier-based modes. `apps/core/src/stores/lifecycle.ts` — multi-stage install pipeline. `apps/core/src/app-registry/auto-configure.ts` — post-install auto-configuration with API key extraction.
 </Accordion>
 </Accordions>
 
@@ -99,7 +99,7 @@ Behind that conversation, the AI executed 10+ tool calls: searching the app stor
   <Card title="Install and manage apps" href="/docs/guides/app-store">
     Browse 100+ apps from Talome, CasaOS, and Umbrel stores. Install, update, back up, and roll back — with one message or one click.
   </Card>
-  <Card title="230+ AI tools" href="/docs/guides/ai-assistant">
+  <Card title="220 AI tools" href="/docs/guides/ai-assistant">
     Docker management, media libraries, network routing, storage analysis, home automation, password vaults, DNS blocking, and more — all accessible through conversation. The AI can also create custom tools, dashboard widgets, automations, and app blueprints on the fly.
   </Card>
   <Card title="Create custom apps" href="/docs/guides/app-creation">
@@ -170,11 +170,11 @@ Four trigger types (cron schedule, container stopped, disk usage threshold, webh
 
 Talome is a TypeScript monorepo with three packages:
 
-- **`apps/core`** — Hono backend serving the API, AI agent, 230+ tools, Docker orchestration, SQLite database, automation engine, and MCP server
+- **`apps/core`** — Hono backend serving the API, AI agent, 220 tools, Docker orchestration, SQLite database, automation engine, and MCP server
 - **`apps/dashboard`** — Next.js 16 frontend with a widget-based dashboard, app store, media views, terminal, and the AI chat interface
 - **`packages/types`** — Shared TypeScript types used by both apps
 
-All state lives in a single SQLite database — users, conversations, memories, automations, widgets, audit logs, app records. The backend talks to Docker via the Unix socket. The AI communicates with Anthropic Claude (recommended), OpenAI, or local Ollama models through the Vercel AI SDK. The MCP server exposes every tool to external AI environments — Claude Code, Cursor, and Claude Desktop can manage your server with the same 230+ tools the dashboard uses.
+All state lives in a single SQLite database — users, conversations, memories, automations, widgets, audit logs, app records. The backend talks to Docker via the Unix socket. The AI communicates with Anthropic Claude (recommended), OpenAI, or local Ollama models through the Vercel AI SDK. The MCP server exposes every tool to external AI environments — Claude Code, Cursor, and Claude Desktop can manage your server with the same 220 tools the dashboard uses.
 
 ### Security
 
@@ -201,6 +201,6 @@ Every tool is classified into a tier (read / modify / destructive), and the secu
     A visual walkthrough of the home page, app store, containers, media, automations, terminal, and settings.
   </Card>
   <Card title="MCP Server" href="/docs/reference/mcp-server">
-    Use all 230+ Talome tools from Claude Code, Cursor, or Claude Desktop.
+    Use all 220 Talome tools from Claude Code, Cursor, or Claude Desktop.
   </Card>
 </Cards>

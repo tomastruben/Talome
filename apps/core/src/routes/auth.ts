@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
 import { setCookie, deleteCookie } from "hono/cookie";
 import { hash as bcryptHash, compare as bcryptCompare } from "bcryptjs";
@@ -9,6 +10,29 @@ import { getCookie } from "hono/cookie";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { UserPermissions } from "@talome/types";
 import { getDefaultPermissions } from "@talome/types";
+
+/**
+ * Produce session-cookie options that flip `secure` on automatically when
+ * the request was served over HTTPS. CLAUDE.md gotcha #4: we cannot set
+ * `secure: true` unconditionally because self-hosted Talome is often
+ * served over HTTP on the LAN, and browsers silently drop secure cookies
+ * on plain HTTP. Detecting the actual request protocol is the safe middle
+ * ground — HTTPS deployments get the flag, HTTP LAN deployments don't.
+ */
+function sessionCookieOptions(c: Context) {
+  const forwardedProto = c.req.header("x-forwarded-proto");
+  const url = new URL(c.req.url);
+  const isSecure =
+    forwardedProto === "https" ||
+    (!forwardedProto && url.protocol === "https:");
+  return {
+    httpOnly: true,
+    secure: isSecure,
+    sameSite: "Lax" as const,
+    path: "/",
+    maxAge: 60 * 60 * 24 * 7,
+  };
+}
 
 const auth = new Hono();
 
@@ -75,13 +99,7 @@ auth.post("/login", async (c) => {
       .run();
 
     const token = await createSessionToken(userId, "admin", name);
-    setCookie(c, SESSION_COOKIE, token, {
-      httpOnly: true,
-      secure: false,
-      sameSite: "Lax",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 7,
-    });
+    setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(c));
 
     return c.json({ ok: true, setup: true, recoveryCode });
   }
@@ -106,13 +124,7 @@ auth.post("/login", async (c) => {
     .run();
 
   const token = await createSessionToken(user.id, user.role as "admin" | "member", user.username);
-  setCookie(c, SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: false,
-    sameSite: "Lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7,
-  });
+  setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(c));
 
   return c.json({ ok: true, setup: false });
 });
@@ -227,13 +239,7 @@ auth.post("/recover", async (c) => {
 
   // Log the user in
   const token = await createSessionToken(user.id, user.role as "admin" | "member", user.username);
-  setCookie(c, SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: false,
-    sameSite: "Lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7,
-  });
+  setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(c));
 
   return c.json({ ok: true, newRecoveryCode });
 });

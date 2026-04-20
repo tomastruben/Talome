@@ -42,7 +42,7 @@ Unlike dashboard chat (which filters tools by settings and keywords to keep the 
 
 The tool schema conversion happens at MCP server startup:
 
-1. `getAllRegisteredTools()` returns a flat `Record<string, Tool>` of all 230+ tools
+1. `getAllRegisteredTools()` returns a flat `Record<string, Tool>` of all 220 tools
 2. Each tool's Zod input schema is converted to JSON Schema (MCP's native format) using `zod-to-json-schema`
 3. Tool descriptions are passed through directly
 4. The MCP server registers all tools and handles incoming call requests
@@ -113,7 +113,7 @@ The MCP server operates independently of the Hono web server. It works whether o
 - Adding a new integration requires exactly one file change (`agent.ts`) to be accessible everywhere
 
 **Tradeoffs:**
-- The MCP server loads 230+ tools at startup, which adds slight startup latency (~50-100ms). This is not noticeable in practice since the server starts once per Claude Code session.
+- The MCP server loads 220 tools at startup, which adds slight startup latency (~50-100ms). This is not noticeable in practice since the server starts once per Claude Code session.
 - All tools appear in MCP regardless of whether the underlying app is configured. Users may attempt to use unconfigured tools and receive "not configured" errors. The error messages are clear and suggest how to configure the app.
 - Zod-to-JSON-Schema conversion may lose some Zod-specific validation features (refinements, transforms, branded types). In practice, tool parameter schemas are simple objects with primitives, so this hasn't been an issue.
 - The schema conversion runs at startup, not at registration time. If a domain is registered after the MCP server starts, it won't appear until the next restart. This is not a practical issue because all domains are registered at module load time.

@@ -15,7 +15,7 @@ description: Why tools are loaded dynamically based on configured settings and m
 
 ## Context
 
-Talome's AI assistant has 230+ tools across 16 domains. Loading all tools into every dashboard chat conversation degrades tool selection accuracy -- language models struggle to choose the right tool when presented with too many options. Testing showed that beyond ~50 tools, the model increasingly selects the wrong tool or hallucinates tool names that don't exist.
+Talome's AI assistant has 220 tools across 17 domains. Loading all tools into every dashboard chat conversation degrades tool selection accuracy -- language models struggle to choose the right tool when presented with too many options. Testing showed that beyond ~50 tools, the model increasingly selects the wrong tool or hallucinates tool names that don't exist.
 
 At the same time, we need every tool available for the MCP server (Claude Code and other MCP clients), where the model has much larger context windows and better tool selection at scale.
 
@@ -52,7 +52,7 @@ Domain keywords are defined in a `DOMAIN_KEYWORDS` map. Each domain maps to an a
 
 | Layer | Typical Tool Count | When |
 |-------|-------------------|------|
-| All tools | 230+ | MCP server, always |
+| All tools | 220 | MCP server, always |
 | Active domains | 80-150 | Dashboard chat, settings-filtered |
 | Keyword-routed | 50-80 | Dashboard chat, message-filtered |
 | Core only | ~117 | Dashboard with no integrations configured |
@@ -60,7 +60,7 @@ Domain keywords are defined in a `DOMAIN_KEYWORDS` map. Each domain maps to an a
 ## Consequences
 
 **Benefits:**
-- Dashboard chat typically sees 50-80 tools instead of 230+, significantly improving tool selection accuracy
+- Dashboard chat typically sees 50-80 tools instead of 220, significantly improving tool selection accuracy
 - Zero-config activation: configure Sonarr's URL and arr tools appear automatically on the next message
 - MCP server gets the full tool set without any filtering, keeping Claude Code fully capable
 - Keyword routing reduces tool count further for focused messages

@@ -96,11 +96,14 @@ const features = [
   },
 ];
 
-// Map videoSlug → actual video files (only for features that have videos ready)
-const VIDEO_ASSETS: Record<string, { mp4: string; webm: string; low: string; poster: string; aspect: string }> = {
+// Map videoSlug → actual video files (only for features that have videos ready).
+// `mp4` is optional — webm covers every modern browser that matters, and
+// low.mp4 covers the rest. Having `mp4` just adds a second desktop-quality
+// source for edge cases.
+const VIDEO_ASSETS: Record<string, { mp4?: string; webm: string; low: string; poster: string; aspect: string }> = {
   "media-management": { mp4: "/media.mp4", webm: "/media.webm", low: "/media-low.mp4", poster: "/media-poster.jpg", aspect: "1728/1080" },
   "automations": { mp4: "/automations.mp4", webm: "/automations.webm", low: "/automations-low.mp4", poster: "/automations-poster.jpg", aspect: "1728/1080" },
-  "file-browser": { mp4: "/files.mp4", webm: "/files.webm", low: "/files-low.mp4", poster: "/files-poster.jpg", aspect: "1724/1080" },
+  "file-browser": { webm: "/files.webm", low: "/files-low.mp4", poster: "/files-poster.jpg", aspect: "1724/1080" },
   "conversational-intelligence": { mp4: "/conversation.mp4", webm: "/conversation.webm", low: "/conversation-low.mp4", poster: "/conversation-poster.jpg", aspect: "1724/1080" },
   "deep-integrations": { mp4: "/integrations.mp4", webm: "/integrations.webm", low: "/integrations-low.mp4", poster: "/integrations-poster.jpg", aspect: "1724/1080" },
   "intelligence-dashboard": { mp4: "/intelligence.mp4", webm: "/intelligence.webm", low: "/intelligence-low.mp4", poster: "/intelligence-poster.jpg", aspect: "1724/1080" },
@@ -219,7 +222,7 @@ function StackedCard({
                 className="max-h-full max-w-full rounded-xl"
               >
                 <source src={v.webm} type="video/webm" media="(min-width: 768px)" />
-                <source src={v.mp4} type="video/mp4" media="(min-width: 768px)" />
+                {v.mp4 ? <source src={v.mp4} type="video/mp4" media="(min-width: 768px)" /> : null}
                 <source src={v.low} type="video/mp4" />
               </video>
             </div>

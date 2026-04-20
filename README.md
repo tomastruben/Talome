@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  230+ purpose-built tools. 12 deep integrations. Autonomous monitoring that fixes problems at 3AM.<br/>
+  220 purpose-built tools. 17 deep integrations. Autonomous monitoring that fixes problems at 3AM.<br/>
   The first home server that improves itself while you sleep.
 </p>
 
@@ -54,7 +54,7 @@ No YAML. No config files. No SSH. One message away.
 
 ## Why Talome?
 
-- **AI-native, not AI-bolted-on.** The agent isn't a chatbot wrapper — it has 230+ tools with deep access to Docker, networking, media APIs, and the filesystem. It doesn't suggest commands for you to run. It runs them.
+- **AI-native, not AI-bolted-on.** The agent isn't a chatbot wrapper — it has 220 tools with deep access to Docker, networking, media APIs, and the filesystem. It doesn't suggest commands for you to run. It runs them.
 - **Self-improving.** Talome reads its own TypeScript source, identifies improvements, writes the code, compiles, tests, and commits. If anything breaks, it rolls back. No other server platform does this.
 - **Autonomous, not just reactive.** Three-layer monitoring catches problems in under 60 seconds, triages severity with a fast model, then dispatches a reasoning model to actually fix things. You wake up to a summary, not a page.
 - **Truly open source.** AGPL-3.0. Not "source available." Not "community edition with the good stuff locked behind a license." The whole thing.
@@ -69,7 +69,11 @@ curl -fsSL https://get.talome.dev | bash
 
 The installer downloads Node.js, clones the repo, builds, and starts Talome as a native service. Open `http://localhost:3000` when it's done.
 
-**Requirements:** macOS or Linux. 2GB RAM, 5GB disk. Docker (for managed apps — OrbStack recommended on Mac). Bring your own [Anthropic API key](https://console.anthropic.com/).
+**Requirements:** macOS 12+ or Linux (Ubuntu 20.04+, Debian 11+, Fedora 38+, Arch, Raspberry Pi OS Bookworm 64-bit). 2 GB RAM, 5 GB disk. Docker (for managed apps — OrbStack recommended on Mac). Bring your own [Anthropic API key](https://console.anthropic.com/).
+
+**Windows:** not supported natively in v0.1. Use WSL2 with Ubuntu 22.04 and run the Linux installer inside it.
+
+**Why native instead of Docker?** Talome's self-evolution — the assistant reading its own source, proposing improvements, and applying them with typecheck + rollback — needs a writable source tree and a real `.git` directory. Running Talome inside a container breaks that. Talome *uses* Docker to run the apps you install *through* Talome, it just doesn't run inside one.
 
 <details>
 <summary>Manual install</summary>
@@ -120,7 +124,7 @@ curl -fsSL https://get.talome.dev | bash -s -- update
 ## Architecture
 
 ```
-apps/core/          Hono backend — AI agent, 230+ tools, Docker API, SQLite
+apps/core/          Hono backend — AI agent, 220 tools, Docker API, SQLite
 apps/dashboard/     Next.js 16 frontend — dashboard, chat, app store
 apps/web/           Documentation and marketing website
 packages/types/     Shared TypeScript types
@@ -139,18 +143,25 @@ packages/types/     Shared TypeScript types
 
 Tools are organized into domains that activate based on what you have installed:
 
-| Domain | Tools | Activates when |
-|---|---|---|
-| Core | ~40 | Always |
-| Media | 5 | Sonarr or Radarr configured |
-| Arr | 27 | Any arr app configured |
-| qBittorrent | 6 | qBittorrent configured |
-| Jellyfin | 6 | Jellyfin configured |
-| Overseerr | 6 | Overseerr configured |
-| Home Assistant | 5 | Home Assistant configured |
-| Pi-hole | 5 | Pi-hole configured |
-| Audiobookshelf | 9 | Audiobookshelf configured |
-| Vaultwarden | 4 | Vaultwarden configured |
+| Domain | Activates when |
+|---|---|
+| Core | Always |
+| Media | Sonarr or Radarr configured |
+| Arr | Any arr app configured |
+| qBittorrent | qBittorrent configured |
+| Jellyfin | Jellyfin configured |
+| Plex | Plex configured |
+| Overseerr | Overseerr configured |
+| Home Assistant | Home Assistant configured |
+| Pi-hole | Pi-hole configured |
+| Audiobookshelf | Audiobookshelf configured |
+| Vaultwarden | Vaultwarden configured |
+| Ollama | Ollama reachable |
+| Optimization | Media stack configured |
+| Proxy | Caddy reverse proxy enabled |
+| Tailscale | Tailscale installed |
+| mDNS | mDNS enabled |
+| Setup | First-run wizard |
 
 ### MCP Server
 
@@ -190,11 +201,17 @@ cp .env.example .env
 
 - AES-256-GCM encryption for all stored API keys and tokens
 - Session-based JWT authentication with RBAC
-- Rate limiting on API and chat endpoints
-- Content Security Policy, X-Frame-Options, and security headers
+- bcrypt for user and terminal-daemon passwords, constant-time comparison
+- Rate limiting on API, chat, webhook, MCP, and terminal auth endpoints
+- CSRF protection via Origin/Sec-Fetch-Site validation
+- CORS locked to loopback, RFC1918, Tailscale (100.64/10), and explicit `DASHBOARD_ORIGIN`
+- Content Security Policy, X-Frame-Options, HSTS in production
 - Zod validation on all API inputs
-- CORS restricted to dashboard origin in production
+- Terminal daemon binds to `127.0.0.1` by default
 - Docker socket never exposed to the frontend
+- Custom AI-authored tools disabled by default (opt-in via `TALOME_ENABLE_CUSTOM_TOOLS=true`)
+- Automatic daily SQLite snapshots to a separate volume
+- Full disclosure process in [SECURITY.md](SECURITY.md)
 
 ## How It Compares
 

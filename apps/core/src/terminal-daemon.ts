@@ -23,12 +23,24 @@ import * as pty from "node-pty";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
+import bcrypt from "bcryptjs";
 import Database from "better-sqlite3";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { DAEMON_PORT } from "./terminal-constants.js";
+
+/**
+ * Bind host — defaults to loopback so a misconfigured LAN exposure can't
+ * reach the PTY daemon. Override with TERMINAL_DAEMON_HOST only if you
+ * understand the consequences (e.g. running daemon and main server on
+ * different hosts behind a trusted network).
+ */
+const DAEMON_HOST = process.env.TERMINAL_DAEMON_HOST ?? "127.0.0.1";
+
+const MIN_PASSWORD_LENGTH = 8;
+const BCRYPT_COST = 12;
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -139,6 +151,25 @@ sqlite.exec(`
 
 const backupAuthTokens = new Map<string, number>(); // token → expiresAt
 const authAttempts = new Map<string, { count: number; blockedUntil: number }>(); // ip → attempts
+const wsAuthAttempts = new Map<string, { count: number; blockedUntil: number }>(); // ip → ws auth attempts
+
+function registerWsAuthFailure(ip: string) {
+  const prev = wsAuthAttempts.get(ip) || { count: 0, blockedUntil: 0 };
+  prev.count++;
+  if (prev.count >= 10) {
+    prev.blockedUntil = Date.now() + 5 * 60 * 1000;
+  }
+  wsAuthAttempts.set(ip, prev);
+}
+
+function isWsAuthBlocked(ip: string): boolean {
+  const attempt = wsAuthAttempts.get(ip);
+  return !!attempt && attempt.blockedUntil > Date.now();
+}
+
+function clearWsAuthAttempts(ip: string) {
+  wsAuthAttempts.delete(ip);
+}
 
 function verifyBackupToken(token: string): boolean {
   const expiresAt = backupAuthTokens.get(token);
@@ -648,7 +679,20 @@ button:hover{background:#30363d}
 </body>
 </html>`;
 
-app.use("*", cors({ origin: (origin) => origin ?? "*", credentials: true }));
+/**
+ * CORS — lock to loopback origins only. The dashboard proxies to the daemon
+ * server-side; the browser hits the dashboard origin, not the daemon.
+ * Direct browser access is limited to the built-in backup terminal UI served
+ * from the same origin, where CORS does not apply.
+ */
+const LOOPBACK_ORIGIN_RE = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
+app.use("*", cors({
+  origin: (origin) => {
+    if (!origin) return origin;
+    return LOOPBACK_ORIGIN_RE.test(origin) ? origin : null;
+  },
+  credentials: true,
+}));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -664,14 +708,16 @@ app.post("/backup-auth/setup", async (c) => {
   const existing = sqlite.prepare("SELECT value FROM daemon_auth WHERE key = 'password_hash'").get() as { value: string } | undefined;
   if (existing) return c.json({ error: "Password already set. Use the dashboard to change it." }, 400);
   const { password } = await c.req.json<{ password: string }>();
-  if (!password || password.length < 4) return c.json({ error: "Password must be at least 4 characters" }, 400);
-  const hash = createHash("sha256").update(password).digest("hex");
+  if (!password || password.length < MIN_PASSWORD_LENGTH) {
+    return c.json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` }, 400);
+  }
+  const hash = await bcrypt.hash(password, BCRYPT_COST);
   sqlite.prepare("INSERT OR REPLACE INTO daemon_auth (key, value) VALUES ('password_hash', ?)").run(hash);
   return c.json({ ok: true });
 });
 
 app.post("/backup-auth", async (c) => {
-  const ip = c.req.header("x-forwarded-for") || "unknown";
+  const ip = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown";
   const attempt = authAttempts.get(ip);
   if (attempt && attempt.blockedUntil > Date.now()) {
     return c.json({ error: "Too many attempts. Try again later." }, 429);
@@ -681,8 +727,17 @@ app.post("/backup-auth", async (c) => {
   const stored = sqlite.prepare("SELECT value FROM daemon_auth WHERE key = 'password_hash'").get() as { value: string } | undefined;
   if (!stored) return c.json({ error: "No password set. POST to /backup-auth/setup first." }, 400);
 
-  const hash = createHash("sha256").update(password).digest("hex");
-  if (hash !== stored.value) {
+  // Legacy hashes (pre-bcrypt) aren't valid bcrypt strings — force re-setup.
+  if (!stored.value.startsWith("$2")) {
+    sqlite.prepare("DELETE FROM daemon_auth WHERE key = 'password_hash'").run();
+    return c.json({ error: "Password hash format upgraded. Please set a new password." }, 410);
+  }
+
+  // bcrypt.compare does constant-time comparison internally.
+  const valid = typeof password === "string" && password.length > 0
+    ? await bcrypt.compare(password, stored.value)
+    : false;
+  if (!valid) {
     const prev = authAttempts.get(ip) || { count: 0, blockedUntil: 0 };
     prev.count++;
     if (prev.count >= 5) prev.blockedUntil = Date.now() + 5 * 60 * 1000;
@@ -851,13 +906,19 @@ app.post("/upload", async (c) => {
 // WebSocket endpoint
 app.get(
   "/ws",
-  upgradeWebSocket(() => {
+  upgradeWebSocket((c) => {
     let session: PtySession | undefined;
     let authenticated = false;
+    const clientIp = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "ws";
 
     return {
-      onOpen() {
-        // Auth via first message — browser WS API cannot set custom headers
+      onOpen(_evt, ws) {
+        // Auth via first message — browser WS API cannot set custom headers.
+        // Close early if this IP is already blocked for repeated failures.
+        if (isWsAuthBlocked(clientIp)) {
+          ws.send("\r\n\x1b[31mToo many failed attempts\x1b[0m\r\n");
+          ws.close(1008, "Too many failed attempts");
+        }
       },
       onMessage(event, ws) {
         try {
@@ -872,6 +933,12 @@ app.get(
           };
 
           if (!authenticated) {
+            if (isWsAuthBlocked(clientIp)) {
+              ws.send("\r\n\x1b[31mToo many failed attempts\x1b[0m\r\n");
+              ws.close(1008, "Too many failed attempts");
+              return;
+            }
+
             if (msg.type !== "auth" || !msg.token) {
               ws.send("\r\n\x1b[31mAuthentication required\x1b[0m\r\n");
               ws.close(1008, "Authentication required");
@@ -884,11 +951,13 @@ app.get(
               !validEphemeral && !validBackup && verifyBearerToken(`Bearer ${msg.token}`);
 
             if (!validEphemeral && !validBackup && !validMcp) {
+              registerWsAuthFailure(clientIp);
               ws.send("\r\n\x1b[31mInvalid token\x1b[0m\r\n");
               ws.close(1008, "Invalid token");
               return;
             }
 
+            clearWsAuthAttempts(clientIp);
             authenticated = true;
 
             if (msg.sessionId) {
@@ -965,9 +1034,9 @@ app.get(
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 const server = serve(
-  { fetch: app.fetch, port: DAEMON_PORT, hostname: "0.0.0.0" },
+  { fetch: app.fetch, port: DAEMON_PORT, hostname: DAEMON_HOST },
   () => {
-    console.log(`[terminal-daemon] Running on :${DAEMON_PORT}`);
+    console.log(`[terminal-daemon] Running on ${DAEMON_HOST}:${DAEMON_PORT}`);
     writePidFile();
   },
 );

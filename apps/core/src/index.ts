@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { cors } from "hono/cors";
+import { csrf } from "hono/csrf";
 import { sql } from "drizzle-orm";
 import { system } from "./routes/system.js";
 import { containers } from "./routes/containers.js";
@@ -45,6 +46,7 @@ import { services as servicesRoute } from "./routes/services.js";
 import { files as filesRoute, cleanupStaleHlsOnStartup, cleanupStaleTransmuxOnStartup } from "./routes/files.js";
 import { optimization as optimizationRoute } from "./routes/optimization.js";
 import { startAutoOptimize } from "./media/optimizer.js";
+import { startSelfBackup, stopSelfBackup, snapshotNow } from "./services/self-backup.js";
 import { audiobooks as audiobooksRoute } from "./routes/audiobooks.js";
 import { audible as audibleRoute } from "./routes/audible.js";
 import { suggestions as suggestionsRoute } from "./routes/suggestions.js";
@@ -234,38 +236,73 @@ const { injectWebSocket, upgradeWebSocket, wss } = createNodeWebSocket({ app });
 // rejects it, corrupting all frames. Enable it so Safari works correctly.
 wss.options.perMessageDeflate = {};
 
+/**
+ * Origin allowlist — shared by CORS and CSRF middleware.
+ *
+ * Talome is self-hosted on a user's own machine / LAN. Accept:
+ *   1. Explicit allowlist via DASHBOARD_ORIGIN env (comma-separated)
+ *   2. Loopback (localhost, 127.0.0.1, ::1) on any port
+ *   3. RFC1918 private ranges on any port (home LAN)
+ *   4. Tailscale 100.64.0.0/10 on any port
+ *   5. Link-local IPv6 fe80::/10
+ *   6. mDNS *.local hostnames
+ *
+ * Public hostnames must be opted in via DASHBOARD_ORIGIN. This prevents
+ * a malicious page on a random *.com domain from driving the API even if
+ * the user exposes Talome behind a reverse proxy. In dev mode we still
+ * accept any origin for convenience.
+ */
+function isTrustedOrigin(origin: string): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+
+  const explicit = (process.env.DASHBOARD_ORIGIN || "http://localhost:3000")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (explicit.includes(origin)) return true;
+
+  try {
+    const url = new URL(origin);
+    const host = url.hostname.toLowerCase();
+
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+    if (/^10\./.test(host)) return true;                          // 10/8
+    if (/^192\.168\./.test(host)) return true;                    // 192.168/16
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;     // 172.16/12
+    if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)) return true; // 100.64/10 (Tailscale/CGNAT)
+    if (/^fe80:/i.test(host)) return true;                        // IPv6 link-local
+    if (host.endsWith(".local")) return true;                     // mDNS
+  } catch {
+    /* invalid origin — reject */
+  }
+  return false;
+}
+
 app.use(
   "*",
   cors({
     origin: (origin) => {
-      // Always allow requests with no Origin header (same-origin, server-to-server, curl)
+      // No Origin header: same-origin, server-to-server, or curl. Permit.
       if (!origin) return "*";
-
-      if (process.env.NODE_ENV === "production") {
-        // Talome is self-hosted — the dashboard and core run on the same host
-        // but on different ports (3000 vs 4000). The user may access via localhost,
-        // LAN IP, hostname, or Tailscale IP. Accept any origin that matches the
-        // dashboard port on the same host, plus any explicitly allowed origins.
-        const explicitOrigins = (process.env.DASHBOARD_ORIGIN || "http://localhost:3000")
-          .split(",")
-          .map((o) => o.trim());
-        if (explicitOrigins.includes(origin)) return origin;
-
-        // Accept same-host requests: origin is http(s)://<any-hostname>:3000
-        try {
-          const url = new URL(origin);
-          if (url.port === "3000" || url.port === "") return origin;
-        } catch { /* invalid origin — reject */ }
-
-        return null;
-      }
-
-      // Development: allow any origin for local dev convenience
-      return origin;
+      return isTrustedOrigin(origin) ? origin : null;
     },
     credentials: true,
   }),
 );
+
+/**
+ * CSRF protection — belt-and-suspenders on top of SameSite=Lax cookies
+ * and the CORS allowlist above. Rejects state-changing requests whose
+ * Origin header isn't trusted. Same-origin and no-Origin requests pass.
+ * Webhook endpoints skip this (they're validated via HMAC elsewhere).
+ */
+app.use("*", async (c, next) => {
+  if (c.req.path.startsWith("/api/webhooks/")) return next();
+  return csrf({
+    origin: (origin) => isTrustedOrigin(origin),
+  })(c, next);
+});
+
 app.use("*", safeRoute);
 app.use("/api/*", requestLogger);
 
@@ -548,6 +585,10 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
   // Start periodic Docker prune (daily cleanup of stopped containers + dangling images)
   try { stopPrune = startPeriodicPrune(); } catch { /* non-fatal */ }
 
+  // Periodic self-snapshots of talome.db so users can recover from a
+  // volume-corruption / rm incident. Silent no-op if disabled via env.
+  try { startSelfBackup(); } catch { /* non-fatal */ }
+
   try {
     startDigestScheduler();
   } catch (err) {
@@ -656,6 +697,7 @@ async function gracefulShutdown(signal: string, exitCode = 0): Promise<void> {
     stopMonitor?.();
     stopAgentLoop?.();
     stopPrune?.();
+    stopSelfBackup();
     stopAutomationCron();
     // Kill terminal daemon via PID file
     try {

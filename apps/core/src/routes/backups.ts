@@ -3,10 +3,48 @@ import { z } from "zod";
 import { db } from "../db/index.js";
 import { sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { backupAppTool, getActiveBackupProgress, getAppVolumeInfo, cancelBackup } from "../ai/tools/backup-tools.js";
+import { snapshotNow } from "../services/self-backup.js";
 
 export const backups = new Hono();
+
+/**
+ * Self-backup endpoints — for Talome's own SQLite database.
+ * `/self` GET lists snapshots, POST takes one immediately.
+ */
+function resolveSelfBackupDir(): string {
+  if (process.env.TALOME_BACKUP_DIR) return process.env.TALOME_BACKUP_DIR;
+  if (process.env.NODE_ENV === "production" && process.cwd().startsWith("/app")) {
+    return "/app/backups";
+  }
+  return join(homedir(), ".talome", "backups");
+}
+
+backups.get("/self", (c) => {
+  const dir = resolveSelfBackupDir();
+  try {
+    const files = readdirSync(dir)
+      .filter((f) => f.startsWith("talome-db-") && f.endsWith(".db"))
+      .map((f) => {
+        const full = join(dir, f);
+        const s = statSync(full);
+        return { file: f, path: full, sizeBytes: s.size, mtime: s.mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    return c.json({ directory: dir, snapshots: files });
+  } catch {
+    return c.json({ directory: dir, snapshots: [] });
+  }
+});
+
+backups.post("/self", (c) => {
+  const result = snapshotNow();
+  if (!result.ok) return c.json({ error: result.error }, 500);
+  return c.json({ ok: true, path: result.path });
+});
 
 // Get backup history — enriched with real-time stage for running backups
 backups.get("/", (c) => {

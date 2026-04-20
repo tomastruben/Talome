@@ -1,9 +1,13 @@
 ---
 title: Installation
-description: Install Talome on Linux, macOS, or Windows in under 60 seconds. One command, zero dependencies.
+description: Install Talome on Linux or macOS. One command, zero surprises.
 ---
 
-Talome runs as a Docker container on Linux, macOS, or Windows. The installer handles everything — Docker, secrets, networking — so you can go from bare metal to a running dashboard in a single command.
+Talome runs as a **native service** on your home server. The one-line installer downloads the source, installs Node.js and pnpm if needed, builds the app, and registers it with your init system (systemd on Linux, launchd on macOS) so it starts automatically on boot.
+
+<Callout type="info">
+**Why native, not Docker?** Talome's self-evolution feature — where the assistant reads its own source, proposes improvements, and applies them with typecheck + rollback — requires a writable source tree and a real `.git` directory. Running Talome itself inside a container makes that impossible. Talome *uses* Docker to manage the apps you install (Jellyfin, Sonarr, etc.) — it just doesn't run inside one.
+</Callout>
 
 ## System Requirements
 
@@ -16,10 +20,12 @@ Talome runs as a Docker container on Linux, macOS, or Windows. The installer han
 | Fedora | 38+ | Fully supported |
 | Arch Linux | Rolling | Fully supported |
 | macOS | 12 Monterey+ | Supported (OrbStack or Docker Desktop) |
-| Windows | 10 21H2+ / 11 | Supported (Docker Desktop + WSL2) |
 | Raspberry Pi OS | Bookworm (64-bit) | Supported (ARM64) |
+| Windows | — | Not supported in v0.1 |
 
 Talome requires a 64-bit OS. 32-bit ARM is not supported.
+
+Windows support will land in a later release. If you're on Windows today, use WSL2 with an Ubuntu-22.04 distro and run the Linux installer inside WSL.
 
 ### Hardware
 
@@ -32,82 +38,71 @@ Talome requires a 64-bit OS. 32-bit ARM is not supported.
 
 Disk requirements are for Talome itself plus Docker images. Your media, app data, and backups need additional storage.
 
-### Docker
+### Dependencies
 
-Docker 20.10+ is required. The installer checks for Docker and installs it automatically if missing — via the official Docker repository on Linux, or by downloading OrbStack/Docker Desktop directly on macOS and Windows.
+The installer checks for and installs anything missing:
+
+- **Docker 20.10+** — required. Installed via the official Docker repository on Linux, or Docker Desktop / OrbStack on macOS. Talome uses Docker to manage the apps you install *through* Talome (not to run itself).
+- **Node.js 22+** — required to run the core. Installed to `~/.talome/node/` if a compatible system Node isn't found, so nothing gets touched in `/usr/local/`.
+- **pnpm** — installed via `corepack` or the standalone installer if missing.
+- **Git** — required. Self-evolution (the assistant modifying its own code) depends on it for stash/rollback safety.
 
 ---
 
 ## Quick Install
 
-**Linux / macOS:**
-
 ```bash
 curl -fsSL https://get.talome.dev | bash
 ```
 
-**Windows (PowerShell):**
-
-```powershell
-irm https://get.talome.dev/install.ps1 | iex
-```
-
 This single command does the following:
 
-1. **Detects your OS and architecture** — Linux (amd64/arm64), macOS, or Windows
-2. **Installs Docker** if not present (Linux only, via official Docker repository)
-3. **Generates a 64-character hex secret** for session encryption
-4. **Pulls the Talome container image** from `ghcr.io/tomastruben/talome`
-5. **Creates a Docker Compose file** at `~/.talome/docker-compose.yml`
-6. **Starts Talome** with persistent storage, Docker socket access, and restart policy
-7. **Prints the dashboard URL** — `http://localhost:3000`
+1. **Detects your OS and architecture** — Linux (amd64/arm64) or macOS (arm64/x86_64).
+2. **Installs Docker** if not present (Linux only, via `get.docker.com`). macOS users are prompted to install Docker Desktop or OrbStack manually.
+3. **Installs Node.js 22 and pnpm** if a compatible version isn't on your PATH. Node is installed to `~/.talome/node/` (not system-wide) if Homebrew isn't available.
+4. **Downloads the Talome source** to `~/.talome/server/` and initializes a local git repository so self-evolution can stash and roll back changes.
+5. **Generates a 64-character hex `TALOME_SECRET`** and writes `apps/core/.env` with permissions 600.
+6. **Registers Talome with your init system** — a `systemd` unit file on Linux (`/etc/systemd/system/talome.service`) or a `launchd` property list on macOS (`~/Library/LaunchAgents/dev.talome.plist`).
+7. **Starts Talome** and waits for `/api/health` to respond.
+8. **Opens the dashboard** — `http://localhost:3000`.
 
-The entire process takes 30-60 seconds on a typical connection.
+On a typical home connection this takes 1-3 minutes depending on whether Node.js needs to be downloaded.
 
 <Callout type="info">
-The installer never modifies your system beyond installing Docker (if needed) and creating the `~/.talome/` directory. All Talome data lives inside that directory and a named Docker volume.
+The installer never writes outside `~/.talome/` except to install Docker (Linux only, if missing) and to register the service file with your init system. Uninstalling is symmetric — see the [Uninstalling](#uninstalling) section.
 </Callout>
 
 ---
 
-## Docker Compose (Manual)
+## Manual Install (advanced)
 
-If you prefer full control over the deployment, create the compose file yourself.
-
-```yaml title="docker-compose.yml"
-services:
-  talome:
-    image: ghcr.io/tomastruben/talome:latest
-    container_name: talome
-    restart: unless-stopped
-    ports:
-      - "3000:3000"   # Dashboard (Next.js)
-      - "4000:4000"   # API server (Hono)
-      - "4001:4001"   # Terminal daemon (WebSocket)
-    volumes:
-      - talome-data:/app/data                          # SQLite DB, configs, backups
-      - /var/run/docker.sock:/var/run/docker.sock      # Docker control
-    environment:
-      - NODE_ENV=production
-      - TALOME_SECRET=<your-64-char-hex-string>        # Required: session encryption
-
-volumes:
-  talome-data:
-```
-
-Generate a secret and start:
+If you want full control over the process — pinning a specific tag, running as a different user, skipping the service registration — install manually.
 
 ```bash
-# Generate a secure secret key
-export TALOME_SECRET=$(openssl rand -hex 32)
+# 1. Prerequisites: Docker, Node 22+, pnpm, git
+# Install these via your package manager if they aren't already present.
 
-# Start Talome
-docker compose up -d
+# 2. Clone Talome
+git clone https://github.com/tomastruben/Talome.git ~/.talome/server
+cd ~/.talome/server
+
+# 3. Install dependencies and build
+pnpm install --frozen-lockfile
+pnpm build
+
+# 4. Generate a secret
+mkdir -p ~/.talome/data
+cat > apps/core/.env <<EOF
+TALOME_SECRET=$(openssl rand -hex 32)
+DATABASE_PATH=$HOME/.talome/data/talome.db
+EOF
+chmod 600 apps/core/.env
+
+# 5. Run the supervisor (starts core + dashboard + terminal daemon)
+./apps/core/node_modules/.bin/tsx scripts/supervisor.ts
 ```
 
-<Callout type="warn">
-The `TALOME_SECRET` encrypts user sessions and stored credentials. If you lose it, existing sessions and encrypted settings become invalid. Store it somewhere safe.
-</Callout>
+Open `http://localhost:3000` when you see `ready to serve` in the output.
 
 ---
 
@@ -115,49 +110,51 @@ The `TALOME_SECRET` encrypts user sessions and stored credentials. If you lose i
 
 After Talome is running, complete these steps to unlock the full experience:
 
-### 1. Open the Dashboard
+### 1. Open the dashboard
 
-Navigate to `http://localhost:3000` (or `http://<your-server-ip>:3000` from another device on your network).
+Navigate to `http://localhost:3000` — or `http://<your-server-ip>:3000` if you deliberately exposed it to your LAN (see [Firewall Configuration](#firewall-configuration)).
 
-<ScreenshotPlaceholder description="The Talome onboarding screen with the password creation form" />
+### 2. Create your admin account
 
-### 2. Create Your Admin Account
+Set a username and password on first visit. Talome generates a **recovery code** — write it down. If you forget your password, the recovery code is the only way back in without resetting the database.
 
-Set a password on first visit. This is the only account — Talome is designed for a single admin user.
+Talome supports multiple users with per-user permissions. The first account is the admin.
 
-### 3. Add Your AI Provider Key
+### 3. Add your AI provider key
 
-Go to **Settings > AI Provider** and paste your API key. Talome supports three providers:
+Go to **Settings → AI Provider** and paste your key. Talome supports three providers:
 
 | Provider | Key | Cost | Notes |
 |----------|-----|------|-------|
-| **Anthropic** (recommended) | `ANTHROPIC_API_KEY` | ~$0.01-0.05/conversation | Claude Haiku for speed, Sonnet for depth |
-| **OpenAI** | `OPENAI_API_KEY` | ~$0.01-0.10/conversation | GPT-5.3, GPT-5.4 supported |
-| **Ollama** (local) | No key needed | Free | Requires Ollama running locally, 8GB+ RAM |
+| **Anthropic** (recommended) | `ANTHROPIC_API_KEY` | ~$0.01-0.05 / conversation | Claude Haiku for speed, Sonnet for depth |
+| **OpenAI** | `OPENAI_API_KEY` | ~$0.01-0.10 / conversation | GPT-5.3 and GPT-5.4 supported |
+| **Ollama** (local) | No key needed | Free | Requires Ollama running locally, 8 GB+ RAM for usable models |
 
-### 4. Verify the AI Works
+### 4. Verify the assistant works
 
-Open the assistant from the sidebar (or press `/` to open the command palette) and type:
+Open the assistant from the sidebar and ask:
 
 ```
 What can you do?
 ```
 
-If you see a detailed response listing capabilities, the AI is connected and ready.
+If you see a detailed response listing capabilities, you're connected.
 
 ---
 
 ## Ports
 
-Talome uses three ports by default:
+Talome uses three ports:
 
 | Port | Service | Purpose |
 |------|---------|---------|
 | `3000` | Dashboard | Next.js frontend |
 | `4000` | API | Hono backend, AI agent, WebSocket |
-| `4001` | Terminal daemon | WebSocket PTY server for browser terminal and Claude Code |
+| `4001` | Terminal daemon | WebSocket PTY server for the browser terminal and Claude Code sessions |
 
-To change ports, set `CORE_PORT`, or modify the port mappings in your compose file. The dashboard port is configured via the Next.js server.
+The terminal daemon binds to `127.0.0.1` by default. Only the dashboard proxies to it — no other device on your LAN should be able to reach port 4001.
+
+To change the API or dashboard port, set `CORE_PORT` or `TALOME_DASHBOARD_PORT` in `~/.talome/server/apps/core/.env`.
 
 ---
 
@@ -167,26 +164,27 @@ To change ports, set `CORE_PORT`, or modify the port mappings in your compose fi
 
 [OrbStack](https://orbstack.dev) is the recommended Docker runtime on macOS. It uses significantly less memory and CPU than Docker Desktop, and the socket path is more predictable.
 
-**OrbStack socket path:**
-```bash
-DOCKER_SOCKET=/Users/$USER/.orbstack/run/docker.sock
-```
+**OrbStack socket path:** `~/.orbstack/run/docker.sock`
+**Docker Desktop socket path:** `/var/run/docker.sock`
 
-**Docker Desktop socket path:**
-```bash
-DOCKER_SOCKET=/var/run/docker.sock
-```
-
-If you use OrbStack, add the socket path to your compose environment:
-
-```yaml
-environment:
-  - DOCKER_SOCKET=/Users/$USER/.orbstack/run/docker.sock
-```
+The installer auto-detects the socket path on first run.
 
 ### File sharing
 
-Docker on macOS requires explicit file sharing for host volume mounts. If you mount media directories (e.g., `/Volumes/Media`), ensure the path is shared in OrbStack or Docker Desktop settings.
+Docker on macOS requires explicit file sharing for host volume mounts. If you want Talome to manage apps that mount media directories (e.g., `/Volumes/Media`), ensure the path is shared in OrbStack or Docker Desktop settings.
+
+---
+
+## Raspberry Pi
+
+Talome runs on Raspberry Pi 4 / 5 with Raspberry Pi OS (Bookworm, 64-bit). A few tips specific to the Pi:
+
+- **Use USB 3 / NVMe storage** for the `~/.talome/` directory. SD cards wear out under SQLite's write-ahead-log and will bottleneck any app that does I/O.
+- **Increase the swap size** to at least 2 GB if you have 4 GB of RAM or less. The build step benefits from the headroom.
+- **Disable GPU memory split** if you don't run a display: `sudo raspi-config` → *Performance* → *GPU Memory* → `16`.
+- **Docker on 64-bit Pi OS** installs cleanly via the installer script. 32-bit Pi OS is not supported.
+
+The default install is ARM64 and the installer will pull the correct Node.js and Docker artifacts automatically.
 
 ---
 
@@ -196,45 +194,43 @@ Docker on macOS requires explicit file sharing for host volume mounts. If you mo
 curl -fsSL https://get.talome.dev | bash -s -- update
 ```
 
-Or manually with Docker Compose:
+The update command:
 
-```bash
-docker compose pull
-docker compose up -d
-```
+1. Takes a **pre-update SQLite snapshot** via `VACUUM INTO` so you can roll back to the old DB state if anything breaks.
+2. Pulls the latest source.
+3. Rebuilds.
+4. Restarts the service.
 
-Updates **preserve** everything:
+Your data is preserved:
+
 - SQLite database (users, conversations, memories, automations, widgets, app records)
 - Installed apps and their data
-- Settings and API keys
+- Encrypted settings and API keys
 - Custom tools and user-created apps
 - Notification channel configurations
 
-Updates **replace**:
-- The Talome container image (backend + dashboard)
+If an update leaves Talome in a bad state, restore the pre-update snapshot from `~/.talome/backups/` — the filename looks like `talome-db-20261231-1800.db`. Copy it over `~/.talome/data/talome.db` (stop the service first) and restart.
 
 <Callout type="info">
-Talome checks for updates automatically and shows a notification in the dashboard when a new version is available. You can also ask the AI: `"Is there an update available?"`
+Talome also takes automatic daily snapshots of `talome.db` to `~/.talome/backups/`, keeping the last 7 by default. See `.env.example` for `TALOME_SELF_BACKUP_INTERVAL_MS` and `TALOME_SELF_BACKUP_KEEP` tuning knobs.
 </Callout>
 
 ---
 
 ## Firewall Configuration
 
-If your server has a firewall (UFW, firewalld, iptables), open these ports:
+If your server has a firewall (UFW, firewalld, iptables), open only the ports you want reachable from your LAN:
 
 ```bash
 # UFW (Ubuntu/Debian)
 sudo ufw allow 3000/tcp   # Dashboard
-sudo ufw allow 4000/tcp   # API
 
 # firewalld (Fedora/CentOS)
 sudo firewall-cmd --permanent --add-port=3000/tcp
-sudo firewall-cmd --permanent --add-port=4000/tcp
 sudo firewall-cmd --reload
 ```
 
-Port 4001 (terminal daemon) only needs to be open if you access Talome's browser terminal from another machine. The MCP server uses stdio, not a network port — no firewall rule needed for MCP.
+Port 4000 (API) is fronted by the dashboard; exposing it is not required for the dashboard to work from another machine. Port 4001 (terminal daemon) should never be reachable from anything other than loopback.
 
 ---
 
@@ -246,18 +242,21 @@ Port 4001 (terminal daemon) only needs to be open if you access Talome's browser
 Error: permission denied while trying to connect to the Docker daemon socket
 ```
 
-Your user is not in the `docker` group. Fix:
+Your user is not in the `docker` group:
 
 ```bash
 sudo usermod -aG docker $USER
-# Log out and back in, or run:
-newgrp docker
+newgrp docker    # reload group membership without logging out
 ```
 
 Then restart Talome:
 
 ```bash
-docker compose restart
+# Linux
+sudo systemctl restart talome
+
+# macOS
+launchctl kickstart -k gui/$(id -u)/dev.talome
 ```
 
 ### Port already in use
@@ -266,39 +265,53 @@ docker compose restart
 Error: bind: address already in use
 ```
 
-Another service is using port 3000 or 4000. Find it:
+Another service is on port 3000 or 4000. Find it:
 
 ```bash
 sudo lsof -i :3000
 sudo lsof -i :4000
 ```
 
-Either stop the conflicting service or change Talome's ports in your compose file.
+Either stop that service, or change Talome's ports in `~/.talome/server/apps/core/.env`:
 
-### ARM vs x86
+```
+CORE_PORT=4100
+TALOME_DASHBOARD_PORT=3100
+```
 
-Talome publishes multi-arch images for both `amd64` and `arm64`. Docker automatically pulls the correct architecture. If you see platform mismatch errors, ensure your Docker version supports multi-platform images (Docker 20.10+).
-
-### Container keeps restarting
+### launchd / systemd service won't start
 
 Check the logs:
 
 ```bash
-docker logs talome --tail 50
+# Linux
+sudo journalctl -u talome -f
+
+# macOS
+tail -f ~/.talome/logs/talome.error.log
 ```
 
 Common causes:
-- Missing `TALOME_SECRET` — the container exits if no secret is set
-- Docker socket not mounted — verify `/var/run/docker.sock` is in your volumes
-- Port conflict — another process is binding to 3000 or 4000
-- Corrupted database — rare, but solvable by restoring from a backup
 
-### Dashboard loads but AI does not respond
+- **Missing `TALOME_SECRET`** — the service refuses to start without it. Check `~/.talome/server/apps/core/.env`.
+- **Docker not running** — Talome waits for Docker on boot. Start Docker Desktop / OrbStack, or `sudo systemctl start docker`.
+- **Port conflict** — see above.
+- **Node.js not on PATH** — the installer writes the Node path into the service file. If you moved `~/.talome/node/` or uninstalled a brew-installed Node, re-run the installer.
 
-1. Check that you have set an API key in **Settings > AI Provider**
-2. Verify the key works: the Settings page shows a green checkmark next to the provider
-3. Check the backend logs: `docker logs talome --tail 20`
-4. If using Ollama, ensure the Ollama server is running and accessible from the Talome container
+### Dashboard loads but the AI doesn't respond
+
+1. Confirm you set an API key in **Settings → AI Provider**.
+2. The Settings page shows a green checkmark next to the active provider when the key works.
+3. Check the logs (see above).
+4. If using Ollama, ensure the Ollama server is running and reachable from the Talome host.
+
+### Reset admin password
+
+If you lose the password *and* the recovery code, there's no remote reset — the DB is encrypted at rest. Your options:
+
+- Log in with the recovery code: **Login → Forgot password**.
+- Restore a recent DB snapshot from `~/.talome/backups/`.
+- Delete the DB and start over: `rm ~/.talome/data/talome.db*` (stop the service first).
 
 ---
 
@@ -307,24 +320,16 @@ Common causes:
 To remove Talome completely:
 
 ```bash
-# Stop and remove the container
-docker compose down
-
-# Remove the data volume (THIS DELETES ALL DATA)
-docker volume rm talome-data
-
-# Remove the Talome directory
-rm -rf ~/.talome
-
-# Remove the container image
-docker rmi ghcr.io/tomastruben/talome:latest
+curl -fsSL https://get.talome.dev | bash -s -- uninstall
 ```
 
+This removes the systemd/launchd unit, the `~/.talome/` directory (data, source, logs), and asks before deleting anything irreversible. The installer offers to save a timestamped DB snapshot outside `~/.talome/` before wiping.
+
 <Callout type="warn">
-Removing the data volume deletes your database, including conversation history, memories, automations, and app installation records. Back up `~/.talome/` first if you want to preserve anything.
+Removing `~/.talome/` deletes your database, including conversation history, memories, automations, and app installation records. Save the snapshot from the uninstaller if you want to preserve anything.
 </Callout>
 
-Apps installed by Talome (Jellyfin, Sonarr, etc.) are separate Docker containers with their own volumes. Uninstalling Talome does not remove them. Use `docker compose down -v` in each app's directory to remove them individually, or ask the AI to uninstall them before removing Talome.
+Apps installed *through* Talome (Jellyfin, Sonarr, etc.) are separate Docker containers with their own volumes. Uninstalling Talome does not remove them. Ask the AI to uninstall them before removing Talome, or use `docker compose down -v` in each app's directory.
 
 ---
 

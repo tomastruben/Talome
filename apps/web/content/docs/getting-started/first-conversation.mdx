@@ -174,7 +174,7 @@ This means the AI always has your preferences and facts in context without you r
 
 ### 3. Dynamic tool loading
 
-Not all 230+ tools are sent to the AI on every message. Talome uses **per-message tool routing**:
+Not all 220 tools are sent to the AI on every message. Talome uses **per-message tool routing**:
 - Core tools (Docker, apps, system, filesystem, memories) are always available
 - Domain-specific tools (arr, Jellyfin, qBittorrent, etc.) load only when that app is configured in Settings
 - Within active domains, keyword matching in your message further narrows the tool set — a message about "torrents" loads qBittorrent tools but not Home Assistant tools

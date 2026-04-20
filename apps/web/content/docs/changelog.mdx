@@ -9,14 +9,26 @@ All notable changes to Talome are documented here. This project uses [Semantic V
 
 ## Unreleased
 
+### Security
+
+- **Terminal daemon hardening**: binds to `127.0.0.1` by default (was `0.0.0.0`), bcrypt password hashes with constant-time comparison (was unsalted SHA-256), 8-character minimum password, WebSocket auth rate limiting, CORS locked to loopback. Legacy hashes are detected on first login and force a password reset.
+- **CSRF middleware** added on all state-changing routes via Origin and Sec-Fetch-Site validation.
+- **Tighter CORS allowlist**: loopback, RFC1918, Tailscale (100.64/10), IPv6 link-local, mDNS (`*.local`), plus explicit `DASHBOARD_ORIGIN`. Arbitrary `*:3000` origins no longer accepted.
+- **Session cookie `secure` flag** now reflects the actual request scheme (HTTPS detected via `X-Forwarded-Proto`) instead of always `false`.
+- **Custom AI tools disabled by default** (`create_tool`, `reload_tools`, `list_custom_tools`). Opt in with `TALOME_ENABLE_CUSTOM_TOOLS=true` — they execute arbitrary TypeScript in-process with no sandbox.
+
 ### Added
 
+**Operational resilience**
+- **Automatic SQLite self-backup** — daily atomic snapshots of `talome.db` to `~/.talome/backups/`. Configurable retention. Manual snapshots via `POST /api/backups/self`.
+- **Install is native-only.** Running Talome itself in a container disables self-evolution, so the Docker Compose path is no longer offered as a supported install. Windows users: use WSL2 with Ubuntu 22.04 and run the Linux installer.
+
 **AI Assistant**
-- AI assistant with 230+ tools across 16 domains (core, media, optimization, arr, qbittorrent, jellyfin, audiobookshelf, overseerr, plex, homeassistant, pihole, vaultwarden, proxy, tailscale, mdns, ollama)
+- AI assistant with 220 tools across 17 domains (core, media, optimization, arr, qbittorrent, jellyfin, audiobookshelf, overseerr, plex, homeassistant, pihole, vaultwarden, proxy, tailscale, mdns, ollama, setup)
 - Three-tier security system (read/modify/destructive) with three enforcement modes (permissive, cautious, locked)
 - Dynamic tool loading: settings-based domain activation and keyword-based message routing
 - Memory system with ranked retrieval (recency + access frequency + confidence) and 80% bigram deduplication
-- Custom tool creation: users can define new tools at runtime via the AI
+- Custom tool creation: users can define new tools at runtime via the AI (disabled by default — see Security above)
 - Audit logging for every tool execution with tier, timestamp, and approval status
 - AI usage tracking: token counts, cache hit rates, and cost estimation per model and context
 

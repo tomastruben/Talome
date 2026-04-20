@@ -3,7 +3,7 @@ title: AI Assistant
 description: How Talome's agentic AI works — architecture, tools, memory, security, and conversation patterns.
 ---
 
-This is not a chatbot. Talome's AI assistant is an autonomous agent with 230+ purpose-built tools that plans multi-step operations, selects the right tools for each step, executes against your real infrastructure, and reasons about failures to recover. When you say "set up a media stack," it doesn't hand you a checklist — it installs five apps, wires their APIs together, syncs indexers, verifies health, and reports back with URLs.
+This is not a chatbot. Talome's AI assistant is an autonomous agent with 220 purpose-built tools that plans multi-step operations, selects the right tools for each step, executes against your real infrastructure, and reasons about failures to recover. When you say "set up a media stack," it doesn't hand you a checklist — it installs five apps, wires their APIs together, syncs indexers, verifies health, and reports back with URLs.
 
 The difference between a chatbot and an agent: a chatbot answers questions. An agent does work.
 
@@ -42,13 +42,13 @@ Before the AI sees your message, Talome injects live context into the conversati
 
 ### 3. Tool Selection (Keyword Routing + Domain Filtering)
 
-Not all 230 tools load for every message. The tool registry uses a two-layer filter:
+Not all 220 tools load for every message. The tool registry uses a two-layer filter:
 
 **Layer 1: Domain activation.** Each tool belongs to a domain. A domain's tools only load when the corresponding app is configured in Settings. If you haven't set up Jellyfin, the 6 Jellyfin tools don't exist in the AI's context.
 
 **Layer 2: Message keyword routing.** Even among active domains, tools are further filtered by scanning your message for domain-relevant keywords. If your message mentions "torrent" or "download speed," the qBittorrent domain loads. If it mentions "indexer" or "quality profile," the arr domain loads. If no optional domain matches (ambiguous message), all active tools load as a fallback.
 
-This keeps the per-message tool count low — typically 80-120 tools instead of 230 — which directly improves the AI's tool selection accuracy.
+This keeps the per-message tool count low — typically 80-120 tools instead of 220 — which directly improves the AI's tool selection accuracy.
 
 <Accordions>
 <Accordion title="Source">
@@ -86,7 +86,7 @@ The AI streams responses using the Vercel AI SDK's `streamText()` with a maximum
 
 ## Tool Domains
 
-All 230+ tools are organized into 16 domains. Each domain activates when you configure the corresponding app in Settings:
+All 220 tools are organized into 17 domains. Each domain activates when you configure the corresponding app in Settings:
 
 | Domain | Tools | Activates When | What It Does |
 |--------|-------|---------------|-------------|
@@ -437,7 +437,7 @@ Custom prompts are appended after the default system prompt and do not override 
 
 <Cards>
   <Card title="Tools Reference" href="/docs/reference/tools">
-    Browse all 230+ tools with parameters and examples.
+    Browse all 220 tools with parameters and examples.
   </Card>
   <Card title="Media Stack Guide" href="/docs/guides/media-stack">
     The most popular AI-orchestrated workflow.
