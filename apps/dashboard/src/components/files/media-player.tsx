@@ -620,9 +620,16 @@ export function VideoPlayer({
     setSubBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
     if (!subVttText) return;
 
-    const seekShiftMs = hlsRequired ? hlsSeekOffset * 1000 : 0;
+    const seekShiftMs = hlsRequired && Number.isFinite(hlsSeekOffset) ? hlsSeekOffset * 1000 : 0;
     const safariShiftMs = hlsRequired && isSafari() ? -500 : 0;
     const totalShiftMs = seekShiftMs + safariShiftMs;
+    // Defensive: if math went sideways (NaN/Infinity from a duration:Infinity
+    // stream), fall through to the unshifted VTT instead of corrupting cues.
+    if (!Number.isFinite(totalShiftMs)) {
+      const blob = new Blob([subVttText], { type: "text/vtt" });
+      setSubBlobUrl(URL.createObjectURL(blob));
+      return;
+    }
     const vtt = totalShiftMs !== 0
       ? subVttText.replace(
           /(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})/g,
@@ -1112,14 +1119,53 @@ export function VideoPlayer({
     });
     hlsRef.current = hls;
 
+    // Bounded retry on HLS errors. The previous implementation called
+    // `hls.startLoad()` immediately on every NETWORK_ERROR, which can spin
+    // forever against a flaky upstream (transmux job restarting, Jellyfin
+    // playlist 404 mid-stream, etc.). Cap at 3 retries with linear backoff.
+    let networkRetries = 0;
+    let mediaRetries = 0;
+    const NETWORK_RETRY_MAX = 3;
+    const MEDIA_RETRY_MAX = 2;
+
     hls.on(Hls.Events.ERROR, (_e, data) => {
-      if (data.fatal) {
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          hls.startLoad();
+      if (!data.fatal) return;
+
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        if (networkRetries < NETWORK_RETRY_MAX) {
+          networkRetries++;
+          const backoffMs = networkRetries * 2_000; // 2s, 4s, 6s
+          console.warn(`[media-player] HLS network error (retry ${networkRetries}/${NETWORK_RETRY_MAX} in ${backoffMs}ms):`, data.details);
+          setTimeout(() => { try { hls.startLoad(); } catch { /* destroyed */ } }, backoffMs);
         } else {
+          console.error("[media-player] HLS network failed after retries — giving up:", data.details);
           handleError();
         }
+        return;
       }
+
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        if (mediaRetries < MEDIA_RETRY_MAX) {
+          mediaRetries++;
+          console.warn(`[media-player] HLS media error (recover ${mediaRetries}/${MEDIA_RETRY_MAX}):`, data.details);
+          try { hls.recoverMediaError(); } catch { handleError(); }
+        } else {
+          console.error("[media-player] HLS media unrecoverable — giving up:", data.details);
+          handleError();
+        }
+        return;
+      }
+
+      // OTHER_ERROR — manifest parsing, key load, etc. Not recoverable.
+      console.error("[media-player] HLS fatal error:", data.type, data.details);
+      handleError();
+    });
+
+    // Reset retry counters when a level loads successfully — a transient
+    // network blip shouldn't permanently consume our retry budget.
+    hls.on(Hls.Events.LEVEL_LOADED, () => {
+      networkRetries = 0;
+      mediaRetries = 0;
     });
 
     // Quality levels from HLS manifest

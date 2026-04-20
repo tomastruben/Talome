@@ -285,7 +285,19 @@ export function useAudioEngine() {
       const idx = stateRef.current.currentTrackIndex;
 
       if (idx < tracks.length - 1) {
-        // Auto-advance to next track
+        // Auto-advance to next track. Three subtle points this has to get
+        // right — earlier implementations failed at each one:
+        //
+        //  1. Attach the `loadedmetadata` listener BEFORE assigning `src`.
+        //     Cached or fast responses can fire metadata synchronously from
+        //     the src setter; a listener added afterwards misses it and the
+        //     next track silently stalls.
+        //  2. Handle `readyState >= HAVE_METADATA` after attachment — the
+        //     event may have already fired in the microtask window.
+        //  3. Surface play() rejection instead of swallowing it. Browsers
+        //     sometimes lose the user-gesture chain across the `ended` event,
+        //     and silently eating the failure makes this look like "auto-
+        //     advance is broken" when the real answer is "tap to continue."
         if (pendingSeekRef.current) {
           a.removeEventListener("loadedmetadata", pendingSeekRef.current);
           pendingSeekRef.current = null;
@@ -294,16 +306,33 @@ export function useAudioEngine() {
         stateRef.current.currentTrackIndex = nextIdx;
         _currentTrackIndex = nextIdx;
         const nextSrc = tracks[nextIdx]?.streamUrl;
-        if (nextSrc) a.src = nextSrc;
+        if (!nextSrc) return;
 
         const onLoaded = () => {
-          void a.play().catch(() => {/* auto-advance — non-critical */});
-          pendingSeekRef.current = null;
           a.removeEventListener("loadedmetadata", onLoaded);
+          pendingSeekRef.current = null;
+          void a.play().catch((err: unknown) => {
+            // Browser blocked programmatic play — most likely autoplay policy
+            // after a pause across the `ended` transition. Mark us paused so
+            // the UI shows a resume control instead of a phantom-playing state.
+            console.warn("[audio-engine] autoplay after chapter end blocked:", err);
+            stateRef.current.isPlaying = false;
+            _isPlaying = false;
+            setState((prev) => ({ ...prev, isPlaying: false, isBuffering: false }));
+          });
         };
+
+        // Attach listener BEFORE src assignment so we can't miss a fast-fire.
         pendingSeekRef.current = onLoaded;
         a.addEventListener("loadedmetadata", onLoaded);
-        setState((prev) => ({ ...prev, currentTrackIndex: nextIdx }));
+        a.src = nextSrc;
+        a.load(); // Force a fresh load — some browsers skip it if the URL matches the previous value after a proxy rewrite.
+
+        // If metadata already loaded in the microtask window (e.g. the browser
+        // had a cached Range response ready), fire our handler manually.
+        if (a.readyState >= HTMLMediaElement.HAVE_METADATA) onLoaded();
+
+        setState((prev) => ({ ...prev, currentTrackIndex: nextIdx, isBuffering: true }));
       } else {
         // Final track ended — book finished
         stateRef.current.isPlaying = false;
