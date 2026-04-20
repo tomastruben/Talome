@@ -5,8 +5,6 @@ description: A visual walkthrough of the Talome dashboard — every page, every 
 
 The Talome dashboard is your control center. Everything about your server — apps, containers, media, system health, automations, and the AI assistant — is accessible from a single interface. This tour walks through each section so you know where everything lives.
 
-<ScreenshotPlaceholder description="Full dashboard view showing the home page with widget grid: CPU, memory, disk, active downloads, container health, and media calendar" />
-
 ---
 
 ## Sidebar Navigation
@@ -31,8 +29,6 @@ The sidebar collapses on smaller screens and can be toggled with the hamburger m
 ## Home Page
 
 The home page is a customizable grid of widgets. Each widget shows a focused slice of your server's state — real-time, no polling delays.
-
-<ScreenshotPlaceholder description="Home page with a 3-column widget grid showing system health, active downloads, services, CPU chart, disk usage, and media calendar" />
 
 ### Widget Categories
 
@@ -87,8 +83,6 @@ The AI uses `create_widget_manifest` and `update_widget_manifest` to build your 
 
 The app store is the fastest way to add services to your server. It aggregates apps from multiple sources into a single, searchable catalog.
 
-<ScreenshotPlaceholder description="App store page showing a grid of app cards (Jellyfin, Sonarr, Pi-hole, Vaultwarden) with source badges and install buttons" />
-
 ### Multi-Source Architecture
 
 Every app card shows its source:
@@ -122,8 +116,6 @@ Click an app card to see its detail page: description, version, resource require
 
 The containers page gives you direct visibility into every Docker container running on your server — not just apps installed through Talome.
 
-<ScreenshotPlaceholder description="Containers page showing a table of running containers with status, image, CPU%, memory, ports, and action buttons" />
-
 ### Real-Time Status
 
 Each container shows:
@@ -156,8 +148,6 @@ Click a container to open its detail view. Here you can:
 
 If you have Sonarr, Radarr, or Jellyfin configured, the Media page becomes your unified media command center.
 
-<ScreenshotPlaceholder description="Media page with three sections: library grid showing movie posters, a download queue with progress bars, and a calendar showing upcoming releases" />
-
 ### Library
 
 Browse your media collection with poster art, ratings, and status indicators. Filter by type (movies, TV, music), status (downloaded, monitored, missing), and quality.
@@ -179,8 +169,6 @@ Talome includes a built-in media player for previewing files directly in the das
 ## Automations Page
 
 Automations let you schedule tasks and respond to events without manual intervention.
-
-<ScreenshotPlaceholder description="Automations page showing a list of automations with name, trigger type, last run time, and status toggle" />
 
 ### Automation List
 
@@ -221,8 +209,6 @@ Every automation execution is logged. View the history to see when it ran, what 
 
 A full-featured file browser for your server's filesystem and mounted drives.
 
-<ScreenshotPlaceholder description="File browser showing a directory listing with file names, sizes, dates, and a sidebar showing mounted drives" />
-
 Navigate directories, preview files (images, text, video), rename, delete, and create directories. Mounted drives (NAS, USB, external storage) appear in the sidebar for quick access.
 
 The media player integrates directly — click a video file and it plays inline.
@@ -232,8 +218,6 @@ The media player integrates directly — click a video file and it plays inline.
 ## Terminal Page
 
 A persistent terminal with full shell access to your server.
-
-<ScreenshotPlaceholder description="Terminal page showing a tmux session with a shell prompt and a 'Launch Claude Code' button" />
 
 ### Persistent tmux Session
 
@@ -250,8 +234,6 @@ The terminal and Claude Code share the same tmux session (`talome-claude`), so y
 ## Settings Page
 
 All configuration lives in Settings, organized into sections.
-
-<ScreenshotPlaceholder description="Settings page showing the navigation sections: AI Provider, Integrations, Security, Notifications, System" />
 
 ### AI Provider
 
@@ -283,8 +265,6 @@ View system information, manage data storage paths, configure the reverse proxy 
 ## The Assistant
 
 The AI assistant has its own page in the sidebar navigation. Click **Assistant** to open it.
-
-<ScreenshotPlaceholder description="The assistant page showing a conversation with tool execution cards and the chat input bar" />
 
 ### Chat Interface
 
