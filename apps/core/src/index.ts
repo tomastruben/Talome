@@ -47,6 +47,7 @@ import { files as filesRoute, cleanupStaleHlsOnStartup, cleanupStaleTransmuxOnSt
 import { optimization as optimizationRoute } from "./routes/optimization.js";
 import { startAutoOptimize } from "./media/optimizer.js";
 import { startSelfBackup, stopSelfBackup, snapshotNow } from "./services/self-backup.js";
+import { reapDeadWorkers } from "./evolution/auto-execute.js";
 import { audiobooks as audiobooksRoute } from "./routes/audiobooks.js";
 import { audible as audibleRoute } from "./routes/audible.js";
 import { suggestions as suggestionsRoute } from "./routes/suggestions.js";
@@ -588,6 +589,17 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
   // Periodic self-snapshots of talome.db so users can recover from a
   // volume-corruption / rm incident. Silent no-op if disabled via env.
   try { startSelfBackup(); } catch { /* non-fatal */ }
+
+  // On boot, reconcile any evolution runs left as 'running' by a previous
+  // crash. Picks up orphan processes, stashes any dangling changes, and
+  // resets suggestions back to 'pending' so they can be retried.
+  try { reapDeadWorkers(); } catch { /* non-fatal */ }
+  // And keep reaping periodically so a silently-killed worker is caught
+  // within a few minutes rather than at next dashboard refresh.
+  const reaperTimer = setInterval(() => {
+    try { reapDeadWorkers(); } catch { /* non-fatal */ }
+  }, 2 * 60 * 1000);
+  reaperTimer.unref?.();
 
   try {
     startDigestScheduler();

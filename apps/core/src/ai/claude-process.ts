@@ -91,11 +91,13 @@ export function spawnClaudeStreaming(
   task: string,
   cwd: string,
   onData?: (chunk: string) => void,
+  abortSignal?: AbortSignal,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     let resultText = "";
     let stderr = "";
     let lineBuffer = "";
+    let aborted = false;
 
     // Strip ANTHROPIC_API_KEY so the claude CLI uses subscription auth
     // (from `claude login`) instead of billing against the API key.
@@ -111,8 +113,30 @@ export function spawnClaudeStreaming(
         "--input-format", "stream-json",
         "--verbose",
       ],
-      { cwd, env: cleanEnv, shell: false },
+      // detached: true so we can SIGTERM the whole process group on timeout.
+      // claude may spawn tool subprocesses (bash, git, etc.) — killing only
+      // the top-level PID leaves orphans.
+      { cwd, env: cleanEnv, shell: false, detached: true },
     );
+
+    // On abort: send SIGTERM to the process group, then SIGKILL after a
+    // grace period if the process still hasn't exited.
+    const onAbort = () => {
+      if (aborted) return;
+      aborted = true;
+      try {
+        if (proc.pid) process.kill(-proc.pid, "SIGTERM");
+      } catch { /* already dead */ }
+      setTimeout(() => {
+        try {
+          if (proc.pid) process.kill(-proc.pid, "SIGKILL");
+        } catch { /* already dead */ }
+      }, 5_000).unref?.();
+    };
+    if (abortSignal) {
+      if (abortSignal.aborted) onAbort();
+      else abortSignal.addEventListener("abort", onAbort, { once: true });
+    }
 
     // Write the task as a stream-json user message then close stdin
     const inputMsg = JSON.stringify({

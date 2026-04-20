@@ -13,7 +13,7 @@ import Database from "better-sqlite3";
 import { join, resolve } from "node:path";
 import { mkdirSync, existsSync, renameSync, rmSync, cpSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import {
   spawnClaudeStreaming,
   getChangedFiles,
@@ -23,6 +23,13 @@ import {
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("evolution-worker");
+
+/**
+ * Claude-Code wall-clock timeout. Default 15 minutes. A hung CLI
+ * session won't tie up the worker forever. Override per run with
+ * TALOME_EVOLUTION_TIMEOUT_MS for long tasks.
+ */
+const CLAUDE_TIMEOUT_MS = Number(process.env.TALOME_EVOLUTION_TIMEOUT_MS) || 15 * 60 * 1000;
 
 // ── Args ──────────────────────────────────────────────────────────────────────
 
@@ -64,6 +71,94 @@ async function postEvent(event: Record<string, unknown>) {
   }
 }
 
+// ── Lifecycle guards ─────────────────────────────────────────────────────────
+
+/**
+ * If the worker exits while the DB row is still `running`, stash any
+ * uncommitted changes Claude made and mark the run failed. Without this,
+ * a crash mid-edit leaves the working tree dirty and the DB showing
+ * "running" until the reaper picks it up — meanwhile the user's tsx
+ * watch could be trying to start the broken code.
+ *
+ * This runs from process.on("exit"), so it must be synchronous.
+ */
+let cleanupDone = false;
+function cleanupDanglingState(reason: string): void {
+  if (cleanupDone) return;
+  cleanupDone = true;
+
+  let runStatus = "running";
+  try {
+    const row = sqlite
+      .prepare("SELECT status FROM evolution_runs WHERE id = ?")
+      .get(runId) as { status?: string } | undefined;
+    runStatus = row?.status ?? "running";
+  } catch { /* DB may be gone */ }
+
+  if (runStatus !== "running") return;
+
+  // Best-effort stash any Claude writes so the working tree is clean
+  // again for the next run. `-u` catches untracked files too.
+  let stashMessage: string | null = null;
+  try {
+    const statusResult = spawnSync("git", ["status", "--porcelain"], {
+      cwd: PROJECT_ROOT,
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    const dirty = statusResult.status === 0 && (statusResult.stdout ?? "").trim().length > 0;
+    if (dirty) {
+      stashMessage = `talome-orphan-recovery-${runId}`;
+      spawnSync("git", ["stash", "push", "-u", "-m", stashMessage], {
+        cwd: PROJECT_ROOT,
+        timeout: 10_000,
+        stdio: "ignore",
+      });
+    }
+  } catch { /* best-effort */ }
+
+  try {
+    sqlite
+      .prepare(
+        "UPDATE evolution_runs SET status = 'failed', completed_at = ?, error = ? WHERE id = ?",
+      )
+      .run(
+        new Date().toISOString(),
+        `Worker terminated unexpectedly (${reason})${stashMessage ? `; changes stashed as "${stashMessage}"` : ""}`,
+        runId,
+      );
+  } catch { /* DB may be gone */ }
+}
+
+// Graceful termination — parent restart, OS asked nicely, supervisor kill.
+// Flush DB state then exit with a non-zero code so the reaper knows.
+function signalHandler(signal: string): () => void {
+  return () => {
+    cleanupDanglingState(signal);
+    process.exit(1);
+  };
+}
+process.on("SIGTERM", signalHandler("SIGTERM"));
+process.on("SIGINT", signalHandler("SIGINT"));
+process.on("SIGHUP", signalHandler("SIGHUP"));
+
+// Last-chance sync cleanup. Runs on any exit path — normal return,
+// exception, signal. Must be synchronous; can't post HTTP events here.
+process.on("exit", () => {
+  cleanupDanglingState("process-exit");
+});
+
+// An unhandled rejection ends the Node process in modern Node anyway,
+// but the explicit handler gives us a labeled reason in the DB row.
+process.on("uncaughtException", (err) => {
+  cleanupDanglingState(`uncaughtException: ${err?.message ?? err}`);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  cleanupDanglingState(`unhandledRejection: ${reason instanceof Error ? reason.message : String(reason)}`);
+  process.exit(1);
+});
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -90,9 +185,30 @@ async function main() {
       " Describe the changes you would make in detail (files to modify, what would change, and why), but do NOT actually modify any files.";
   }
 
-  const { code, stdout, stderr } = await spawnClaudeStreaming(fullTask, cwd, async (chunk) => {
-    await postEvent({ type: "output", chunk });
-  });
+  // Hard deadline so a hung Claude CLI can't pin the worker forever.
+  // spawnClaudeStreaming respects the abort signal and kills the child
+  // process group on timeout.
+  const deadlineController = new AbortController();
+  const deadlineTimer = setTimeout(() => deadlineController.abort(), CLAUDE_TIMEOUT_MS);
+
+  const { code, stdout, stderr } = await spawnClaudeStreaming(
+    fullTask,
+    cwd,
+    async (chunk) => {
+      await postEvent({ type: "output", chunk });
+    },
+    deadlineController.signal,
+  );
+  clearTimeout(deadlineTimer);
+
+  if (deadlineController.signal.aborted) {
+    await postEvent({
+      type: "failed",
+      error: `Claude Code exceeded ${Math.round(CLAUDE_TIMEOUT_MS / 60_000)} minute timeout`,
+    });
+    // cleanupDanglingState handles stash + DB status on exit.
+    process.exit(1);
+  }
 
   const duration = Date.now() - start;
 

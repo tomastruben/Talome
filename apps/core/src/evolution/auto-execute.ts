@@ -7,7 +7,7 @@
  */
 
 import { resolve, join } from "node:path";
-import { spawn, execSync } from "node:child_process";
+import { spawn, execSync, spawnSync } from "node:child_process";
 import { eq, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { writeNotification } from "../db/notifications.js";
@@ -40,13 +40,35 @@ const MAX_AUTO_EXEC_PER_DAY = 5;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+// Keep in sync with the list in self-modify-tools.ts — keys Claude Code
+// can leak to the evolution event stream if it runs `env` or similar.
+const WORKER_ENV_SCRUB = [
+  "TALOME_SECRET",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "DATABASE_URL",
+  "SMTP_PASSWORD",
+  "DISCORD_BOT_TOKEN",
+  "TELEGRAM_BOT_TOKEN",
+];
+
+function buildWorkerEnv(): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (WORKER_ENV_SCRUB.includes(k)) continue;
+    if (typeof v === "string") out[k] = v;
+  }
+  return out;
+}
+
 function spawnWorker(runId: string, scope: string, task: string): void {
   const taskB64 = Buffer.from(task).toString("base64");
 
   const worker = spawn(
     TSX_BIN,
     [WORKER_PATH, runId, "apply", scope, String(SERVER_PORT), DB_PATH, taskB64],
-    { detached: true, stdio: "ignore", env: process.env },
+    { detached: true, stdio: "ignore", env: buildWorkerEnv() },
   );
 
   worker.unref();
@@ -115,11 +137,34 @@ export function reapDeadWorkers(): void {
     for (const run of running) {
       // If PID was recorded and the process is dead → mark failed
       if (run.pid && !isProcessAlive(run.pid)) {
+        // A worker that died via SIGKILL / OOM can't run its exit handler,
+        // so the working tree may still be dirty from Claude's writes.
+        // Stash anything left behind so the next run starts clean. Named
+        // distinctly so users can find (and recover from) it.
+        let recoveryNote = "";
+        try {
+          const statusResult = spawnSync("git", ["status", "--porcelain"], {
+            cwd: PROJECT_ROOT,
+            encoding: "utf8",
+            timeout: 5_000,
+          });
+          const dirty = statusResult.status === 0 && (statusResult.stdout ?? "").trim().length > 0;
+          if (dirty) {
+            const stashName = `talome-orphan-recovery-${run.id}`;
+            spawnSync("git", ["stash", "push", "-u", "-m", stashName], {
+              cwd: PROJECT_ROOT,
+              timeout: 10_000,
+              stdio: "ignore",
+            });
+            recoveryNote = `; uncommitted changes stashed as "${stashName}"`;
+          }
+        } catch { /* best effort */ }
+
         db.update(schema.evolutionRuns)
           .set({
             status: "failed",
             completedAt: now,
-            error: "Worker process terminated unexpectedly",
+            error: `Worker process terminated unexpectedly${recoveryNote}`,
           })
           .where(eq(schema.evolutionRuns.id, run.id))
           .run();
@@ -130,7 +175,7 @@ export function reapDeadWorkers(): void {
           .where(eq(schema.evolutionSuggestions.runId, run.id))
           .run();
 
-        console.log(`[evolution/reaper] Reaped dead worker for run ${run.id} (pid ${run.pid})`);
+        console.log(`[evolution/reaper] Reaped dead worker for run ${run.id} (pid ${run.pid})${recoveryNote}`);
         continue;
       }
 

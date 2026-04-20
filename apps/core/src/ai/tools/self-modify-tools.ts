@@ -106,6 +106,36 @@ function runGitIn(args: string[]): Promise<{ code: number; stdout: string; stder
 }
 
 /**
+ * Keys we deliberately strip from the worker's environment. Claude Code
+ * can be prompted to run `env` (or equivalent), which streams the full
+ * env back as tool output and then up to the dashboard's evolution
+ * stream. Users viewing that stream would see plaintext secrets.
+ *
+ * We already strip `ANTHROPIC_API_KEY` inside `spawnClaudeStreaming` so
+ * the claude CLI uses subscription auth; this list is broader and
+ * applies to EVERYTHING the worker can see, not just claude.
+ */
+const WORKER_ENV_SCRUB = [
+  "TALOME_SECRET",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "DATABASE_URL",
+  "SMTP_PASSWORD",
+  "DISCORD_BOT_TOKEN",
+  "TELEGRAM_BOT_TOKEN",
+];
+
+function buildWorkerEnv(): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (WORKER_ENV_SCRUB.includes(k)) continue;
+    if (typeof v === "string") out[k] = v;
+  }
+  return out;
+}
+
+/**
  * Spawn the evolution worker as a detached process that survives tsx watch restarts.
  * Returns the runId immediately — the caller then waits for the result via waitForRunResult().
  */
@@ -126,7 +156,7 @@ function spawnWorker(runId: string, mode: "plan" | "apply", scope: string, task:
     {
       detached: true,
       stdio: "ignore",
-      env: process.env,
+      env: buildWorkerEnv(),
     },
   );
 

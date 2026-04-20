@@ -36,3 +36,10 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Shellcheck installer
+        run: |
+          sudo apt-get install -y shellcheck
+          # SC2086: word splitting is used intentionally for systemd env vars
+          # SC2046: command substitution in sudo calls
+          shellcheck -e SC2086,SC2046 install.sh
