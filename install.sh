@@ -27,6 +27,22 @@ DASHBOARD_PORT="${TALOME_DASHBOARD_PORT:-3000}"
 TERMINAL_PORT="4001"
 INSTALL_DIR="${TALOME_DIR}/server"
 
+# Refuse to run as root via sudo. The installer treats $HOME as the user's
+# Talome home — running under sudo points it at /root, which silently
+# installs to the wrong place and registers a service for a user who
+# can't manage it. The Docker / systemd steps below escalate per-command,
+# which is the correct pattern.
+if [ "${EUID:-$(id -u)}" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+  fatal "Don't run with sudo. Run as your normal user: 'bash install.sh' (the installer will sudo only the steps that need it)."
+fi
+
+# Fail-fast on unknown subcommands so a typo like 'updte' doesn't trigger
+# a full reinstall. Empty $1 means "fresh install, no subcommand".
+case "${1:-}" in
+  ""|uninstall|update) ;;  # known
+  *) fatal "Unknown subcommand: '${1}'. Valid: '' (install), 'update', 'uninstall'." ;;
+esac
+
 # ── Uninstall subcommand ──────────────────────────────────────────────────────
 if [ "${1:-}" = "uninstall" ]; then
   echo ""
@@ -72,7 +88,10 @@ if [ "${1:-}" = "update" ]; then
   echo ""
   echo -e "  ${BOLD}Updating Talome...${RESET}"
   echo ""
-  if [ ! -d "${INSTALL_DIR}" ]; then
+  if [ ! -f "${INSTALL_DIR}/package.json" ]; then
+    if [ -d "${INSTALL_DIR}" ]; then
+      fatal "Found ${INSTALL_DIR} but no package.json — looks like a partial/corrupted install. Run 'bash install.sh uninstall' then reinstall."
+    fi
     fatal "Talome not found at ${INSTALL_DIR}. Run the installer first."
   fi
   cd "${INSTALL_DIR}"
@@ -204,26 +223,55 @@ fi
 # ── Port conflict detection ──────────────────────────────────────────────────
 step "Checking ports"
 
-check_port() {
+port_in_use() {
   local port="$1"
-  local name="$2"
   if command -v lsof &>/dev/null; then
-    if lsof -iTCP:"${port}" -sTCP:LISTEN -P -n &>/dev/null 2>&1; then
-      fatal "Port ${port} (${name}) is in use. Set TALOME_${name}_PORT to change it."
-    fi
+    lsof -iTCP:"${port}" -sTCP:LISTEN -P -n &>/dev/null
   elif command -v ss &>/dev/null; then
-    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
-      fatal "Port ${port} (${name}) is in use. Set TALOME_${name}_PORT to change it."
-    fi
+    ss -tlnp 2>/dev/null | grep -q ":${port} "
+  elif command -v netstat &>/dev/null; then
+    netstat -tln 2>/dev/null | grep -q ":${port} "
+  else
+    # Last resort: try to open the port via Bash's /dev/tcp. If we connect,
+    # something is already listening. (timeout cap so a hanging connect
+    # doesn't stall the installer.)
+    timeout 1 bash -c "</dev/tcp/127.0.0.1/${port}" 2>/dev/null
   fi
 }
 
-check_port "${API_PORT}" "API"
-check_port "${DASHBOARD_PORT}" "DASHBOARD"
-check_port "${TERMINAL_PORT}" "TERMINAL"
-success "Port ${API_PORT} ${DIM}(API)${RESET} available"
-success "Port ${DASHBOARD_PORT} ${DIM}(Dashboard)${RESET} available"
-success "Port ${TERMINAL_PORT} ${DIM}(Terminal)${RESET} available"
+CONFLICTS=()
+for spec in "API:${API_PORT}" "DASHBOARD:${DASHBOARD_PORT}" "TERMINAL:${TERMINAL_PORT}"; do
+  name="${spec%%:*}"
+  port="${spec##*:}"
+  if port_in_use "${port}"; then
+    CONFLICTS+=("Port ${port} (${name})")
+  else
+    success "Port ${port} ${DIM}(${name})${RESET} available"
+  fi
+done
+if [ ${#CONFLICTS[@]} -gt 0 ]; then
+  echo ""
+  for c in "${CONFLICTS[@]}"; do
+    warn "${c} is in use"
+  done
+  fatal "Port conflicts found. Stop the conflicting services or override with TALOME_API_PORT / TALOME_DASHBOARD_PORT (terminal port 4001 is fixed)."
+fi
+
+# ── sudo availability precheck (Linux only) ──────────────────────────────────
+# We call sudo later for: installing Docker (on Linux via get.docker.com),
+# creating /etc/systemd/system/talome.service, and starting Docker's daemon.
+# Fail now with a clear message instead of mid-install after the user has
+# waited for Node.js and pnpm to download.
+if [ "${OS}" = "Linux" ] && command -v systemctl &>/dev/null; then
+  if ! command -v sudo &>/dev/null; then
+    fatal "sudo not available. This installer requires sudo for Docker setup and systemd service creation. Install sudo, or run the manual install from the docs."
+  fi
+  if ! sudo -n true 2>/dev/null; then
+    info "The installer needs sudo for Docker and systemd setup."
+    info "You'll be prompted for your password before anything that requires it."
+    echo ""
+  fi
+fi
 
 # ── Docker check ──────────────────────────────────────────────────────────────
 step "Checking Docker"
@@ -341,8 +389,13 @@ if ! check_node_version; then
     fi
   elif [ "${OS}" = "Linux" ]; then
     info "Installing Node.js ${MIN_NODE}..."
-    NODE_ARCH="x64"
-    [ "${ARCH}" = "aarch64" ] || [ "${ARCH}" = "arm64" ] && NODE_ARCH="arm64"
+    # Map uname -m → Node.js build tag. Unknown arches stop here loud.
+    case "${ARCH}" in
+      x86_64)        NODE_ARCH="x64" ;;
+      aarch64|arm64) NODE_ARCH="arm64" ;;
+      armv7l)        NODE_ARCH="armv7l" ;;
+      *) fatal "Unsupported architecture '${ARCH}'. Install Node.js ${MIN_NODE}+ manually and re-run." ;;
+    esac
     NODE_URL="https://nodejs.org/dist/v22.22.2/node-v22.22.2-linux-${NODE_ARCH}.tar.xz"
     NODE_INSTALL="${TALOME_DIR}/node"
     mkdir -p "${NODE_INSTALL}"
@@ -469,6 +522,14 @@ EOF
   fi
   info "Starting Talome..."
   sudo systemctl start talome
+  # Fail fast on broken unit — don't make the user wait 120s on the health
+  # endpoint below only to learn the service never started.
+  sleep 1
+  if ! sudo systemctl is-active --quiet talome 2>/dev/null; then
+    warn "systemd service 'talome' is not active after start."
+    warn "Check: sudo journalctl -u talome --no-pager -n 50"
+    fatal "Service failed to start — see journalctl output above."
+  fi
 
 elif [ "${OS}" = "Darwin" ]; then
   # macOS launchd
@@ -517,7 +578,8 @@ EOF
   launchctl bootstrap gui/$(id -u) "${PLIST_FILE}"
 
 else
-  warn "Auto-start not configured. Start manually: cd ${INSTALL_DIR} && node scripts/supervisor.js"
+  warn "Auto-start not configured for this OS. Start manually:"
+  warn "  cd ${INSTALL_DIR} && ./apps/core/node_modules/.bin/tsx scripts/supervisor.ts"
 fi
 
 # ── Wait for health ───────────────────────────────────────────────────────────
