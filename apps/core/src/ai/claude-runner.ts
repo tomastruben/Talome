@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readdir, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import {
@@ -13,6 +13,33 @@ import {
 export const PROJECT_ROOT = resolve(process.cwd(), "../..");
 
 const SCREENSHOTS_DIR = join(homedir(), ".talome", "evolution-screenshots");
+
+/**
+ * Screenshot retention. Bug-hunt flows drop user-attached screenshots here
+ * as visual context for Claude Code. They can contain sensitive content
+ * (forms, API keys on screen). Keep only the last 14 days so old context
+ * doesn't linger on disk.
+ */
+const SCREENSHOT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+
+async function sweepOldScreenshots() {
+  try {
+    const entries = await readdir(SCREENSHOTS_DIR);
+    const cutoff = Date.now() - SCREENSHOT_RETENTION_MS;
+    for (const name of entries) {
+      try {
+        const full = join(SCREENSHOTS_DIR, name);
+        const s = await stat(full);
+        if (s.isFile() && s.mtimeMs < cutoff) await unlink(full);
+      } catch { /* best-effort per file */ }
+    }
+  } catch { /* dir missing — nothing to do */ }
+}
+
+// Sweep once at module load, then daily. `.unref()` so this timer doesn't
+// keep the event loop alive on graceful shutdown.
+sweepOldScreenshots();
+setInterval(sweepOldScreenshots, 24 * 60 * 60 * 1000).unref?.();
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

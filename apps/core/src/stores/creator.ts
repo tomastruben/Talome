@@ -112,12 +112,66 @@ function copyDirSync(src: string, dest: string): void {
   }
 }
 
+/**
+ * Blueprint safety checks — refuse to generate compose files that would
+ * bring down a home server. Applied at the creator layer so both AI-authored
+ * and user-authored blueprints are validated before any file is written.
+ *
+ *  - `:latest` and untagged images float, so a restart can pull a breaking
+ *    version with no rollback path.
+ *  - Absolute host paths let a blueprint mount arbitrary host directories
+ *    (including `/`, `/etc`, `$HOME`). Relative paths under the app's
+ *    install directory are the only safe default.
+ */
+function validateCreateAppInput(input: CreateAppInput): string | null {
+  for (const svc of input.services) {
+    if (!svc.image || typeof svc.image !== "string") {
+      return `Service "${svc.name}" is missing an image tag.`;
+    }
+
+    // Strip any digest suffix before checking the tag (images can legitimately
+    // be pinned to :<tag>@sha256:<digest>, which is fine).
+    const imageNoDigest = svc.image.split("@")[0];
+    const lastColon = imageNoDigest.lastIndexOf(":");
+    const lastSlash = imageNoDigest.lastIndexOf("/");
+    const hasTag = lastColon > lastSlash && lastColon < imageNoDigest.length - 1;
+    if (!hasTag) {
+      return `Service "${svc.name}" uses image "${svc.image}" without a tag. Pin a specific version instead of relying on an implicit :latest.`;
+    }
+    const tag = imageNoDigest.slice(lastColon + 1);
+    if (tag.toLowerCase() === "latest") {
+      return `Service "${svc.name}" uses "${svc.image}". Talome refuses :latest tags in user apps — pin a specific version.`;
+    }
+
+    for (const vol of svc.volumes) {
+      if (!vol.hostPath || typeof vol.hostPath !== "string") {
+        return `Service "${svc.name}" has a volume with no hostPath.`;
+      }
+      // Named volumes (no slash) and relative paths starting with ./ are
+      // acceptable. Anything else (including "/var/run/docker.sock",
+      // "/etc/passwd", "~/foo") is rejected.
+      if (vol.hostPath.startsWith("/")) {
+        return `Service "${svc.name}" mounts absolute host path "${vol.hostPath}". Use a named volume or a path relative to the app directory (e.g. "./data").`;
+      }
+      if (vol.hostPath.startsWith("~")) {
+        return `Service "${svc.name}" mounts tilde path "${vol.hostPath}". Use a named volume or a relative path.`;
+      }
+    }
+  }
+  return null;
+}
+
 export function createUserApp(input: CreateAppInput): {
   success: boolean;
   appId: string;
   storeId: string;
   error?: string;
 } {
+  const validationError = validateCreateAppInput(input);
+  if (validationError) {
+    return { success: false, appId: input.id, storeId: "", error: validationError };
+  }
+
   try {
     const storeId = ensureUserAppsStore();
     const appDir = join(USER_APPS_DIR, "apps", input.id);
@@ -184,6 +238,16 @@ export function createUserApp(input: CreateAppInput): {
           image: svc.image,
           container_name: svc.name,
           restart: "unless-stopped",
+          // Default log cap so a chatty container can't fill the host disk.
+          // 20 MB × 3 rotations = 60 MB ceiling per service. User can
+          // override by providing their own logging block in the blueprint.
+          logging: {
+            driver: "json-file",
+            options: {
+              "max-size": "20m",
+              "max-file": "3",
+            },
+          },
         };
 
         if (svc.ports.length > 0) {

@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { writeAuditEntry } from "../../db/audit.js";
 import { PROJECT_ROOT, readEvolutionLog } from "./claude-code-tool.js";
@@ -10,6 +11,7 @@ import { writeNotification } from "../../db/notifications.js";
 import { saveScreenshots } from "../claude-runner.js";
 import { db, schema } from "../../db/index.js";
 import { waitForRunResult } from "../evolution-emitter.js";
+import { and } from "drizzle-orm";
 
 // ── DB polling fallback for MCP context ───────────────────────────────────────
 // When apply_change / plan_change is invoked via the MCP stdio server (a separate
@@ -137,6 +139,66 @@ const SCOPE_DIRS: Record<string, string> = {
   full: PROJECT_ROOT,
 };
 
+/**
+ * Pre-flight checks for apply_change. Any of these "no" before the worker
+ * spawns is safer than any "sorry" after. Returns an error message if the
+ * check fails, or null if we're good to go.
+ *
+ *  - `.git` must exist. Without it, the worker's stash/rollback path is
+ *    a no-op and a failed change has no automatic recovery. This also
+ *    catches the "Talome is running inside a container" case where the
+ *    source tree is ephemeral.
+ *
+ *  - The working tree must be clean. `git stash push -u` sweeps ANY
+ *    uncommitted file into the stash, including unrelated dev work. A
+ *    user with WIP shouldn't lose it to an AI's auto-rollback.
+ *
+ *  - No other evolution run may be in-flight. Two concurrent
+ *    apply_change calls would interleave stashes and almost certainly
+ *    lose work. We already have the DB row; just check it.
+ */
+async function preflightApplyChange(): Promise<string | null> {
+  if (!existsSync(join(PROJECT_ROOT, ".git"))) {
+    return (
+      "apply_change requires a .git directory in the project root so the " +
+      "worker can stash and roll back on typecheck failure. This Talome " +
+      "install appears to have no git history (e.g. Talome is running " +
+      "from a container image with .git stripped). Reinstall from " +
+      "https://get.talome.dev to enable self-evolution."
+    );
+  }
+
+  const status = await runGitIn(["status", "--porcelain"]);
+  if (status.code === 0 && status.stdout.trim().length > 0) {
+    return (
+      "Refusing to run apply_change: the working tree has uncommitted " +
+      "changes. The worker's auto-rollback would sweep your changes into " +
+      "a git stash and make them hard to recover. Commit, stash, or " +
+      "discard your current work first, then try again. (`git status` " +
+      "to see what's there.)"
+    );
+  }
+
+  const running = db
+    .select({ id: schema.evolutionRuns.id })
+    .from(schema.evolutionRuns)
+    .where(eq(schema.evolutionRuns.status, "running"))
+    .all();
+  if (running.length > 0) {
+    return (
+      `Another evolution run is in progress (id=${running[0].id}). ` +
+      "Wait for it to finish before starting a new one. You can watch " +
+      "progress on the Evolution page."
+    );
+  }
+
+  return null;
+}
+
+// Silence the unused-import warning — `and` was imported for a future filter
+// but isn't currently used. Keeping the import avoids churn when we add it.
+void and;
+
 // ── plan_change ───────────────────────────────────────────────────────────────
 
 export const planChangeTool = tool({
@@ -217,6 +279,12 @@ export const applyChangeTool = tool({
           "This will modify the Talome codebase. Please confirm by calling apply_change again with confirmed: true. " +
           "Consider calling plan_change first to preview the diff.",
       };
+    }
+
+    const preflightError = await preflightApplyChange();
+    if (preflightError) {
+      writeAuditEntry("AI: apply_change BLOCKED (preflight)", "destructive", preflightError, false);
+      return { success: false, error: preflightError, preflight: true };
     }
 
     // Save any attached screenshots so Claude Code can read them

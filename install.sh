@@ -76,8 +76,31 @@ if [ "${1:-}" = "update" ]; then
     fatal "Talome not found at ${INSTALL_DIR}. Run the installer first."
   fi
   cd "${INSTALL_DIR}"
+
+  # Take a DB snapshot BEFORE pulling any new code. If the migration
+  # in the new release corrupts state, the user can copy this file back
+  # over ~/.talome/data/talome.db to roll back.
+  DB_PATH="${TALOME_DIR}/data/talome.db"
+  if [ -f "${DB_PATH}" ]; then
+    BACKUP_DIR="${TALOME_DIR}/backups"
+    mkdir -p "${BACKUP_DIR}"
+    STAMP=$(date +"%Y%m%d-%H%M%S")
+    PRE_UPDATE="${BACKUP_DIR}/talome-db-pre-update-${STAMP}.db"
+    info "Snapshotting database to $(basename "${PRE_UPDATE}")..."
+    # Prefer sqlite3 (atomic VACUUM INTO) if available; fall back to file copy.
+    if command -v sqlite3 &>/dev/null; then
+      sqlite3 "${DB_PATH}" "VACUUM INTO '${PRE_UPDATE}'" 2>/dev/null \
+        || cp "${DB_PATH}" "${PRE_UPDATE}"
+    else
+      cp "${DB_PATH}" "${PRE_UPDATE}"
+    fi
+    success "Pre-update snapshot saved"
+  fi
+
   info "Downloading latest version..."
-  curl -fsSL "https://github.com/tomastruben/Talome/archive/refs/heads/main.tar.gz" | tar xz -C "${INSTALL_DIR}" --strip-components=1
+  # --exclude='*/.env' so the user's TALOME_SECRET is never clobbered by
+  # a stray upstream .env if one ever slipped in.
+  curl -fsSL "https://github.com/tomastruben/Talome/archive/refs/heads/main.tar.gz" | tar xz -C "${INSTALL_DIR}" --strip-components=1 --exclude='*/.env'
   info "Installing dependencies..."
   pnpm install --frozen-lockfile 2>/dev/null || pnpm install
   info "Building..."
@@ -94,6 +117,9 @@ if [ "${1:-}" = "update" ]; then
   success "Talome updated to latest!"
   echo ""
   echo -e "  ${DIM}Dashboard${RESET}  ${BOLD}http://localhost:${DASHBOARD_PORT}${RESET}"
+  if [ -n "${PRE_UPDATE:-}" ]; then
+    echo -e "  ${DIM}Rollback${RESET}   ${DIM}stop service, copy ${PRE_UPDATE} over ${DB_PATH}, restart${RESET}"
+  fi
   echo ""
   exit 0
 fi
@@ -357,14 +383,16 @@ step "Installing Talome"
 
 mkdir -p "${TALOME_DIR}"
 
-if [ -d "${INSTALL_DIR}/package.json" ]; then
+if [ -f "${INSTALL_DIR}/package.json" ]; then
   info "Existing installation found"
   cd "${INSTALL_DIR}"
 else
   info "Downloading Talome..."
   TARBALL_URL="https://github.com/tomastruben/Talome/archive/refs/heads/main.tar.gz"
   mkdir -p "${INSTALL_DIR}"
-  curl -fsSL "${TARBALL_URL}" | tar xz -C "${INSTALL_DIR}" --strip-components=1
+  # --exclude='*/.env' protects any existing user secret from a fresh tarball
+  # that might ship an accidental .env (shouldn't happen, but belt + braces).
+  curl -fsSL "${TARBALL_URL}" | tar xz -C "${INSTALL_DIR}" --strip-components=1 --exclude='*/.env'
   cd "${INSTALL_DIR}"
   # Init git for self-evolution support
   git init -q 2>/dev/null && git add -A 2>/dev/null && git commit -q -m "Initial install" 2>/dev/null || true
@@ -424,6 +452,11 @@ ExecStart=${INSTALL_DIR}/apps/core/node_modules/.bin/tsx ${INSTALL_DIR}/scripts/
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
+# PATH so the service can find a bundled ~/.talome/node if the installer
+# had to download Node.js (system node was absent or too old). Without
+# this, tsx's shebang can't locate node and the service fails to start
+# on reboot even though it worked in the interactive install.
+Environment=PATH=${TALOME_DIR}/node/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=multi-user.target

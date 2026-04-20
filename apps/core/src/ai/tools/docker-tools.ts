@@ -20,6 +20,34 @@ import {
   execInContainer,
 } from "../../docker/client.js";
 import { writeAuditEntry } from "../../db/audit.js";
+import { db, schema } from "../../db/index.js";
+
+/**
+ * Build the set of container IDs Talome installed. Used by `exec_container`
+ * to refuse execs into containers Talome doesn't own — the Talome daemon
+ * itself, or user-managed containers installed outside of Talome. Returns
+ * both full and short (12-char) IDs so either form matches.
+ */
+function getTalomeManagedContainerIds(): Set<string> {
+  try {
+    const rows = db.select({ containerIds: schema.installedApps.containerIds }).from(schema.installedApps).all();
+    const ids = new Set<string>();
+    for (const row of rows) {
+      try {
+        const arr = JSON.parse(row.containerIds || "[]") as string[];
+        for (const id of arr) {
+          if (typeof id === "string" && id.length > 0) {
+            ids.add(id);
+            if (id.length >= 12) ids.add(id.slice(0, 12));
+          }
+        }
+      } catch { /* malformed row — skip */ }
+    }
+    return ids;
+  } catch {
+    return new Set();
+  }
+}
 
 export const listContainersTool = tool({
   description: `List all Docker containers with their current status, ports, and images.
@@ -366,6 +394,47 @@ After calling: Show the command output. If exit code is non-zero, explain what l
     if (mode === "locked") {
       writeAuditEntry("Docker exec BLOCKED (locked)", "modify", `${containerId}: ${command.join(" ")}`, false);
       return { error: 'Container exec is disabled. Security mode is set to "locked". An admin can change this in Settings > Security.' };
+    }
+
+    // Container scope — only Talome-managed containers are targets. This
+    // prevents an AI-authored exec from reaching into the Talome daemon
+    // itself, or into user containers that weren't installed through
+    // Talome. In permissive mode an admin can override by setting
+    // TALOME_ALLOW_UNMANAGED_EXEC=true, but the default is strict.
+    const managedIds = getTalomeManagedContainerIds();
+    const allowUnmanaged =
+      mode === "permissive" && process.env.TALOME_ALLOW_UNMANAGED_EXEC === "true";
+    if (!allowUnmanaged) {
+      // Accept the full ID, a 12+ char prefix, or a container name that
+      // inspectContainer could resolve. Since we only have IDs in the DB,
+      // we match by prefix and fall back to resolving a name via inspect.
+      let matched = false;
+      for (const id of managedIds) {
+        if (id === containerId || id.startsWith(containerId) || containerId.startsWith(id)) {
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        try {
+          const info = await inspectContainer(containerId) as { Id?: string } | null;
+          const fullId = info?.Id;
+          if (fullId) {
+            for (const id of managedIds) {
+              if (fullId === id || fullId.startsWith(id) || id.startsWith(fullId)) {
+                matched = true;
+                break;
+              }
+            }
+          }
+        } catch { /* container doesn't exist or daemon unreachable — fall through */ }
+      }
+      if (!matched) {
+        writeAuditEntry("Docker exec BLOCKED (unmanaged container)", "modify", `${containerId}: ${command.join(" ")}`, false);
+        return {
+          error: `Refusing to exec into "${containerId}" — Talome didn't install this container and won't exec into arbitrary containers on the host. Install it through Talome, or set TALOME_ALLOW_UNMANAGED_EXEC=true in permissive mode to override.`,
+        };
+      }
     }
 
     // Cautious mode: allowlist check on the base command

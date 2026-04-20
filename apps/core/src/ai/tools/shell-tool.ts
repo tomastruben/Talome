@@ -21,18 +21,23 @@ const BLOCKED_PATTERNS = [
   /\biptables\s+-F\b/,
 ];
 
-// ── Cautious mode: command allowlist (safe-by-default)
+// ── Cautious mode: command allowlist (safe-by-default).
+// Deliberately excludes `docker` — Docker operations must go through
+// execContainerTool / the docker-tools API, which enforces its own
+// container allowlist and argument checks. A `docker exec` through
+// run_shell would bypass all of that.
+// Also excludes `curl` and `mv` in cautious mode: curl can be piped into
+// a shell, mv can rename across mount points in ways that become
+// destructive.
 export const SHELL_ALLOWLIST = new Set([
   // Read-only system info
   "ls", "cat", "head", "tail", "df", "du", "free", "uptime", "whoami",
   "date", "uname", "pwd", "wc", "sort", "grep", "awk", "sed", "stat",
   "file", "which", "top", "ps", "env", "echo", "test", "id", "hostname",
-  // File operations (non-destructive)
-  "mkdir", "touch", "cp", "mv", "tar", "gzip", "gunzip", "zip", "unzip",
+  // File operations (additive, non-destructive)
+  "mkdir", "touch", "cp", "tar", "gzip", "gunzip", "zip", "unzip",
   // Network diagnostics
-  "ping", "curl", "dig", "nslookup", "ss", "ifconfig", "ip",
-  // Docker (read + managed operations)
-  "docker",
+  "ping", "dig", "nslookup", "ss", "ifconfig", "ip",
   // Search
   "find", "locate", "rg",
 ]);

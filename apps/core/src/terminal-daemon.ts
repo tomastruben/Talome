@@ -42,6 +42,48 @@ const DAEMON_HOST = process.env.TERMINAL_DAEMON_HOST ?? "127.0.0.1";
 const MIN_PASSWORD_LENGTH = 8;
 const BCRYPT_COST = 12;
 
+/**
+ * Internal daemon key — derived from TALOME_SECRET. The main Talome server
+ * (same host, same .env) injects this as `X-Daemon-Auth` on its proxy
+ * calls. A random local process that doesn't have TALOME_SECRET cannot
+ * forge it, so the daemon's HTTP routes become inaccessible to any code
+ * running as another user / inside a container / in the user's browser.
+ */
+const DAEMON_INTERNAL_KEY = (() => {
+  const secret = process.env.TALOME_SECRET;
+  if (!secret) return null;
+  return createHash("sha256").update(secret + ":daemon-internal").digest("hex");
+})();
+
+/**
+ * Upload limits. 10 MB is generous for pasted screenshots, small enough
+ * that a single bad request can't fill the disk.
+ */
+const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+const UPLOAD_ALLOWED_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
+const UPLOAD_ALLOWED_MIME = /^image\/(png|jpeg|webp|gif)$/;
+
+/**
+ * Scroll buffer cap — bytes, not chunks. A single `cat` can produce one
+ * massive chunk, and the buffer is serialized into SQLite at every
+ * `persistSession`. 256 KB keeps per-session rows bounded.
+ */
+const SCROLL_BUFFER_MAX_BYTES = 256 * 1024;
+
+/**
+ * PTY environment scrubbing. The daemon inherits the main server's env,
+ * which includes secrets. Strip anything an interactive shell user
+ * shouldn't see in `env | grep`. The tmux integration inside the shell
+ * can still re-read them from the source-of-truth .env if needed.
+ */
+const SCRUBBED_ENV_KEYS = [
+  "TALOME_SECRET",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "DATABASE_URL",
+];
+
 // ── Config ────────────────────────────────────────────────────────────────────
 
 export { DAEMON_PORT };
@@ -106,7 +148,6 @@ function verifyEphemeralToken(token: string): boolean {
 
 // ── PTY session registry ──────────────────────────────────────────────────────
 
-const SCROLL_BUFFER_SIZE = 500;
 const SESSION_IDLE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 interface PtySession {
@@ -285,12 +326,21 @@ function getOrCreateSession(id: string, name: string): PtySession {
   // Check for a session recoverable from the previous daemon boot
   const recovered = recoveredSessions.get(id);
 
+  // Build a scrubbed env so `env | grep` in the shell can't reveal secrets.
+  // The server needs these values; an interactive user typing `env` does not.
+  const scrubbedEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (SCRUBBED_ENV_KEYS.includes(k)) continue;
+    if (typeof v === "string") scrubbedEnv[k] = v;
+  }
+  scrubbedEnv.TERM = "xterm-256color";
+
   const proc = pty.spawn(process.env.SHELL ?? "/bin/bash", [], {
     name: "xterm-256color",
     cols: recovered?.cols ?? 80,
     rows: recovered?.rows ?? 24,
     cwd: process.env.HOME ?? "/",
-    env: { ...(process.env as Record<string, string>), TERM: "xterm-256color" },
+    env: scrubbedEnv,
   });
 
   const pendingName = pendingDisplayNames.get(id);
@@ -331,8 +381,20 @@ function getOrCreateSession(id: string, name: string): PtySession {
 
   proc.onData((data) => {
     session.buffer.push(data);
-    if (session.buffer.length > SCROLL_BUFFER_SIZE) {
-      session.buffer.shift();
+    // Bound the buffer by total bytes rather than chunk count. A single
+    // `cat largefile` produces one huge chunk; a count-based cap wouldn't
+    // protect the daemon (or the SQLite snapshot) from that. Drop oldest
+    // chunks until total bytes fit under the cap.
+    let total = 0;
+    for (const s of session.buffer) total += s.length;
+    while (total > SCROLL_BUFFER_MAX_BYTES && session.buffer.length > 1) {
+      const dropped = session.buffer.shift() ?? "";
+      total -= dropped.length;
+    }
+    // If a single chunk is larger than the cap on its own, keep just its
+    // tail so the terminal gets useful context rather than an empty buffer.
+    if (session.buffer.length === 1 && session.buffer[0].length > SCROLL_BUFFER_MAX_BYTES) {
+      session.buffer[0] = session.buffer[0].slice(-SCROLL_BUFFER_MAX_BYTES);
     }
     session.lastActivityAt = Date.now();
 
@@ -694,6 +756,59 @@ app.use("*", cors({
   credentials: true,
 }));
 
+/**
+ * Auth gate for the daemon's HTTP surface.
+ *
+ * Unauthenticated (public) paths:
+ *   - `/`                → the backup terminal HTML page
+ *   - `/backup-auth*`    → the way to obtain a backup token
+ *   - `/health`          → liveness probe
+ *   - `/ws`              → WebSocket endpoint (auths via first message)
+ *
+ * Everything else requires one of:
+ *   - `X-Daemon-Auth: <DAEMON_INTERNAL_KEY>`   (main server → daemon proxy)
+ *   - `Authorization: Bearer backup_<token>`   (backup UI after password auth)
+ *   - `Authorization: Bearer <mcp-token>`      (external MCP clients)
+ *
+ * In dev with no TALOME_SECRET set, DAEMON_INTERNAL_KEY is null and we
+ * fall back to loopback-origin trust; in production a missing secret
+ * means every protected route 401s, which fails fast and loudly.
+ */
+const PUBLIC_DAEMON_PATHS = new Set(["/", "/health", "/ws", "/backup-auth", "/backup-auth/setup"]);
+
+function constantTimeEq(a: string | undefined, b: string | null): boolean {
+  if (!a || !b) return false;
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
+app.use("*", async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (PUBLIC_DAEMON_PATHS.has(path)) return next();
+
+  const authHeader = c.req.header("authorization") || "";
+
+  // Backup token (password-authed via /backup-auth)
+  if (authHeader.startsWith("Bearer backup_")) {
+    const token = authHeader.slice(7);
+    if (verifyBackupToken(token)) return next();
+  }
+
+  // MCP Bearer token (external AI clients / Claude Code)
+  if (authHeader.startsWith("Bearer ") && verifyBearerToken(authHeader)) {
+    return next();
+  }
+
+  // Internal daemon-auth header (only the main Talome server can forge this)
+  if (constantTimeEq(c.req.header("x-daemon-auth"), DAEMON_INTERNAL_KEY)) {
+    return next();
+  }
+
+  return c.json({ error: "Unauthorized" }, 401);
+});
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 // Backup terminal UI — self-contained HTML page served directly by the daemon
@@ -886,14 +1001,57 @@ app.get("/health", (c) =>
 const UPLOAD_DIR = join(homedir(), ".talome", "terminal-uploads");
 mkdirSync(UPLOAD_DIR, { recursive: true });
 
+/**
+ * Sweep uploads older than 24 hours. Runs hourly. The uploads directory
+ * is a drop zone for Claude Code paste-in-images; it doesn't need to
+ * persist past a single session. Keeps the disk from slowly filling on
+ * a long-running install.
+ */
+function sweepOldUploads() {
+  try {
+    const now = Date.now();
+    const cutoff = now - 24 * 60 * 60 * 1000;
+    const fs = require("node:fs") as typeof import("node:fs");
+    for (const name of fs.readdirSync(UPLOAD_DIR)) {
+      try {
+        const full = join(UPLOAD_DIR, name);
+        const st = fs.statSync(full);
+        if (st.isFile() && st.mtimeMs < cutoff) fs.unlinkSync(full);
+      } catch { /* best-effort per file */ }
+    }
+  } catch { /* directory missing — nothing to do */ }
+}
+setInterval(sweepOldUploads, 60 * 60 * 1000).unref?.();
+// Run once on boot to catch anything left from a previous daemon life.
+sweepOldUploads();
+
 app.post("/upload", async (c) => {
+  // Enforce a size cap before parsing the body — parseBody buffers everything.
+  const declared = parseInt(c.req.header("content-length") || "0", 10);
+  if (Number.isFinite(declared) && declared > UPLOAD_MAX_BYTES) {
+    return c.json({ error: `Upload exceeds ${UPLOAD_MAX_BYTES} bytes` }, 413);
+  }
+
   const body = await c.req.parseBody();
   const file = body.file;
   if (!(file instanceof File)) {
     return c.json({ error: "No file provided" }, 400);
   }
 
-  const ext = file.name.split(".").pop() || "png";
+  if (file.size > UPLOAD_MAX_BYTES) {
+    return c.json({ error: `Upload exceeds ${UPLOAD_MAX_BYTES} bytes` }, 413);
+  }
+
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  if (!UPLOAD_ALLOWED_EXT.has(ext)) {
+    return c.json({ error: "File extension not allowed" }, 415);
+  }
+
+  const declaredType = String(file.type || "").toLowerCase();
+  if (declaredType && !UPLOAD_ALLOWED_MIME.test(declaredType)) {
+    return c.json({ error: "Content type not allowed" }, 415);
+  }
+
   const filename = `${Date.now()}-${randomUUID().slice(0, 8)}.${ext}`;
   const filePath = join(UPLOAD_DIR, filename);
 

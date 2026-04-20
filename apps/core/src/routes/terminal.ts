@@ -14,11 +14,25 @@
 
 import type { Hono } from "hono";
 import { inArray } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { db, schema } from "../db/index.js";
 import { DAEMON_PORT } from "../terminal-constants.js";
 import { ensureDaemonRunning } from "../terminal-spawn.js";
 
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
+
+/**
+ * Shared secret with the terminal daemon. The daemon now requires this
+ * header on its protected HTTP routes so a random local process can't
+ * mint PTY tokens or list sessions just because it can reach
+ * 127.0.0.1:4001. Derived deterministically from TALOME_SECRET so both
+ * processes agree without any coordination — they share the .env.
+ */
+const DAEMON_INTERNAL_KEY = (() => {
+  const secret = process.env.TALOME_SECRET;
+  if (!secret) return null;
+  return createHash("sha256").update(secret + ":daemon-internal").digest("hex");
+})();
 
 /**
  * Enrich session list with display names from the evolution_runs DB table.
@@ -79,6 +93,7 @@ export function setupTerminal(
           for (const [k, v] of Object.entries(c.req.raw.headers)) {
             if (k !== "host") h.set(k, v as string);
           }
+          if (DAEMON_INTERNAL_KEY) h.set("x-daemon-auth", DAEMON_INTERNAL_KEY);
           return h;
         })(),
         body: c.req.method !== "GET" && c.req.method !== "HEAD" ? c.req.raw.body : undefined,
