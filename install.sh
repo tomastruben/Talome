@@ -475,6 +475,12 @@ if [ ! -f "${ENV_FILE}" ]; then
   cat > "${ENV_FILE}" << EOF
 TALOME_SECRET=${TALOME_SECRET}
 DATABASE_PATH=${TALOME_DIR}/data/talome.db
+# Terminal daemon bind host. Loopback by default so a misconfigured LAN
+# exposure can't reach the PTY daemon. Set to 0.0.0.0 if you access the
+# dashboard over LAN/Tailscale and need the built-in terminal to work
+# (the daemon's WS endpoint still requires a single-use ephemeral token
+# minted by the main server, so auth is preserved).
+TERMINAL_DAEMON_HOST=127.0.0.1
 EOF
   chmod 600 "${ENV_FILE}"
   mkdir -p "${TALOME_DIR}/data"
