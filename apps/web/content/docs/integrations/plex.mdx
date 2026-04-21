@@ -1,0 +1,284 @@
+---
+title: Plex
+description: Track your Plex media server status, manage on-deck items, and control watch history through conversation.
+---
+
+Plex is one of the most popular media servers for home use. Talome's integration gives the AI 5 tools to monitor your Plex server, view what's currently on deck, browse watch history, and manage watched states. Unlike Jellyfin (which Talome can fully configure), the Plex integration focuses on read operations and watch-state management -- since Plex handles its own library management internally.
+
+If you run Plex alongside the arr stack (Sonarr, Radarr, Prowlarr), the AI can coordinate across all of them: checking what's on your Plex on-deck, finding missing content in Sonarr, and triggering downloads -- all in one conversation.
+
+## Setup
+
+### 1. Install Plex (if not already running)
+
+```
+You: Install Plex
+```
+
+Plex can be installed through the Talome app store. After installation, you need to claim the server through Plex's web UI at `http://your-server:32400/web` and sign in with your Plex account.
+
+### 2. Get your Plex token
+
+Plex uses authentication tokens rather than API keys. To get your token:
+
+1. Sign in to Plex Web at `app.plex.tv`
+2. Navigate to any library item
+3. Click the three-dot menu and select "Get Info"
+4. Click "View XML" -- your token is the `X-Plex-Token` parameter in the URL
+
+Or ask the AI:
+
+```
+You: How do I find my Plex token?
+
+AI: Your Plex token can be found in several ways:
+
+    1. In the Plex Web app, go to Settings → Advanced → XML data
+       The token is in the URL as X-Plex-Token=...
+
+    2. From the Plex container's Preferences.xml:
+       [read_app_config_file: plex, "Preferences.xml"]
+       Token found: PlexOnlineToken="..."
+```
+
+### 3. Configure settings
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `plex_url` | `http://localhost:32400` | Plex server URL |
+| `plex_token` | `abc123xyz...` | Your Plex authentication token |
+
+Add these in **Settings > Integrations** or through conversation:
+
+```
+You: Set my Plex URL to http://localhost:32400 and token to abc123xyz
+
+AI: [set_setting: plex_url, "http://localhost:32400"]
+    [set_setting: plex_token, "abc123xyz"]
+    Plex is now configured. Let me verify the connection.
+
+    [plex_get_status]
+    Connected to "HomeServer" running Plex v1.41.0 on Linux.
+```
+
+## Auto-Configuration
+
+When `wire_apps` detects a running Plex container, it:
+
+- Identifies the Plex container by image name
+- Attempts to read the Plex token from `Preferences.xml` in the container's config directory
+- Saves the URL and token to Talome settings
+- Verifies connectivity by calling the identity endpoint
+
+Note that Plex token extraction requires the Plex server to have been claimed first (initial setup through the web UI must be complete).
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `plex_get_status` | Server information including name, version, platform, and reachability. Returns the machine identifier, which is useful for identifying Plex in multi-server setups. |
+| `plex_get_on_deck` | Items currently in the "On Deck" queue -- shows and movies you've started but haven't finished. Includes progress percentage and remaining time. |
+| `plex_get_recently_watched` | Watch history showing what was played, when, and by which user. Useful for seeing what your household has been watching. |
+| `plex_mark_watched` | Mark a specific item (movie, episode, or entire season) as watched. Useful for cleaning up your On Deck or syncing state when you've watched something outside Plex. |
+| `plex_mark_unwatched` | Mark an item as unwatched, restoring it to your On Deck or unwatched list. Useful when you want to rewatch something or accidentally marked it as watched. |
+
+## Conversation Examples
+
+### Checking server status
+
+```
+You: Is Plex running?
+
+AI: [plex_get_status]
+    Plex is running and reachable.
+    Server: HomeServer
+    Version: 1.41.0.8994
+    Platform: Linux
+    Machine ID: abc123def456
+```
+
+### Viewing what's on deck
+
+```
+You: What's on my Plex on deck?
+
+AI: [plex_get_on_deck]
+    Your On Deck (continue watching):
+
+    1. The Bear — S03E05 "Doors" — 22 minutes remaining
+    2. Shogun — S01E07 "A Stick of Time" — 38 minutes remaining
+    3. Interstellar (2014) — 1h 42m remaining (paused at 1:07:00)
+    4. Severance — S02E03 "Who Is Alive?" — Not started
+
+    4 items on deck. Want me to play something or manage these?
+```
+
+### Browsing watch history
+
+```
+You: What did we watch this week?
+
+AI: [plex_get_recently_watched]
+    This week's watch history:
+
+    Today:
+    - The Bear S03E04 (watched by Tomas)
+
+    Yesterday:
+    - Dune: Part Two (watched by Tomas, 2h 46m)
+    - Bluey S03E12 (watched by Kids profile)
+    - Bluey S03E13 (watched by Kids profile)
+
+    3 days ago:
+    - The Bear S03E03 (watched by Tomas)
+    - Oppenheimer (watched by Guest)
+
+    6 items watched across 3 profiles this week.
+```
+
+### Managing watched states
+
+```
+You: Mark all of Severance season 1 as watched
+
+AI: [plex_mark_watched: "Severance", season: 1]
+    Marked Severance Season 1 (10 episodes) as watched.
+    These episodes will no longer appear in your On Deck.
+```
+
+```
+You: I want to rewatch The Bear from the beginning, mark it as unwatched
+
+AI: [plex_mark_unwatched: "The Bear"]
+    Marked The Bear as unwatched (all seasons, all episodes).
+    The first episode will appear in your On Deck now.
+```
+
+### Cross-app conversation
+
+```
+You: What's on my Plex on deck, and are there any new episodes coming for those shows?
+
+AI: [plex_get_on_deck]
+    On Deck: The Bear S03E05, Shogun S01E07, Severance S02E03
+
+    [get_calendar: sonarr]
+    Upcoming episodes for your on-deck shows:
+
+    The Bear — S03E06 airs tomorrow
+    Shogun — S01E08 airs in 3 days
+    Severance — S02E04 airs next Wednesday
+
+    All three shows have new episodes coming soon. Sonarr is monitoring
+    all of them and will download automatically when available.
+```
+
+### Cleaning up after a binge
+
+```
+You: I finished watching The Last of Us, clean up my on deck
+
+AI: [plex_mark_watched: "The Last of Us", season: 2]
+    Marked The Last of Us Season 2 (8 episodes) as watched.
+
+    [plex_get_on_deck]
+    Updated On Deck (The Last of Us removed):
+    1. The Bear — S03E05
+    2. Shogun — S01E07
+    3. Severance — S02E03
+```
+
+## Advanced Usage
+
+### Multi-server awareness
+
+If you run multiple Plex servers (e.g., one for media, one for photos), Talome connects to the server specified in `plex_url`. You can check which server is connected:
+
+```
+You: Which Plex server am I connected to?
+
+AI: [plex_get_status]
+    Connected to "HomeServer" (machine ID: abc123).
+    This is the server at http://localhost:32400.
+
+    If you have another Plex server, you can switch by updating
+    the plex_url setting.
+```
+
+### Watch history analysis
+
+The AI can analyze patterns in your watch history to help with recommendations or monitoring:
+
+```
+You: How much TV have I watched this month?
+
+AI: [plex_get_recently_watched]
+    This month's viewing:
+    - 34 TV episodes across 6 shows
+    - 8 movies
+    - Estimated total watch time: ~42 hours
+
+    Most watched show: The Bear (12 episodes)
+    Most watched day: Saturday (average 3.2 hours)
+```
+
+### Combining Plex with Overseerr
+
+When Overseerr is configured alongside Plex, the AI can handle the full request-to-watch flow:
+
+```
+You: My friend requested Oppenheimer on Overseerr. Is it in Plex yet?
+
+AI: [overseerr_list_requests]
+    Found request: Oppenheimer (2023) — Status: Available
+
+    [plex_get_recently_watched]
+    Oppenheimer hasn't been watched yet. It should be in your Movies library.
+    Your friend can stream it from Plex now.
+```
+
+## Troubleshooting
+
+### "Plex is not configured" error
+
+**Cause:** The `plex_url` or `plex_token` setting is missing.
+
+**Fix:** Add both values in Settings > Integrations. The token can be found in Plex's XML data (Settings > Troubleshooting > Enable XML data, then check the URL) or in the container's `Preferences.xml` file.
+
+### Token authentication fails
+
+**Cause:** The Plex token has expired or the server hasn't been claimed.
+
+**Fix:** Plex tokens don't typically expire, but they can become invalid if you change your Plex account password. Generate a new token by signing into Plex Web and extracting it from the XML endpoint. If the server was reinstalled, you need to reclaim it first.
+
+### On Deck is empty but you have unwatched content
+
+**Cause:** Plex's On Deck algorithm only shows items you've started watching or the next episode in a series you're following. Completely unwatched shows don't appear on On Deck.
+
+**Fix:** This is expected Plex behavior. To see unwatched content, check your library directly or ask: `"What shows do I have in Plex that I haven't started yet?"` (requires `app_api_call` for a library query).
+
+### Connection timeout errors
+
+**Cause:** Plex is unreachable at the configured URL, or the server is still starting up.
+
+**Fix:** Verify Plex is running: `"Is the Plex container running?"`. If it is running but unreachable, check if the port is correct and the container is on the expected network: `"Test connectivity to Plex"`.
+
+### Watched state doesn't sync to other Plex clients
+
+**Cause:** Talome marks items as watched through the Plex API, which updates the server-side state. All clients connected to the same server will see the updated state, but it may take a moment to propagate.
+
+**Fix:** This isn't a Talome issue. If clients still show old state, try refreshing the Plex app or restarting the Plex client. Server-side state is always correct.
+
+<Cards>
+  <Card title="Jellyfin" href="/docs/integrations/jellyfin">
+    Open-source alternative media server with deeper management tools.
+  </Card>
+  <Card title="Overseerr" href="/docs/integrations/overseerr">
+    Media request system that works with Plex.
+  </Card>
+  <Card title="Sonarr & Radarr" href="/docs/integrations/sonarr-radarr">
+    Media acquisition tools that feed your Plex library.
+  </Card>
+</Cards>

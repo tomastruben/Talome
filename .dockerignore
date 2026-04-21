@@ -1,0 +1,51 @@
+# Secrets — never bake these into an image
+.env
+.env.*
+!.env.example
+apps/*/.env
+apps/*/.env.*
+
+# Build output / caches — rebuilt inside the image
+**/node_modules
+**/.next
+**/.turbo
+**/.source
+**/dist
+**/.cache
+**/coverage
+**/*.tsbuildinfo
+
+# Local data + dev artifacts
+data/
+backups/
+**/talome.db
+**/talome.db-*
+**/*.sqlite
+**/*.sqlite-*
+
+# IDE / OS junk
+.vscode
+.idea
+.DS_Store
+
+# Git (still needed inside the image for certain build steps? NO —
+# Talome-in-container does not support self-evolution, so .git is dead weight.)
+.git
+.github
+
+# Tests and dev scripts don't belong in the production image
+**/__tests__
+**/*.test.ts
+**/*.spec.ts
+.claude
+
+# Local dev-only files that shouldn't leak
+dev.talome.server.plist
+hero-preview.gif
+evolution-screenshots/
+generated-apps/
+user-apps/
+
+# Logs
+logs/
+*.log

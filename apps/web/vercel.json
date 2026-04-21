@@ -1,0 +1,31 @@
+{
+  "framework": null,
+  "buildCommand": "pnpm build",
+  "outputDirectory": "out",
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "redirects": [
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "get.talome.dev" }],
+      "destination": "https://talome.dev/install.sh",
+      "permanent": false
+    }
+  ],
+  "headers": [
+    {
+      "source": "/install.sh",
+      "headers": [
+        { "key": "Content-Type", "value": "text/plain; charset=utf-8" },
+        { "key": "Cache-Control", "value": "public, max-age=300" }
+      ]
+    },
+    {
+      "source": "/install.ps1",
+      "headers": [
+        { "key": "Content-Type", "value": "text/plain; charset=utf-8" },
+        { "key": "Cache-Control", "value": "public, max-age=300" }
+      ]
+    }
+  ]
+}

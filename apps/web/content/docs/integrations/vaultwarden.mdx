@@ -1,0 +1,334 @@
+---
+title: Vaultwarden
+description: Manage your self-hosted password manager through conversation -- user invitations, signup control, and server monitoring.
+---
+
+Vaultwarden is a lightweight, self-hosted implementation of the Bitwarden password manager. It is fully compatible with all official Bitwarden clients (browser extensions, mobile apps, desktop apps, CLI) while using a fraction of the resources. Talome's integration gives the AI 4 tools focused on server administration: checking status, managing users, sending invitations, and controlling registration.
+
+This integration is intentionally focused on administration, not on vault contents. The AI never accesses, reads, or modifies stored passwords. It manages the server infrastructure around the password manager -- who can access it, whether new signups are allowed, and whether the server is healthy.
+
+## Setup
+
+### 1. Install Vaultwarden
+
+```
+You: Install Vaultwarden
+```
+
+The AI installs Vaultwarden from the app store. It runs on port 8222 by default (the Talome store config avoids the common 80/443 ports). After installation, you need to create an admin account through the web vault.
+
+### 2. Enable the admin panel
+
+Vaultwarden has an admin panel (separate from the regular web vault) that requires an admin token. This token is set as an environment variable during installation:
+
+```
+You: What's my Vaultwarden admin token?
+
+AI: [get_app_config: vaultwarden]
+    The admin token is set in the ADMIN_TOKEN environment variable.
+    Your admin panel is at http://your-server:8222/admin
+
+    To access it, enter the admin token shown during installation.
+    If you need to change it, I can update the environment variable.
+```
+
+### 3. Configure settings
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `vaultwarden_url` | `http://localhost:8222` | Vaultwarden server URL |
+| `vaultwarden_admin_token` | `random-admin-token` | Admin panel token for management API |
+
+Add these in **Settings > Integrations**. The admin token is the same one used to access the `/admin` panel.
+
+## Auto-Configuration
+
+When `wire_apps` detects a running Vaultwarden container:
+
+- Identifies the container by image name
+- Reads the `ADMIN_TOKEN` from the container's environment variables
+- Saves the URL and admin token to Talome settings
+- Verifies the admin API is accessible
+
+The admin token gives Talome access to user management operations. It does not provide access to any user's vault contents -- vault data is encrypted with each user's master password and cannot be decrypted by the server.
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `vaultwarden_get_status` | Server status including whether the admin panel is accessible, the number of registered users, and basic server health. Confirms the server is running and the admin token is valid. |
+| `vaultwarden_list_users` | List all registered users with their email address, creation date, last active date, and whether their email is verified. Does not expose any vault data or passwords. |
+| `vaultwarden_invite_user` | Send an invitation email to a new user. The recipient receives a link to create their Bitwarden account on your Vaultwarden server. Requires SMTP to be configured for email delivery. |
+| `vaultwarden_toggle_signups` | Enable or disable open registration. When disabled, only invited users can create accounts. This is a critical security control for keeping your instance private. |
+
+## Conversation Examples
+
+### Checking server status
+
+```
+You: Is Vaultwarden running?
+
+AI: [vaultwarden_get_status]
+    Vaultwarden is running and healthy.
+    Admin panel: accessible
+    Registered users: 4
+    Signups: disabled (invite-only)
+
+    The server is secure with invite-only registration.
+```
+
+### Listing users
+
+```
+You: Who has accounts on my Vaultwarden?
+
+AI: [vaultwarden_list_users]
+    Registered users:
+
+    1. tomas@example.com
+       Created: 2024-01-15
+       Last active: today
+       Email verified: yes
+
+    2. sarah@example.com
+       Created: 2024-02-03
+       Last active: yesterday
+       Email verified: yes
+
+    3. mike@example.com
+       Created: 2024-03-12
+       Last active: 5 days ago
+       Email verified: yes
+
+    4. guest@example.com
+       Created: 2024-06-01
+       Last active: 3 months ago
+       Email verified: no
+
+    4 users total. The guest account hasn't been used in 3 months
+    and never verified their email -- you may want to remove it.
+```
+
+### Inviting new users
+
+```
+You: Invite my friend at alex@example.com to Vaultwarden
+
+AI: [vaultwarden_invite_user: email: "alex@example.com"]
+    Invitation sent to alex@example.com.
+
+    Alex will receive an email with a link to create their account.
+    They can then install the Bitwarden app on any device and sign in
+    using your server URL: http://your-server:8222
+
+    Note: make sure signups are disabled so only invited people
+    can create accounts.
+
+    [vaultwarden_get_status]
+    Signups: disabled (invite-only) -- good, your server is secure.
+```
+
+### Controlling registration
+
+```
+You: Temporarily enable signups so my family can create accounts,
+     then disable it again
+
+AI: [vaultwarden_toggle_signups: enabled: true]
+    Open registration enabled. Anyone with the server URL can now
+    create an account.
+
+    Let me know when your family has created their accounts and
+    I'll disable signups again.
+
+You: They're done, lock it down
+
+AI: [vaultwarden_toggle_signups: enabled: false]
+    Signups disabled. Only invited users can create new accounts.
+
+    [vaultwarden_list_users]
+    Users now: 6 (2 new accounts created)
+    - tomas@example.com
+    - sarah@example.com
+    - mike@example.com
+    - guest@example.com
+    - dad@example.com (new)
+    - mom@example.com (new)
+
+    Your server is back to invite-only mode.
+```
+
+### Security audit
+
+```
+You: Do a security check on my Vaultwarden setup
+
+AI: [vaultwarden_get_status]
+    Server status: running
+    Signups: disabled (good)
+
+    [vaultwarden_list_users]
+    4 users registered.
+    1 user (guest@example.com) has an unverified email and hasn't
+    been active in 3 months.
+
+    [inspect_container: vaultwarden]
+    Container config:
+    - ADMIN_TOKEN: set (not exposed)
+    - SIGNUPS_ALLOWED: false
+    - INVITATIONS_ALLOWED: true
+    - DOMAIN: https://vault.example.com
+
+    Security findings:
+    1. Signups are disabled -- good
+    2. Admin token is set -- good
+    3. Inactive user (guest@example.com) should be reviewed
+    4. HTTPS domain is configured -- good
+
+    Recommendation: Consider removing the inactive guest account.
+    Everything else looks secure.
+```
+
+### Monitoring over time
+
+```
+You: When was the last time each user logged in?
+
+AI: [vaultwarden_list_users]
+    User activity:
+
+    tomas@example.com — Last active: today (daily user)
+    sarah@example.com — Last active: yesterday
+    mike@example.com — Last active: 5 days ago
+    guest@example.com — Last active: 3 months ago
+
+    All users except the guest account are actively using Vaultwarden.
+    The Bitwarden clients sync automatically, so "last active" reflects
+    the most recent sync from any of their devices.
+```
+
+## Advanced Usage
+
+### SMTP configuration for invitations
+
+User invitations require SMTP (email sending) to be configured. The AI can help set this up:
+
+```
+You: Set up email sending for Vaultwarden invitations
+
+AI: [get_app_config: vaultwarden]
+    Current SMTP settings: not configured.
+
+    To enable invitation emails, I need to set these environment variables:
+    - SMTP_HOST (your email server)
+    - SMTP_PORT (usually 587 for TLS)
+    - SMTP_FROM (sender address)
+    - SMTP_USERNAME
+    - SMTP_PASSWORD
+
+    What email service do you want to use?
+    (Gmail, SendGrid, your own SMTP server, etc.)
+
+You: Use my Gmail: myemail@gmail.com with app password xxxx
+
+AI: [set_app_env: vaultwarden, {
+      SMTP_HOST: "smtp.gmail.com",
+      SMTP_PORT: "587",
+      SMTP_SECURITY: "starttls",
+      SMTP_FROM: "myemail@gmail.com",
+      SMTP_USERNAME: "myemail@gmail.com",
+      SMTP_PASSWORD: "xxxx"
+    }]
+    [restart_app: vaultwarden]
+    SMTP configured and Vaultwarden restarted.
+    Invitation emails will now be sent from myemail@gmail.com.
+```
+
+### Backup considerations
+
+Vaultwarden's data is critical -- if you lose it, all stored passwords are gone:
+
+```
+You: Back up my Vaultwarden data
+
+AI: [backup_app: vaultwarden]
+    Backing up Vaultwarden:
+    - Database (db.sqlite3): 2.4 MB
+    - Attachments: 128 KB
+    - RSA keys: 4 KB
+    - Config: 1 KB
+
+    Backup saved to ~/.talome/backups/vaultwarden-2024-12-15.tar.gz
+    Total size: 2.6 MB
+
+    Consider keeping multiple backup copies for password manager data.
+    This is one of the most critical apps to back up regularly.
+```
+
+### Reverse proxy setup
+
+For external access, Vaultwarden should always run behind HTTPS:
+
+```
+You: Set up HTTPS access for Vaultwarden
+
+AI: [proxy_add_route: domain: "vault.example.com",
+     target: "http://vaultwarden:8222"]
+    [proxy_configure_tls: domain: "vault.example.com"]
+
+    Vaultwarden is now accessible at https://vault.example.com.
+    TLS certificate will be automatically provisioned.
+
+    Update the DOMAIN variable so Vaultwarden generates correct URLs:
+    [set_app_env: vaultwarden, { DOMAIN: "https://vault.example.com" }]
+    [restart_app: vaultwarden]
+
+    Users should update their Bitwarden client server URL to
+    https://vault.example.com
+```
+
+## Troubleshooting
+
+### "Vaultwarden not configured" error
+
+**Cause:** The `vaultwarden_url` or `vaultwarden_admin_token` setting is missing.
+
+**Fix:** Add both in Settings > Integrations. The admin token is the value of the `ADMIN_TOKEN` environment variable. Check it with: `"Show me the Vaultwarden container configuration"`.
+
+### Admin panel returns 401 Unauthorized
+
+**Cause:** The admin token in settings doesn't match the one configured in Vaultwarden.
+
+**Fix:** Check the current admin token from the container environment: `"What's the ADMIN_TOKEN for Vaultwarden?"`. Update the setting to match. If you changed it, the old token is invalid.
+
+### Invitation emails aren't delivered
+
+**Cause:** SMTP is not configured, or the SMTP credentials are wrong.
+
+**Fix:** Check SMTP settings: `"Show me the Vaultwarden SMTP configuration"`. If SMTP isn't set up, configure it as shown in the Advanced Usage section. For Gmail, make sure you're using an app-specific password, not your regular password.
+
+### Users can't connect from Bitwarden clients
+
+**Cause:** The server URL is wrong in the client, or the server isn't reachable from outside the local network.
+
+**Fix:** The server URL must include the port (e.g., `http://192.168.1.100:8222`). For external access, set up a reverse proxy with HTTPS. Users configure the server URL in the Bitwarden client under "Self-hosted" during login.
+
+### Data loss after container recreation
+
+**Cause:** The Vaultwarden data directory wasn't mounted as a persistent volume, so it was lost when the container was removed.
+
+**Fix:** Prevention is key. Verify the volume mount: `"Is Vaultwarden's data directory persistent?"`. Talome's default install uses `./vaultwarden-data:/data`, which persists across container restarts. If data was lost and you have a backup, restore it: `"Restore Vaultwarden from backup"`.
+
+<Cards>
+  <Card title="Backups Guide" href="/docs/guides/backups">
+    Critical for password manager data protection.
+  </Card>
+  <Card title="Networking Guide" href="/docs/guides/networking">
+    Setting up HTTPS access for Vaultwarden.
+  </Card>
+  <Card title="Monitoring Guide" href="/docs/guides/monitoring">
+    Keeping Vaultwarden healthy and monitored.
+  </Card>
+</Cards>

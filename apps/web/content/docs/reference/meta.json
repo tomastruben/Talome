@@ -1,0 +1,13 @@
+{
+  "title": "Reference",
+  "icon": "FileSearch",
+  "pages": [
+    "tools",
+    "api",
+    "environment-variables",
+    "app-manifest",
+    "automation-schema",
+    "mcp-server",
+    "cli"
+  ]
+}

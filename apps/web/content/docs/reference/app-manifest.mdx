@@ -1,0 +1,354 @@
+---
+title: App Manifest
+description: Complete reference for Talome app manifest format with annotated examples.
+---
+
+Every app in Talome's store is defined by a manifest that describes its metadata, Docker Compose configuration, environment variables, volumes, ports, and lifecycle hooks. This page documents every field and provides full working examples.
+
+## Full Annotated Example
+
+```json
+{
+  "id": "jellyfin",
+  "name": "Jellyfin",
+  "description": "Free and open-source media server for streaming your personal media collection.",
+  "tagline": "Your media, your server",
+  "version": "10.10.6",
+  "icon": "https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/SVG/icon-transparent.svg",
+  "category": "media",
+  "author": "Jellyfin Contributors",
+  "source": "https://github.com/jellyfin/jellyfin",
+  "website": "https://jellyfin.org",
+  "port": 8096,
+  "architectures": ["amd64", "arm64"],
+  "dependencies": ["qbittorrent"],
+  "defaultUsername": null,
+  "defaultPassword": null,
+  "compose": {
+    "services": {
+      "app": {
+        "image": "jellyfin/jellyfin:10.10.6",
+        "ports": ["8096:8096"],
+        "volumes": [
+          "./config:/config",
+          "./cache:/cache"
+        ],
+        "environment": {
+          "PUID": "1000",
+          "PGID": "1000",
+          "TZ": "America/New_York"
+        },
+        "restart": "unless-stopped",
+        "healthcheck": {
+          "test": ["CMD", "curl", "-f", "http://localhost:8096/health"],
+          "interval": "30s",
+          "timeout": "10s",
+          "retries": 3
+        }
+      }
+    }
+  },
+  "env": [
+    {
+      "key": "PUID",
+      "label": "User ID",
+      "description": "Linux user ID for file ownership",
+      "default": "1000",
+      "required": false
+    },
+    {
+      "key": "PGID",
+      "label": "Group ID",
+      "description": "Linux group ID for file ownership",
+      "default": "1000",
+      "required": false
+    },
+    {
+      "key": "TZ",
+      "label": "Timezone",
+      "description": "Container timezone",
+      "default": "America/New_York",
+      "required": false
+    }
+  ],
+  "ports": [
+    {
+      "host": 8096,
+      "container": 8096,
+      "protocol": "tcp",
+      "description": "Web UI"
+    }
+  ],
+  "volumes": [
+    {
+      "hostPath": "./config",
+      "containerPath": "/config",
+      "description": "Configuration and database",
+      "mediaVolume": false
+    },
+    {
+      "hostPath": "./cache",
+      "containerPath": "/cache",
+      "description": "Transcoding cache",
+      "mediaVolume": false
+    }
+  ],
+  "hooks": {
+    "postInstall": "echo 'Jellyfin installed successfully'",
+    "preUninstall": "echo 'Backing up configuration...'"
+  }
+}
+```
+
+---
+
+## Field Reference
+
+### Required Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier. Lowercase, hyphen-separated. Must be unique across all store sources. Example: `jellyfin`, `home-assistant`, `pi-hole`. |
+| `name` | string | Human-readable display name shown in the app store and dashboard. Example: `Jellyfin`, `Home Assistant`. |
+| `description` | string | One or two sentences describing what the app does. Shown on the app detail page. |
+| `tagline` | string | Short phrase (under 60 characters) shown on store cards. Example: `Your media, your server`. |
+| `version` | string | Semantic version of the app manifest. This should match the Docker image tag where possible. |
+| `icon` | string | Emoji or URL to an icon image. URLs should point to SVG or PNG files. Emojis are used as fallback. |
+| `category` | string | One of: `media`, `productivity`, `developer`, `networking`, `storage`, `security`, `ai`, `other`. Determines where the app appears in store filtering. |
+| `author` | string | Author or maintainer name. |
+| `compose` | object | Docker Compose configuration. Must contain a `services` key with at least one service. See Docker Compose section below. |
+
+### Optional Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | string | URL to the app's source code repository. |
+| `website` | string | URL to the app's homepage or documentation. |
+| `port` | number | Primary web UI port. Used for quick-access links on the dashboard. |
+| `architectures` | string[] | Supported CPU architectures. Common values: `amd64`, `arm64`, `armv7`. If omitted, assumes all architectures. |
+| `dependencies` | string[] | App IDs that should be installed first. Talome checks these before installation and warns if missing. |
+| `defaultUsername` | string | Default login username, shown post-install. Example: `admin`. |
+| `defaultPassword` | string | Default login password, shown post-install. Example: `admin`. |
+| `env` | object[] | Structured environment variable definitions with labels and descriptions. See Environment Variables section. |
+| `ports` | object[] | Structured port mapping definitions. See Ports section. |
+| `volumes` | object[] | Structured volume definitions with descriptions and media volume flags. See Volumes section. |
+| `hooks` | object | Lifecycle hooks. See Hooks section. |
+| `installNotes` | string | Markdown-formatted text shown to the user after installation. |
+| `releaseNotes` | string | Markdown-formatted release notes for the current version. |
+| `screenshots` | string[] | URLs to screenshot images for the app detail page. |
+
+---
+
+## Docker Compose Configuration
+
+The `compose` field contains a standard Docker Compose configuration. Talome writes this to a `docker-compose.yml` file in the app's installation directory and uses Docker Compose to manage the app's lifecycle.
+
+### Service Conventions
+
+- **Image tags**: always use a specific version tag (`jellyfin/jellyfin:10.10.6`), never `latest`. Pinned tags enable reliable updates and rollbacks.
+- **Volume paths**: always use relative paths (`./data`, `./config`). Talome resolves these relative to the app's install directory (`~/.talome/apps/<appId>/`). Never use absolute host paths.
+- **Restart policy**: always include `restart: unless-stopped`. This ensures containers recover from crashes and host reboots.
+- **Environment defaults**: include `PUID=1000`, `PGID=1000`, and `TZ=America/New_York` for Linux-based images that support them.
+- **Healthchecks**: include when the image supports health checking. Talome uses these for dashboard status indicators.
+- **Resource limits**: optional but recommended for resource-intensive apps.
+
+### Multi-Service Apps
+
+Apps can define multiple services. Each service becomes a separate container managed as a group.
+
+```json
+{
+  "compose": {
+    "services": {
+      "app": {
+        "image": "paperlessngx/paperless-ngx:2.14",
+        "ports": ["8000:8000"],
+        "volumes": ["./data:/usr/src/paperless/data", "./media:/usr/src/paperless/media"],
+        "environment": {
+          "PAPERLESS_REDIS": "redis://redis:6379",
+          "PAPERLESS_DBHOST": "postgres"
+        },
+        "depends_on": ["redis", "postgres"],
+        "restart": "unless-stopped"
+      },
+      "redis": {
+        "image": "redis:7.4-alpine",
+        "restart": "unless-stopped"
+      },
+      "postgres": {
+        "image": "postgres:16-alpine",
+        "volumes": ["./postgres:/var/lib/postgresql/data"],
+        "environment": {
+          "POSTGRES_DB": "paperless",
+          "POSTGRES_USER": "paperless",
+          "POSTGRES_PASSWORD": "paperless"
+        },
+        "restart": "unless-stopped"
+      }
+    }
+  }
+}
+```
+
+---
+
+## Environment Variables
+
+The `env` array provides structured metadata for environment variables. This powers the app configuration UI, allowing users to customize variables before installation.
+
+```json
+{
+  "env": [
+    {
+      "key": "PAPERLESS_SECRET_KEY",
+      "label": "Secret Key",
+      "description": "Random secret key for session signing",
+      "default": "",
+      "required": true,
+      "secret": true
+    },
+    {
+      "key": "PAPERLESS_OCR_LANGUAGE",
+      "label": "OCR Language",
+      "description": "Three-letter ISO 639-2 language code for OCR",
+      "default": "eng",
+      "required": false
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `key` | string | Yes | Environment variable name |
+| `label` | string | Yes | Human-readable label for the UI |
+| `description` | string | No | Tooltip or helper text |
+| `default` | string | No | Default value pre-filled in the UI |
+| `required` | boolean | No | Whether the variable must have a value |
+| `secret` | boolean | No | If true, the value is masked in the UI and not logged |
+
+---
+
+## Ports
+
+The `ports` array provides structured metadata for port mappings.
+
+```json
+{
+  "ports": [
+    {
+      "host": 8096,
+      "container": 8096,
+      "protocol": "tcp",
+      "description": "Web UI"
+    },
+    {
+      "host": 1900,
+      "container": 1900,
+      "protocol": "udp",
+      "description": "DLNA discovery"
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `host` | number | Yes | Port on the host machine |
+| `container` | number | Yes | Port inside the container |
+| `protocol` | string | No | `tcp` (default) or `udp` |
+| `description` | string | No | What the port is used for |
+
+---
+
+## Volumes
+
+The `volumes` array provides structured metadata for volume mounts. The `mediaVolume` flag is important for media apps -- it tells Talome which volumes should be mapped to the user's media directories.
+
+```json
+{
+  "volumes": [
+    {
+      "hostPath": "./config",
+      "containerPath": "/config",
+      "description": "Application configuration and database",
+      "mediaVolume": false
+    },
+    {
+      "hostPath": "",
+      "containerPath": "/media",
+      "description": "Media files",
+      "mediaVolume": true
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `hostPath` | string | Yes | Path on the host (relative to app directory). Empty string for media volumes that the user configures. |
+| `containerPath` | string | Yes | Mount point inside the container |
+| `description` | string | No | What the volume stores |
+| `mediaVolume` | boolean | No | If true, Talome prompts the user to map their media directory during install |
+
+---
+
+## Hooks
+
+Lifecycle hooks run at specific points in the app's lifecycle. They execute as shell commands on the host.
+
+```json
+{
+  "hooks": {
+    "postInstall": "echo 'Setup complete'",
+    "preUninstall": "docker exec $CONTAINER_NAME backup-script.sh"
+  }
+}
+```
+
+| Hook | When It Runs |
+|------|-------------|
+| `postInstall` | After all containers are created and started successfully |
+| `preUninstall` | Before containers are stopped and removed |
+
+---
+
+## Categories
+
+| Category | Description | Examples |
+|----------|-------------|---------|
+| `media` | Media servers, downloaders, managers | Jellyfin, Plex, Sonarr, Radarr |
+| `productivity` | Document management, notes, collaboration | Paperless-ngx, Nextcloud, Bookstack |
+| `developer` | Development tools, CI/CD, code hosting | Gitea, Drone CI, code-server |
+| `networking` | DNS, VPN, proxy, network management | Pi-hole, WireGuard, Nginx Proxy Manager |
+| `storage` | File sync, backup, object storage | Syncthing, MinIO, Duplicati |
+| `security` | Password managers, authentication, monitoring | Vaultwarden, Authelia, CrowdSec |
+| `ai` | AI/ML tools, LLM servers | Ollama, Open WebUI, ComfyUI |
+| `other` | Everything else | Home Assistant, Uptime Kuma |
+
+---
+
+## Store Sources
+
+App manifests come from multiple sources. Each source has its own format that Talome normalizes into the manifest schema above.
+
+| Source | Format | Description |
+|--------|--------|-------------|
+| Talome Native | JSON manifest | First-party apps curated by the Talome team |
+| CasaOS | `docker-compose.yml` + metadata | Compatible CasaOS app stores (official and community) |
+| Umbrel | YAML manifest | Compatible Umbrel app stores (official and community) |
+| User Created | JSON manifest | Apps created through the AI app creation system |
+| Community | JSON manifest | Apps submitted by users and reviewed by the community |
+
+---
+
+## Validation
+
+All manifests are validated with Zod schemas at multiple points:
+
+1. **Store sync**: when a store source is synced, each manifest is validated and invalid entries are skipped with a warning
+2. **Installation**: the full manifest is re-validated before Docker Compose runs
+3. **User creation**: the app creation system validates the generated manifest before saving
+4. **Community submission**: manifests undergo automated checks before entering the review queue
+
+Required fields that fail validation will prevent the app from appearing in the store.

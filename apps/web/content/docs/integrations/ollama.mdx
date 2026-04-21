@@ -1,0 +1,359 @@
+---
+title: Ollama
+description: Manage local AI models and optionally use them as Talome's own AI provider -- all through conversation.
+---
+
+Ollama runs large language models locally on your hardware. No API keys, no cloud services, no data leaving your network. Talome's integration gives the AI 5 tools to manage your model library: pulling new models, inspecting running instances, checking resource usage, and cleaning up unused models. Beyond management, Ollama can also serve as Talome's own AI provider -- replacing the cloud-based Anthropic API with a fully local model.
+
+This integration is unique because it's the only one where the managed app can also power the AI assistant itself. You can use Claude (via Anthropic API) to manage your Ollama models, or switch to an Ollama model for fully offline, private operation.
+
+## Setup
+
+### 1. Install Ollama
+
+```
+You: Install Ollama
+```
+
+The AI installs Ollama from the app store. Ollama listens on port 11434 by default. For GPU acceleration (highly recommended for usable performance), the container needs access to your GPU device.
+
+### 2. GPU setup (recommended)
+
+Ollama runs on CPU by default but benefits enormously from GPU acceleration:
+
+```
+You: Does my server have a GPU that Ollama can use?
+
+AI: [get_gpu_status]
+    Detected: NVIDIA GeForce RTX 3080 (10 GB VRAM)
+    Driver: 535.183.01
+    CUDA: 12.2
+
+    This GPU can run models up to ~7B parameters at full speed,
+    or 13B models with some layer offloading.
+
+    [set_app_env: ollama, { NVIDIA_VISIBLE_DEVICES: "all" }]
+    [restart_app: ollama]
+    Ollama is now using your GPU.
+```
+
+### 3. Configure settings
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `ollama_url` | `http://localhost:11434` | Ollama API endpoint |
+
+Ollama doesn't use API keys -- it accepts unauthenticated requests on the local network.
+
+### 4. Pull your first model
+
+```
+You: Download llama3.2
+
+AI: [ollama_pull_model: "llama3.2"]
+    Downloading llama3.2 (2.0 GB)...
+    Progress: 100% complete.
+
+    Model ready. You can now use it with Ollama's API or
+    switch Talome to use it as the AI provider.
+```
+
+## Auto-Configuration
+
+When `wire_apps` detects a running Ollama container:
+
+- Identifies the container by image name and port
+- Saves the URL to Talome settings
+- Checks if GPU passthrough is configured
+- Reports available VRAM and recommends model sizes
+
+Ollama is one of the simplest integrations to configure because it requires no authentication -- just the URL.
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `ollama_list_models` | List all downloaded models with their name, size on disk, parameter count, quantization level, and last modified date. Shows what's available locally. |
+| `ollama_pull_model` | Download a new model from the Ollama registry. Supports model names like `llama3.2`, `mistral`, `codellama`, `phi3`, and tagged variants like `llama3.2:13b-instruct-q4_0`. Downloads are streamed with progress tracking. |
+| `ollama_delete_model` | Remove a downloaded model and free its disk space. The model must not be currently running. |
+| `ollama_model_info` | Detailed information about a specific model: parameter count, quantization type, context window size, architecture, license, model family, file size, and template format. |
+| `ollama_ps` | List currently running (loaded) model instances. Shows which models are in memory, their VRAM/RAM usage, and how long they've been loaded. Ollama keeps recently used models in memory for fast inference. |
+
+## Conversation Examples
+
+### Browsing available models
+
+```
+You: What Ollama models do I have?
+
+AI: [ollama_list_models]
+    Downloaded models:
+
+    1. llama3.2:latest — 2.0 GB
+       8B parameters, Q4_0 quantization
+
+    2. mistral:latest — 4.1 GB
+       7B parameters, Q4_K_M quantization
+
+    3. codellama:13b — 7.4 GB
+       13B parameters, Q4_0 quantization
+
+    4. phi3:mini — 2.3 GB
+       3.8B parameters, Q4_0 quantization
+
+    Total: 4 models, 15.8 GB on disk
+```
+
+### Pulling a new model
+
+```
+You: Download the largest Llama model my GPU can handle
+
+AI: [get_gpu_status]
+    GPU: NVIDIA RTX 3080, 10 GB VRAM
+
+    With 10 GB VRAM, you can comfortably run:
+    - 7-8B models fully on GPU (fastest)
+    - 13B models with partial GPU offloading (good)
+    - 70B models won't fit (too large)
+
+    Recommended: llama3.2 (8B) for the best quality-to-speed ratio
+    on your hardware, or codellama:13b for coding tasks.
+
+    [ollama_list_models]
+    You already have llama3.2. Let me pull the 13B variant for
+    higher quality output:
+
+    [ollama_pull_model: "llama3.2:13b"]
+    Downloading llama3.2:13b (7.4 GB)...
+    Done. The 13B model is now available.
+```
+
+### Checking what's running
+
+```
+You: What models are loaded in memory right now?
+
+AI: [ollama_ps]
+    Running model instances:
+
+    1. llama3.2:latest
+       VRAM usage: 4.2 GB (GPU)
+       Loaded: 15 minutes ago
+       Last request: 3 minutes ago
+
+    No other models are loaded. Ollama automatically unloads
+    models after 5 minutes of inactivity to free VRAM.
+```
+
+### Getting model details
+
+```
+You: Tell me about the Mistral model
+
+AI: [ollama_model_info: "mistral"]
+    mistral:latest
+
+    Architecture: Transformer (Mistral)
+    Parameters: 7.24 billion
+    Quantization: Q4_K_M (medium quality/speed balance)
+    Context window: 32,768 tokens
+    License: Apache 2.0
+
+    Size on disk: 4.1 GB
+    VRAM when loaded: ~4.5 GB
+
+    Strengths: Good general-purpose model, strong at instruction
+    following, supports 32K context. Slightly faster than Llama 8B
+    with comparable quality.
+```
+
+### Cleaning up unused models
+
+```
+You: How much space are my models using? Delete the ones I'm not using.
+
+AI: [ollama_list_models]
+    Model storage:
+    1. llama3.2:latest — 2.0 GB (last used: today)
+    2. mistral:latest — 4.1 GB (last used: 2 weeks ago)
+    3. codellama:13b — 7.4 GB (last used: 1 month ago)
+    4. phi3:mini — 2.3 GB (last used: 3 months ago)
+
+    Total: 15.8 GB
+
+    phi3:mini hasn't been used in 3 months and codellama in a month.
+    Want me to delete them to free 9.7 GB?
+
+You: Delete phi3 but keep codellama
+
+AI: [ollama_delete_model: "phi3:mini"]
+    Deleted phi3:mini. Freed 2.3 GB.
+
+    Remaining models: 3, using 13.5 GB total.
+```
+
+### Switching Talome to Ollama
+
+```
+You: Switch Talome to use Ollama instead of Claude
+
+AI: To use Ollama as Talome's AI provider, I'll update the configuration:
+
+    [set_setting: ai_provider, "ollama"]
+    [set_setting: ollama_model, "llama3.2"]
+
+    Talome is now using llama3.2 via Ollama for the AI assistant.
+
+    Important notes:
+    - Responses will be generated locally on your hardware
+    - No API costs -- completely free to use
+    - Response quality and speed depend on your hardware
+    - You can switch back to Claude anytime
+
+    With your RTX 3080, expect ~30-40 tokens/second with llama3.2.
+    This is fast enough for conversational use but slower than
+    cloud-based Claude.
+```
+
+## Advanced Usage
+
+### Model comparison
+
+```
+You: Compare llama3.2 and mistral for my use case
+
+AI: [ollama_model_info: "llama3.2"]
+    [ollama_model_info: "mistral"]
+
+    Comparison:
+
+    |               | llama3.2     | mistral      |
+    |---------------|-------------|-------------|
+    | Parameters    | 8B          | 7.24B       |
+    | Size on disk  | 2.0 GB      | 4.1 GB      |
+    | VRAM needed   | ~4.2 GB     | ~4.5 GB     |
+    | Context       | 128K tokens | 32K tokens  |
+    | Quantization  | Q4_0        | Q4_K_M      |
+    | License       | Llama 3.2   | Apache 2.0  |
+
+    llama3.2 has a much larger context window (128K vs 32K) and
+    is smaller on disk. mistral uses higher-quality quantization
+    (K_M vs plain Q4). For general use, llama3.2 is the better choice.
+    For tasks needing careful instruction following, mistral edges ahead.
+```
+
+### VRAM management
+
+When running multiple services that use the GPU:
+
+```
+You: Jellyfin is transcoding and Ollama is slow. What's happening?
+
+AI: [ollama_ps]
+    llama3.2 loaded, using 4.2 GB VRAM
+
+    [get_gpu_status]
+    GPU: RTX 3080, 10 GB VRAM
+    VRAM used: 8.7 GB (87%)
+    - Ollama: 4.2 GB
+    - Jellyfin NVENC: 4.5 GB
+
+    Your GPU is nearly full. Jellyfin's hardware transcoding and
+    Ollama are competing for VRAM.
+
+    Options:
+    1. Use a smaller Ollama model (phi3:mini uses ~2 GB)
+    2. Switch Jellyfin to software transcoding temporarily
+    3. Wait for the transcode to finish
+
+    Want me to switch Jellyfin to software transcoding?
+```
+
+### Custom model variants
+
+Ollama supports tagged variants with different quantization levels:
+
+```
+You: Pull a high-quality version of Mistral for important tasks
+
+AI: [ollama_pull_model: "mistral:7b-instruct-q8_0"]
+    Downloading mistral:7b-instruct-q8_0 (7.7 GB)...
+    Done.
+
+    This Q8_0 variant uses 8-bit quantization (vs 4-bit in your
+    existing version). It produces higher quality output but:
+    - Uses ~7.5 GB VRAM (vs ~4.5 GB)
+    - Is ~30% slower to generate
+    - Takes 7.7 GB on disk (vs 4.1 GB)
+
+    Use it for tasks where quality matters most.
+```
+
+### Offline operation
+
+One of Ollama's key advantages is fully offline operation:
+
+```
+You: I'm going off-grid for a week. Set up Talome for offline use.
+
+AI: [ollama_list_models]
+    You have 3 models available locally.
+
+    [set_setting: ai_provider, "ollama"]
+    [set_setting: ollama_model, "llama3.2"]
+
+    Talome is now running fully offline:
+    - AI: llama3.2 via local Ollama (no internet needed)
+    - All management tools work locally (Docker, filesystem, etc.)
+    - Media apps work with local content only
+
+    No data will leave your network. When you're back online,
+    you can switch back to Claude for higher-quality responses.
+```
+
+## Troubleshooting
+
+### "Ollama not configured" error
+
+**Cause:** The `ollama_url` setting is missing.
+
+**Fix:** Add it in Settings > Integrations. The default URL is `http://localhost:11434`. If Ollama runs in a Docker container, use the container name: `http://ollama:11434`.
+
+### Model pull fails with "out of space"
+
+**Cause:** Insufficient disk space to download and store the model.
+
+**Fix:** Check disk usage: `"How much disk space is available?"`. Delete unused models to free space: `"Delete my unused Ollama models"`. Models are stored in the Ollama container's data directory.
+
+### Inference is extremely slow
+
+**Cause:** The model is running on CPU instead of GPU, or the model is too large for your hardware.
+
+**Fix:** Check GPU status: `"Is Ollama using my GPU?"`. If not, the container may need GPU passthrough configured. If the model is too large, try a smaller variant: 7B models are much faster than 13B or 70B.
+
+### Model loads but produces garbage output
+
+**Cause:** Corrupted download or incompatible model format.
+
+**Fix:** Delete and re-pull the model: `"Delete and re-download llama3.2"`. If the issue persists, try a different model or quantization variant.
+
+### Ollama container keeps restarting
+
+**Cause:** Out of memory (OOM killed by Docker), GPU driver issues, or corrupted model files.
+
+**Fix:** Check container logs: `"Show me Ollama container logs"`. If it's OOM, the model is too large for your available RAM/VRAM. Try a smaller model or increase the container's memory limit.
+
+<Cards>
+  <Card title="AI Assistant Guide" href="/docs/guides/ai-assistant">
+    How Talome's AI works and how it can use Ollama as a provider.
+  </Card>
+  <Card title="Monitoring Guide" href="/docs/guides/monitoring">
+    Track GPU and resource usage for AI workloads.
+  </Card>
+  <Card title="Terminal Guide" href="/docs/guides/terminal">
+    Use the terminal to interact with Ollama directly.
+  </Card>
+</Cards>

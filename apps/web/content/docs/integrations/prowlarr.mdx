@@ -1,0 +1,259 @@
+---
+title: Prowlarr
+description: Centralized indexer management that syncs search sources across your entire arr stack with one command.
+---
+
+Prowlarr is the indexer manager for the arr ecosystem. Instead of configuring indexers separately in Sonarr, Radarr, and Readarr, you configure them once in Prowlarr and sync them everywhere. Talome's integration adds 3 dedicated Prowlarr tools plus full access to the 27 shared arr tools, making indexer management entirely conversational.
+
+Prowlarr sits at a critical junction in the media pipeline. When Sonarr or Radarr search for a release, the query flows through Prowlarr's configured indexers. If Prowlarr has problems, nothing downloads. The AI understands this dependency chain and can diagnose issues across the full stack.
+
+## Setup
+
+### 1. Install Prowlarr
+
+```
+You: Install Prowlarr
+```
+
+The AI installs Prowlarr from the app store with default settings. Prowlarr runs on port 9696 by default.
+
+### 2. Configure settings
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `prowlarr_url` | `http://localhost:9696` | Prowlarr base URL |
+| `prowlarr_api_key` | `abc123...` | Extracted from Prowlarr's config.xml |
+
+Like Sonarr and Radarr, Prowlarr stores its API key in `config.xml`. The `wire_apps` tool extracts it automatically during setup.
+
+### 3. Add indexers
+
+After installation, you need to add at least one indexer before Prowlarr can search:
+
+```
+You: Add my indexers to Prowlarr
+```
+
+The AI uses `prowlarr_manage_indexers` to add indexer configurations. You can provide indexer details in conversation and the AI handles the API calls.
+
+## Auto-Configuration
+
+When `wire_apps` runs and detects Prowlarr, it:
+
+- Extracts the API key from Prowlarr's `config.xml`
+- Saves the URL and API key to Talome settings
+- Connects Prowlarr to Sonarr as a sync target (if Sonarr is configured)
+- Connects Prowlarr to Radarr as a sync target (if Radarr is configured)
+- Triggers an initial indexer sync to push all configured indexers to the arr apps
+
+After wiring, any indexer you add to Prowlarr in the future can be synced to all arr apps with a single command.
+
+## Available Tools
+
+### Dedicated Prowlarr Tools (3)
+
+| Tool | Description |
+|------|-------------|
+| `prowlarr_search` | Cross-search all configured indexers simultaneously. Returns results from every indexer in a unified format with release name, size, seeders, age, and source. |
+| `prowlarr_manage_indexers` | Add, edit, delete, or list indexers. Supports all indexer types that Prowlarr supports (Torznab, Newznab, private trackers, public indexers). |
+| `prowlarr_get_indexer_stats` | Performance statistics per indexer: query count, grab count, failure rate, average response time. Helps identify unreliable or slow indexers. |
+
+### Shared Arr Tools
+
+Prowlarr also benefits from several arr domain tools:
+
+| Tool | Description |
+|------|-------------|
+| `arr_get_status` | Check Prowlarr's system status, version, and health warnings |
+| `arr_list_indexers` | List indexers configured in Sonarr/Radarr (to compare with Prowlarr) |
+| `arr_sync_indexers_from_prowlarr` | Push Prowlarr's indexer configuration to Sonarr and/or Radarr |
+
+## Conversation Examples
+
+### Cross-searching all indexers
+
+```
+You: Search all indexers for "Dune Part Two 4K"
+
+AI: [prowlarr_search: "Dune Part Two 4K"]
+    Found 31 results across 5 indexers:
+
+    Best matches:
+    1. Dune.Part.Two.2024.2160p.UHD.BluRay.TrueHD.7.1 — 76.2 GB
+       Indexer: TorrentLeech | 342 seeders | 2 days old
+    2. Dune.Part.Two.2024.2160p.WEB-DL.DDP5.1.HDR — 21.8 GB
+       Indexer: IPTorrents | 189 seeders | 5 days old
+    3. Dune.Part.Two.2024.2160p.REMUX.TrueHD.Atmos.7.1 — 82.1 GB
+       Indexer: BeyondHD | 87 seeders | 1 day old
+
+    Want me to grab one of these through Radarr?
+```
+
+### Checking indexer health
+
+```
+You: Which of my indexers are having problems?
+
+AI: [prowlarr_get_indexer_stats]
+    Indexer performance over the last 30 days:
+
+    Healthy:
+    - TorrentLeech — 1,247 queries, 0.3% failure rate, avg 420ms
+    - IPTorrents — 892 queries, 0.8% failure rate, avg 380ms
+    - BeyondHD — 634 queries, 0.1% failure rate, avg 290ms
+
+    Degraded:
+    - NZBgeek — 456 queries, 12.4% failure rate, avg 2,100ms
+      Last error: "Rate limit exceeded" (3 hours ago)
+
+    Down:
+    - PublicTracker — 0 successful queries in 7 days
+      Last error: "Connection refused"
+
+    Recommendation: NZBgeek is rate-limited — you may want to reduce
+    the RSS sync interval. PublicTracker should be removed or reconfigured.
+```
+
+### Syncing indexers to arr apps
+
+```
+You: Sync my Prowlarr indexers to Sonarr and Radarr
+
+AI: [arr_sync_indexers_from_prowlarr: sonarr]
+    Synced 5 indexers to Sonarr.
+
+    [arr_sync_indexers_from_prowlarr: radarr]
+    Synced 5 indexers to Radarr.
+
+    Both apps now have the same indexer configuration as Prowlarr.
+    Any future changes in Prowlarr can be synced the same way.
+```
+
+### Managing indexers
+
+```
+You: List my indexers and remove the one that's been down for a week
+
+AI: [prowlarr_manage_indexers: list]
+    You have 5 configured indexers:
+
+    1. TorrentLeech (Torznab) — Enabled, healthy
+    2. IPTorrents (Torznab) — Enabled, healthy
+    3. BeyondHD (Torznab) — Enabled, healthy
+    4. NZBgeek (Newznab) — Enabled, degraded
+    5. PublicTracker (Torznab) — Enabled, down for 7 days
+
+    [prowlarr_manage_indexers: delete, id: 5]
+    Removed PublicTracker. You now have 4 active indexers.
+
+    Want me to sync this change to Sonarr and Radarr?
+```
+
+### Diagnosing search failures
+
+```
+You: Why aren't there any search results for this show in Sonarr?
+
+AI: [arr_get_status: sonarr]
+    Sonarr is healthy, version 4.0.2.
+
+    [arr_list_indexers: sonarr]
+    Sonarr has 5 indexers configured, all enabled.
+
+    [prowlarr_get_indexer_stats]
+    2 of your 5 indexers have elevated failure rates.
+
+    [prowlarr_search: "show name"]
+    Prowlarr found 0 results across all indexers for this title.
+
+    The issue isn't with Sonarr's configuration — none of your indexers
+    have this show available. It may not have been released yet, or your
+    indexers don't carry it. Try checking the show's air date on TVDB.
+```
+
+## Advanced Usage
+
+### Indexer priority and categories
+
+Prowlarr supports indexer priorities and category mappings. When multiple indexers return the same release, the one from the higher-priority indexer wins. You can manage this through conversation:
+
+```
+You: Set TorrentLeech as my highest priority indexer
+
+AI: [prowlarr_manage_indexers: edit, name: "TorrentLeech", priority: 1]
+    TorrentLeech is now priority 1 (highest). Other indexers remain at their
+    current priorities. When the same release appears on multiple indexers,
+    TorrentLeech's version will be preferred.
+```
+
+### Bulk operations across the stack
+
+Because the AI has access to Prowlarr, Sonarr, and Radarr simultaneously, it can coordinate operations that span all three:
+
+```
+You: I just got access to a new indexer. Add it to Prowlarr and sync everywhere.
+
+AI: [prowlarr_manage_indexers: add, type: "torznab", name: "NewTracker", url: "...", apiKey: "..."]
+    Added NewTracker to Prowlarr.
+
+    [arr_sync_indexers_from_prowlarr: sonarr]
+    [arr_sync_indexers_from_prowlarr: radarr]
+    NewTracker is now available in Prowlarr, Sonarr, and Radarr.
+```
+
+### Using Prowlarr search for manual grabs
+
+When Sonarr or Radarr's automatic search doesn't find what you want, you can use Prowlarr's cross-search to cast a wider net, then grab the release through the arr app:
+
+```
+You: Sonarr can't find S01E01 of this obscure show. Search Prowlarr directly.
+
+AI: [prowlarr_search: "Obscure Show S01E01"]
+    Found 2 results that Sonarr missed (different naming):
+    1. Obscure.Show.S01E01.720p.HDTV — 1.2 GB, 3 seeders
+    2. The.Obscure.Show.1x01.WEB-DL — 890 MB, 7 seeders
+
+    [arr_grab_release: sonarr, release #2]
+    Grabbed the WEB-DL release through Sonarr. It should appear in your
+    library once the download and import complete.
+```
+
+## Troubleshooting
+
+### "No indexers configured" after sync
+
+**Cause:** Prowlarr's app connections (Sonarr/Radarr) aren't configured in Prowlarr's settings.
+
+**Fix:** The `wire_apps` tool sets up these connections. Run `"Wire up my media apps"` to re-establish the Prowlarr-to-Sonarr/Radarr connections. Alternatively, check Prowlarr's Settings > Apps section in the web UI.
+
+### Indexer returns "rate limit exceeded"
+
+**Cause:** Too many queries in a short period. Each RSS sync and manual search counts against the indexer's rate limit.
+
+**Fix:** Reduce the RSS sync interval in Sonarr/Radarr (Settings > Indexers > RSS Sync Interval). A 60-minute interval is usually safe for most indexers.
+
+### Search results differ between Prowlarr and Sonarr
+
+**Cause:** Sonarr applies its own filters (quality profile, size limits, preferred words) on top of Prowlarr's raw results.
+
+**Fix:** This is expected behavior. If you want to see all available releases, use `prowlarr_search` for unfiltered results. If a release you want is being filtered out in Sonarr, check the quality profile settings.
+
+### Prowlarr status shows warnings
+
+**Cause:** Common warnings include indexer connectivity issues, missing app connections, or outdated version.
+
+**Fix:** Ask the AI to check: `"What warnings does Prowlarr have?"`. It will call `arr_get_status` and explain each warning with a recommended action.
+
+<Cards>
+  <Card title="Sonarr & Radarr" href="/docs/integrations/sonarr-radarr">
+    TV and movie management tools.
+  </Card>
+  <Card title="qBittorrent" href="/docs/integrations/qbittorrent">
+    Download client for your media pipeline.
+  </Card>
+  <Card title="Media Stack Guide" href="/docs/guides/media-stack">
+    End-to-end setup of the full media pipeline.
+  </Card>
+</Cards>

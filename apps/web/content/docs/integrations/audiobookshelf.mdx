@@ -1,0 +1,244 @@
+---
+title: Audiobookshelf
+description: Manage your audiobook and podcast library through conversation -- search, progress tracking, library management, and scanning.
+---
+
+Audiobookshelf is a self-hosted audiobook and podcast server. It provides a beautiful listening experience across web, iOS, and Android, with features like chapter navigation, bookmarks, sleep timers, and multi-user progress tracking. Talome's integration gives the AI 13 tools to manage your libraries, search your collection, track listening progress, scan for new content, and search for and download new audiobooks.
+
+This is one of Talome's more feature-rich integrations. The 13 tools cover the full lifecycle: creating libraries, scanning for content, searching and browsing, tracking where you left off, updating progress, searching for new audiobook releases via Prowlarr, and downloading them via qBittorrent. The AI becomes a knowledgeable librarian that knows your entire audiobook collection and your listening habits.
+
+## Setup
+
+### 1. Install Audiobookshelf
+
+```
+You: Install Audiobookshelf
+```
+
+The AI installs Audiobookshelf from the app store, mapping your audiobook directory if known. Audiobookshelf runs on port 13378 by default.
+
+### 2. Initial configuration
+
+After installation, create an admin account through the Audiobookshelf web UI. Then create an API token:
+
+1. Sign in to Audiobookshelf
+2. Go to Settings (gear icon)
+3. Under your user profile, find or generate an API token
+
+Or ask the AI to guide you:
+
+```
+You: How do I get my Audiobookshelf API token?
+```
+
+### 3. Configure settings
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `audiobookshelf_url` | `http://localhost:13378` | Audiobookshelf server URL |
+| `audiobookshelf_api_key` | `eyJhbGciOi...` | API bearer token |
+
+Add these in **Settings > Integrations** or through conversation:
+
+<ChatSimulation>
+  <UserMessage>Set my Audiobookshelf URL and token</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="set_setting" result="audiobookshelf_url and api_key saved" />
+    <ToolCall tool="audiobookshelf_get_status" result="connected, v2.8.1, 1 library, 89 audiobooks" />
+    Audiobookshelf configured and verified. Connected to Audiobookshelf v2.8.1. 1 library configured with 89 audiobooks.
+  </AssistantMessage>
+</ChatSimulation>
+
+## Auto-Configuration
+
+When `wire_apps` detects a running Audiobookshelf container:
+
+- Identifies the container by image name and port
+- Saves the URL to Talome settings
+- Notes that a token must be created manually (Audiobookshelf tokens are tied to user accounts)
+- Prompts you to provide the API token if one isn't configured
+
+Like Home Assistant, Audiobookshelf tokens are user-specific and cannot be auto-extracted from config files. The AI will remind you to set one up.
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `audiobookshelf_get_status` | Server status: version, uptime, number of libraries, total items, total duration, and storage usage. Quick health check for the entire server. |
+| `audiobookshelf_list_libraries` | List all libraries with their name, type (book or podcast), folder paths, item count, and total duration. Shows where your content is organized. |
+| `audiobookshelf_add_library` | Create a new library by specifying a name, type (book or podcast), and filesystem path. The path must be accessible inside the Audiobookshelf container. |
+| `audiobookshelf_get_library_items` | List items in a specific library with title, author, duration, progress, and whether the item has been started or finished. Supports pagination and sorting. |
+| `audiobookshelf_search` | Search across all libraries by title, author, narrator, or series name. Returns matching items with their metadata and your current progress on each. |
+| `audiobookshelf_get_item` | Get detailed information about a specific audiobook or podcast: full metadata, chapters, files, duration, narrators, series membership, and user progress. |
+| `audiobookshelf_get_progress` | Get your listening progress for a specific item: current position, percentage complete, time remaining, last listened date, and whether it's finished. |
+| `audiobookshelf_update_progress` | Update your listening progress for an item. Set a specific position (in seconds), mark as finished, or mark as not started. Useful for syncing with external listening. |
+| `audiobookshelf_scan_library` | Trigger a library scan to detect new files, update metadata, and refresh cover art. Scans run in the background and process new additions incrementally. |
+| `audiobook_search_releases` | Search for audiobook torrent releases across all Prowlarr indexers (category Audio/Audiobook). Returns downloadable releases sorted by seeders with detected language. |
+| `audiobook_download` | Download an audiobook release via qBittorrent. Takes a download URL from `audiobook_search_releases` results and sends it to qBittorrent with the "audiobooks" category. |
+| `audiobook_list_downloads` | List active and completed audiobook downloads from qBittorrent (category "audiobooks"). Shows progress, speed, and ETA for active downloads. |
+| `audiobook_request` | Request an audiobook -- searches Prowlarr for the best available release and auto-downloads it via qBittorrent. Picks the release with the most seeders matching the language filter. |
+
+## Conversation Examples
+
+### Browsing your library
+
+<ChatSimulation>
+  <UserMessage>How many audiobooks do I have?</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_get_status" result="v2.8.1, 2 libraries, 134 items, 1,247 hours, 289 GB" />
+    <ToolCall tool="audiobookshelf_list_libraries" result="Audiobooks (127 items), Podcasts (7 feeds)" />
+    Audiobookshelf server status: Version 2.8.1, 2 libraries, 134 total items (127 audiobooks, 7 podcasts), 1,247 hours total duration, 289 GB storage. Libraries: 1. Audiobooks -- 127 items, 1,198 hours, /audiobooks. 2. Podcasts -- 7 feeds, 49 hours, /podcasts.
+  </AssistantMessage>
+</ChatSimulation>
+
+### Searching for a book
+
+<ChatSimulation>
+  <UserMessage>Do I have Project Hail Mary?</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_search" result="found: Project Hail Mary by Andy Weir, 73% complete" />
+    Found: Project Hail Mary. Author: Andy Weir. Narrator: Ray Porter. Duration: 16h 10m. Series: Standalone. Your progress: 73% (11h 48m listened, 4h 22m remaining). You're about 4 hours from finishing. Want me to show the chapter you're on?
+  </AssistantMessage>
+</ChatSimulation>
+
+### Checking listening progress
+
+<ChatSimulation>
+  <UserMessage>What am I currently listening to?</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_list_libraries" result="found Audiobooks library" />
+    <ToolCall tool="audiobookshelf_get_library_items" result="3 in-progress audiobooks" />
+    You have 3 audiobooks in progress: 1. Project Hail Mary by Andy Weir -- 73% complete, 4h 22m remaining, last listened yesterday. 2. Dune by Frank Herbert -- 31% complete, 14h 48m remaining, last listened 3 days ago. 3. The Name of the Wind by Patrick Rothfuss -- 12% complete, 17h 30m remaining, last listened 2 weeks ago. Want details on any of these?
+  </AssistantMessage>
+</ChatSimulation>
+
+### Getting detailed book information
+
+<ChatSimulation>
+  <UserMessage>Tell me about the Dune audiobook</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_get_item" result="Dune by Frank Herbert, 21h 2m, 31% progress" />
+    Dune. Author: Frank Herbert. Narrator: Scott Brick, Orlagh Cassidy, Euan Morton (full cast). Duration: 21h 2m. Published: 1965. Series: Dune Chronicles, Book 1. Chapters: 48 chapters. Current chapter: Chapter 15 -- "The Litany Against Fear". Position: 6h 32m (31%). Files: 1 M4B file, 892 MB. Cover: Ace Books edition (2019).
+  </AssistantMessage>
+</ChatSimulation>
+
+### Adding new content
+
+<ChatSimulation>
+  <UserMessage>I just downloaded some new audiobooks to /audiobooks/new/</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_scan_library" result="scan triggered for Audiobooks library" />
+    Library scan triggered. Audiobookshelf will detect new files, extract metadata, download cover art, and match to known books. This usually takes a few minutes.
+    <ToolCall tool="audiobookshelf_get_library_items" result="5 new audiobooks detected" />
+    5 new audiobooks detected: 1. Children of Time by Adrian Tchaikovsky (16h 31m), 2. Piranesi by Susanna Clarke (9h 14m), 3. Klara and the Sun by Kazuo Ishiguro (10h 16m), 4. Recursion by Blake Crouch (10h 46m), 5. Dark Matter by Blake Crouch (10h 8m). All matched and ready to listen.
+  </AssistantMessage>
+</ChatSimulation>
+
+### Managing progress
+
+<ChatSimulation>
+  <UserMessage>I finished listening to Project Hail Mary in the car but the app didn't sync. Mark it as complete.</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_update_progress" result="Project Hail Mary marked as finished" />
+    Marked Project Hail Mary as finished. Your completion time has been recorded. Great book! Since you liked Andy Weir, you might enjoy The Martian or Artemis if you haven't listened to them yet.
+  </AssistantMessage>
+</ChatSimulation>
+
+<ChatSimulation>
+  <UserMessage>I want to relisten to Dune from the beginning</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_update_progress" result="Dune progress reset to beginning" />
+    Reset Dune progress to the beginning. It will show as unstarted in your library.
+  </AssistantMessage>
+</ChatSimulation>
+
+### Creating a new library
+
+<ChatSimulation>
+  <UserMessage>I have a collection of lecture recordings at /media/lectures. Create a library for them.</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_add_library" result="created Lectures library at /media/lectures" />
+    <ToolCall tool="audiobookshelf_scan_library" result="scan triggered for Lectures library" />
+    Created library "Lectures" pointing to /media/lectures. Scanning for content. Audiobookshelf will detect audio files and organize them by folder structure.
+  </AssistantMessage>
+</ChatSimulation>
+
+## Advanced Usage
+
+### Series tracking
+
+Audiobookshelf organizes books into series. The AI can help you track your progress through a series:
+
+<ChatSimulation>
+  <UserMessage>Where am I in the Dune series?</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_search" result="found 3 of 4 Dune Chronicles books in library" />
+    Dune Chronicles in your library: 1. Dune (Book 1) -- 31% in progress. 2. Dune Messiah (Book 2) -- Not started. 3. Children of Dune (Book 3) -- Not started. 4. God Emperor of Dune (Book 4) -- Not in library. You're partway through Book 1 with 14h 48m remaining. Books 2 and 3 are ready when you finish. Book 4 is not in your library yet.
+  </AssistantMessage>
+</ChatSimulation>
+
+### Listening statistics
+
+<ChatSimulation>
+  <UserMessage>How much have I listened to this month?</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_get_library_items" result="2 books finished this month, 3 in progress" />
+    This month you've finished The Martian (10h 53m) and Recursion (10h 46m). Plus progress on 3 in-progress books (~18 hours). Estimated total listening: ~40 hours this month.
+  </AssistantMessage>
+</ChatSimulation>
+
+### Multi-library management
+
+<ChatSimulation>
+  <UserMessage>Show me all my Audiobookshelf libraries and how much is in each</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="audiobookshelf_list_libraries" result="3 libraries, 168 items, 1,334 hours, 303 GB" />
+    Libraries: 1. Audiobooks -- 127 items, 1,198 hours, 267 GB. 2. Podcasts -- 7 feeds (312 episodes), 49 hours, 22 GB. 3. Lectures -- 34 items, 87 hours, 14 GB. Total: 168 items across 3 libraries, 1,334 hours, 303 GB.
+  </AssistantMessage>
+</ChatSimulation>
+
+## Troubleshooting
+
+### "Audiobookshelf not configured" error
+
+**Cause:** The `audiobookshelf_url` or `audiobookshelf_api_key` setting is missing.
+
+**Fix:** Add both in Settings > Integrations. The token is found in Audiobookshelf's user settings. If you lost it, sign into the web UI and generate a new one.
+
+### Library scan doesn't find new files
+
+**Cause:** The files are on the host but the path isn't mounted into the Audiobookshelf container.
+
+**Fix:** Check the container's volume mounts: `"What paths does Audiobookshelf have access to?"`. If the path is missing, add a volume mount: `"Add /media/audiobooks as a volume mount to Audiobookshelf"`.
+
+### Metadata is wrong or missing
+
+**Cause:** File naming doesn't match expected patterns, or online metadata lookup failed.
+
+**Fix:** Audiobookshelf expects folders named `Author/Book Title/` with audio files inside. If your files are named differently, consider renaming. You can also manually match books through the Audiobookshelf web UI.
+
+### Progress not syncing between devices
+
+**Cause:** The mobile app may be offline or the API token has expired.
+
+**Fix:** This is typically a client-side issue. Verify the server is reachable: `"Is Audiobookshelf running?"`. If the server is fine, try signing out and back in on the mobile app to refresh the token.
+
+### Search returns no results for a book you have
+
+**Cause:** The book's metadata might not match your search query, or it might be in a different library than expected.
+
+**Fix:** Try searching by author name instead of title, or use a partial title. The AI searches across all libraries, so if the book exists anywhere in Audiobookshelf, it will be found.
+
+<Cards>
+  <Card title="Jellyfin" href="/docs/integrations/jellyfin">
+    Media server for video content alongside your audiobooks.
+  </Card>
+  <Card title="App Store Guide" href="/docs/guides/app-store">
+    Installing Audiobookshelf and other apps.
+  </Card>
+  <Card title="Backups Guide" href="/docs/guides/backups">
+    Backing up your audiobook library and listening progress.
+  </Card>
+</Cards>

@@ -1,0 +1,22 @@
+{
+  "name": "@talome/types",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
+  "author": "Tomas Truben",
+  "type": "module",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

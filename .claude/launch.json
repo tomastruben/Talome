@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "dashboard", "exec", "next", "dev", "--port", "3000"],
+      "port": 3000,
+      "autoPort": false
+    },
+    {
+      "name": "core",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@talome/core", "dev"],
+      "port": 4000,
+      "autoPort": false
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "web", "dev"],
+      "port": 3100,
+      "autoPort": false
+    }
+  ]
+}

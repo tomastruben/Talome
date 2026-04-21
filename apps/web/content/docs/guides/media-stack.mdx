@@ -1,0 +1,376 @@
+---
+title: Media Stack
+description: Set up a complete self-hosted media server — Jellyfin, Sonarr, Radarr, Prowlarr, qBittorrent, and Overseerr — in one conversation.
+---
+
+The media stack is Talome's most popular use case. One message replaces a weekend of manual setup: installing six apps, configuring their APIs, wiring download clients, syncing indexers, mapping volumes, and verifying health. The AI does all of it in under two minutes.
+
+<VideoPlaceholder description="Watch: Setting up a full media stack in one conversation" />
+
+## The Stack Explained
+
+A self-hosted media server is a pipeline. Each app handles one stage:
+
+<Mermaid chart={`graph LR
+    P[Prowlarr] -->|Indexers| S[Sonarr]
+    P -->|Indexers| R[Radarr]
+    S -->|Download request| Q[qBittorrent]
+    R -->|Download request| Q
+    Q -->|Completed files| M[/Media Library/]
+    M --> J[Jellyfin / Plex]
+    O[Overseerr] -->|TV requests| S
+    O -->|Movie requests| R
+`} />
+
+| App | Role | What It Does |
+|-----|------|-------------|
+| **Jellyfin** or **Plex** | Media server | Streams your library to any device. Jellyfin is fully open-source; Plex has a free tier with optional premium features. |
+| **Sonarr** | TV management | Monitors TV shows, searches for episodes, manages quality profiles, renames files |
+| **Radarr** | Movie management | Same as Sonarr, but for movies. Separate app because movies and TV have different release patterns. |
+| **Prowlarr** | Indexer manager | Centralizes your search sources (indexers). Configure indexers once in Prowlarr, sync to all *arr apps. |
+| **qBittorrent** | Download client | Handles the actual file transfers. Sonarr/Radarr tell it what to download; it reports back when done. |
+| **Overseerr** | Request system | A clean web UI for family and friends to request movies and TV shows. Requests flow to Sonarr/Radarr automatically. |
+
+## One-Message Setup
+
+The fastest path from nothing to a working media server:
+
+<ChatSimulation>
+  <UserMessage>Set up a complete media stack. My media is at /mnt/media.</UserMessage>
+  <AssistantMessage>
+    I will install Jellyfin, Sonarr, Radarr, Prowlarr, and qBittorrent, then wire everything together.
+    <ToolCall tool="search_apps" result="found all 5 apps in Talome store" />
+    <ToolCall tool="install_app" result="jellyfin created, media mounted at /mnt/media" />
+    <ToolCall tool="install_app" result="sonarr created, media mounted at /mnt/media" />
+    <ToolCall tool="install_app" result="radarr created, media mounted at /mnt/media" />
+    <ToolCall tool="install_app" result="prowlarr created" />
+    <ToolCall tool="install_app" result="qbittorrent created, downloads at /mnt/media/Downloads" />
+    All five apps installed. Now wiring them together.
+    <ToolCall tool="wire_apps" result="discovered 5 media apps" />
+    <ToolCall tool="arr_add_download_client" result="sonarr and radarr linked to qbittorrent" />
+    <ToolCall tool="arr_add_root_folder" result="/mnt/media/TV on Sonarr, /mnt/media/Movies on Radarr" />
+    <ToolCall tool="arr_sync_indexers_from_prowlarr" result="indexers synced to sonarr and radarr" />
+    <ToolCall tool="check_service_health" result="all 5 apps healthy" />
+    Your media stack is running. Jellyfin at :8096, Sonarr at :8989, Radarr at :7878, Prowlarr at :9696, qBittorrent at :8080. Configuration complete: Sonarr and Radarr use qBittorrent as download client, root folders at /mnt/media/TV and /mnt/media/Movies, indexers synced from Prowlarr, Jellyfin pointed at /mnt/media for library scanning. Next step: add indexers in Prowlarr, then try "Search for Inception" to test the pipeline.
+  </AssistantMessage>
+</ChatSimulation>
+
+That's it. Five apps installed, APIs wired, volumes mapped, health verified. The AI remembered your media path from the conversation (and stored it as a memory for future use).
+
+## Volume Configuration
+
+Media apps need to see the same files. The key is mapping your host media directory into every container that needs it.
+
+### Common Directory Structures
+
+**Linux (typical NAS mount):**
+```
+/mnt/media/
+├── Movies/
+├── TV/
+├── Music/
+├── Downloads/
+│   ├── complete/
+│   └── incomplete/
+└── Books/
+```
+
+**macOS:**
+```
+/Volumes/Media Vault/Media/
+├── Movies/
+├── TV Shows/
+├── Downloads/
+└── Music/
+```
+
+### How Volumes Map
+
+When the AI installs an app with `volumeMounts`, it maps your host directory into the container:
+
+| App | Host Path | Container Path | Why |
+|-----|-----------|---------------|-----|
+| Jellyfin | `/mnt/media` | `/media` | Scans and streams the full library |
+| Sonarr | `/mnt/media` | `/media` | Moves completed TV episodes to `/media/TV` |
+| Radarr | `/mnt/media` | `/media` | Moves completed movies to `/media/Movies` |
+| qBittorrent | `/mnt/media/Downloads` | `/downloads` | Stores downloads here; *arr apps hardlink or move from here |
+
+The critical rule: **Sonarr/Radarr and qBittorrent must see the same filesystem** for hardlinks to work. If Sonarr's `/media` and qBittorrent's `/downloads` are on the same host mount, file moves are instant (hardlink) instead of slow copies.
+
+### Fixing Volumes After Install
+
+If you installed apps without specifying media paths:
+
+<ChatSimulation>
+  <UserMessage>Point Jellyfin at my media drive at /Volumes/Media Vault/Media</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="inspect_container" result="jellyfin: no media mount, only config and cache volumes" />
+    Jellyfin currently has no media mount — only config and cache volumes. Adding your media drive now.
+    <ToolCall tool="add_volume_mount" result="mounted /Volumes/Media Vault/Media to /media" />
+    <ToolCall tool="restart_app" result="jellyfin restarted" />
+    <ToolCall tool="jellyfin_add_library" result="Movies library created at /media/Movies" />
+    <ToolCall tool="jellyfin_add_library" result="TV Shows library created at /media/TV Shows" />
+    <ToolCall tool="jellyfin_scan_library" result="scan started" />
+    Done. Jellyfin now has two libraries:
+    - Movies → /Volumes/Media Vault/Media/Movies
+    - TV Shows → /Volumes/Media Vault/Media/TV Shows
+
+    Library scan started — it'll find your existing files automatically.
+  </AssistantMessage>
+</ChatSimulation>
+
+## Step-by-Step (Manual Control)
+
+If you prefer installing and configuring each app individually, the AI supports that too.
+
+### 1. Install the Media Server
+
+<ChatSimulation>
+  <UserMessage>Install Jellyfin and point it at /mnt/media</UserMessage>
+</ChatSimulation>
+
+The AI installs Jellyfin, maps your media volume, creates libraries for Movies and TV, and triggers an initial scan.
+
+### 2. Install Sonarr and Radarr
+
+<ChatSimulation>
+  <UserMessage>Install Sonarr and Radarr with media at /mnt/media</UserMessage>
+</ChatSimulation>
+
+Both apps install with the correct volume mapping. The AI creates root folders pointing to `/mnt/media/TV` and `/mnt/media/Movies`.
+
+### 3. Install Prowlarr
+
+<ChatSimulation>
+  <UserMessage>Install Prowlarr and sync indexers to Sonarr and Radarr</UserMessage>
+</ChatSimulation>
+
+Prowlarr installs. After you add indexers in Prowlarr's web UI, the AI syncs them to your *arr apps using `arr_sync_indexers_from_prowlarr`.
+
+### 4. Install qBittorrent
+
+<ChatSimulation>
+  <UserMessage>Install qBittorrent and set it as the download client for Sonarr and Radarr</UserMessage>
+</ChatSimulation>
+
+qBittorrent installs with downloads mapped to your media drive. The AI calls `arr_add_download_client` for both Sonarr and Radarr, pointing them at qBittorrent's API.
+
+### 5. Wire Everything
+
+If you installed apps separately and need to connect them:
+
+<ChatSimulation>
+  <UserMessage>Wire all my media apps together</UserMessage>
+</ChatSimulation>
+
+The `wire_apps` tool auto-discovers installed media apps and configures their connections — download clients, root folders, and indexer sync.
+
+## Adding Overseerr
+
+Once your core stack is running, Overseerr adds a clean request interface:
+
+<ChatSimulation>
+  <UserMessage>Install Overseerr and connect it to Jellyfin, Sonarr, and Radarr</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="install_app" result="overseerr installed and running on port 5055" />
+    <ToolCall tool="overseerr_configure_jellyfin" result="connected to Jellyfin" />
+    <ToolCall tool="overseerr_configure_sonarr" result="connected to Sonarr with HD-1080p profile" />
+    <ToolCall tool="overseerr_configure_radarr" result="connected to Radarr with HD-1080p profile" />
+    Overseerr is running at http://localhost:5055 and connected to:
+    - Jellyfin (user authentication + media availability checks)
+    - Sonarr (TV requests → HD-1080p profile → /mnt/media/TV)
+    - Radarr (movie requests → HD-1080p profile → /mnt/media/Movies)
+
+    Share the Overseerr URL with family and friends. When they request a movie, it flows automatically: Overseerr → Radarr → Prowlarr → qBittorrent → Jellyfin
+  </AssistantMessage>
+</ChatSimulation>
+
+## Media Optimization
+
+Talome includes a built-in media optimizer — 9 dedicated tools for analyzing and transcoding your library.
+
+### Scanning for Opportunities
+
+<ChatSimulation>
+  <UserMessage>Scan my movie library for optimization opportunities</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="scan_library_for_optimization" result="scanned 847 movies, found 23 candidates" />
+    Scanned 847 movies. Found 23 optimization candidates:
+    - 12 HEVC files that could be transcoded to H.264 for wider device compatibility
+    - 8 files with oversized bitrates (>20 Mbps for 1080p content)
+    - 3 files with missing audio tracks (no English audio)
+
+    Estimated space savings: 41 GB. Want me to queue these for optimization?
+  </AssistantMessage>
+</ChatSimulation>
+
+### Transcoding
+
+<ChatSimulation>
+  <UserMessage>Optimize the oversized files first</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="queue_optimization" result="8 files queued for bitrate adjustment" />
+    <ToolCall tool="get_optimization_status" result="optimization running" />
+    Queued 8 files for optimization:
+    - Target: reduce bitrate to 12 Mbps (visually lossless for 1080p)
+    - Estimated time: 2 hours 15 minutes
+    - Estimated savings: 28 GB
+
+    Progress is tracked in real-time. Check back with "How's the optimization going?" or I'll notify you when it's done.
+  </AssistantMessage>
+</ChatSimulation>
+
+### Diagnosing Failures
+
+<ChatSimulation>
+  <UserMessage>Some optimizations failed — what happened?</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="diagnose_optimization_failures" result="3 jobs failed: disk space, codec, OOM" />
+    3 jobs failed:
+
+    | File | Error | Fix |
+    |------|-------|-----|
+    | Interstellar.mkv | Out of disk space | Need 4.2 GB free in temp dir |
+    | Dune.mkv | Codec not supported | Source uses DV Profile 5 — skip |
+    | Matrix.mkv | Process killed | Ran out of memory during encode |
+
+    I can reprocess the first and third after freeing space. Dune uses Dolby Vision Profile 5 which doesn't transcode cleanly — I'd recommend keeping it as-is.
+    <ToolCall tool="reprocess_failed_jobs" result="requeued Interstellar.mkv and Matrix.mkv" />
+  </AssistantMessage>
+</ChatSimulation>
+
+## Common Conversations
+
+### Searching and Adding Media
+
+<ChatSimulation>
+  <UserMessage>Search for The Bear</UserMessage>
+  <UserMessage>Add Inception to Radarr</UserMessage>
+  <UserMessage>Download the latest season of Severance</UserMessage>
+  <UserMessage>What movies are coming out this week?</UserMessage>
+  <UserMessage>Search for 4K releases of Oppenheimer</UserMessage>
+</ChatSimulation>
+
+### Monitoring Downloads
+
+<ChatSimulation>
+  <UserMessage>What's downloading right now?</UserMessage>
+  <UserMessage>Show me the Sonarr queue</UserMessage>
+  <UserMessage>Why is this download stuck at 43%?</UserMessage>
+  <UserMessage>How much is left in the qBittorrent queue?</UserMessage>
+  <UserMessage>Cancel the download for that wrong release</UserMessage>
+</ChatSimulation>
+
+### Library Management
+
+<ChatSimulation>
+  <UserMessage>What's in my movie library?</UserMessage>
+  <UserMessage>How many TV shows do I have?</UserMessage>
+  <UserMessage>Which shows are missing episodes?</UserMessage>
+  <UserMessage>Show me shows that haven't upgraded to my cutoff quality</UserMessage>
+  <UserMessage>Find all movies larger than 30 GB</UserMessage>
+</ChatSimulation>
+
+### Quality and Profiles
+
+<ChatSimulation>
+  <UserMessage>Change Sonarr's quality to prefer 1080p Bluray</UserMessage>
+  <UserMessage>What quality profiles does Radarr have?</UserMessage>
+  <UserMessage>Set minimum quality to WEBDL-720p for all shows</UserMessage>
+  <UserMessage>Why did Sonarr grab a 720p when I wanted 1080p?</UserMessage>
+</ChatSimulation>
+
+### Cleanup and Maintenance
+
+<ChatSimulation>
+  <UserMessage>Clean up completed downloads</UserMessage>
+  <UserMessage>How much disk space can I reclaim?</UserMessage>
+  <UserMessage>Show me Sonarr's blocklist</UserMessage>
+  <UserMessage>Remove failed downloads from the queue</UserMessage>
+  <UserMessage>What indexers are unhealthy?</UserMessage>
+</ChatSimulation>
+
+### Overseerr Requests
+
+<ChatSimulation>
+  <UserMessage>Show me pending media requests</UserMessage>
+  <UserMessage>Approve all movie requests</UserMessage>
+  <UserMessage>Decline the request for that reality show</UserMessage>
+  <UserMessage>How many requests came in this week?</UserMessage>
+</ChatSimulation>
+
+## Troubleshooting
+
+### Indexers Not Working
+
+<ChatSimulation>
+  <UserMessage>Sonarr says "no indexers available"</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="arr_list_indexers" result="sonarr: 0 indexers configured" />
+    <ToolCall tool="prowlarr_get_indexer_stats" result="3 active indexers in Prowlarr" />
+    Sonarr has 0 indexers. Prowlarr has 3 indexers but they haven't been synced to Sonarr yet.
+    <ToolCall tool="arr_sync_indexers_from_prowlarr" result="3 indexers synced to sonarr" />
+    Fixed. Sonarr now has 3 indexers. Try searching again.
+  </AssistantMessage>
+</ChatSimulation>
+
+### qBittorrent Connection Failed
+
+<ChatSimulation>
+  <UserMessage>Sonarr can't connect to qBittorrent</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="arr_list_download_clients" result="configured with host localhost:8080" />
+    <ToolCall tool="arr_test_download_client" result="connection failed" />
+    <ToolCall tool="inspect_container" result="qbittorrent on talome network" />
+    The download client is configured with host "localhost:8080" but containers can't reach each other via localhost. The correct host is the container name on the Docker network.
+    <ToolCall tool="arr_add_download_client" result="sonarr linked to qbittorrent:8080" />
+    <ToolCall tool="arr_test_download_client" result="connection test passed" />
+    Connection test passed. Sonarr can now reach qBittorrent at qbittorrent:8080 on the Docker network.
+  </AssistantMessage>
+</ChatSimulation>
+
+### Volume Mount Issues
+
+<ChatSimulation>
+  <UserMessage>Jellyfin shows empty libraries</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="jellyfin_list_libraries" result="Movies library pointing to /movies" />
+    <ToolCall tool="inspect_container" result="volume mount: /mnt/media → /media" />
+    Found the issue. Jellyfin has a "Movies" library pointing to /movies inside the container, but the volume mount maps your host /mnt/media to /media. The library path doesn't match the mount.
+    <ToolCall tool="jellyfin_add_library" result="created Movies library at /media/Movies" />
+    Created a new library with the correct path. The old empty library can be removed from Jellyfin's dashboard.
+    <ToolCall tool="jellyfin_scan_library" result="scan started" />
+    Scan started — your movies should appear within a few minutes.
+  </AssistantMessage>
+</ChatSimulation>
+
+### Prowlarr Sync Failures
+
+<ChatSimulation>
+  <UserMessage>Prowlarr won't sync to Radarr</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="arr_get_status" result="radarr: running" />
+    <ToolCall tool="inspect_container" result="prowlarr on default network" />
+    <ToolCall tool="test_app_connectivity" result="prowlarr cannot reach radarr" />
+    Prowlarr can't reach Radarr. They're on different Docker networks.
+    <ToolCall tool="connect_container_to_network" result="prowlarr connected to talome_media" />
+    Connected Prowlarr to the media network. Syncing now:
+    <ToolCall tool="arr_sync_indexers_from_prowlarr" result="3 indexers synced to radarr" />
+    Success — 3 indexers synced to Radarr.
+  </AssistantMessage>
+</ChatSimulation>
+
+<Cards>
+  <Card title="Sonarr & Radarr Integration" href="/docs/integrations/sonarr-radarr">
+    All 27 arr tools explained.
+  </Card>
+  <Card title="Jellyfin Integration" href="/docs/integrations/jellyfin">
+    Jellyfin-specific tools and library management.
+  </Card>
+  <Card title="qBittorrent Integration" href="/docs/integrations/qbittorrent">
+    Download client configuration and monitoring.
+  </Card>
+  <Card title="Overseerr Integration" href="/docs/integrations/overseerr">
+    Media request system with auto-approval.
+  </Card>
+</Cards>

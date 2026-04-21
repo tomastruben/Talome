@@ -1,0 +1,21 @@
+{
+  "id": "jellyfin",
+  "name": "Jellyfin",
+  "description": "Free and open source media server",
+  "icon": "🪼",
+  "category": "media",
+  "version": "latest",
+  "website": "https://jellyfin.org",
+  "image": "jellyfin/jellyfin:latest",
+  "ports": [{"host": 8096, "container": 8096}],
+  "volumes": [
+    {"name": "config", "containerPath": "/config", "description": "Jellyfin configuration and metadata"},
+    {"name": "media", "containerPath": "/media", "description": "Media files library", "mediaVolume": true},
+    {"name": "cache", "containerPath": "/cache", "description": "Transcoding cache"}
+  ],
+  "env": [
+    {"key": "TZ", "label": "Timezone", "required": false, "default": "UTC"}
+  ],
+  "minResources": {"cpuCores": 2, "memoryMb": 2048, "diskMb": 5120},
+  "arm64": true
+}

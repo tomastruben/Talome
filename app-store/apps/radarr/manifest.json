@@ -1,0 +1,23 @@
+{
+  "id": "radarr",
+  "name": "Radarr",
+  "description": "Movie manager for automatic downloading and organization",
+  "icon": "🎞️",
+  "category": "media",
+  "version": "latest",
+  "website": "https://radarr.video",
+  "image": "lscr.io/linuxserver/radarr:latest",
+  "ports": [{"host": 7878, "container": 7878}],
+  "volumes": [
+    {"name": "config", "containerPath": "/config", "description": "Radarr configuration and database"},
+    {"name": "movies", "containerPath": "/movies", "description": "Movie library", "mediaVolume": true},
+    {"name": "downloads", "containerPath": "/downloads", "description": "Download directory", "mediaVolume": true}
+  ],
+  "env": [
+    {"key": "TZ", "label": "Timezone", "required": false, "default": "UTC"},
+    {"key": "PUID", "label": "User ID", "required": false, "default": "1000"},
+    {"key": "PGID", "label": "Group ID", "required": false, "default": "1000"}
+  ],
+  "minResources": {"cpuCores": 1, "memoryMb": 512, "diskMb": 1024},
+  "arm64": true
+}

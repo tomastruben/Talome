@@ -1,0 +1,276 @@
+---
+title: Jellyfin
+description: Manage your open-source media server through conversation -- libraries, scanning, statistics, and API key generation.
+---
+
+Jellyfin is the recommended media server for Talome. It is fully open-source, requires no account or subscription, and provides a complete streaming experience for movies, TV shows, music, and photos. Talome's integration gives the AI 6 tools to manage Jellyfin's libraries, trigger scans, monitor playback statistics, and generate API keys for connecting other services.
+
+In the media pipeline, Jellyfin sits at the end: Sonarr and Radarr acquire media files, and Jellyfin serves them to your devices. When new files arrive, Jellyfin detects them automatically or via a triggered library scan. The AI can coordinate this entire flow -- from requesting a movie to confirming it appears in your Jellyfin library.
+
+## Setup
+
+### 1. Install Jellyfin
+
+```
+You: Install Jellyfin
+```
+
+The AI installs Jellyfin from the app store. During installation, it maps your media volumes if they are known from previous conversations. Jellyfin runs on port 8096 by default.
+
+### 2. Configure settings
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `jellyfin_url` | `http://localhost:8096` | Jellyfin server URL |
+| `jellyfin_api_key` | `abc123...` | API key for Talome access |
+
+After installation, Jellyfin requires initial setup through its web UI (creating an admin user, selecting language). Once that's done, the AI can generate an API key:
+
+```
+You: Create a Jellyfin API key for Talome
+```
+
+The `wire_apps` tool can also configure Jellyfin automatically if the initial setup is complete.
+
+### 3. Verify the connection
+
+```
+You: Is Jellyfin running?
+
+AI: [jellyfin_get_status]
+    Jellyfin is running.
+    Version: 10.9.6
+    Server name: HomeServer
+    Startup completed: yes
+```
+
+## Auto-Configuration
+
+When `wire_apps` detects a running Jellyfin container:
+
+- Checks if the Jellyfin initial setup is complete
+- Generates an API key for Talome (via `jellyfin_create_api_key`)
+- Saves the URL and API key to settings
+- Verifies that library paths match the container's volume mounts
+- If Overseerr is configured, connects Overseerr to Jellyfin using the generated API key
+
+The API key is stored encrypted in Talome's settings database. It never appears in logs or chat history.
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `jellyfin_get_status` | Server status including version, server name, startup state, and whether it is reachable. Returns connection errors with hints if the server is unreachable. |
+| `jellyfin_list_libraries` | List all media libraries with their type (movies, tvshows, music, etc.), item count, and associated content paths. |
+| `jellyfin_add_library` | Create a new library by specifying a name, content type, and filesystem path. The path must be accessible inside the Jellyfin container. |
+| `jellyfin_scan_library` | Trigger a metadata scan for a specific library or all libraries. Jellyfin will detect new files, refresh metadata, and update artwork. |
+| `jellyfin_get_stats` | Server-wide statistics: total items, playback counts, active sessions, transcoding stats, and storage usage per library. |
+| `jellyfin_create_api_key` | Generate a new API key with an optional label. Used for connecting Overseerr, Talome, or other services to Jellyfin. |
+
+## Conversation Examples
+
+### Checking library status
+
+```
+You: How many movies and shows do I have in Jellyfin?
+
+AI: [jellyfin_list_libraries]
+    Your Jellyfin libraries:
+
+    Movies — 312 items, /media/Movies
+    TV Shows — 47 series (2,341 episodes), /media/TV
+    Music — 1,247 albums, /media/Music
+    Audiobooks — 89 items, /media/Audiobooks
+
+    Total: 4,036 items across 4 libraries.
+```
+
+### Triggering a library scan
+
+```
+You: I just added some new movies, scan the library
+
+AI: [jellyfin_scan_library: "Movies"]
+    Library scan triggered for Movies. Jellyfin will detect new files,
+    download metadata, and generate thumbnails in the background.
+
+    This usually takes 1-2 minutes depending on how many new files
+    were added. The movies will appear in your library as they're processed.
+```
+
+### Adding a new library
+
+```
+You: I set up a photos folder at /media/Photos, add it as a Jellyfin library
+
+AI: [jellyfin_add_library: name: "Photos", type: "photos", path: "/media/Photos"]
+    Created a new Photos library pointing to /media/Photos.
+    Jellyfin is now scanning the folder for images.
+
+    Photos will appear in the Jellyfin mobile app and web UI
+    once the initial scan completes.
+```
+
+### Creating API keys for other services
+
+```
+You: I need a Jellyfin API key for Overseerr
+
+AI: [jellyfin_create_api_key: label: "Overseerr"]
+    Created API key: jf_xxxxxxxxxxxxxxxxxxxx
+
+    [overseerr_configure_jellyfin: hostname: "jellyfin", port: 8096,
+     apiKey: "jf_xxxxxxxxxxxxxxxxxxxx"]
+    Connected Overseerr to Jellyfin. Overseerr can now see your libraries
+    and will use Jellyfin for user authentication.
+```
+
+### Getting playback statistics
+
+```
+You: Show me Jellyfin usage stats
+
+AI: [jellyfin_get_stats]
+    Jellyfin server statistics:
+
+    Total items: 4,036
+    Active sessions: 2 (living room Chromecast, bedroom iPad)
+    Transcoding: 1 active stream (H.265 → H.264 for Chromecast)
+
+    This week:
+    - 23 movies played
+    - 47 TV episodes played
+    - Most watched: The Bear (12 episodes)
+
+    Storage: 5.2 TB used across all libraries
+```
+
+### End-to-end media flow
+
+```
+You: Add the movie Interstellar and make sure it shows up in Jellyfin
+
+AI: [request_media: radarr, "Interstellar"]
+    Added Interstellar (2014) to Radarr. Searching for the best release
+    matching your HD-1080p quality profile.
+
+    [arr_get_queue_details: radarr]
+    Interstellar is downloading: 14.2 GB, ETA 6 minutes.
+
+    ... (after download completes) ...
+
+    [jellyfin_scan_library: "Movies"]
+    Triggered a Movies library scan. Interstellar should appear in
+    Jellyfin within the next minute once metadata is fetched.
+```
+
+## Advanced Usage
+
+### Library path planning
+
+Before adding a library, verify the path exists inside the container:
+
+```
+You: What paths can Jellyfin see? I want to add a new media folder.
+
+AI: [inspect_container: jellyfin]
+    Jellyfin container volume mounts:
+    - /media → /media (read-only)
+    - /config → ./jellyfin-config
+
+    Jellyfin can access anything under /media inside the container.
+    If your new folder is outside /media on the host, you'll need
+    to add a volume mount first.
+
+    [add_volume_mount: jellyfin, /mnt/external:/external:ro]
+    Added the mount. Restarting Jellyfin...
+
+    [jellyfin_add_library: name: "External", type: "movies", path: "/external"]
+    Library created and scanning.
+```
+
+### Coordinating with Sonarr/Radarr
+
+The AI knows that Jellyfin, Sonarr, and Radarr must agree on paths. If you change a root folder in Radarr, the AI can verify Jellyfin still has access:
+
+```
+You: I moved my movies from /media/Movies to /mnt/nas/Movies
+
+AI: I'll update all three apps:
+
+    [arr_add_root_folder: radarr, "/mnt/nas/Movies"]
+    [arr_list_root_folders: radarr]
+    Removed old path, added new one.
+
+    [inspect_container: jellyfin]
+    Warning: Jellyfin doesn't have /mnt/nas mounted.
+
+    [add_volume_mount: jellyfin, /mnt/nas:/mnt/nas:ro]
+    [restart_app: jellyfin]
+    [jellyfin_scan_library: "Movies"]
+
+    All three apps are now pointing to /mnt/nas/Movies.
+```
+
+### Hardware transcoding verification
+
+```
+You: Is Jellyfin using hardware transcoding?
+
+AI: [jellyfin_get_stats]
+    Active transcoding session: H.265 → H.264
+    Method: Software (CPU)
+
+    [get_container_stats: jellyfin]
+    CPU usage: 78% (transcoding is CPU-intensive without hardware acceleration)
+
+    Hardware transcoding isn't enabled. To use VAAPI or NVENC, the Jellyfin
+    container needs access to your GPU device. Want me to check for available
+    GPU hardware and update the container configuration?
+```
+
+## Troubleshooting
+
+### "Jellyfin is not configured" error
+
+**Cause:** The `jellyfin_url` setting is missing or the API key is invalid.
+
+**Fix:** Run `wire_apps` to auto-detect Jellyfin, or manually add the URL in Settings. Generate a new API key from Jellyfin's dashboard (Administration > API Keys) or ask the AI: `"Create a new Jellyfin API key for Talome"`.
+
+### Library scan doesn't find new files
+
+**Cause:** The files are on the host but the path isn't mounted into the Jellyfin container, or the library points to a different path.
+
+**Fix:** Ask the AI: `"What paths does Jellyfin have access to?"`. It will inspect the container's volume mounts and compare them with your library paths. If the mount is missing, it can add one.
+
+### Metadata is missing or wrong
+
+**Cause:** Jellyfin couldn't match the file to a known title, often due to non-standard naming.
+
+**Fix:** Ensure files follow the standard naming convention: `Movie Name (Year)/Movie Name (Year).mkv` for movies, `Series Name/Season XX/Series Name - SXXEXX - Episode Title.mkv` for TV. Ask the AI to set up Sonarr/Radarr naming conventions: `"Set standard Plex-compatible naming in Sonarr and Radarr"`.
+
+### API key stops working
+
+**Cause:** The API key was deleted in Jellyfin's admin panel, or Jellyfin was reinstalled and the old key is no longer valid.
+
+**Fix:** Generate a new key: `"Create a new Jellyfin API key and update Talome settings"`. The AI will create the key and update the stored setting in one step.
+
+### Streams buffer or fail
+
+**Cause:** Network bandwidth issues, transcoding overload, or client incompatibility.
+
+**Fix:** Ask the AI to check: `"Why are Jellyfin streams buffering?"`. It will check CPU usage, active transcoding sessions, and network stats to pinpoint the bottleneck.
+
+<Cards>
+  <Card title="Plex" href="/docs/integrations/plex">
+    Alternative media server integration.
+  </Card>
+  <Card title="Overseerr" href="/docs/integrations/overseerr">
+    Media request system that connects to Jellyfin.
+  </Card>
+  <Card title="Media Stack Guide" href="/docs/guides/media-stack">
+    Full pipeline setup with Jellyfin as the media server.
+  </Card>
+</Cards>

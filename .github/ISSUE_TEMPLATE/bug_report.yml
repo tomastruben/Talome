@@ -1,0 +1,73 @@
+name: Bug Report
+description: Report a bug in Talome
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please fill out the sections below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of what went wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this?
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Talome version
+      description: "Run `cat ~/.talome/version` or check the footer"
+      placeholder: "e.g. 1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Ubuntu
+        - Debian
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Raspberry Pi OS
+        - Other Linux
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste any error messages or logs. This will be formatted as code.
+      render: shell
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots.

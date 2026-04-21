@@ -1,0 +1,404 @@
+---
+title: Automation Schema
+description: Complete reference for automation triggers, steps, conditions, and examples.
+---
+
+Talome's automation engine lets you create workflows that run on schedules, in response to events, or via webhooks. Automations consist of a trigger (when to run), optional conditions (whether to continue), and a sequence of steps (what to do). This page documents the full schema.
+
+## Overview
+
+An automation has three main parts:
+
+1. **Trigger** -- defines when the automation fires
+2. **Steps** -- an ordered list of actions to execute
+3. **Conditions** -- optional checks within the step flow that can short-circuit execution
+
+Automations are stored in the `automations` table and can be created through the AI chat, the dashboard UI, or the REST API.
+
+---
+
+## Trigger Types
+
+| Type | Description | Configuration |
+|------|-------------|---------------|
+| `schedule` | Run on a cron schedule | `cron`: a cron expression (e.g., `0 3 * * *` for 3 AM daily) |
+| `container_stopped` | Fires when a container stops unexpectedly | `containerName`: name or pattern to watch |
+| `disk_usage_exceeds` | Fires when disk usage exceeds a threshold | `threshold`: percentage (0-100), `mount`: mount point path |
+| `webhook` | Fires when an HTTP POST hits the webhook URL | `secret`: optional HMAC secret for payload validation |
+| `app_installed` | Fires when an app is installed | `appId`: optional filter for a specific app ID |
+
+### Schedule Trigger
+
+Cron expressions follow the standard five-field format: minute, hour, day-of-month, month, day-of-week.
+
+```json
+{
+  "type": "schedule",
+  "cron": "0 3 * * *"
+}
+```
+
+Common patterns:
+
+| Expression | Schedule |
+|-----------|----------|
+| `0 * * * *` | Every hour |
+| `0 3 * * *` | Daily at 3:00 AM |
+| `0 0 * * 0` | Weekly on Sunday at midnight |
+| `0 0 1 * *` | First day of every month |
+| `*/15 * * * *` | Every 15 minutes |
+| `0 9-17 * * 1-5` | Hourly during business hours (Mon-Fri) |
+
+Use the `validate_cron` tool to check expressions and preview the next run times.
+
+### Container Stopped Trigger
+
+```json
+{
+  "type": "container_stopped",
+  "containerName": "jellyfin"
+}
+```
+
+This fires when the named container transitions to a stopped state. It does not fire for intentional stops via the Talome UI or API -- only for unexpected crashes or OOM kills.
+
+### Disk Usage Trigger
+
+```json
+{
+  "type": "disk_usage_exceeds",
+  "threshold": 90,
+  "mount": "/"
+}
+```
+
+Checked every 5 minutes. Fires once when the threshold is crossed, then resets when usage drops below the threshold.
+
+### Webhook Trigger
+
+```json
+{
+  "type": "webhook",
+  "secret": "optional-hmac-secret"
+}
+```
+
+When an automation has a webhook trigger, Talome generates a unique webhook URL: `POST /api/webhooks/<automation-id>`. The payload body is available in step templates as `{{webhook.body}}`.
+
+### App Installed Trigger
+
+```json
+{
+  "type": "app_installed",
+  "appId": "sonarr"
+}
+```
+
+If `appId` is omitted, fires for any app installation.
+
+---
+
+## Step Types
+
+Steps execute in order. Each step receives the output of the previous step as context, available through template variables.
+
+| Type | Description | Configuration |
+|------|-------------|---------------|
+| `tool_action` | Execute a Talome AI tool | `tool`: tool name, `params`: tool parameters |
+| `ai_prompt` | Run an AI prompt with context | `prompt`: text prompt with optional template variables |
+| `condition` | Evaluate a condition, skip remaining steps if false | `field`, `operator`, `value` |
+| `notify` | Send a notification | `channel`: channel ID, `message`: template string |
+
+### Tool Action Step
+
+Execute any automation-safe tool. Only tier 1 (read) and a curated subset of tier 2 (modify) tools are available. Tier 3 (destructive) tools are blocked.
+
+```json
+{
+  "type": "tool_action",
+  "tool": "get_disk_usage",
+  "params": {}
+}
+```
+
+The tool's return value is stored as the step's output and available to subsequent steps via `{{steps.<stepIndex>.output}}`.
+
+Use the `list_automation_safe_tools` tool to see which tools are available for automations.
+
+### AI Prompt Step
+
+Send a prompt to the AI model and capture the response. Useful for summarization, analysis, and decision-making within a workflow.
+
+```json
+{
+  "type": "ai_prompt",
+  "prompt": "Analyze this disk usage data and suggest what to clean up: {{steps.0.output}}"
+}
+```
+
+Template variables available in prompts:
+
+| Variable | Description |
+|----------|-------------|
+| `{{steps.N.output}}` | Output of step N (zero-indexed) |
+| `{{trigger.type}}` | The trigger type that fired this run |
+| `{{trigger.timestamp}}` | ISO timestamp when the trigger fired |
+| `{{webhook.body}}` | Webhook payload body (only for webhook triggers) |
+| `{{automation.name}}` | Name of the automation |
+
+### Condition Step
+
+Evaluate a condition against the previous step's output. If the condition is false, all remaining steps are skipped and the run ends.
+
+```json
+{
+  "type": "condition",
+  "field": "$.usage_percent",
+  "operator": "gte",
+  "value": 90
+}
+```
+
+The `field` uses JSONPath notation to extract a value from the previous step's output.
+
+### Notify Step
+
+Send a notification through a configured channel.
+
+```json
+{
+  "type": "notify",
+  "channel": "telegram",
+  "message": "Disk usage is at {{steps.0.output.usage_percent}}%. Consider running cleanup."
+}
+```
+
+The `channel` can be a channel ID or a channel type name (telegram, discord, email, webhook).
+
+---
+
+## Condition Operators
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `eq` | Equals | `"field": "$.status", "operator": "eq", "value": "running"` |
+| `neq` | Not equals | `"field": "$.status", "operator": "neq", "value": "healthy"` |
+| `gt` | Greater than | `"field": "$.cpu", "operator": "gt", "value": 80` |
+| `lt` | Less than | `"field": "$.freeGb", "operator": "lt", "value": 10` |
+| `gte` | Greater than or equal | `"field": "$.usage_percent", "operator": "gte", "value": 90` |
+| `lte` | Less than or equal | `"field": "$.count", "operator": "lte", "value": 0` |
+| `contains` | String contains | `"field": "$.name", "operator": "contains", "value": "error"` |
+
+---
+
+## Full Examples
+
+### 1. Disk Usage Alert
+
+Send a Telegram notification when disk usage exceeds 90%, checked every hour.
+
+```json
+{
+  "name": "Disk usage alert",
+  "enabled": true,
+  "trigger": {
+    "type": "schedule",
+    "cron": "0 * * * *"
+  },
+  "steps": [
+    {
+      "id": "check-disk",
+      "type": "tool_action",
+      "tool": "get_disk_usage",
+      "params": {}
+    },
+    {
+      "id": "is-high",
+      "type": "condition",
+      "field": "$.usage_percent",
+      "operator": "gte",
+      "value": 90
+    },
+    {
+      "id": "alert",
+      "type": "notify",
+      "channel": "telegram",
+      "message": "Disk usage is at {{steps.0.output.usage_percent}}% on {{steps.0.output.mount}}. Free space: {{steps.0.output.freeGb}} GB."
+    }
+  ]
+}
+```
+
+### 2. Nightly Docker Cleanup
+
+Analyze reclaimable space and clean up Docker resources every night at 3 AM.
+
+```json
+{
+  "name": "Nightly Docker cleanup",
+  "enabled": true,
+  "trigger": {
+    "type": "schedule",
+    "cron": "0 3 * * *"
+  },
+  "steps": [
+    {
+      "id": "check-reclaimable",
+      "type": "tool_action",
+      "tool": "get_reclaimable_space",
+      "params": {}
+    },
+    {
+      "id": "worth-cleaning",
+      "type": "condition",
+      "field": "$.reclaimableGb",
+      "operator": "gt",
+      "value": 1
+    },
+    {
+      "id": "cleanup",
+      "type": "tool_action",
+      "tool": "cleanup_hls_cache",
+      "params": {}
+    },
+    {
+      "id": "report",
+      "type": "notify",
+      "channel": "discord",
+      "message": "Nightly cleanup complete. Reclaimed space from HLS cache."
+    }
+  ]
+}
+```
+
+### 3. Container Crash Recovery
+
+Automatically restart a container when it stops unexpectedly and notify via Discord.
+
+```json
+{
+  "name": "Restart Jellyfin on crash",
+  "enabled": true,
+  "trigger": {
+    "type": "container_stopped",
+    "containerName": "jellyfin"
+  },
+  "steps": [
+    {
+      "id": "restart",
+      "type": "tool_action",
+      "tool": "start_container",
+      "params": { "name": "jellyfin" }
+    },
+    {
+      "id": "verify",
+      "type": "tool_action",
+      "tool": "check_service_health",
+      "params": { "name": "jellyfin" }
+    },
+    {
+      "id": "notify",
+      "type": "notify",
+      "channel": "discord",
+      "message": "Jellyfin crashed and was restarted. Health status: {{steps.1.output.status}}"
+    }
+  ]
+}
+```
+
+### 4. Webhook-Triggered Backup
+
+Back up an app when an external system sends a webhook.
+
+```json
+{
+  "name": "Webhook backup trigger",
+  "enabled": true,
+  "trigger": {
+    "type": "webhook",
+    "secret": "my-shared-secret"
+  },
+  "steps": [
+    {
+      "id": "backup",
+      "type": "tool_action",
+      "tool": "backup_app",
+      "params": { "appId": "{{webhook.body.appId}}" }
+    },
+    {
+      "id": "confirm",
+      "type": "notify",
+      "channel": "email",
+      "message": "Backup completed for {{webhook.body.appId}}"
+    }
+  ]
+}
+```
+
+### 5. AI-Powered System Report
+
+Generate a weekly AI summary of system health.
+
+```json
+{
+  "name": "Weekly system report",
+  "enabled": true,
+  "trigger": {
+    "type": "schedule",
+    "cron": "0 9 * * 1"
+  },
+  "steps": [
+    {
+      "id": "stats",
+      "type": "tool_action",
+      "tool": "get_system_health",
+      "params": {}
+    },
+    {
+      "id": "containers",
+      "type": "tool_action",
+      "tool": "list_containers",
+      "params": {}
+    },
+    {
+      "id": "analyze",
+      "type": "ai_prompt",
+      "prompt": "Generate a concise weekly health report for my home server. System health: {{steps.0.output}}. Containers: {{steps.1.output}}. Highlight any issues or recommendations."
+    },
+    {
+      "id": "send-report",
+      "type": "notify",
+      "channel": "telegram",
+      "message": "{{steps.2.output}}"
+    }
+  ]
+}
+```
+
+---
+
+## Automation Runs
+
+Every automation execution creates a run record in the `automation_runs` table with:
+
+- `triggeredAt` -- when the run started
+- `success` -- whether all steps completed without error
+- `error` -- error message if a step failed
+- `actionsRun` -- how many steps executed before completion or failure
+- `resultSummary` -- brief summary of the run outcome
+
+Individual step executions are recorded in `automation_step_runs` with duration, output, and error details.
+
+Use `get_automation_runs` to inspect execution history for debugging.
+
+---
+
+## Safe Tool Restrictions
+
+Automations run unattended, so they are restricted to a safe subset of tools:
+
+- **All tier 1 (read) tools** are available -- these only query data and have no side effects
+- **Curated tier 2 (modify) tools** are available -- operations like `start_container`, `restart_app`, `send_notification`, and `backup_app`
+- **No tier 3 (destructive) tools** -- operations like `uninstall_app`, `delete_file`, and `prune_resources` are blocked
+
+If a step references a blocked tool, the step fails with a clear error message and the run is marked as failed. The `list_automation_safe_tools` tool returns the complete list of available tools.

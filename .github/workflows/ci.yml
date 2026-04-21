@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  ci:
+    name: Typecheck, Test & Build
+    runs-on: ubuntu-latest
+    env:
+      TALOME_SECRET: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Shellcheck installer
+        run: |
+          sudo apt-get install -y shellcheck
+          # Exclusions with rationale:
+          #  SC2086 — word splitting is used intentionally for systemd env vars
+          #  SC2046 — command substitution in sudo calls
+          #  SC2059 — printf format strings embed ANSI color constants
+          #           (${RED}, ${RESET}, etc.) by design
+          #  SC2015 — `A && B || C` shorthand is used where C is a literal
+          #           `true` and the pattern is equivalent to an if-else
+          #  SC1091 — `source /etc/os-release` isn't followed at lint time
+          #           because it's a runtime-only file
+          shellcheck -e SC2086,SC2046,SC2059,SC2015,SC1091 install.sh

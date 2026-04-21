@@ -1,0 +1,24 @@
+{
+  "id": "audiobookshelf",
+  "name": "Audiobookshelf",
+  "description": "Self-hosted audiobook and podcast server with multi-user support and progress sync",
+  "tagline": "Audiobooks & podcasts, self-hosted",
+  "icon": "📚",
+  "category": "media",
+  "version": "2.17.7",
+  "website": "https://www.audiobookshelf.org",
+  "image": "ghcr.io/advplyr/audiobookshelf:2.17.7",
+  "ports": [{"host": 13378, "container": 80}],
+  "volumes": [
+    {"name": "config", "containerPath": "/config", "description": "Database, users, and settings"},
+    {"name": "metadata", "containerPath": "/metadata", "description": "Cache, covers, backups, and logs"},
+    {"name": "audiobooks", "containerPath": "/audiobooks", "description": "Audiobook library", "mediaVolume": true}
+  ],
+  "env": [
+    {"key": "TZ", "label": "Timezone", "required": false, "default": "UTC"},
+    {"key": "PUID", "label": "User ID", "required": false, "default": "1000"},
+    {"key": "PGID", "label": "Group ID", "required": false, "default": "1000"}
+  ],
+  "minResources": {"cpuCores": 1, "memoryMb": 512, "diskMb": 1024},
+  "arm64": true
+}

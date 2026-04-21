@@ -1,0 +1,45 @@
+# TALOME — Cursor Rules
+
+## Project Overview
+Talome is an AI-first, open-source home server management platform.
+Beautiful shadcn/ui dashboard + AI chat management + Docker container orchestration.
+
+## Architecture
+- Monorepo: pnpm workspaces + Turborepo
+- apps/dashboard: Next.js 15 + React 19 + shadcn/ui + Tailwind CSS 4
+- apps/core: Hono server + Vercel AI SDK + SQLite (Drizzle ORM)
+- packages/types: Shared TypeScript types
+
+## Tech Stack & Conventions
+- TypeScript strict mode everywhere
+- Next.js App Router (no Pages Router)
+- Server Components by default, 'use client' only when needed
+- shadcn/ui for all UI components — never install alternative component libs
+- Hugeicons (@hugeicons/react + @hugeicons/core-free-icons) for icons — NOT Lucide
+  - Use HugeiconsIcon wrapper: <HugeiconsIcon icon={Home01Icon} size={20} />
+  - lucide-react only exists as peer dep for shadcn internals, never import it directly
+- Tailwind CSS 4 with CSS variables for theming (dark/light)
+- All theming in globals.css — no inline styles, no per-component color overrides
+- Vercel AI SDK for all LLM interactions (streamText, tool)
+- Hono for the backend API
+- Drizzle ORM + better-sqlite3 for persistence
+- Zod for all runtime validation and tool parameter schemas
+- Error handling: use Result types, never throw in library code
+- Naming: kebab-case files, PascalCase components, camelCase functions
+- Exports: named exports only, no default exports (except Next.js pages)
+
+## Johnny Ive Design Rules
+- Radical reduction: if it doesn't serve the user's task, remove it
+- Breathing space: p-6 minimum on content areas, gap-6 between cards
+- Honest materials: no decorative gradients, no fake shadows
+- One primary action per view
+- Every animation < 200ms, ease-out, no bounce, no spring overshoot
+- Typography: text-sm, text-base, text-lg, text-2xl only. Weight 400/500 only.
+- Dark mode is the default
+
+## Security Rules
+- NEVER use eval() or execute arbitrary code
+- NEVER expose Docker socket directly to the frontend
+- All API routes validate input with Zod
+- API keys stored in .env, never committed
+- CORS restricted to dashboard origin only

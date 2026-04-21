@@ -1,0 +1,165 @@
+---
+title: Environment Variables
+description: Complete reference for all Talome environment variables by category.
+---
+
+Talome uses environment variables for initial server configuration. Most runtime settings are stored in the SQLite database and managed through the dashboard Settings page or the AI assistant's `set_setting` tool. The variables listed here configure the server itself and are read at startup.
+
+Environment variables are set in the `.env` file at the project root. A `.env.example` template is included in the repository.
+
+---
+
+## Required Variables
+
+These must be set for Talome to function. The install script generates them automatically.
+
+| Variable | Description |
+|----------|-------------|
+| `TALOME_SECRET` | 64-character hex string used for JWT session signing. Must be cryptographically random. Generate with `openssl rand -hex 32`. If not set, sessions will not work. |
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude. Required for the AI assistant to function. Get one at [console.anthropic.com](https://console.anthropic.com). Can alternatively be set in the database via `set_setting("anthropic_key", "sk-...")`. |
+
+---
+
+## AI Provider Configuration
+
+Talome supports multiple AI providers. At least one must be configured.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | -- | Anthropic API key for Claude models. This is the primary and recommended provider. |
+| `OPENAI_API_KEY` | -- | OpenAI API key. Optional alternative provider for GPT models. |
+| `OLLAMA_URL` | `http://localhost:11434` | Base URL for an Ollama instance. Enables local LLM support with no API key required. Can also be set in the database as `ollama_url`. |
+| `DEFAULT_MODEL` | `claude-sonnet-4-20250514` | Default model identifier. Examples: `claude-sonnet-4-20250514`, `gpt-5.3`, `llama3.1`. |
+| `DEFAULT_LLM_PROVIDER` | `anthropic` | Which provider to use by default. Options: `anthropic`, `openai`, `ollama`. |
+
+### Provider Priority
+
+When the user sends a message, the system checks providers in this order:
+
+1. The provider set in `DEFAULT_LLM_PROVIDER` (or the dashboard model selector)
+2. If that provider's API key is missing, falls back to the next available provider
+3. Ollama is always available if the server is reachable (no API key needed)
+
+---
+
+## Server Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORE_HOST` | `0.0.0.0` | IP address the backend binds to. Use `0.0.0.0` to accept connections from any interface, or `127.0.0.1` for localhost only. |
+| `CORE_PORT` | `4000` | HTTP port for the Hono backend API. The dashboard connects to this port. |
+| `TERMINAL_DAEMON_PORT` | `4001` | WebSocket port for the terminal daemon. Used for real-time PTY communication in the browser terminal. |
+| `NODE_ENV` | `development` | Node.js environment. Set to `production` for deployed instances. Affects logging verbosity and error detail. |
+
+---
+
+## Database
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_PATH` | `./data/talome.db` | Path to the SQLite database file. Relative paths are resolved from the project root. For Docker deployments, this should point to a persistent volume. |
+
+The database file is created automatically on first start. Drizzle ORM handles schema migrations.
+
+---
+
+## Docker
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOCKER_SOCKET` | `/var/run/docker.sock` | Path to the Docker socket. On most Linux systems this is the default. On Docker Desktop for Mac, it may be at `~/.docker/run/docker.sock`. |
+
+Talome communicates with Docker via the socket using Dockerode (a native Node.js Docker SDK). The socket must be accessible by the user running the Talome process.
+
+---
+
+## Dashboard Configuration
+
+These variables are used by the Next.js dashboard frontend. Variables prefixed with `NEXT_PUBLIC_` are embedded at build time and available in the browser.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEXT_PUBLIC_CORE_URL` | `http://localhost:4000` | URL of the Hono backend. The dashboard makes API calls to this URL. In production, this should match the backend's accessible URL. |
+| `NEXT_PUBLIC_APP_NAME` | `Talome` | Application name displayed in the browser title bar and header. |
+| `NEXT_PUBLIC_DASHBOARD_BENTO` | `1` | Enable (`1`) or disable (`0`) the bento grid layout on the dashboard home page. |
+| `NEXT_PUBLIC_DECLARATIVE_WIDGETS` | `1` | Enable (`1`) or disable (`0`) the declarative widget system (AI-managed widget layout). |
+| `DASHBOARD_PORT` | `3000` | Port for the Next.js dashboard. Standard Next.js port. |
+
+---
+
+## Container Defaults
+
+These variables are injected into app containers as default environment variables when not overridden by the app manifest.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TZ` | `America/New_York` | Timezone for containers. Uses the IANA timezone database format (e.g., `Europe/London`, `Asia/Tokyo`). |
+| `PUID` | `1000` | Linux user ID for file ownership inside containers. Should match the host user that owns the data directories. |
+| `PGID` | `1000` | Linux group ID for file ownership inside containers. Should match the host user's group. |
+
+To find your user and group IDs, run `id` on the host:
+
+```bash
+$ id
+uid=1000(tomas) gid=1000(tomas) groups=1000(tomas),998(docker)
+```
+
+---
+
+## Database Settings vs Environment Variables
+
+Some configuration values can be set in both places. The database value takes precedence at runtime:
+
+| Setting | Environment Variable | Database Key | Priority |
+|---------|---------------------|-------------|----------|
+| Anthropic API key | `ANTHROPIC_API_KEY` | `anthropic_key` | Database wins |
+| Ollama URL | `OLLAMA_URL` | `ollama_url` | Database wins |
+| Default model | `DEFAULT_MODEL` | `default_model` | Database wins |
+| Security mode | -- | `security_mode` | Database only |
+| Theme | -- | `theme` | Database only |
+
+This design means you can set initial values in `.env` and later override them through the dashboard without restarting the server.
+
+---
+
+## Example `.env` File
+
+```bash
+# Required
+TALOME_SECRET=your-64-character-hex-string-here
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Server
+CORE_HOST=0.0.0.0
+CORE_PORT=4000
+NODE_ENV=production
+
+# Database
+DATABASE_PATH=./data/talome.db
+
+# Docker
+DOCKER_SOCKET=/var/run/docker.sock
+
+# Dashboard
+NEXT_PUBLIC_CORE_URL=http://localhost:4000
+
+# Optional: OpenAI (if using GPT models)
+# OPENAI_API_KEY=sk-...
+
+# Optional: Ollama (if running local models)
+# OLLAMA_URL=http://localhost:11434
+
+# Container defaults
+TZ=America/New_York
+PUID=1000
+PGID=1000
+```
+
+---
+
+## Security Notes
+
+- Never commit `.env` files to version control. The repository's `.gitignore` excludes `.env` by default.
+- `TALOME_SECRET` must be unique per installation. Sharing it between instances would allow session token forgery.
+- API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are sensitive credentials. When stored in the database via `set_setting`, they are only accessible to authenticated users.
+- The Docker socket grants full control over all containers on the host. Talome's API requires authentication for all Docker operations.

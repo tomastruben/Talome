@@ -1,0 +1,9 @@
+{
+  "title": "Architecture Decisions",
+  "pages": [
+    "dynamic-tool-loading",
+    "memory-ranking",
+    "automation-safe-tools",
+    "mcp-auto-sync"
+  ]
+}

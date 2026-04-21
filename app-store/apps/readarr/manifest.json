@@ -1,0 +1,23 @@
+{
+  "id": "readarr",
+  "name": "Readarr",
+  "description": "Book and audiobook manager for automatic downloading and organization",
+  "icon": "📚",
+  "category": "media",
+  "version": "develop",
+  "website": "https://readarr.com",
+  "image": "lscr.io/linuxserver/readarr:develop",
+  "ports": [{"host": 8787, "container": 8787}],
+  "volumes": [
+    {"name": "config", "containerPath": "/config", "description": "Readarr configuration and database"},
+    {"name": "books", "containerPath": "/books", "description": "Book and audiobook library", "mediaVolume": true},
+    {"name": "downloads", "containerPath": "/downloads", "description": "Download directory", "mediaVolume": true}
+  ],
+  "env": [
+    {"key": "TZ", "label": "Timezone", "required": false, "default": "UTC"},
+    {"key": "PUID", "label": "User ID", "required": false, "default": "1000"},
+    {"key": "PGID", "label": "Group ID", "required": false, "default": "1000"}
+  ],
+  "minResources": {"cpuCores": 1, "memoryMb": 512, "diskMb": 1024},
+  "arm64": true
+}

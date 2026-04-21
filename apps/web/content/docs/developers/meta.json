@@ -1,0 +1,11 @@
+{
+  "title": "Developers",
+  "icon": "CommandLine",
+  "pages": [
+    "architecture",
+    "contributing",
+    "adding-integrations",
+    "design-system",
+    "decisions"
+  ]
+}

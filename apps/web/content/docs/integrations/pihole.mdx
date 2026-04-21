@@ -1,0 +1,304 @@
+---
+title: Pi-hole
+description: Manage network-wide DNS blocking through conversation -- statistics, whitelist, blacklist, and temporary disable.
+---
+
+Pi-hole is a network-level DNS sinkhole that blocks ads, trackers, and malicious domains for every device on your network. Instead of installing browser extensions on each device, Pi-hole filters DNS queries at the network level -- your TV, phone, laptop, and IoT devices all benefit. Talome's integration gives the AI 5 tools to monitor blocking statistics, manage domain lists, and temporarily disable filtering.
+
+Pi-hole is a unique integration because it affects your entire network, not just a single app. The AI understands this scope and treats Pi-hole operations with appropriate care -- especially `pihole_disable`, which temporarily exposes your whole network to unblocked DNS.
+
+## Setup
+
+### 1. Install Pi-hole
+
+```
+You: Install Pi-hole
+```
+
+The AI installs Pi-hole from the app store. Pi-hole's web admin interface runs on port 80 (or 8089 if port 80 is taken) and the DNS service listens on port 53. After installation, you need to configure your router or devices to use Pi-hole as their DNS server.
+
+### 2. Configure settings
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `pihole_url` | `http://localhost:8089` | Pi-hole admin web UI URL |
+| `pihole_api_key` | `abc123...` | API key (the admin password hash) |
+
+Pi-hole's API key is typically the SHA-256 hash of your admin password, found in `/etc/pihole/setupVars.conf` inside the container. The `wire_apps` tool can extract it automatically.
+
+### 3. Point DNS to Pi-hole
+
+Pi-hole only works when devices use it as their DNS server. The most effective approach is to configure your router's DHCP settings to hand out Pi-hole's IP as the DNS server. Alternatively, configure individual devices manually.
+
+```
+You: I set up Pi-hole. How do I make my devices use it?
+
+AI: The best approach is to set your router's DNS to Pi-hole's IP address.
+
+    Your Pi-hole container is at 192.168.1.100:53.
+
+    In your router settings (usually at 192.168.1.1):
+    1. Find DHCP / DNS settings
+    2. Set the primary DNS to 192.168.1.100
+    3. Remove or leave secondary DNS blank
+    4. Save and reboot the router
+
+    All devices will start using Pi-hole after their next DHCP lease renewal.
+    You can force this by reconnecting Wi-Fi on individual devices.
+```
+
+## Auto-Configuration
+
+When `wire_apps` detects a running Pi-hole container:
+
+- Identifies the container by image name
+- Reads the API key from `setupVars.conf` (the `WEBPASSWORD` value)
+- Saves the URL and API key to Talome settings
+- Verifies the API is accessible
+
+Pi-hole doesn't connect to other apps the way the media stack does, so wiring is straightforward -- just the URL and API key.
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `pihole_get_stats` | Dashboard statistics: total queries today, queries blocked, percentage blocked, domains on blocklist, unique clients, and top blocked domains. Provides a complete overview of Pi-hole's filtering activity. |
+| `pihole_enable` | Re-enable DNS blocking after it was disabled. Takes effect immediately -- all subsequent DNS queries are filtered again. |
+| `pihole_disable` | Temporarily disable DNS blocking. Accepts an optional duration in seconds -- after the timer expires, blocking re-enables automatically. If no duration is specified, blocking stays disabled until manually re-enabled. |
+| `pihole_whitelist` | Add a domain to the whitelist. Whitelisted domains are never blocked, even if they appear on a blocklist. Useful when Pi-hole blocks a legitimate site you need. |
+| `pihole_blacklist` | Add a domain to the blacklist. Blacklisted domains are always blocked, regardless of whether they appear on other lists. Useful for blocking specific domains your blocklists don't cover. |
+
+## Conversation Examples
+
+### Checking blocking statistics
+
+```
+You: How's Pi-hole doing today?
+
+AI: [pihole_get_stats]
+    Pi-hole statistics for today:
+
+    Total queries: 14,287
+    Queries blocked: 2,891 (20.2%)
+    Domains on blocklist: 174,329
+
+    Unique clients: 23 devices
+
+    Top blocked domains:
+    1. analytics.google.com — 312 blocks
+    2. graph.facebook.com — 287 blocks
+    3. ads.doubleclick.net — 245 blocks
+    4. tracking.example.com — 198 blocks
+    5. telemetry.microsoft.com — 156 blocks
+
+    Your network is filtering about 1 in 5 DNS queries.
+```
+
+### Temporarily disabling blocking
+
+```
+You: Disable Pi-hole for 5 minutes, I need to access a site it's blocking
+
+AI: [pihole_disable: duration: 300]
+    Pi-hole blocking disabled for 5 minutes.
+    DNS filtering will re-enable automatically at 2:47 PM.
+
+    All devices on your network can now reach any domain.
+    The site you need should work now.
+```
+
+```
+You: Actually, re-enable it now
+
+AI: [pihole_enable]
+    Pi-hole blocking re-enabled immediately.
+    DNS filtering is active again for all devices.
+```
+
+### Managing the whitelist
+
+```
+You: Pi-hole is blocking login.microsoftonline.com and I need it for work
+
+AI: [pihole_whitelist: domain: "login.microsoftonline.com"]
+    Added login.microsoftonline.com to the whitelist.
+    This domain will never be blocked, even if it appears on a blocklist.
+
+    The change takes effect immediately -- try the site again.
+    If you're still having issues, related domains like
+    aadcdn.msftauth.net might also need whitelisting.
+```
+
+### Blocking specific domains
+
+```
+You: Block tiktok.com on my network
+
+AI: [pihole_blacklist: domain: "tiktok.com"]
+    Added tiktok.com to the blacklist.
+
+    Note: TikTok uses multiple domains. For comprehensive blocking,
+    you may also want to block:
+    - www.tiktok.com
+    - api.tiktok.com
+    - log.tiktokv.com
+    - v16-web.tiktok.com
+
+    Want me to block all of these?
+
+You: Yes, block them all
+
+AI: [pihole_blacklist: domain: "www.tiktok.com"]
+    [pihole_blacklist: domain: "api.tiktok.com"]
+    [pihole_blacklist: domain: "log.tiktokv.com"]
+    [pihole_blacklist: domain: "v16-web.tiktok.com"]
+    All TikTok domains blocked. Devices on your network will not
+    be able to access TikTok.
+```
+
+### Investigating blocking patterns
+
+```
+You: Which devices are generating the most DNS queries?
+
+AI: [pihole_get_stats]
+    Top clients by query volume:
+
+    1. 192.168.1.42 (living-room-tv) — 3,412 queries (847 blocked)
+    2. 192.168.1.15 (tomas-laptop) — 2,876 queries (423 blocked)
+    3. 192.168.1.67 (smart-hub) — 2,134 queries (1,203 blocked)
+    4. 192.168.1.23 (iphone-tomas) — 1,567 queries (234 blocked)
+    5. 192.168.1.88 (ring-doorbell) — 987 queries (412 blocked)
+
+    The smart hub has the highest block rate (56%) — IoT devices
+    tend to phone home frequently. The TV is generating the most
+    total queries, likely from streaming app analytics.
+```
+
+### Daily monitoring
+
+```
+You: Compare Pi-hole stats from today vs yesterday
+
+AI: [pihole_get_stats]
+    Today: 14,287 queries, 2,891 blocked (20.2%)
+
+    This is roughly in line with typical daily patterns.
+    If you want more detailed historical data, you can check
+    Pi-hole's web UI at http://your-server:8089/admin
+    for long-term query graphs and trends.
+```
+
+## Advanced Usage
+
+### Combining with Home Assistant
+
+If you have both Pi-hole and Home Assistant, the AI can create coordinated workflows:
+
+```
+You: When the kids' devices connect to the network after 9 PM,
+     block gaming and social media domains
+
+AI: This requires two systems working together:
+
+    For Pi-hole, I'll add the relevant domains to a group blacklist:
+    [pihole_blacklist: "roblox.com"]
+    [pihole_blacklist: "discord.com"]
+    [pihole_blacklist: "instagram.com"]
+    [pihole_blacklist: "youtube.com"]
+
+    For time-based control, you'll need to set up a schedule.
+    You could create a Talome automation that:
+    1. At 9 PM: calls pihole_blacklist for these domains
+    2. At 7 AM: calls pihole_whitelist to remove them
+
+    Want me to create that automation?
+```
+
+### Network security monitoring
+
+Pi-hole statistics can reveal suspicious activity:
+
+```
+You: Are any devices on my network making suspicious DNS requests?
+
+AI: [pihole_get_stats]
+    Looking at unusual patterns:
+
+    192.168.1.88 (ring-doorbell) — 412 blocked queries to:
+    - analytics.ring.com
+    - api.ring.com
+    - fw.ring.com
+
+    192.168.1.67 (smart-hub) — 1,203 blocked queries, including:
+    - telemetry.hubitat.com (expected)
+    - cn-api.iot.example.com (unusual — Chinese IoT endpoint)
+
+    The Ring doorbell's analytics are expected (and blocked).
+    The smart hub is trying to reach a Chinese API endpoint,
+    which could be from a third-party Zigbee device phoning home.
+    Pi-hole is blocking it successfully.
+```
+
+### Using Pi-hole with a VPN
+
+If you run a VPN (WireGuard, Tailscale) for remote access, you can point the VPN's DNS at Pi-hole so remote devices get ad blocking too:
+
+```
+You: How do I use Pi-hole with my Tailscale setup?
+
+AI: In your Tailscale admin console, set the DNS to your Pi-hole's
+    Tailscale IP address. This way, all devices connected to your
+    Tailscale network will use Pi-hole for DNS, getting ad blocking
+    even when they're away from home.
+
+    [tailscale_status]
+    Your Pi-hole's Tailscale IP is 100.64.0.3.
+    Set this as the DNS server in Tailscale's admin panel.
+```
+
+## Troubleshooting
+
+### Pi-hole API returns authentication errors
+
+**Cause:** The API key in settings doesn't match Pi-hole's current web password hash.
+
+**Fix:** The API key is the SHA-256 hash of your admin password. If you changed the password, update the key in Settings. Or run `wire_apps` to re-extract it from `setupVars.conf`.
+
+### Blocking percentage seems too low
+
+**Cause:** Devices aren't using Pi-hole as their DNS server, or HTTPS-based DNS (DoH) is bypassing Pi-hole.
+
+**Fix:** Verify devices are using Pi-hole: check the "Top clients" stat. If a device isn't listed, it's using a different DNS server. Some browsers (Firefox, Chrome) enable DNS-over-HTTPS by default, which bypasses Pi-hole. Disable DoH in browser settings.
+
+### Legitimate site blocked
+
+**Cause:** A domain needed by the site is on one of Pi-hole's blocklists.
+
+**Fix:** Whitelist the domain: `"Whitelist login.example.com"`. If you don't know which domain is being blocked, temporarily disable Pi-hole, access the site, then check Pi-hole's query log for the domains that were just resolved.
+
+### Pi-hole container uses too much memory
+
+**Cause:** Large blocklists or the gravity database needs updating.
+
+**Fix:** Check Pi-hole's container stats: `"How much memory is Pi-hole using?"`. The gravity database can be rebuilt by running a gravity update inside the container: `"Run pihole -g inside the Pi-hole container"`.
+
+### DNS resolution stops completely
+
+**Cause:** Pi-hole container crashed or stopped, and devices have no fallback DNS.
+
+**Fix:** Restart the container: `"Restart Pi-hole"`. To prevent total DNS failure, consider configuring a secondary DNS server (like `1.1.1.1`) on your router as a fallback. Note that queries hitting the fallback won't be filtered.
+
+<Cards>
+  <Card title="Home Assistant" href="/docs/integrations/home-assistant">
+    Smart home automation that pairs well with Pi-hole.
+  </Card>
+  <Card title="Networking Guide" href="/docs/guides/networking">
+    DNS, reverse proxy, and network configuration.
+  </Card>
+  <Card title="Monitoring Guide" href="/docs/guides/monitoring">
+    System and service monitoring including Pi-hole health.
+  </Card>
+</Cards>

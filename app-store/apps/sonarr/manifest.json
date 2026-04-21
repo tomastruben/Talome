@@ -1,0 +1,23 @@
+{
+  "id": "sonarr",
+  "name": "Sonarr",
+  "description": "TV show manager for automatic downloading and organization",
+  "icon": "📺",
+  "category": "media",
+  "version": "latest",
+  "website": "https://sonarr.tv",
+  "image": "lscr.io/linuxserver/sonarr:latest",
+  "ports": [{"host": 8989, "container": 8989}],
+  "volumes": [
+    {"name": "config", "containerPath": "/config", "description": "Sonarr configuration and database"},
+    {"name": "tv", "containerPath": "/tv", "description": "TV show library", "mediaVolume": true},
+    {"name": "downloads", "containerPath": "/downloads", "description": "Download directory", "mediaVolume": true}
+  ],
+  "env": [
+    {"key": "TZ", "label": "Timezone", "required": false, "default": "UTC"},
+    {"key": "PUID", "label": "User ID", "required": false, "default": "1000"},
+    {"key": "PGID", "label": "Group ID", "required": false, "default": "1000"}
+  ],
+  "minResources": {"cpuCores": 1, "memoryMb": 512, "diskMb": 1024},
+  "arm64": true
+}

@@ -1,0 +1,325 @@
+---
+title: Home Assistant
+description: Control your smart home through conversation -- entities, services, history, and automations managed by AI.
+---
+
+Home Assistant is the leading open-source home automation platform, integrating with over 2,000 devices and services. Talome's integration gives the AI 5 tools to list entities, call services, read sensor history, and create automations. Instead of building automations in YAML or clicking through the Home Assistant UI, you describe what you want in natural language and the AI translates it into the correct API calls.
+
+This integration bridges your server management and your home. When the AI knows both your Docker infrastructure and your smart home, it can coordinate across them: "turn off the office lights and shut down the dev containers" becomes a single conversation.
+
+## Setup
+
+### 1. Install Home Assistant (if not already running)
+
+```
+You: Install Home Assistant
+```
+
+Home Assistant can be installed through the Talome app store as a Docker container. It runs on port 8123 by default. After installation, complete the onboarding flow through the Home Assistant web UI.
+
+### 2. Create a Long-Lived Access Token
+
+Home Assistant uses long-lived access tokens for API access:
+
+1. Open Home Assistant at `http://your-server:8123`
+2. Click your profile icon (bottom-left)
+3. Scroll to "Long-Lived Access Tokens"
+4. Click "Create Token" and give it a name like "Talome"
+5. Copy the token (it's only shown once)
+
+### 3. Configure settings
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `homeassistant_url` | `http://localhost:8123` | Home Assistant base URL |
+| `homeassistant_token` | `eyJhbGciOi...` | Long-lived access token |
+
+Add these in **Settings > Integrations** or through conversation:
+
+```
+You: Set my Home Assistant URL and token
+
+AI: [set_setting: homeassistant_url, "http://localhost:8123"]
+    [set_setting: homeassistant_token, "eyJhbGciOi..."]
+    Home Assistant configured. Verifying connection...
+
+    [hass_get_status]
+    Connected to Home Assistant 2024.12.3 with 147 entities.
+```
+
+## Auto-Configuration
+
+When `wire_apps` detects a running Home Assistant container:
+
+- Identifies the container by image name
+- Saves the URL to Talome settings
+- Notes that a token must be created manually (Home Assistant tokens cannot be extracted from config files)
+- Prompts you to create a long-lived access token if one isn't configured
+
+Unlike most integrations, the Home Assistant token cannot be auto-extracted. This is by design -- Home Assistant's security model requires explicit user action to grant API access.
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `hass_get_status` | Home Assistant server status: version, state (running/starting), number of entities, number of automations, and whether the API is responsive. |
+| `hass_list_entities` | List entities by domain (light, switch, sensor, climate, etc.) or list all entities. Returns entity ID, friendly name, current state, and attributes. Supports filtering by domain or area. |
+| `hass_call_service` | Call any Home Assistant service. This is the primary action tool -- turning lights on/off, setting thermostat temperatures, locking doors, triggering scenes, and any other service the HA instance supports. |
+| `hass_get_history` | Retrieve state history for a specific entity over a time period. Returns timestamped state changes, useful for analyzing sensor patterns, tracking usage, or debugging automations. |
+| `hass_create_automation` | Create a Home Assistant automation with triggers, conditions, and actions. The AI translates your natural language description into the correct YAML structure. |
+
+## Conversation Examples
+
+### Controlling lights
+
+```
+You: Turn off all the lights
+
+AI: [hass_list_entities: domain: "light"]
+    Found 12 lights. 5 are currently on:
+    - light.living_room (on, 80% brightness)
+    - light.kitchen (on, 100% brightness)
+    - light.bedroom (on, 40% brightness)
+    - light.office (on, 70% brightness)
+    - light.porch (on, 100% brightness)
+
+    [hass_call_service: domain: "light", service: "turn_off",
+     entity_id: "all"]
+    All 5 lights turned off.
+```
+
+### Reading sensor data
+
+```
+You: What's the temperature in the living room?
+
+AI: [hass_list_entities: domain: "sensor", filter: "living_room_temperature"]
+    sensor.living_room_temperature: 72.4°F
+    Last updated: 2 minutes ago
+
+    The living room is at 72.4°F. Want me to check the thermostat setting?
+```
+
+### Analyzing sensor history
+
+```
+You: Show me the living room temperature over the last 24 hours
+
+AI: [hass_get_history: entity_id: "sensor.living_room_temperature",
+     period: "24h"]
+    Living room temperature (last 24 hours):
+
+    Midnight - 6 AM: 68-69°F (overnight setback)
+    6 AM - 8 AM: 69-72°F (warming up)
+    8 AM - 6 PM: 71-73°F (daytime target)
+    6 PM - 10 PM: 72-73°F (evening)
+    10 PM - now: 70°F (cooling down)
+
+    The pattern looks normal. Temperature stays within 68-73°F range
+    with expected transitions at your schedule boundaries.
+```
+
+### Creating automations
+
+```
+You: Create an automation to turn on the porch lights at sunset and off at midnight
+
+AI: [hass_create_automation: {
+      alias: "Porch Lights Schedule",
+      trigger: [
+        { platform: "sun", event: "sunset" },
+        { platform: "time", at: "00:00:00" }
+      ],
+      action: [
+        {
+          choose: [
+            {
+              conditions: [{ condition: "sun", after: "sunset" }],
+              sequence: [{ service: "light.turn_on",
+                          target: { entity_id: "light.porch" },
+                          data: { brightness_pct: 100 } }]
+            }
+          ],
+          default: [{ service: "light.turn_off",
+                      target: { entity_id: "light.porch" } }]
+        }
+      ]
+    }]
+    Created automation "Porch Lights Schedule":
+    - Turns on porch lights at sunset (100% brightness)
+    - Turns them off at midnight
+
+    The automation is enabled and will run starting tonight.
+```
+
+### Complex service calls
+
+```
+You: Set the thermostat to 70 and turn on the bedroom fan
+
+AI: [hass_call_service: domain: "climate", service: "set_temperature",
+     entity_id: "climate.thermostat", temperature: 70]
+    Thermostat set to 70°F.
+
+    [hass_call_service: domain: "fan", service: "turn_on",
+     entity_id: "fan.bedroom", percentage: 50]
+    Bedroom fan turned on at 50% speed.
+```
+
+### Cross-domain queries
+
+```
+You: Which doors are unlocked and which windows are open?
+
+AI: [hass_list_entities: domain: "lock"]
+    Locks:
+    - lock.front_door: locked
+    - lock.back_door: unlocked
+    - lock.garage: locked
+
+    [hass_list_entities: domain: "binary_sensor", filter: "window"]
+    Windows:
+    - binary_sensor.kitchen_window: open
+    - binary_sensor.bedroom_window: closed
+    - binary_sensor.office_window: closed
+
+    The back door is unlocked and the kitchen window is open.
+    Want me to lock the back door?
+```
+
+### Combining server and home control
+
+```
+You: I'm leaving the house. Lock up and shut down my dev environment.
+
+AI: [hass_call_service: domain: "lock", service: "lock",
+     entity_id: "all"]
+    All doors locked.
+
+    [hass_call_service: domain: "light", service: "turn_off",
+     entity_id: "all"]
+    All lights off.
+
+    [hass_call_service: domain: "climate", service: "set_preset_mode",
+     entity_id: "climate.thermostat", preset_mode: "away"]
+    Thermostat set to away mode.
+
+    [stop_app: "dev-postgres"]
+    [stop_app: "dev-redis"]
+    Development containers stopped. Have a good one.
+```
+
+## Advanced Usage
+
+### Automation templates
+
+The AI can create common automation patterns:
+
+```
+You: Create a movie night scene: dim living room lights to 20%,
+     turn off all other lights, and set thermostat to 72
+
+AI: [hass_create_automation: {
+      alias: "Movie Night",
+      trigger: [{ platform: "event", event_type: "call_service",
+                  event_data: { domain: "scene", service: "turn_on" } }],
+      action: [
+        { service: "light.turn_on",
+          target: { entity_id: "light.living_room" },
+          data: { brightness_pct: 20 } },
+        { service: "light.turn_off",
+          target: { entity_id: ["light.kitchen", "light.bedroom",
+                                "light.office"] } },
+        { service: "climate.set_temperature",
+          target: { entity_id: "climate.thermostat" },
+          data: { temperature: 72 } }
+      ]
+    }]
+```
+
+### Monitoring with history
+
+Use sensor history to detect issues:
+
+```
+You: Has my basement moisture sensor triggered in the last week?
+
+AI: [hass_get_history: entity_id: "sensor.basement_moisture", period: "7d"]
+    Basement moisture sensor (last 7 days):
+    - Stable at 45% humidity throughout the week
+    - No spikes detected
+    - Last state change: 3 days ago (45.2% → 44.8%)
+
+    Everything looks normal. No moisture events detected.
+```
+
+### Entity exploration
+
+When you don't know exact entity names:
+
+```
+You: What smart devices do I have?
+
+AI: [hass_list_entities]
+    Your Home Assistant has 147 entities across these domains:
+
+    Lights: 12 entities (5 on, 7 off)
+    Switches: 8 entities
+    Sensors: 67 entities (temperature, humidity, motion, power)
+    Binary sensors: 23 entities (doors, windows, occupancy)
+    Climate: 2 entities (thermostat, bedroom AC)
+    Locks: 3 entities
+    Fans: 2 entities
+    Media players: 4 entities (Chromecast, Sonos, etc.)
+    Cameras: 3 entities
+    Covers: 2 entities (garage doors)
+    Automations: 21 active
+
+    Want details on any specific domain?
+```
+
+## Troubleshooting
+
+### "Home Assistant not configured" error
+
+**Cause:** The `homeassistant_url` or `homeassistant_token` setting is missing.
+
+**Fix:** Add both values in Settings > Integrations. The token must be created in the Home Assistant UI (Profile > Long-Lived Access Tokens). Unlike other integrations, this cannot be auto-extracted.
+
+### Service calls fail with "entity not found"
+
+**Cause:** The entity ID is wrong or the device is unavailable.
+
+**Fix:** List entities first to get the correct ID: `"Show me all lights"`. Entity IDs in Home Assistant follow the pattern `domain.name` (e.g., `light.living_room`). If the device is unavailable, it may be offline or disconnected.
+
+### Automation creation fails
+
+**Cause:** Invalid trigger or action configuration, or a required entity doesn't exist.
+
+**Fix:** The AI validates automation structure before sending, but edge cases can fail. Ask the AI to check the entity exists first: `"Does sensor.basement_moisture exist?"`. If the automation has a complex condition, try simplifying it.
+
+### History returns empty results
+
+**Cause:** The entity hasn't changed state in the requested period, or the recorder component isn't tracking it.
+
+**Fix:** Home Assistant's recorder has a default history retention of 10 days. Data older than that is purged. Some entities may be excluded from recording in Home Assistant's configuration.
+
+### Connection timeouts
+
+**Cause:** Home Assistant is still starting up (can take 1-2 minutes for large installations), or the URL is incorrect.
+
+**Fix:** Verify the container is running and healthy: `"Is Home Assistant running?"`. Check the container logs for startup progress: `"Show me Home Assistant logs"`.
+
+<Cards>
+  <Card title="Automations Guide" href="/docs/guides/automations">
+    Create Talome automations that can trigger Home Assistant actions.
+  </Card>
+  <Card title="Pi-hole" href="/docs/integrations/pihole">
+    Another network-layer integration for DNS management.
+  </Card>
+  <Card title="AI Assistant Guide" href="/docs/guides/ai-assistant">
+    How the AI selects and chains tools across integrations.
+  </Card>
+</Cards>

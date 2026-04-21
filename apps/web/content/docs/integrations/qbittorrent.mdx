@@ -1,0 +1,328 @@
+---
+title: qBittorrent
+description: Manage your download client through conversation -- speed limits, download paths, torrent monitoring, and preference tuning.
+---
+
+qBittorrent is the default download client in Talome's media pipeline. It handles the actual file transfers that Sonarr and Radarr initiate. Talome's integration gives the AI 6 tools to monitor active torrents, adjust speed limits, change download paths, and configure preferences -- all without opening the qBittorrent web UI.
+
+In the media stack, qBittorrent sits between the arr apps and your media server. Sonarr and Radarr tell qBittorrent what to download, qBittorrent handles the transfer, and once complete, the arr apps import the files into your organized library. The AI understands this chain and can diagnose issues at any point.
+
+## Setup
+
+### 1. Install qBittorrent
+
+```
+You: Install qBittorrent
+```
+
+The AI installs qBittorrent from the app store. It maps the downloads directory to your media path if known. qBittorrent's web UI runs on port 8080 by default.
+
+### 2. Configure settings
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `qbittorrent_url` | `http://localhost:8080` | qBittorrent web UI URL |
+| `qbittorrent_username` | `admin` | Web UI username |
+| `qbittorrent_password` | `adminadmin` | Web UI password |
+
+qBittorrent's default credentials are `admin`/`adminadmin`. The `wire_apps` tool detects qBittorrent and saves the URL and default credentials to settings. You should change the default password after installation.
+
+### 3. Verify the connection
+
+```
+You: Is qBittorrent running?
+
+AI: [qbt_get_version]
+    qBittorrent is running.
+    Version: qBittorrent v4.6.4
+    libtorrent version: 2.0.10
+
+    Web UI accessible at http://localhost:8080
+```
+
+## Auto-Configuration
+
+When `wire_apps` runs and detects qBittorrent:
+
+- Identifies the qBittorrent container by image name and port
+- Saves the URL and default credentials to Talome settings
+- Adds qBittorrent as a download client in Sonarr (via `arr_add_download_client`)
+- Adds qBittorrent as a download client in Radarr (via `arr_add_download_client`)
+- Tests the download client connection from both arr apps (via `arr_test_download_client`)
+- Sets the download path to match the shared media volume if applicable
+
+This means after a single `wire_apps` call, Sonarr and Radarr can immediately send downloads to qBittorrent with no manual configuration.
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `qbt_get_version` | Returns the qBittorrent version, libtorrent version, and confirms the web API is reachable. Quick health check. |
+| `qbt_get_preferences` | Returns the full preferences object: download paths, connection limits, speed limits, scheduling, proxy settings, and more. |
+| `qbt_set_preferences` | Update one or more preferences. Accepts a partial preferences object -- only the specified keys are changed, others remain untouched. |
+| `qbt_set_download_path` | Change the default download directory. Also supports setting separate paths for incomplete and completed downloads. |
+| `qbt_set_speed_limits` | Set upload and download speed limits in bytes per second. Pass 0 for unlimited. Can set global limits or alternative-speed limits. |
+| `qbt_list_torrents` | List all torrents with their name, status (downloading, seeding, paused, stalled), progress percentage, download/upload speed, size, and ETA. Supports filtering by status. |
+
+## Conversation Examples
+
+### Monitoring active downloads
+
+```
+You: Show me what's downloading
+
+AI: [qbt_list_torrents: filter: "downloading"]
+    Active downloads:
+
+    1. The.Bear.S03E07.1080p.WEB-DL — 1.8 GB
+       Progress: 67% | Speed: 42.3 MB/s | ETA: 14s
+       Status: Downloading
+
+    2. Dune.Part.Two.2024.2160p.UHD.BluRay — 76.2 GB
+       Progress: 12% | Speed: 28.1 MB/s | ETA: 32m
+       Status: Downloading
+
+    3. Oppenheimer.2023.1080p.BluRay — 14.3 GB
+       Progress: 0% | Speed: 0 B/s | ETA: unknown
+       Status: Stalled (checking metadata)
+
+    2 active downloads, 1 stalled.
+```
+
+### Setting speed limits
+
+```
+You: Limit download speed to 50 MB/s, I'm about to start a video call
+
+AI: [qbt_set_speed_limits: download: 52428800, upload: 10485760]
+    Speed limits set:
+    Download: 50 MB/s (was unlimited)
+    Upload: 10 MB/s (was unlimited)
+
+    These limits will stay until you remove them. Want me to set
+    a reminder to remove the limits after your call?
+```
+
+```
+You: Remove the speed limits
+
+AI: [qbt_set_speed_limits: download: 0, upload: 0]
+    Speed limits removed. Downloads are now running at full speed.
+```
+
+### Changing download paths
+
+```
+You: Move the download directory to /mnt/nas/Downloads
+
+AI: [qbt_set_download_path: "/mnt/nas/Downloads"]
+    Default download path changed to /mnt/nas/Downloads.
+
+    Note: Existing torrents will continue downloading to their original
+    path. Only new downloads will use the new directory. Make sure
+    Sonarr and Radarr can also access /mnt/nas/Downloads for imports.
+```
+
+### Checking and updating preferences
+
+```
+You: What are my current qBittorrent settings?
+
+AI: [qbt_get_preferences]
+    Key settings:
+
+    Download path: /downloads
+    Max active downloads: 5
+    Max active uploads: 5
+    Max connections: 500
+    Max connections per torrent: 100
+    Download speed limit: Unlimited
+    Upload speed limit: Unlimited
+    DHT: Enabled
+    PeX: Enabled
+    Encryption: Prefer encryption
+    Listening port: 6881
+    UPnP: Enabled
+
+    Want me to change any of these?
+```
+
+```
+You: Set max active downloads to 3 and enable alternative speed limits
+     for weekdays 9am-5pm at 10 MB/s
+
+AI: [qbt_set_preferences: {
+      max_active_downloads: 3,
+      scheduler_enabled: true,
+      schedule_from_hour: 9,
+      schedule_to_hour: 17,
+      schedule_days: "weekdays",
+      alt_dl_limit: 10485760
+    }]
+    Updated preferences:
+    - Max active downloads: 3
+    - Scheduling enabled: weekdays 9:00-17:00
+    - Alternative speed during schedule: 10 MB/s download
+
+    During work hours, downloads will be limited to 10 MB/s.
+    Outside that window, they run at full speed.
+```
+
+### Diagnosing stalled torrents
+
+```
+You: Why is my Oppenheimer download stuck at 0%?
+
+AI: [qbt_list_torrents: filter: "stalled"]
+    Oppenheimer.2023.1080p.BluRay — 14.3 GB
+    Status: Stalled
+    Seeds: 0 | Peers: 0
+    Added: 2 hours ago
+    Tracker: Error — "tracker is down"
+
+    The torrent has no available seeds and the tracker is unreachable.
+    This release may have been removed or the tracker is temporarily down.
+
+    Options:
+    1. Wait for the tracker to come back
+    2. Mark this as failed in Radarr so it searches for an alternative release
+    3. Search manually through Prowlarr for a different release
+
+    Want me to mark it as failed and search for alternatives?
+```
+
+### Viewing all torrents by status
+
+```
+You: Show me everything in qBittorrent, grouped by status
+
+AI: [qbt_list_torrents]
+    Downloading (2):
+    - The.Bear.S03E07 — 67%, 42 MB/s
+    - Dune.Part.Two — 12%, 28 MB/s
+
+    Seeding (5):
+    - Shogun.S01E06 — Ratio: 2.1, uploaded 4.8 GB
+    - The.Last.of.Us.S02E01 — Ratio: 1.4, uploaded 2.1 GB
+    ... and 3 more
+
+    Paused (1):
+    - Linux.ISO.Collection — Paused by user
+
+    Total: 8 torrents, 2 downloading, 5 seeding, 1 paused
+```
+
+## Advanced Usage
+
+### Bandwidth scheduling for households
+
+If you have multiple people using the network, set up automatic speed scheduling:
+
+```
+You: Set up a schedule: full speed at night, limited during the day
+
+AI: [qbt_set_preferences: {
+      scheduler_enabled: true,
+      schedule_from_hour: 8,
+      schedule_to_hour: 23,
+      schedule_days: "all",
+      alt_dl_limit: 20971520,
+      alt_up_limit: 5242880
+    }]
+    Schedule configured:
+    - 8:00 AM to 11:00 PM: 20 MB/s download, 5 MB/s upload
+    - 11:00 PM to 8:00 AM: Unlimited
+
+    This keeps your daytime internet usable while maximizing
+    overnight download speeds.
+```
+
+### Connection tuning
+
+For users with specific ISP configurations or VPN setups:
+
+```
+You: I'm using a VPN. Optimize qBittorrent for it.
+
+AI: [qbt_set_preferences: {
+      encryption: 2,
+      dht: false,
+      pex: false,
+      lsd: false,
+      anonymous_mode: true,
+      max_connec: 200,
+      max_connec_per_torrent: 50
+    }]
+    VPN-optimized settings applied:
+    - Forced encryption (no unencrypted connections)
+    - DHT, PeX, and LSD disabled (prevents IP leaks)
+    - Anonymous mode enabled
+    - Connection limits reduced (prevents VPN overload)
+```
+
+### Coordinating with arr apps
+
+The AI can diagnose download-to-import pipeline issues:
+
+```
+You: Sonarr says downloads are completing but not being imported
+
+AI: [qbt_get_preferences]
+    Download path: /downloads/complete
+
+    [arr_list_download_clients: sonarr]
+    qBittorrent configured with path: /downloads
+
+    The paths don't match. Sonarr expects completed downloads in
+    /downloads but qBittorrent is putting them in /downloads/complete.
+
+    [qbt_set_preferences: { temp_path_enabled: false }]
+    Disabled the separate completed path. Downloads now go directly
+    to /downloads, which matches Sonarr's expectation.
+```
+
+## Troubleshooting
+
+### Authentication fails
+
+**Cause:** The default password was changed in qBittorrent's web UI but not updated in Talome settings.
+
+**Fix:** Update the password in Settings > Integrations, or ask: `"Update my qBittorrent password to newpassword123"`. Recent versions of qBittorrent generate a random password on first launch -- check the container logs for the initial password.
+
+### "Connection refused" errors
+
+**Cause:** qBittorrent isn't running, or the URL/port is wrong.
+
+**Fix:** Check if the container is running: `"Is qBittorrent running?"`. If it is running, verify the port mapping: `"What port is qBittorrent on?"`. The web UI defaults to 8080 but can be changed.
+
+### Downloads are extremely slow
+
+**Cause:** Speed limits are set, too few connections allowed, or the listening port isn't forwarded.
+
+**Fix:** Ask the AI to check: `"Why are my downloads slow?"`. It will inspect speed limits, connection counts, and port settings. If behind a VPN, port forwarding may not be available.
+
+### Sonarr/Radarr can't connect to qBittorrent
+
+**Cause:** The containers aren't on the same Docker network, or the hostname is wrong.
+
+**Fix:** The arr apps need to reach qBittorrent by its Docker hostname (usually `qbittorrent` or the container name). Ask: `"Test the download client connection in Sonarr"` to diagnose. If they're on different networks, the AI can connect them: `"Put Sonarr and qBittorrent on the same Docker network"`.
+
+### Disk space running out
+
+**Cause:** Completed torrents still seeding occupy disk space until removed.
+
+**Fix:** Check what's seeding: `"Show me all seeding torrents and their sizes"`. You can configure seeding limits in preferences or have the arr apps manage completed torrents automatically.
+
+<Cards>
+  <Card title="Sonarr & Radarr" href="/docs/integrations/sonarr-radarr">
+    Media management tools that send downloads to qBittorrent.
+  </Card>
+  <Card title="Prowlarr" href="/docs/integrations/prowlarr">
+    Indexer management for finding content to download.
+  </Card>
+  <Card title="Media Stack Guide" href="/docs/guides/media-stack">
+    Complete pipeline setup with qBittorrent as the download client.
+  </Card>
+</Cards>

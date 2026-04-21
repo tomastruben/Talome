@@ -1,0 +1,398 @@
+---
+title: Adding Integrations
+description: Complete walkthrough for adding a new tool domain to Talome, from API client to MCP registration.
+---
+
+Talome's tool system is designed for easy extension. Each integration is a "domain" -- a group of tools that activate when the corresponding app is configured in settings. This guide walks through the complete process of adding a new integration, using a fictional "Uptime Kuma" monitoring tool as the example.
+
+## Architecture Overview
+
+Before diving in, understand how the pieces fit together:
+
+1. **Tool file** (`apps/core/src/ai/tools/<name>-tools.ts`) -- defines the tool functions with Zod schemas
+2. **Domain registration** (`apps/core/src/ai/agent.ts`) -- registers the domain with settings keys and tier assignments
+3. **Keyword routing** (`apps/core/src/ai/tool-registry.ts`) -- optional keywords for message-based tool filtering
+4. **Settings** -- the user configures `<app>_url` and optionally `<app>_api_key` through the AI or Settings UI
+5. **MCP auto-sync** -- happens automatically, zero configuration needed
+
+---
+
+## Step 1: Create the Tool File
+
+Create `apps/core/src/ai/tools/uptimekuma-tools.ts`.
+
+Every tool file follows the same pattern: import Zod and the Vercel AI SDK `tool` function, read settings for the app's URL and API key, make HTTP requests to the app's API, and return structured data.
+
+```typescript
+import { z } from "zod";
+import { tool } from "ai";
+import { db, schema } from "../../db/index.js";
+import { eq } from "drizzle-orm";
+
+// ── Settings helper ─────────────────────────────────────────────────────────
+
+function getSettings(): { url: string; apiKey: string } | null {
+  try {
+    const rows = db
+      .select()
+      .from(schema.settings)
+      .where(
+        eq(schema.settings.key, "uptimekuma_url"),
+      )
+      .all();
+
+    const urlRow = rows.find((r) => r.key === "uptimekuma_url");
+    if (!urlRow?.value) return null;
+
+    // Query api key separately since we need OR logic
+    const keyRow = db
+      .select()
+      .from(schema.settings)
+      .where(eq(schema.settings.key, "uptimekuma_api_key"))
+      .get();
+
+    return {
+      url: urlRow.value.replace(/\/$/, ""),
+      apiKey: keyRow?.value ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function notConfigured() {
+  return {
+    error:
+      "Uptime Kuma is not configured. Set uptimekuma_url in Settings > Integrations.",
+  };
+}
+
+// ── Tool: get status ────────────────────────────────────────────────────────
+
+export const uptimekumaGetStatusTool = tool({
+  description: "Get the status of the Uptime Kuma monitoring instance",
+  parameters: z.object({}),
+  execute: async () => {
+    const cfg = getSettings();
+    if (!cfg) return notConfigured();
+
+    try {
+      const res = await fetch(`${cfg.url}/api/status-page/default`, {
+        headers: cfg.apiKey
+          ? { Authorization: `Bearer ${cfg.apiKey}` }
+          : {},
+      });
+
+      if (!res.ok) {
+        return { error: `Uptime Kuma returned ${res.status}: ${res.statusText}` };
+      }
+
+      const data = await res.json();
+      return {
+        status: "connected",
+        url: cfg.url,
+        monitors: data.publicGroupList?.length ?? 0,
+      };
+    } catch (err) {
+      return {
+        error: `Failed to connect to Uptime Kuma at ${cfg.url}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+  },
+});
+
+// ── Tool: list monitors ─────────────────────────────────────────────────────
+
+export const uptimekumaListMonitorsTool = tool({
+  description: "List all monitors in Uptime Kuma with their current status",
+  parameters: z.object({
+    tag: z
+      .string()
+      .optional()
+      .describe("Filter monitors by tag name"),
+  }),
+  execute: async ({ tag }) => {
+    const cfg = getSettings();
+    if (!cfg) return notConfigured();
+
+    try {
+      const res = await fetch(`${cfg.url}/api/monitors`, {
+        headers: { Authorization: `Bearer ${cfg.apiKey}` },
+      });
+
+      if (!res.ok) {
+        return { error: `Failed to fetch monitors: ${res.status}` };
+      }
+
+      let monitors = await res.json();
+
+      if (tag) {
+        monitors = monitors.filter((m: { tags: { name: string }[] }) =>
+          m.tags?.some((t) => t.name.toLowerCase() === tag.toLowerCase()),
+        );
+      }
+
+      return {
+        monitors: monitors.map((m: {
+          id: number; name: string; type: string;
+          active: boolean; url: string;
+        }) => ({
+          id: m.id,
+          name: m.name,
+          type: m.type,
+          active: m.active,
+          url: m.url,
+        })),
+        total: monitors.length,
+      };
+    } catch (err) {
+      return {
+        error: `Failed to list monitors: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+  },
+});
+
+// ── Tool: add monitor ───────────────────────────────────────────────────────
+
+export const uptimekumaAddMonitorTool = tool({
+  description: "Add a new HTTP monitor to Uptime Kuma",
+  parameters: z.object({
+    name: z.string().describe("Display name for the monitor"),
+    url: z.string().url().describe("URL to monitor"),
+    interval: z
+      .number()
+      .default(60)
+      .describe("Check interval in seconds"),
+  }),
+  execute: async ({ name, url, interval }) => {
+    const cfg = getSettings();
+    if (!cfg) return notConfigured();
+
+    try {
+      const res = await fetch(`${cfg.url}/api/monitors`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${cfg.apiKey}`,
+        },
+        body: JSON.stringify({
+          name,
+          url,
+          type: "http",
+          interval,
+          active: true,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        return { error: `Failed to create monitor: ${res.status} ${body}` };
+      }
+
+      const monitor = await res.json();
+      return {
+        id: monitor.id,
+        name: monitor.name,
+        url: monitor.url,
+        created: true,
+      };
+    } catch (err) {
+      return {
+        error: `Failed to add monitor: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+  },
+});
+
+// ── Tool: pause monitor ─────────────────────────────────────────────────────
+
+export const uptimekumaPauseMonitorTool = tool({
+  description: "Pause or resume an Uptime Kuma monitor",
+  parameters: z.object({
+    id: z.number().describe("Monitor ID"),
+    active: z.boolean().describe("Set to true to resume, false to pause"),
+  }),
+  execute: async ({ id, active }) => {
+    const cfg = getSettings();
+    if (!cfg) return notConfigured();
+
+    try {
+      const res = await fetch(`${cfg.url}/api/monitors/${id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${cfg.apiKey}`,
+        },
+        body: JSON.stringify({ active }),
+      });
+
+      if (!res.ok) {
+        return { error: `Failed to update monitor: ${res.status}` };
+      }
+
+      return {
+        id,
+        active,
+        status: active ? "resumed" : "paused",
+      };
+    } catch (err) {
+      return {
+        error: `Failed to update monitor: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+  },
+});
+```
+
+### Key Patterns
+
+- **Settings helper**: each tool file has a private function that reads settings from the database. Returns `null` if the app isn't configured.
+- **Graceful failure**: every tool returns `{ error: "..." }` instead of throwing when the app is unreachable or unconfigured.
+- **Zod `.describe()`**: every parameter has a description -- the AI model uses these to understand what values to pass.
+- **Error context**: error messages include the URL, status code, and upstream error message for debugging.
+- **Structured returns**: tools return structured objects, not formatted strings. The AI formats the response for the user.
+
+---
+
+## Step 2: Register the Domain
+
+In `apps/core/src/ai/agent.ts`, import the tools and register the domain.
+
+```typescript
+// ── Uptime Kuma tools ────────────────────────────────────────────────────────
+import {
+  uptimekumaGetStatusTool,
+  uptimekumaListMonitorsTool,
+  uptimekumaAddMonitorTool,
+  uptimekumaPauseMonitorTool,
+} from "./tools/uptimekuma-tools.js";
+
+registerDomain({
+  name: "uptimekuma",
+  settingsKeys: ["uptimekuma_url"],
+  tools: {
+    uptimekuma_get_status: uptimekumaGetStatusTool,
+    uptimekuma_list_monitors: uptimekumaListMonitorsTool,
+    uptimekuma_add_monitor: uptimekumaAddMonitorTool,
+    uptimekuma_pause_monitor: uptimekumaPauseMonitorTool,
+  },
+  tiers: {
+    uptimekuma_get_status: "read",
+    uptimekuma_list_monitors: "read",
+    uptimekuma_add_monitor: "modify",
+    uptimekuma_pause_monitor: "modify",
+  },
+});
+```
+
+### Domain Registration Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Domain identifier. Used in keyword routing and logging. |
+| `settingsKeys` | string[] | If ANY of these settings keys exist in the database, the domain's tools load for dashboard chat. Use `[]` for always-on domains. |
+| `tools` | Record | Map of `tool_name` to tool definition. Names must follow `<domain>_<action>` convention. |
+| `tiers` | Record | Map of `tool_name` to security tier (`read`, `modify`, `destructive`). |
+| `categories` | Record (optional) | Map of `tool_name` to category label. Only needed for the core domain's sub-categories. |
+
+### Tier Guidelines
+
+| Tier | Use When | Examples |
+|------|----------|---------|
+| `read` | The tool only retrieves data, never changes state | `_get_status`, `_list_*`, `_search` |
+| `modify` | The tool changes state but can be undone or is safe | `_add_*`, `_configure_*`, `_pause_*`, `_start_*` |
+| `destructive` | The tool permanently removes data or is irreversible | `_delete_*`, `_uninstall_*`, `_purge_*` |
+
+---
+
+## Step 3: Add Keyword Routing (Optional but Recommended)
+
+In `apps/core/src/ai/tool-registry.ts`, add keywords for your domain:
+
+```typescript
+const DOMAIN_KEYWORDS: Record<string, string[]> = {
+  // ... existing entries
+  uptimekuma: [
+    "uptime kuma",
+    "uptimekuma",
+    "monitor",
+    "uptime",
+    "health check",
+    "status page",
+  ],
+};
+```
+
+Keywords are matched case-insensitively against the user's message. If any keyword matches, the domain's tools are loaded for that message. Without keywords, the tools load on every message (as a fallback), which wastes context.
+
+---
+
+## Step 4: MCP Auto-Sync
+
+No code changes needed. The MCP server calls `getAllRegisteredTools()` which returns every tool from every registered domain. When a user opens Claude Code in the Talome project, the new tools appear automatically.
+
+This means:
+- Claude Code users can use `uptimekuma_get_status` immediately
+- The Talome dashboard assistant loads the tools when `uptimekuma_url` is set
+- No separate MCP registration or schema conversion is required
+
+---
+
+## Step 5: Write Tests
+
+Create `apps/core/src/__tests__/uptimekuma-tools.test.ts`:
+
+```typescript
+import { describe, it, expect, vi } from "vitest";
+
+describe("uptimekuma tools", () => {
+  it("returns error when not configured", async () => {
+    // Mock the database to return no settings
+    const result = await uptimekumaGetStatusTool.execute({}, {});
+    expect(result).toHaveProperty("error");
+    expect(result.error).toContain("not configured");
+  });
+
+  it("returns status when configured", async () => {
+    // Mock fetch and database
+    // ...
+  });
+});
+```
+
+Cover at minimum:
+- The "not configured" error case
+- A successful response (mock the HTTP call)
+- Error handling (upstream returns 500, network error)
+
+---
+
+## Step 6: Add Integration Documentation
+
+Create `apps/web/content/docs/integrations/uptime-kuma.mdx` and add it to the integrations `meta.json`. Follow the pattern of existing integration docs (see `/docs/integrations/jellyfin` for reference).
+
+---
+
+## Checklist
+
+Before submitting your PR:
+
+- [ ] Tool file created in `apps/core/src/ai/tools/`
+- [ ] All tools have clear descriptions (one sentence each)
+- [ ] All parameters have `.describe()` annotations
+- [ ] Tools return `{ error: "..." }` when app is not configured (never throw)
+- [ ] Domain registered in `agent.ts` with correct `settingsKeys`
+- [ ] Tiers assigned correctly (read/modify/destructive)
+- [ ] Keywords added to `DOMAIN_KEYWORDS` in `tool-registry.ts`
+- [ ] `pnpm exec tsc --noEmit` passes
+- [ ] Tests cover happy path and error cases
+- [ ] Integration doc page created

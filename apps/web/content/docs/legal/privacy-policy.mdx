@@ -1,0 +1,93 @@
+---
+title: Privacy Policy
+description: How Talome handles your data. Short version — it stays on your machine.
+---
+
+*Last updated: April 20, 2026*
+
+Talome is self-hosted software. It runs entirely on your hardware, under your control. This policy explains what data Talome handles and where it goes.
+
+---
+
+## The short version
+
+- Talome does not collect telemetry, run analytics, or phone home
+- Your data stays on your machine
+- External network calls happen only when *you* opt in to a feature that needs them (your chosen AI provider, your Plex account if paired, your messaging bot if configured, etc.) — see "External network calls" below for the complete list
+- If you use Ollama and skip the optional integrations, nothing leaves your network
+
+---
+
+## Data storage
+
+Everything Talome stores lives locally on your server:
+
+- **SQLite database** -- user settings, conversation history, memories, automations, app metadata, and audit logs
+- **Docker volumes** -- all installed app data
+- **Backups** -- compressed tarballs stored in `~/.talome/backups/`
+
+There is no cloud sync, no remote database, and no external storage. If you delete Talome, the data is gone.
+
+## AI provider communication
+
+When you send a message in the chat, Talome forwards your conversation to the AI provider you configured:
+
+- **Anthropic (Claude)** -- conversations are sent to Anthropic's API. See [Anthropic's Privacy Policy](https://www.anthropic.com/privacy) and [Usage Policy](https://www.anthropic.com/usage-policy).
+- **OpenAI (GPT)** -- conversations are sent to OpenAI's API. See [OpenAI's Privacy Policy](https://openai.com/privacy).
+- **Ollama (local models)** -- conversations stay entirely on your machine. Nothing is sent externally.
+
+Talome sends only the conversation context and tool results needed for the AI to respond. It does not send system information, file contents, or other data beyond what is part of the active conversation.
+
+When using cloud providers, their privacy policies govern how they handle conversation data. If this concerns you, use Ollama for fully local operation.
+
+## API keys
+
+API keys for AI providers (Anthropic, OpenAI) are stored encrypted in the local SQLite database. They are only sent to the respective provider's API endpoint during requests. They are never logged, never sent to any other service, and never leave your server except to authenticate with the provider you configured.
+
+## Telemetry
+
+There is none. Talome does not collect usage statistics, crash reports, feature flags, or analytics of any kind. There are no tracking pixels, no beacon calls, and no background requests to any Talome-operated server. The software does not phone home.
+
+## Cookies
+
+Talome uses a single session cookie for authentication when you log into the dashboard. This cookie is:
+
+- **HTTP-only** -- not accessible to JavaScript
+- **Local only** -- sent only to your Talome instance
+- **Session-scoped** -- expires when you close the browser or after the configured timeout
+
+There are no third-party cookies, no tracking cookies, and no advertising cookies.
+
+## External network calls
+
+This is the complete list of network calls Talome's own backend can make. Each one happens only when the corresponding feature is configured or used. None happen without your action.
+
+| Service | When | Purpose | Privacy policy |
+|---|---|---|---|
+| **Anthropic** (`api.anthropic.com`) | When chat is used and Anthropic is the active provider | Forwards conversation context for the AI to respond | [Anthropic](https://www.anthropic.com/privacy) |
+| **OpenAI** (`api.openai.com`) | When chat is used and OpenAI is the active provider | Same | [OpenAI](https://openai.com/privacy) |
+| **Anthropic / OpenAI `/v1/models`** | When you open Settings → AI Provider | Refresh the model dropdown so it shows what your account has access to | (same as above) |
+| **Telegram** (`api.telegram.org`) | When you configure a Telegram bot | Inbound and outbound messages to your bot | [Telegram](https://telegram.org/privacy) |
+| **Discord** (`discord.com`, gateway) | When you configure a Discord bot | Slash-command handler + outbound notifications | [Discord](https://discord.com/privacy) |
+| **Plex** (`plex.tv`, `metadata.provider.plex.tv`, `discover.provider.plex.tv`) | When you pair a Plex account | OAuth pin flow + watchlist/metadata fetch | [Plex](https://www.plex.tv/about/privacy-legal/privacy-policy/) |
+| **TMDb image CDN** (`image.tmdb.org`) | When the dashboard or media UI shows a movie/show poster | Fetches poster art lazily for watchlist items returned by Plex's metadata API | [TMDb](https://www.themoviedb.org/privacy-policy) |
+| **GitHub** (`github.com`, `raw.githubusercontent.com`) | When a third-party app store is enabled (CasaOS, Umbrel, BigBear) and on each store sync | Clones the public app-catalog repository so Talome can list those apps in its store | [GitHub](https://docs.github.com/en/site-policy/privacy-policies) |
+| **GitHub Gists** (`api.github.com/gists`) | If you use Custom Tools "Share via Gist" (off by default) | Publishes a gist under your GitHub account | [GitHub](https://docs.github.com/en/site-policy/privacy-policies) |
+
+That's the complete list for Talome itself. Apps you install *through* Talome (Jellyfin, Sonarr, Pi-hole, etc.) are independent software with their own network behavior; Talome doesn't modify or monitor their external communications.
+
+## Network exposure
+
+By default, Talome listens only on your local network. It does not register DNS records, open ports on your router, or create tunnels. If you configure Tailscale or a reverse proxy to expose Talome externally, that is your configuration and your responsibility to secure.
+
+## Children's privacy
+
+Talome does not collect personal information from anyone, including children. It is self-hosted software with no user accounts beyond the local instance.
+
+## Changes to this policy
+
+If this policy changes, the update will be reflected in the documentation with a new "last updated" date. Since Talome has no way to contact you (no email, no accounts, no telemetry), checking the documentation is the only way to see changes.
+
+## Questions
+
+If you have questions about Talome's privacy practices, open an issue on [GitHub](https://github.com/tomastruben/Talome/issues).

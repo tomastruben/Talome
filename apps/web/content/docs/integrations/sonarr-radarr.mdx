@@ -1,0 +1,313 @@
+---
+title: Sonarr & Radarr
+description: Manage your TV and movie libraries through conversation with 32 AI-powered tools for queue management, release searching, quality profiles, and automated organization.
+---
+
+Sonarr manages TV series and Radarr manages movies. They share the same underlying API architecture (the "arr" protocol), so Talome treats them as a single integration domain with 27 arr tools plus 5 media tools. Every tool accepts an `app` parameter to target either Sonarr or Radarr, and many operations work across both simultaneously.
+
+This is Talome's deepest integration. From searching for releases to managing quality profiles, from monitoring missing episodes to cleaning up your download queue -- the AI handles the entire media acquisition lifecycle through natural conversation.
+
+## Setup
+
+### 1. Install the apps
+
+```
+You: Install Sonarr and Radarr
+```
+
+The AI installs both apps from the app store, mapping your media volumes automatically if it knows your media path (from previous conversations or memories).
+
+### 2. Configure settings
+
+After installation, the URL and API key are typically configured automatically. Sonarr and Radarr store their API keys in a `config.xml` file, and the `wire_apps` tool extracts them during setup.
+
+**Settings keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `sonarr_url` | `http://localhost:8989` | Sonarr base URL |
+| `sonarr_api_key` | `abc123...` | Extracted from Sonarr's config.xml |
+| `radarr_url` | `http://localhost:7878` | Radarr base URL |
+| `radarr_api_key` | `def456...` | Extracted from Radarr's config.xml |
+
+If auto-configuration didn't run, add these manually in **Settings > Integrations** or ask the AI:
+
+```
+You: Wire up my media apps
+```
+
+### 3. Verify connectivity
+
+```
+You: Check if Sonarr and Radarr are working
+```
+
+The AI calls `arr_get_status` for both apps and reports their version, health, and any warnings.
+
+## Auto-Configuration
+
+When you run `wire_apps` or install through the one-message media stack setup, Talome automatically:
+
+- Detects running Sonarr/Radarr containers
+- Reads the API key from each app's `config.xml` via `read_app_config_file`
+- Saves the URL and API key to Talome settings
+- Adds qBittorrent as a download client in both Sonarr and Radarr (if qBittorrent is running)
+- Syncs indexers from Prowlarr to both apps (if Prowlarr is configured)
+- Sets up root folders pointing to your media directories
+- Tests the download client connection to verify everything works
+
+## Available Tools
+
+### Arr Domain (27 tools)
+
+| Tool | Description |
+|------|-------------|
+| `arr_get_status` | System status, version, and health check warnings for Sonarr or Radarr |
+| `arr_list_root_folders` | List configured library paths (e.g., `/media/TV`, `/media/Movies`) |
+| `arr_add_root_folder` | Add a new library path for media storage |
+| `arr_list_download_clients` | List connected download clients (qBittorrent, etc.) |
+| `arr_add_download_client` | Configure a new download client with host, port, and credentials |
+| `arr_test_download_client` | Test connectivity to a configured download client |
+| `arr_list_indexers` | List configured indexer sources |
+| `arr_sync_indexers_from_prowlarr` | Pull indexer configuration from Prowlarr into Sonarr/Radarr |
+| `arr_list_quality_profiles` | List available quality profiles (e.g., HD-1080p, Ultra-HD) |
+| `arr_apply_quality_profile` | Change the quality profile for a series or movie |
+| `arr_get_wanted_missing` | List episodes or movies that are monitored but not yet downloaded |
+| `arr_get_wanted_cutoff` | List items that exist but are below the quality cutoff |
+| `arr_search_releases` | Search indexers for available releases of a specific title |
+| `arr_grab_release` | Download a specific release from search results |
+| `arr_get_queue_details` | View the current download queue with status, progress, and ETA |
+| `arr_queue_action` | Pause, resume, or retry items in the download queue |
+| `arr_delete_queue_item` | Remove a specific item from the download queue |
+| `arr_mark_failed` | Mark a download as failed, triggering a search for alternatives |
+| `arr_manage_blocklist` | View or clear the release blocklist |
+| `arr_cleanup_dry_run` | Preview what files would be cleaned up without actually deleting |
+| `arr_set_naming_convention` | Configure how files are named and organized on disk |
+| `arr_get_history` | View download, import, and upgrade history |
+| `arr_run_command` | Execute Sonarr/Radarr commands (RSS sync, rename, backup, etc.) |
+| `arr_set_monitoring` | Enable or disable monitoring for a series, season, or movie |
+| `prowlarr_search` | Cross-search all configured indexers (via Prowlarr) |
+| `prowlarr_manage_indexers` | Add, edit, or remove indexers in Prowlarr |
+| `prowlarr_get_indexer_stats` | View indexer performance statistics |
+
+### Media Domain (5 tools)
+
+| Tool | Description |
+|------|-------------|
+| `get_library` | Get a summary of your TV or movie library with counts and recent additions |
+| `search_media` | Search your existing library for a specific title |
+| `get_downloads` | Get a combined view of active downloads across Sonarr and Radarr |
+| `get_calendar` | View upcoming episodes and movie releases |
+| `request_media` | Request a new TV show or movie to be added and monitored |
+
+## Conversation Examples
+
+### Checking what's downloading
+
+```
+You: What's downloading right now?
+
+AI: [get_downloads]
+    You have 3 active downloads:
+
+    1. The Bear S03E07 — 45% complete, ETA 12 minutes (qBittorrent)
+    2. Dune: Part Two (2024) — 78% complete, ETA 8 minutes
+    3. Shogun S01E03 — Queued, waiting for download slot
+
+    All downloads are healthy with no warnings.
+```
+
+### Finding and grabbing a specific release
+
+```
+You: Search for the 4K HDR release of Oppenheimer
+
+AI: [arr_search_releases: radarr, "Oppenheimer"]
+    Found 23 releases. Here are the top matches for 4K HDR:
+
+    1. Oppenheimer.2023.2160p.UHD.BluRay.HDR.DV.TrueHD.7.1 — 76.2 GB, 142 seeders
+    2. Oppenheimer.2023.2160p.WEB-DL.HDR.DDP5.1 — 22.1 GB, 89 seeders
+    3. Oppenheimer.2023.2160p.UHD.BluRay.HDR.DTS-HD.MA.5.1 — 58.4 GB, 67 seeders
+
+    Want me to grab one of these?
+
+You: Grab the first one
+
+AI: [arr_grab_release: radarr, release #1]
+    Done. Oppenheimer 4K UHD BluRay is now downloading.
+    It will appear in your Jellyfin library automatically when the import completes.
+```
+
+### Managing quality profiles
+
+```
+You: What quality profiles do I have in Sonarr, and switch The Bear to 1080p
+
+AI: [arr_list_quality_profiles: sonarr]
+    Your Sonarr quality profiles:
+    1. Any — accepts all qualities
+    2. HD-1080p — prefers 1080p Bluray, allows WEB-DL
+    3. Ultra-HD — prefers 2160p, allows 1080p as fallback
+
+    [arr_apply_quality_profile: sonarr, "The Bear", "HD-1080p"]
+    Done. The Bear is now using the HD-1080p quality profile.
+    Existing episodes won't be re-downloaded unless they're below the new cutoff.
+```
+
+### Finding missing episodes
+
+```
+You: Show me all missing episodes for my monitored shows
+
+AI: [arr_get_wanted_missing: sonarr]
+    You have 12 missing episodes across 4 shows:
+
+    Severance — S02E05, S02E06 (not aired yet)
+    The Last of Us — S02E01 through S02E04 (airing weekly)
+    Slow Horses — S04E01, S04E02 (available, no matching release found)
+    Foundation — S03E08, S03E09, S03E10 (not aired yet)
+
+    Want me to search for the Slow Horses episodes that should be available?
+```
+
+### Cleaning up the queue
+
+```
+You: Something's stuck in my Radarr queue, can you check?
+
+AI: [arr_get_queue_details: radarr]
+    Found 1 stuck item:
+
+    The Iron Claw (2023) — Status: Warning
+    Issue: "Download has been in queue for 3 days with no progress"
+    Download client reports 0 seeders.
+
+    [arr_mark_failed: radarr, "The Iron Claw"]
+    Marked as failed. Radarr will automatically search for an alternative release.
+
+    [arr_search_releases: radarr, "The Iron Claw"]
+    Found 8 alternative releases. Radarr grabbed the best match:
+    The.Iron.Claw.2023.1080p.BluRay — 12.3 GB, 234 seeders.
+```
+
+### Setting up file naming
+
+```
+You: Set up standard Plex-compatible naming in Sonarr
+
+AI: [arr_set_naming_convention: sonarr, standard_plex]
+    Updated Sonarr naming convention:
+    Series folder: {Series TitleYear}
+    Season folder: Season {season:00}
+    Episode file: {Series Title} - S{season:00}E{episode:00} - {Episode Title} [{Quality Title}]
+
+    Existing files won't be renamed. Want me to trigger a rename scan?
+```
+
+### Wiring the full stack
+
+```
+You: I just installed Sonarr, Radarr, Prowlarr, and qBittorrent. Wire them together.
+
+AI: [wire_apps]
+    Auto-detected 4 media apps. Configuring connections:
+
+    [arr_add_download_client: sonarr → qBittorrent at localhost:8080]
+    [arr_add_download_client: radarr → qBittorrent at localhost:8080]
+    [arr_test_download_client: sonarr] — Connected
+    [arr_test_download_client: radarr] — Connected
+    [arr_sync_indexers_from_prowlarr: sonarr] — 4 indexers synced
+    [arr_sync_indexers_from_prowlarr: radarr] — 4 indexers synced
+    [arr_add_root_folder: sonarr, "/media/TV"]
+    [arr_add_root_folder: radarr, "/media/Movies"]
+
+    All apps are wired together and ready. Sonarr and Radarr can now
+    search through Prowlarr's indexers and download via qBittorrent.
+```
+
+## Advanced Usage
+
+### Blocklist management
+
+When a release causes import issues (wrong format, corrupt file, mislabeled quality), it gets added to the blocklist. The AI can manage this:
+
+```
+You: Show me what's on the Radarr blocklist and clear entries older than a month
+
+AI: [arr_manage_blocklist: radarr, action: "list"]
+    [arr_manage_blocklist: radarr, action: "clear_old", days: 30]
+```
+
+### Running system commands
+
+Sonarr and Radarr support internal commands for maintenance tasks:
+
+```
+You: Run an RSS sync on both Sonarr and Radarr, then back up their databases
+
+AI: [arr_run_command: sonarr, "RssSync"]
+    [arr_run_command: radarr, "RssSync"]
+    [arr_run_command: sonarr, "Backup"]
+    [arr_run_command: radarr, "Backup"]
+```
+
+Available commands include `RssSync`, `RenameFiles`, `RescanSeries`/`RescanMovie`, `Backup`, `MissingEpisodeSearch`, and `RefreshSeries`/`RefreshMovie`.
+
+### Cross-app operations
+
+Because the AI has access to both Sonarr and Radarr simultaneously, it can perform cross-app operations:
+
+```
+You: How much total media do I have?
+
+AI: [get_library: sonarr]
+    [get_library: radarr]
+    Your library contains:
+    TV: 47 series, 2,341 episodes (1.8 TB)
+    Movies: 312 movies (3.2 TB)
+    Total: 5.0 TB across both libraries
+```
+
+## Troubleshooting
+
+### Tools return "not configured" error
+
+**Cause:** The Sonarr/Radarr URL or API key is missing from settings.
+
+**Fix:** Run `wire_apps` to auto-detect, or manually add the URL and API key in Settings > Integrations. The API key can be found in Sonarr/Radarr under Settings > General > Security.
+
+### "No indexers available" when searching
+
+**Cause:** No indexers are configured in Sonarr/Radarr, or Prowlarr sync hasn't run.
+
+**Fix:** Ask the AI to sync indexers: `"Sync indexers from Prowlarr to Sonarr and Radarr"`. If Prowlarr isn't configured either, you need to add indexers in Prowlarr first.
+
+### Download client connection failures
+
+**Cause:** qBittorrent URL, username, or password is wrong, or the containers aren't on the same Docker network.
+
+**Fix:** Ask the AI to test the connection: `"Test the download client in Sonarr"`. If it fails, verify both containers are on the same network: `"Are Sonarr and qBittorrent on the same Docker network?"`.
+
+### Imports fail with "path not found"
+
+**Cause:** The root folder configured in Sonarr/Radarr doesn't match the container's volume mount.
+
+**Fix:** Check root folders with `"Show me the root folders in Sonarr"` and compare with the container's volume mounts. The path inside the container must match the configured root folder.
+
+### Queue shows "completed" but files aren't imported
+
+**Cause:** Permissions issue or the download path doesn't match what Sonarr/Radarr expects.
+
+**Fix:** Ask the AI to diagnose: `"Why aren't completed downloads being imported in Radarr?"`. The AI will check queue details, download client settings, and container logs to identify the issue.
+
+<Cards>
+  <Card title="Prowlarr" href="/docs/integrations/prowlarr">
+    Centralized indexer management for your arr stack.
+  </Card>
+  <Card title="qBittorrent" href="/docs/integrations/qbittorrent">
+    Download client configuration and monitoring.
+  </Card>
+  <Card title="Media Stack Guide" href="/docs/guides/media-stack">
+    Set up the entire media pipeline in one conversation.
+  </Card>
+</Cards>

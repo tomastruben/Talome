@@ -1,0 +1,302 @@
+---
+title: Self-Improvement
+description: How Talome rewrites its own TypeScript source code — with a full plan-apply-verify pipeline and automatic rollback.
+---
+
+Talome is the first self-hosted platform that improves its own source code. When you report a slow page, a UI bug, or ask for a new feature, the AI reads the relevant source files, understands the implementation, writes a targeted modification, runs the TypeScript compiler, and either commits the change or rolls it back. Every step is audited.
+
+This isn't theoretical. The AI has access to the full Talome monorepo, understands the architecture, and has purpose-built tools for safe code modification. You can watch it plan a change, review the diff, approve it, and see the result on your next page refresh.
+
+<VideoPlaceholder description="Watch: The AI identifying and fixing a performance issue in its own code" />
+
+<Mermaid chart={`graph TD
+    A[User requests change] --> B[plan_change]
+    B --> C[AI reads source files]
+    C --> D[Generate diff preview]
+    D --> E{User approves?}
+    E -->|No| F[End]
+    E -->|Yes| G[apply_change]
+    G --> H[Write modification]
+    H --> I[Run tsc --noEmit]
+    I --> J{Compiles?}
+    J -->|Yes| K[Commit to history]
+    J -->|No| L[git stash - auto rollback]
+    L --> M[Report failure]
+`} />
+
+## The Three-Stage Pipeline
+
+Self-improvement follows a strict plan-apply-verify pipeline. No stage can be skipped.
+
+### Stage 1: Plan
+
+The `plan_change` tool reads the relevant source files, understands the current implementation, and generates a detailed change plan. This is a read-only operation — nothing is modified.
+
+<ChatSimulation>
+  <UserMessage>The container list loads slowly when I have 20+ containers</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="plan_change" result="Optimize container list performance" />
+    <ToolCall tool="read_file" result="read apps/core/src/routes/containers.ts" />
+    <ToolCall tool="read_file" result="read apps/dashboard/src/components/containers/container-list.tsx" />
+    Found the bottleneck. The container list route calls Docker's /containers/id/stats endpoint for each container sequentially. With 23 containers, that's 23 serial HTTP calls -- each taking 150-200ms. Proposed change: in containers.ts, replace sequential inspect+stats calls with a single /containers/json call using Docker's built-in stats summary, add a 5-second cache, and move per-container details to a separate endpoint. In container-list.tsx, remove the per-row stats fetch and use summary stats from the list endpoint. Expected improvement: ~4 seconds to ~200ms for 23 containers. Should I apply this?
+  </AssistantMessage>
+</ChatSimulation>
+
+The plan stage is critical because it lets you review what will change before anything is modified. The AI shows:
+- Which files will be touched
+- What the current code does
+- What the new code will do
+- Why the change improves things
+
+### Stage 2: Apply
+
+The `apply_change` tool writes the modification and immediately validates it:
+
+<ChatSimulation>
+  <UserMessage>Do it.</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="apply_change" result="2 files modified, TypeScript compilation succeeded (0 errors)" />
+    Change applied and committed. Modified apps/core/src/routes/containers.ts and apps/dashboard/src/components/containers/container-list.tsx. The container list now fetches all stats in a single Docker API call with a 5-second cache. Refresh the Containers page to see the difference.
+  </AssistantMessage>
+</ChatSimulation>
+
+What happens inside `apply_change`:
+
+1. The modification is written to disk
+2. `pnpm exec tsc --noEmit` runs from the affected app directory
+3. **If compilation succeeds** — the change is committed to git with a descriptive message
+4. **If compilation fails** — the change is automatically stashed with `git stash`, the error is reported, and the codebase returns to its previous state
+
+The apply stage runs in a **detached worker process** that survives server restarts. If Talome restarts mid-apply, the worker finishes and reports the result when the server comes back.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/ai/tools/self-modify-tools.ts` — `applyChangeTool` (line 186) orchestrates the apply pipeline. The detached worker is spawned via `spawnWorker()` (line 108) with `detached: true, stdio: "ignore"` so it survives tsx watch restarts. `apps/core/src/ai/evolution-worker.ts` — the worker process runs `tsc --noEmit` via `runTypecheck()` at line 142 and calls `stashRollback()` at line 145 if compilation fails.
+</Accordion>
+</Accordions>
+
+### Stage 3: Verify
+
+After applying, you can:
+
+- **Test the change** — refresh the page or trigger the behavior that was fixed
+- **Review the diff** — `list_changes` shows the full history with before/after
+- **Roll back** — `rollback_change` reverts the most recent change cleanly
+
+<ChatSimulation>
+  <UserMessage>Show me recent changes</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="list_changes" result="3 changes: container list optimization, media player seek bar, dark mode settings" />
+    Recent changes: 1. Container list optimization (Applied, 2 files, 5 min ago), 2. Fixed media player seek bar (Applied, 1 file, 2 days ago), 3. Added dark mode to settings (Applied, 3 files, 1 week ago).
+  </AssistantMessage>
+  <UserMessage>Roll back the container list change -- I want to test more first</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="rollback_change" result="rolled back change #1" />
+    Rolled back "Container list optimization." Both files restored to their previous state.
+  </AssistantMessage>
+</ChatSimulation>
+
+## Safety Mechanisms
+
+Every safety net exists because self-modifying code is inherently dangerous. Here's what prevents the AI from breaking your system:
+
+| Safety Net | What It Does | When It Triggers |
+|-----------|-------------|-----------------|
+| **TypeScript validation** | Every change must pass `pnpm exec tsc --noEmit` with zero errors | After every apply |
+| **Git stash rollback** | Failed changes are stashed (not lost) and the codebase reverts to the last good state | On compilation failure |
+| **Scope restriction** | Only files within the Talome project root can be modified — no system files, no files outside the repo | Always enforced |
+| **One change at a time** | The AI cannot chain multiple apply_change calls without confirming each result with you | Always enforced |
+| **Audit trail** | Every change is logged with full diff, timestamp, description, and success/failure status | After every apply |
+| **User confirmation** | `apply_change` is a destructive-tier tool — in the default "cautious" security mode, the AI asks before executing | In cautious mode |
+| **Detached worker** | The apply process runs independently of the Talome server — if the server crashes during apply, the worker finishes and cleans up | Always |
+
+### What Happens on Failure
+
+<ChatSimulation>
+  <AssistantMessage>
+    <ToolCall tool="apply_change" result="TypeScript compilation FAILED: TS2345 type mismatch in sidebar.tsx" />
+    Applying changes to apps/dashboard/src/components/sidebar.tsx... TypeScript validation failed with error TS2345: Argument of type string is not assignable to parameter of type SidebarItem. Change failed. The modification was automatically stashed (git stash). Your codebase is back to the last working state. The stash can be inspected with: git stash show -p. I need to fix the type mismatch. The SidebarItem type expects an object, but I passed a string. Let me revise the approach.
+  </AssistantMessage>
+</ChatSimulation>
+
+The failed change is never lost — it's in the git stash. But your running codebase is never broken.
+
+<Accordions>
+<Accordion title="Source">
+`apps/core/src/ai/evolution-worker.ts` — the full safety pipeline: TypeScript validation at line 142, git stash rollback at line 145, status written to the `evolution_runs` table at lines 148-160, and result posted back to the server via `postEvent()` at line 178. The worker communicates with the server via HTTP POST to `/api/evolution/internal-event` (line 56).
+</Accordion>
+</Accordions>
+
+### Supervisor Protection
+
+After a self-improvement change is applied and the backend restarts, the **supervisor** monitors whether the new code is stable:
+
+1. **60-second grace period** — immediately after a code change restart, crashes are tolerated without escalation. Transient startup issues resolve themselves.
+2. **Clean-tree awareness** — if the working tree is clean (changes were committed), the supervisor falls through to AI diagnosis instead of uselessly stashing.
+3. **Dashboard autofix** — if the dashboard crashes with build errors, Claude Code attempts a fix automatically before reverting.
+4. **Known-good safety** — reverts never overwrite code that's ahead of the known-good tag, protecting committed improvements.
+
+### Recovering from a Revert
+
+If the supervisor reverted your changes, they're in the git stash:
+
+```bash
+git stash list                    # see what was stashed
+git stash show -p stash@{0}      # inspect the most recent stash
+git stash pop stash@{0}          # restore it
+```
+
+## What the AI Can Improve
+
+### Performance Optimizations
+- Database query efficiency (N+1 queries, missing indexes)
+- React render optimization (memoization, virtual scrolling)
+- API response caching
+- Docker API call batching
+- Bundle size reduction
+
+### Bug Fixes
+- Error handling for edge cases
+- Race conditions in async code
+- Type mismatches caught at runtime but not compile time
+- UI state inconsistencies
+
+### UI Enhancements
+- Layout improvements
+- Responsive design fixes
+- Accessibility improvements
+- New component variants
+- Theme adjustments
+
+### New Features
+- New API routes and tools
+- New dashboard pages and widgets
+- New integration tools for additional apps
+- Automation enhancements
+- Custom tool templates
+
+## Complete Transcript: Performance Fix
+
+Here's an end-to-end example of the AI identifying and fixing a real performance issue:
+
+<ChatSimulation>
+  <UserMessage>The settings page takes forever to load</UserMessage>
+  <AssistantMessage>
+    Let me investigate.
+    <ToolCall tool="plan_change" result="Diagnose and fix settings page load performance" />
+    <ToolCall tool="read_file" result="apps/core/src/routes/settings.ts" />
+    <ToolCall tool="read_file" result="apps/dashboard/src/app/dashboard/settings/page.tsx" />
+    Found it. The settings page fetches ALL settings on mount, including binary blobs (custom SSL certificates, backup encryption keys) stored as base64. The /api/settings endpoint returns every row without filtering. For your 47 settings entries, 3 are binary blobs totaling 2.4 MB. The page only needs key-value pairs for text settings. Proposed change: add a type column filter to exclude binary settings from GET /api/settings, and add a separate GET /api/settings/:key endpoint for individual binary lookups. No frontend changes needed. This removes 2.4 MB from the response. Load time should drop from ~3 seconds to under 100ms. Apply?
+  </AssistantMessage>
+  <UserMessage>Yes</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="apply_change" result="TypeScript compilation passed (0 errors)" />
+    Change applied. Modified apps/core/src/routes/settings.ts — added binary exclusion filter to GET /api/settings and added GET /api/settings/:key for individual lookups. Refresh the Settings page — it should load instantly now.
+  </AssistantMessage>
+  <UserMessage>Much faster. Thanks.</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="remember" result="stored fact about settings page binary blob fix" />
+    Good. I have noted this fix in case a similar pattern shows up elsewhere in the codebase.
+  </AssistantMessage>
+</ChatSimulation>
+
+## Custom Tool Creation
+
+For runtime extensions that don't require modifying Talome's source code, use `create_tool` instead of `apply_change`.
+
+### When to Use create_tool vs. apply_change
+
+| Use `create_tool` When | Use `apply_change` When |
+|----------------------|----------------------|
+| Adding a new capability at runtime | Fixing a bug in existing code |
+| The tool is specific to your setup | The change benefits all Talome users |
+| You want to test without risk to core code | The change touches existing files |
+| Adding an integration with a niche app | Improving performance of core features |
+
+### How Custom Tools Work
+
+<ChatSimulation>
+  <UserMessage>Create a tool that checks my UPS battery status via NUT</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_tool" result="created ups_battery_status, read tier, triggers: ups/battery/power" />
+    Created custom tool: ups_battery_status. Location: ~/.talome/custom-tools/ups-battery-status.ts. Triggers: "ups", "battery", "power". Tier: read. The tool calls your NUT server at 192.168.1.1:3493 and returns battery percentage, load, runtime remaining, and status. Test it: "What's my UPS battery status?"
+  </AssistantMessage>
+</ChatSimulation>
+
+Custom tools are written to `~/.talome/custom-tools/`, loaded at runtime via `jiti` (a TypeScript-aware module loader), and automatically registered in the tool registry. They persist across restarts.
+
+Dangerous patterns (eval, exec, filesystem writes outside allowed paths) are blocked during tool creation.
+
+## Issue Tracking
+
+The AI has a built-in issue tracker for improvements and bugs:
+
+<ChatSimulation>
+  <UserMessage>Track an issue: the notification sound plays even when notifications are muted</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="track_issue" result="tracked as issue #17, type=bug" />
+    Tracked as issue #17. I can fix this now or queue it for the next improvement session.
+  </AssistantMessage>
+</ChatSimulation>
+
+Issues appear on the **Evolution** page in the dashboard, where you can see all tracked bugs, feature requests, and their status.
+
+### Issue Types
+
+| Type | Purpose |
+|------|---------|
+| `bug` | Something that's broken |
+| `feature` | Something new to build |
+| `improvement` | Something existing to make better |
+| `performance` | Something that's too slow |
+
+## Scheduling Improvements
+
+Combine self-improvement with automations for overnight maintenance:
+
+<ChatSimulation>
+  <UserMessage>Create an automation that runs self-improvement every night at 3am. Focus on performance issues.</UserMessage>
+  <AssistantMessage>
+    <ToolCall tool="create_automation" result="created: Nightly performance improvements, daily at 3 AM" />
+    Automation "Nightly performance improvements" created. It will run at 3:00 AM daily and attempt up to 3 performance fixes per session. Each change still goes through the full pipeline: plan, apply, tsc validation, commit or rollback.
+  </AssistantMessage>
+</ChatSimulation>
+
+## Key Codebase Paths
+
+When the AI plans a change, it reads from these locations:
+
+| What to Change | Where to Look |
+|---------------|--------------|
+| Backend API routes | `apps/core/src/routes/` |
+| AI agent behavior | `apps/core/src/ai/agent.ts` |
+| Tool definitions | `apps/core/src/ai/tools/` |
+| Database schema | `apps/core/src/db/schema.ts` |
+| Dashboard pages | `apps/dashboard/src/app/dashboard/` |
+| UI components | `apps/dashboard/src/components/` |
+| Shared types | `packages/types/` |
+| App creation | `apps/core/src/creator/` |
+
+## Limitations
+
+- **No files outside the project root** — the AI cannot modify system files, home directory configs, or other repositories
+- **No global package installs** — `npm install -g`, `brew install`, or similar commands are blocked
+- **No system-level changes** — no modifying `/etc/`, no changing shell configs, no touching Docker daemon settings
+- **TypeScript must pass** — every single change is validated. There are no exceptions, no flags to skip it, no force-commit options
+- **One change at a time** — the AI must confirm each change's success before attempting the next. No batch modifications.
+- **Destructive tier** — `apply_change` and `rollback_change` require confirmation in the default security mode
+
+<Cards>
+  <Card title="Architecture" href="/docs/developers/architecture">
+    Understand the codebase the AI modifies.
+  </Card>
+  <Card title="Automations" href="/docs/guides/automations">
+    Schedule self-improvement sessions.
+  </Card>
+  <Card title="AI Assistant" href="/docs/guides/ai-assistant">
+    How the AI agent works under the hood.
+  </Card>
+  <Card title="Contributing" href="/docs/developers/contributing">
+    Contribute changes yourself — the human way.
+  </Card>
+</Cards>
