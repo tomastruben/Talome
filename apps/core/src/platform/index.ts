@@ -80,7 +80,10 @@ export function getDockerHostAddress(): string {
 export function sampleNetworkBytes(): { rx: number; tx: number } | null {
   try {
     if (isDarwin) {
-      const out = execSync("netstat -ib", { encoding: "utf-8" });
+      // Absolute path — macOS netstat lives in /usr/sbin, which is not on
+      // the launchd-spawned process PATH by default. Without this we'd
+      // silently return null and the network widget would stick at 0 kb/s.
+      const out = execSync("/usr/sbin/netstat -ib", { encoding: "utf-8" });
       let rx = 0, tx = 0;
       for (const line of out.split("\n").slice(1)) {
         const cols = line.trim().split(/\s+/);
