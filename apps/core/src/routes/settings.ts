@@ -4,7 +4,7 @@ import { db, schema } from "../db/index.js";
 import { eq, desc, sql } from "drizzle-orm";
 import { DEFAULT_SYSTEM_PROMPT } from "../ai/agent.js";
 import { getAllToolMeta } from "../ai/tool-registry.js";
-import { isSecretSettingKey, encryptSetting } from "../utils/crypto.js";
+import { isSecretSettingKey, encryptSetting, decryptSetting } from "../utils/crypto.js";
 import { writeAuditEntry } from "../db/audit.js";
 import { listContainers, execInContainer } from "../docker/client.js";
 import { getUsageSummary, getTodayCostUsd, getDailyCapUsd, getBudgetZone } from "../agent-loop/budget.js";
@@ -100,11 +100,22 @@ settings.post("/test", async (c) => {
   try {
     const parsed = serviceTestSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ ok: false, error: parsed.error.flatten() }, 400);
-    const { service, url, apiKey } = parsed.data;
+    const { service, url } = parsed.data;
+    let { apiKey } = parsed.data;
 
     const healthPath = SERVICE_HEALTH[service];
     if (!healthPath) {
       return c.json({ ok: false, error: `Unknown service: ${service}` }, 400);
+    }
+
+    // If the client sent the "(configured)" sentinel returned by GET /api/settings
+    // (which masks secret values), pull the real, decrypted value from the DB.
+    if (apiKey === "(configured)" || !apiKey) {
+      const keyName = service === "plex" ? "plex_token" : `${service}_api_key`;
+      const row = db.select().from(schema.settings).where(eq(schema.settings.key, keyName)).get();
+      if (row?.value) {
+        try { apiKey = decryptSetting(row.value); } catch { /* fall through with empty key */ }
+      }
     }
 
     if (service === "plex" && !apiKey) {

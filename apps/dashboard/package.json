@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && cp -r .next/static .next/standalone/apps/dashboard/.next/static && ([ -d public ] && cp -r public .next/standalone/apps/dashboard/public || true)",
+    "build": "next build && DASHBOARD_STANDALONE=$(find .next/standalone -type d -name dashboard -path '*/apps/dashboard' | head -1) && cp -r .next/static \"$DASHBOARD_STANDALONE/.next/static\" && ([ -d public ] && cp -r public \"$DASHBOARD_STANDALONE/public\" || true)",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",

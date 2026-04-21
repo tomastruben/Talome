@@ -533,6 +533,12 @@ EOF
 elif [ "${OS}" = "Darwin" ]; then
   # macOS launchd
   PLIST_FILE="${HOME}/Library/LaunchAgents/dev.talome.plist"
+  # Pin the plist PATH to the *same* node that ran pnpm install, so runtime
+  # loads the same native modules the post-install compiled (better-sqlite3
+  # otherwise throws ERR_DLOPEN_FAILED on NODE_MODULE_VERSION mismatch when
+  # launchd picks a different node — e.g. Node 25 from Homebrew vs Node 22
+  # from /usr/local that built the modules).
+  NODE_BIN_DIR="$(dirname "$(command -v node)")"
   if [ ! -f "${PLIST_FILE}" ]; then
     mkdir -p "${HOME}/Library/LaunchAgents"
     cat > "${PLIST_FILE}" << EOF
@@ -558,7 +564,7 @@ elif [ "${OS}" = "Darwin" ]; then
     <key>NODE_ENV</key>
     <string>production</string>
     <key>PATH</key>
-    <string>${TALOME_DIR}/node/bin:${INSTALL_DIR}/node_modules/.bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>${NODE_BIN_DIR}:${TALOME_DIR}/node/bin:${INSTALL_DIR}/node_modules/.bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
   </dict>
   <key>StandardOutPath</key>
   <string>${TALOME_DIR}/logs/talome.log</string>
