@@ -4,6 +4,7 @@ import { getAppCapabilities } from "../../app-registry/index.js";
 import { db, schema } from "../../db/index.js";
 import { eq } from "drizzle-orm";
 import { getSetting } from "../../utils/settings.js";
+import { resolveAppContainers, type ResolvedContainer } from "../../docker/container-resolver.js";
 
 interface DiagnosticResult {
   check: string;
@@ -59,12 +60,50 @@ export const diagnoseAppTool = tool({
       };
     }
 
-    results.push({
-      check: "installation",
-      status: installedApp.status === "running" ? "ok" : "warning",
-      details: `Installed app found. Status: ${installedApp.status}`,
-      recommendation: installedApp.status !== "running" ? `App status is '${installedApp.status}'. Try restarting it.` : undefined,
-    });
+    // ── Resolve current container state (heals stale IDs) ─────────────────────
+    let storedIds: string[] = [];
+    try {
+      storedIds = JSON.parse(installedApp.containerIds || "[]");
+    } catch {
+      storedIds = [];
+    }
+    let resolved: ResolvedContainer[] = [];
+    try {
+      resolved = await resolveAppContainers(appId, storedIds);
+    } catch {
+      // Docker daemon unreachable — fall back to assuming the stored IDs are valid
+      resolved = storedIds.map((id) => ({ storedId: id, currentId: id, name: appId, state: "stopped" as const, adopted: false }));
+    }
+    const anyMissing = resolved.some((r) => r.state === "missing");
+    const allMissing = resolved.length > 0 && resolved.every((r) => r.state === "missing");
+    const anyRunning = resolved.some((r) => r.state === "running");
+    const adoptedAny = resolved.some((r) => r.adopted);
+
+    // ── Check 1: Installation (uses resolved state) ───────────────────────────
+    if (allMissing) {
+      results.push({
+        check: "installation",
+        status: "error",
+        details: `App is registered but its container has been destroyed (DB tracked ${storedIds.length} ID(s), none found on Docker, no replacement matched by name).`,
+        recommendation: `Container is gone — re-run install_app or 'docker compose up' on the app's compose file at ~/.talome/app-data/${appId}/. A parallel compose stack may have removed it; check for conflicts.`,
+      });
+    } else if (anyMissing) {
+      results.push({
+        check: "installation",
+        status: "warning",
+        details: `Some of the app's containers are missing (resolved ${resolved.filter((r) => r.state !== "missing").length}/${resolved.length}).`,
+        recommendation: `Recreate the missing containers via 'docker compose up' on ~/.talome/app-data/${appId}/.`,
+      });
+    } else {
+      const status = anyRunning ? "ok" : "warning";
+      const adoptedNote = adoptedAny ? " (re-bound to current container by name)" : "";
+      results.push({
+        check: "installation",
+        status,
+        details: `Installed app found. Status: ${installedApp.status}${adoptedNote}.`,
+        recommendation: !anyRunning ? `App status is '${installedApp.status}'. Try restarting it.` : undefined,
+      });
+    }
 
     // ── Get registry info for advanced checks ─────────────────────────────────
     const capabilities = getAppCapabilities(appId);
@@ -75,20 +114,25 @@ export const diagnoseAppTool = tool({
     const [logCheck, healthCheck, configCheck] = await Promise.allSettled([
       // Check 2: Recent logs for errors
       (async (): Promise<DiagnosticResult> => {
-        try {
-          const containerIds: string[] = JSON.parse(installedApp.containerIds || "[]");
-          if (containerIds.length === 0) {
-            return { check: "logs", status: "warning", details: "No container IDs found.", recommendation: "Reinstall or restart the app." };
-          }
-          // We can't import docker tools here without circular deps — return info for agent to follow up
+        if (storedIds.length === 0) {
+          return { check: "logs", status: "warning", details: "No container IDs found.", recommendation: "Reinstall or restart the app." };
+        }
+        const liveIds = resolved
+          .filter((r) => r.currentId)
+          .map((r) => r.currentId as string);
+        if (liveIds.length === 0) {
           return {
             check: "logs",
-            status: "skipped",
-            details: `Container IDs: ${containerIds.join(", ")}. Use get_container_logs to check for errors.`,
+            status: "error",
+            details: `Stored container IDs (${storedIds.join(", ")}) no longer exist and no replacement was found by name.`,
+            recommendation: "Recreate the container via the install/start path before fetching logs.",
           };
-        } catch {
-          return { check: "logs", status: "error", details: "Could not read container IDs." };
         }
+        return {
+          check: "logs",
+          status: "skipped",
+          details: `Container IDs: ${liveIds.join(", ")}. Use get_container_logs to check for errors.`,
+        };
       })(),
 
       // Check 3: HTTP health probe

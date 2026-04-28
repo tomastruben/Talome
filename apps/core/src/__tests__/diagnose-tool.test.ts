@@ -28,11 +28,19 @@ vi.mock("../db/index.js", () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
+// ── Mock container resolver ───────────────────────────────────────────────────
+const mockResolveAppContainers = vi.fn();
+vi.mock("../docker/container-resolver.js", () => ({
+  resolveAppContainers: (...args: unknown[]) => mockResolveAppContainers(...args),
+}));
+
 import { diagnoseAppTool } from "../ai/tools/diagnose-tool.js";
 
 describe("diagnose_app tool", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: no containers tracked / nothing to resolve.
+    mockResolveAppContainers.mockResolvedValue([]);
   });
 
   it("returns error when app is not installed", async () => {
@@ -67,6 +75,9 @@ describe("diagnose_app tool", () => {
       containerIds: '["abc123"]',
       overrideComposePath: null,
     });
+    mockResolveAppContainers.mockResolvedValue([
+      { storedId: "abc123", currentId: "abc123", name: "jellyfin", state: "running", adopted: false },
+    ]);
 
     // fetch returns ok for health probe
     mockFetch.mockResolvedValue({ ok: true, status: 200 });
@@ -76,6 +87,50 @@ describe("diagnose_app tool", () => {
     // Installation check should be ok
     const installCheck = result.checks.find((c: { check: string }) => c.check === "installation");
     expect(installCheck?.status).toBe("ok");
+  });
+
+  it("flags installation as error when all stored containers are gone", async () => {
+    mockInstalledAppGet.mockReturnValue({
+      appId: "radarr",
+      status: "stopped",
+      containerIds: '["688c0dd2dad6"]',
+      overrideComposePath: null,
+    });
+    mockResolveAppContainers.mockResolvedValue([
+      { storedId: "688c0dd2dad6", currentId: null, name: "radarr", state: "missing", adopted: false },
+    ]);
+    mockFetch.mockResolvedValue({ ok: false, status: 503 });
+
+    const result = await (diagnoseAppTool.execute as Function)({ appId: "radarr" }, {});
+    const installCheck = result.checks.find((c: { check: string }) => c.check === "installation");
+    expect(installCheck?.status).toBe("error");
+    expect(installCheck?.details).toMatch(/destroyed|none found/i);
+    expect(result.overallStatus).toBe("unhealthy");
+
+    const logCheck = result.checks.find((c: { check: string }) => c.check === "logs");
+    expect(logCheck?.status).toBe("error");
+  });
+
+  it("re-binds to an adopted container and reports it as ok", async () => {
+    mockInstalledAppGet.mockReturnValue({
+      appId: "sonarr",
+      status: "stopped",
+      containerIds: '["staleid12345"]',
+      overrideComposePath: null,
+    });
+    mockResolveAppContainers.mockResolvedValue([
+      { storedId: "staleid12345", currentId: "newid67890", name: "sonarr", state: "running", adopted: true },
+    ]);
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
+
+    const result = await (diagnoseAppTool.execute as Function)({ appId: "sonarr" }, {});
+    const installCheck = result.checks.find((c: { check: string }) => c.check === "installation");
+    expect(installCheck?.status).toBe("ok");
+    expect(installCheck?.details).toMatch(/re-bound/i);
+
+    const logCheck = result.checks.find((c: { check: string }) => c.check === "logs");
+    expect(logCheck?.details).toContain("newid67890");
+    expect(logCheck?.details).not.toContain("staleid12345");
   });
 
   it("includes all expected check types in results", async () => {
