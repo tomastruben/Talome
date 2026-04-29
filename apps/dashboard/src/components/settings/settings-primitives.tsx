@@ -66,9 +66,9 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function SettingsGroup({ children }: { children: React.ReactNode }) {
+export function SettingsGroup({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className="rounded-xl border border-border bg-card divide-y divide-border overflow-hidden">
+    <div className={`rounded-xl border border-border bg-card divide-y divide-border overflow-hidden ${className}`}>
       {children}
     </div>
   );

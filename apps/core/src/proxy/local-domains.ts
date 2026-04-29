@@ -5,7 +5,7 @@
  * + Avahi (single-hostname mDNS for server discovery).
  */
 
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -242,6 +242,85 @@ async function setupServerAsClient(domain: string, serverIp: string): Promise<{ 
   return { dns: dnsOk, cert: certOk, errors };
 }
 
+/* ── CA trust detection ────────────────────────────────────────────────────── */
+
+export type CaTrustReason =
+  | "trusted"
+  | "missing-cert"
+  | "missing-from-keychain"
+  | "fingerprint-mismatch"
+  | "no-trust-settings"
+  | "unsupported-os"
+  | "check-failed";
+
+function fingerprintFromPem(pem: string): string | null {
+  const match = pem.match(/-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/);
+  if (!match) return null;
+  const der = Buffer.from(match[1].replace(/\s/g, ""), "base64");
+  return createHash("sha256").update(der).digest("hex");
+}
+
+function getCaTrustState(caCertPath: string): { trusted: boolean; reason: CaTrustReason } {
+  if (!existsSync(caCertPath)) return { trusted: false, reason: "missing-cert" };
+
+  const os = platform();
+  if (os !== "darwin" && os !== "linux") {
+    return { trusted: false, reason: "unsupported-os" };
+  }
+
+  let onDiskFp: string | null = null;
+  try {
+    onDiskFp = fingerprintFromPem(readFileSync(caCertPath, "utf-8"));
+  } catch {
+    return { trusted: false, reason: "check-failed" };
+  }
+  if (!onDiskFp) return { trusted: false, reason: "check-failed" };
+
+  if (os === "darwin") {
+    let installedPem = "";
+    try {
+      installedPem = execFileSync(
+        "security",
+        ["find-certificate", "-c", "Caddy Local Authority", "-p", "/Library/Keychains/System.keychain"],
+        { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] },
+      );
+    } catch {
+      return { trusted: false, reason: "missing-from-keychain" };
+    }
+    const installedFp = fingerprintFromPem(installedPem);
+    if (!installedFp) return { trusted: false, reason: "missing-from-keychain" };
+    if (installedFp !== onDiskFp) return { trusted: false, reason: "fingerprint-mismatch" };
+
+    let trustDump = "";
+    try {
+      trustDump = execFileSync("security", ["dump-trust-settings", "-d"], {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      // dump-trust-settings exits non-zero when there are no admin trust settings at all
+      return { trusted: false, reason: "no-trust-settings" };
+    }
+    const block = trustDump.split(/\nCert \d+:/).find((b) => b.includes("Caddy Local Authority"));
+    if (!block) return { trusted: false, reason: "no-trust-settings" };
+    const m = block.match(/Number of trust settings\s*:\s*(\d+)/);
+    if (!m || Number(m[1]) === 0) return { trusted: false, reason: "no-trust-settings" };
+    return { trusted: true, reason: "trusted" };
+  }
+
+  // Linux: cert is trusted system-wide if it lives in the CA bundle dir
+  const linuxCertPath = "/usr/local/share/ca-certificates/talome-ca.crt";
+  if (!existsSync(linuxCertPath)) return { trusted: false, reason: "missing-from-keychain" };
+  try {
+    const installedFp = fingerprintFromPem(readFileSync(linuxCertPath, "utf-8"));
+    if (installedFp !== onDiskFp) return { trusted: false, reason: "fingerprint-mismatch" };
+    return { trusted: true, reason: "trusted" };
+  } catch {
+    return { trusted: false, reason: "check-failed" };
+  }
+}
+
 /* ── Enable / Disable / Status ─────────────────────────────────────────────── */
 
 let stopMonitor: (() => void) | null = null;
@@ -331,6 +410,7 @@ export async function getLocalDomainsStatus(): Promise<{
   mdns: { running: boolean };
   caCertAvailable: boolean;
   serverConfigured: boolean;
+  caTrust: { trusted: boolean; reason: CaTrustReason };
 }> {
   const enabled = getSetting("local_domains_enabled") === "true";
   const baseDomain = getSetting("local_domains_base") || "talome.local";
@@ -342,11 +422,10 @@ export async function getLocalDomainsStatus(): Promise<{
     getAvahiStatus(),
   ]);
 
-  // Check if Caddy CA cert exists
   const caCertPath = join(homedir(), ".talome", "caddy", "data", "caddy", "pki", "authorities", "local", "root.crt");
   const caCertAvailable = existsSync(caCertPath);
+  const caTrust = getCaTrustState(caCertPath);
 
-  // Check if this server machine is configured as a client
   let serverConfigured = false;
   const os = platform();
   if (os === "darwin") {
@@ -365,6 +444,7 @@ export async function getLocalDomainsStatus(): Promise<{
     mdns: { running: mdnsStatus.running },
     caCertAvailable,
     serverConfigured,
+    caTrust,
   };
 }
 

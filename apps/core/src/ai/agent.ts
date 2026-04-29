@@ -310,6 +310,7 @@ import {
   getAllTiers,
 } from "./tool-registry.js";
 import { gateToolExecution, getSecurityMode } from "./tool-gateway.js";
+import { wrapToolsWithTruncation, getFullToolResultTool, getTruncationStatsTool } from "./tool-truncation.js";
 import { getFeatureStackStatus } from "../stacks/feature-stacks.js";
 
 // getSetting imported from ../utils/settings.js
@@ -437,6 +438,8 @@ registerDomain({
     create_directory: createDirectoryTool,
     get_file_info: getFileInfoTool,
     query_docs: queryDocsTool,
+    get_full_tool_result: getFullToolResultTool,
+    get_truncation_stats: getTruncationStatsTool,
   },
   tiers: {
     list_containers: "read",
@@ -544,6 +547,8 @@ registerDomain({
     create_directory: "modify",
     get_file_info: "read",
     query_docs: "read",
+    get_full_tool_result: "read",
+    get_truncation_stats: "read",
   },
   categories: {
     // Docker
@@ -605,6 +610,8 @@ registerDomain({
     // Other
     web_search: "search",
     query_docs: "search",
+    get_full_tool_result: "system",
+    get_truncation_stats: "system",
   },
 });
 
@@ -1197,7 +1204,7 @@ function getResolvedSystemPrompt(pageContext?: string): string {
 // activeTools: only tools from configured domains — used by MCP server + dashboard chat
 // getAllRegisteredTools(): full set — only for builtin-name registration
 
-export const activeTools = getActiveRegisteredTools();
+export const activeTools = wrapToolsWithTruncation(getActiveRegisteredTools());
 
 // Register built-in tool names so custom tools cannot shadow them (needs full set)
 setBuiltinToolNames(Object.keys(getAllRegisteredTools()));
@@ -1249,11 +1256,13 @@ function getActiveTools(message?: string) {
 
   const mode = getSecurityMode();
 
-  return Object.fromEntries(
+  const gated = Object.fromEntries(
     Object.entries(mergedTools)
       .filter(([name]) => !disabledTools.has(name))
       .map(([name, t]) => [name, gateToolExecution(t, name, TOOL_TIERS[name] ?? "read", mode)])
   );
+
+  return wrapToolsWithTruncation(gated);
 }
 
 const ANTHROPIC_MODEL_MAP: Record<string, string> = {

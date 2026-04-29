@@ -1422,11 +1422,14 @@ media.post("/releases/grab", async (c) => {
       payload.mappedSeriesId = seriesId;
     }
 
-    let result = await fetch(`${baseUrl}/api/v3/release`, {
+    const grabFetch = () => fetch(`${baseUrl}/api/v3/release`, {
       method: "POST",
       headers: apiKey ? { "X-Api-Key": apiKey, "Content-Type": "application/json" } : { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30000),
     });
+
+    let result = await grabFetch();
 
     // Radarr v6+ expires release cache quickly — retry by re-triggering search first
     if (result.status === 404 && payload.guid) {
@@ -1441,12 +1444,7 @@ media.post("/releases/grab", async (c) => {
           signal: AbortSignal.timeout(30000),
         }).catch(() => {});
 
-        // Retry the grab with fresh cache
-        result = await fetch(`${baseUrl}/api/v3/release`, {
-          method: "POST",
-          headers: apiKey ? { "X-Api-Key": apiKey, "Content-Type": "application/json" } : { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
+        result = await grabFetch();
       }
     }
 
@@ -1459,6 +1457,17 @@ media.post("/releases/grab", async (c) => {
     }
     return c.json({ ok: true });
   } catch (err: unknown) {
+    // Timeouts and connection failures here almost always mean the *arr app
+    // can't reach its download client (qBittorrent / SABnzbd / etc.) — surface
+    // that to the dashboard instead of a generic 500.
+    const name = err instanceof Error ? err.name : "";
+    const msg = err instanceof Error ? err.message : String(err);
+    if (name === "TimeoutError" || name === "AbortError" || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT/i.test(msg)) {
+      log.warn(`grab failed — ${app} unreachable or download client offline`, err);
+      return c.json({
+        error: `${app} could not push the release to its download client. Check that your download client (e.g. qBittorrent) is running and reachable from ${app}, then try again.`,
+      }, 502);
+    }
     return serverError(c, err);
   }
 });

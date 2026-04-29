@@ -155,7 +155,23 @@ function buildProcessConfigs(mode: "dev" | "build"): ProcessConfig[] {
   }
 
   // Dashboard — skip in Docker if standalone dir doesn't exist
-  const dashboardStandalone = join(DASHBOARD_DIR, ".next", "standalone", "apps", "dashboard", "server.js");
+  // Next.js may nest the standalone tree under a monorepo-root-relative prefix
+  // (e.g. when the install lives under ~/.talome, the leading dot-dir shifts
+  // the tree). Locate server.js dynamically rather than hardcoding the path.
+  const dashboardStandalone = (() => {
+    const hardcoded = join(DASHBOARD_DIR, ".next", "standalone", "apps", "dashboard", "server.js");
+    if (existsSync(hardcoded)) return hardcoded;
+    try {
+      const { execSync: ex } = require("node:child_process") as typeof import("node:child_process");
+      const found = ex(
+        `find ${JSON.stringify(join(DASHBOARD_DIR, ".next", "standalone"))} -type f -name server.js -path '*/apps/dashboard/server.js' | head -1`,
+        { encoding: "utf-8", timeout: 5000 },
+      ).trim();
+      return found || hardcoded;
+    } catch {
+      return hardcoded;
+    }
+  })();
   const dashboardExists = isDev || existsSync(dashboardStandalone);
 
   if (dashboardExists) {

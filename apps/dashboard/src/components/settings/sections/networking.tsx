@@ -24,6 +24,7 @@ import {
   ArrowDown01Icon,
   ArrowRight01Icon,
   LinkSquare01Icon,
+  AlertCircleIcon,
 } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
@@ -53,6 +54,15 @@ interface ProxyData {
   routes: ProxyRoute[];
 }
 
+type CaTrustReason =
+  | "trusted"
+  | "missing-cert"
+  | "missing-from-keychain"
+  | "fingerprint-mismatch"
+  | "no-trust-settings"
+  | "unsupported-os"
+  | "check-failed";
+
 interface LocalDomainsStatus {
   enabled: boolean;
   baseDomain: string;
@@ -62,7 +72,18 @@ interface LocalDomainsStatus {
   mdns: { running: boolean };
   caCertAvailable: boolean;
   serverConfigured: boolean;
+  caTrust: { trusted: boolean; reason: CaTrustReason };
 }
+
+const CA_TRUST_MESSAGES: Record<CaTrustReason, string> = {
+  trusted: "",
+  "missing-cert": "Caddy hasn't generated a root certificate yet. Restart the proxy.",
+  "missing-from-keychain": "Talome's certificate authority isn't installed on this Mac.",
+  "fingerprint-mismatch": "An older Talome certificate is still installed. Replace it with the current one.",
+  "no-trust-settings": "Talome's certificate is installed but not marked as trusted.",
+  "unsupported-os": "Automatic trust check isn't supported on this OS — verify manually.",
+  "check-failed": "Couldn't verify certificate trust state.",
+};
 
 /* ── Local Domains Section ───────────────────────────── */
 
@@ -156,6 +177,12 @@ function LocalDomainsSection({
   const setupPs1 = status
     ? `irm http://${status.serverIp}:4000/api/network/setup.ps1 | iex`
     : "";
+
+  const caUntrusted = isEnabled
+    && !!status?.caTrust
+    && !status.caTrust.trusted
+    && status.caTrust.reason !== "unsupported-os";
+  const caInstallCommand = `curl -fsSL http://${status?.serverIp}:4000/api/network/ca.pem -o /tmp/talome-ca.pem && sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /tmp/talome-ca.pem`;
 
   return (
     <div className="grid gap-6">
@@ -257,6 +284,64 @@ function LocalDomainsSection({
           </>
         )}
       </SettingsGroup>
+
+      {/* CA trust warning — browsers will show "Not Secure" until the user trusts Caddy's local CA */}
+      {caUntrusted && status && (
+        <SettingsGroup className="border-status-warning/40">
+          <SettingsRow className="py-2.5">
+            <HugeiconsIcon icon={AlertCircleIcon} size={14} className="text-status-warning" />
+            <p className="text-xs font-medium uppercase tracking-wide text-status-warning">Browser shows &ldquo;Not Secure&rdquo;</p>
+          </SettingsRow>
+
+          <SettingsRow>
+            <div className="flex-1 min-w-0 space-y-3">
+              <p className="text-sm text-muted-foreground">
+                {CA_TRUST_MESSAGES[status.caTrust.reason]} Until this Mac trusts Talome&apos;s certificate authority, every <span className="font-mono text-foreground">*.{status.baseDomain}</span> site will show a security warning.
+              </p>
+
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">macOS — install &amp; trust the current CA</p>
+                <div className="flex items-start gap-2">
+                  <code className="flex-1 text-xs bg-muted/50 rounded-lg px-3 py-2 font-mono break-all leading-relaxed">
+                    {caInstallCommand}
+                  </code>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0 shrink-0"
+                    onClick={() => {
+                      navigator.clipboard.writeText(caInstallCommand);
+                      toast.success("Copied to clipboard");
+                    }}
+                  >
+                    <span className="text-xs">Copy</span>
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <Button
+                  asChild
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs gap-1.5"
+                >
+                  <a
+                    href={`http://${status.serverIp}:4000/api/network/ca.pem`}
+                    download="talome-ca.pem"
+                  >
+                    <HugeiconsIcon icon={Shield01Icon} size={12} />
+                    Download certificate
+                  </a>
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  After running, fully quit and reopen your browser.
+                </p>
+              </div>
+            </div>
+          </SettingsRow>
+        </SettingsGroup>
+      )}
 
       {/* Client setup instructions */}
       {isEnabled && status?.dns.running && (
