@@ -11,6 +11,14 @@ import yaml from "js-yaml";
 export const TALOME_NETWORK = "talome";
 
 /**
+ * Legacy network name from before the Talon → Talome rename. Old override compose
+ * files may still declare it as an external network that no longer exists, which
+ * makes `docker compose up` fail with "network talon declared as external, but
+ * could not be found". It is stripped during network injection.
+ */
+const LEGACY_NETWORK = "talon";
+
+/**
  * Create the `talome` bridge network if it doesn't already exist.
  * Idempotent — safe to call on every install and at server startup.
  */
@@ -93,8 +101,9 @@ export async function verifyTalomeNetworkAttachments(): Promise<{ missing: strin
 export function injectTalomeNetwork(doc: Record<string, unknown>): Record<string, unknown> {
   if (!doc?.services) return doc;
 
-  // Add top-level networks declaration
+  // Add top-level networks declaration, dropping the stale legacy network
   const networks = (doc.networks ?? {}) as Record<string, unknown>;
+  delete networks[LEGACY_NETWORK];
   networks[TALOME_NETWORK] = { external: true };
   doc.networks = networks;
 
@@ -108,14 +117,18 @@ export function injectTalomeNetwork(doc: Record<string, unknown>): Record<string
       delete svc.network_mode;
     }
 
-    // Build network list: talome + default (for intra-project comms)
+    // Build network list: talome + default (for intra-project comms), and drop
+    // any reference to the stale legacy network.
     const existing = svc.networks;
     if (Array.isArray(existing)) {
-      if (!existing.includes(TALOME_NETWORK)) existing.push(TALOME_NETWORK);
-      if (!existing.includes("default")) existing.push("default");
+      const cleaned = existing.filter((n) => n !== LEGACY_NETWORK);
+      svc.networks = cleaned;
+      if (!cleaned.includes(TALOME_NETWORK)) cleaned.push(TALOME_NETWORK);
+      if (!cleaned.includes("default")) cleaned.push("default");
     } else if (existing && typeof existing === "object") {
       // Object-form networks: { mynet: { aliases: [...] } }
       const netObj = existing as Record<string, unknown>;
+      delete netObj[LEGACY_NETWORK];
       if (!(TALOME_NETWORK in netObj)) netObj[TALOME_NETWORK] = {};
       if (!("default" in netObj)) netObj["default"] = {};
     } else {

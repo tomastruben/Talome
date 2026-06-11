@@ -827,14 +827,32 @@ async function updateAppInner(appId: string): Promise<{ success: boolean; error?
     .where(eq(schema.installedApps.appId, appId))
     .run();
 
-  let effectiveCompose = installed.overrideComposePath ?? app.composePath;
-
   const envOverrides = JSON.parse(installed.envConfig) as Record<string, string>;
-  const env = buildEnv(appId, envOverrides);
+  let mergedEnvOverrides = { ...envOverrides };
+
+  // Determine the compose file to operate on. Prefer the stored override (already
+  // sanitized and customized at install — preserves the user's volume/port config).
+  // When there is no override, the catalog file is used directly — but for
+  // CasaOS/Umbrel apps that raw file contains platform constructs (e.g. the
+  // app_proxy service, which has no image) that plain `docker compose` rejects with
+  // "invalid compose project". Sanitize it the same way installAppInner does so both
+  // `pull` and `up` operate on a valid project rather than the raw catalog file.
+  let effectiveCompose = installed.overrideComposePath ?? app.composePath;
+  if (!installed.overrideComposePath) {
+    if (app.source === "casaos") {
+      effectiveCompose = sanitizeCasaosCompose(app.composePath, appId) || effectiveCompose;
+    } else if (app.source === "umbrel") {
+      const platformEnv = generateUmbrelPlatformEnv(app.composePath, appId);
+      mergedEnvOverrides = { ...platformEnv, ...envOverrides };
+      effectiveCompose = sanitizeUmbrelCompose(app.composePath, appId, app.webPort ?? undefined) || effectiveCompose;
+    }
+  }
+
+  const env = buildEnv(appId, mergedEnvOverrides);
 
   try {
-    await run(`docker compose -f "${app.composePath}" pull`, {
-      cwd: dirname(app.composePath),
+    await run(`docker compose -f "${effectiveCompose}" pull`, {
+      cwd: dirname(effectiveCompose),
       env,
       timeout: 300_000,
     });
