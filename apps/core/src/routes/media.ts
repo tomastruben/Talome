@@ -1929,9 +1929,23 @@ media.get("/plex/watching", async (c) => {
 
   try {
     const [onDeckRes, historyRes] = await Promise.allSettled([
-      plexFetch("/library/onDeck", plex.token, plex.baseUrl),
+      // includeGuids=1 so each item carries its TMDB id — used to match the
+      // on-deck item to the local Radarr/Sonarr library for internal playback.
+      plexFetch("/library/onDeck?includeGuids=1", plex.token, plex.baseUrl),
       plexFetch("/status/sessions/history/all?sort=viewedAt:desc&limit=30", plex.token, plex.baseUrl),
     ]);
+
+    // Extract the TMDB id from a Plex item's Guid array (e.g. "tmdb://12345").
+    const parseTmdbId = (guids?: Array<{ id?: string }>): number | undefined => {
+      for (const g of guids ?? []) {
+        const gid = String(g.id ?? "");
+        if (gid.startsWith("tmdb://")) {
+          const n = Number(gid.replace("tmdb://", ""));
+          if (Number.isFinite(n)) return n;
+        }
+      }
+      return undefined;
+    };
 
     interface PlexWatchItem {
       ratingKey?: string;
@@ -1947,6 +1961,7 @@ media.get("/plex/watching", async (c) => {
       grandparentTitle?: string;
       parentIndex?: number;
       index?: number;
+      tmdbId?: number;
     }
 
     const continueWatching: PlexWatchItem[] = [];
@@ -1966,6 +1981,8 @@ media.get("/plex/watching", async (c) => {
           grandparentTitle: item.grandparentTitle,
           parentIndex: item.parentIndex,
           index: item.index,
+          // For TV, grandparentGuid (the show) carries the TMDB id, not the episode.
+          tmdbId: parseTmdbId(item.Guid),
         });
       }
     }
