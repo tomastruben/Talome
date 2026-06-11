@@ -157,6 +157,8 @@ export interface VideoPlayerProps {
   preferOriginal?: boolean;
   /** When true, skip Jellyfin and play directly via Talome's stream endpoint. */
   preferDirect?: boolean;
+  /** Initial resume position in seconds (e.g. from "Continue Watching"). */
+  startTime?: number;
 }
 
 export interface AudioPlayerProps {

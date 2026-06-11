@@ -105,7 +105,12 @@ export function VideoPlayer({
   previousLabel,
   preferOriginal,
   preferDirect,
+  startTime,
 }: VideoPlayerProps) {
+  // Resume offset (seconds) from "Continue Watching" — seeds the resume position
+  // so playback starts there. Applied on canPlay (direct play seeks currentTime;
+  // HLS re-transcodes from the offset) — the same path Jellyfin resume uses.
+  const initialResume = startTime && startTime > 0 ? startTime : 0;
   // ── Assistant (for "Ask Talome" on error) ──────────────────────────────
   const { handleSubmit: assistantSubmit, openPaletteInChatMode } = useAssistant();
 
@@ -174,7 +179,7 @@ export function VideoPlayer({
   const [jfQualities, setJfQualities] = useState<Array<{ label: string; height: number; bitrate: number; url: string }>>([]);
 
   // ── Resume position ────────────────────────────────────────────────────
-  const [resumePosition, setResumePosition] = useState<number | null>(null);
+  const [resumePosition, setResumePosition] = useState<number | null>(initialResume > 0 ? initialResume : null);
   const resumeApplied = useRef(false);
   const [showResumeIndicator, setShowResumeIndicator] = useState(false);
 

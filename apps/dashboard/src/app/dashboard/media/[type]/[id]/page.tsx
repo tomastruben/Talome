@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSetAtom } from "jotai";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { pageBackAtom } from "@/atoms/page-back";
@@ -284,8 +284,13 @@ function DownloadProgressCard({
 export default function MediaDetailPage() {
   const params = useParams<{ type: string; id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const type = params.type as "movie" | "tv";
   const id = Number(params.id);
+
+  // Resume intent from "Continue Watching" (e.g. ?autoplay=1&startAt=1802).
+  const autoplayParam = searchParams.get("autoplay") === "1";
+  const startAtParam = Number(searchParams.get("startAt")) || 0;
 
   const setPageTitle = useSetAtom(pageTitleAtom);
   const setPageBack = useSetAtom(pageBackAtom);
@@ -465,6 +470,14 @@ export default function MediaDetailPage() {
     setPlayingFileName(item.filePath.split("/").pop() ?? "");
   }, [item]);
 
+  // Auto-start playback when arriving from "Continue Watching" (?autoplay=1).
+  const autoplayedRef = useRef(false);
+  useEffect(() => {
+    if (autoplayedRef.current || !autoplayParam || type !== "movie" || !item?.filePath) return;
+    autoplayedRef.current = true;
+    playMovie();
+  }, [autoplayParam, type, item, playMovie]);
+
   const handleVideoEnded = useCallback(() => {
     if (!nextEpisode) return;
     setNextCountdown(8);
@@ -585,6 +598,7 @@ export default function MediaDetailPage() {
               fileName={playingFileName}
               filePath={playingFilePath}
               apiBase={mediaApiBase}
+              startTime={playingFilePath === item.filePath ? startAtParam : 0}
               onEnded={handleVideoEnded}
               preferOriginal={selectedPreQuality === "original"}
               preferDirect={selectedPreQuality === "direct"}
