@@ -10,7 +10,6 @@ import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { spawn } from "node:child_process";
 import { getSetting } from "../utils/settings.js";
 import { inspectContainer, listContainers } from "../docker/client.js";
 import { findOptimizedPath } from "../media/optimizer.js";
@@ -21,8 +20,9 @@ import {
   resolveMediaFilePath,
 } from "../utils/media-paths.js";
 import {
-  probeFile, startHls, hlsOutDirByHash, stopHls, touchJob, hasFfmpeg,
-  buildStreamResponse, startTransmux, stopTransmux, transmuxJobs, TRANSMUX_ROOT,
+  probeFile, startHls, hlsOutDirByHash, stopHls, touchJob, hasFfmpeg, hlsJobStatus,
+  buildStreamResponse, startTransmux, stopTransmux, transmuxStatus, findTransmuxOutput,
+  extractSubtitleVtt,
 } from "./files.js";
 import { parseContainerFormat } from "../utils/media-format.js";
 import {
@@ -2381,7 +2381,7 @@ media.get("/hls-start", async (c) => {
   const seekTo = parseFloat(c.req.query("seekTo") ?? "0");
   const transcodeVideo = c.req.query("transcodeVideo") === "1";
   const probe = probeFile(hostPath);
-  const hash = startHls(hostPath, audioTrack, seekTo, probe.videoCodec, transcodeVideo, probe.videoColorTransfer ?? "", probe.videoColorPrimaries ?? "", probe.videoColorSpace ?? "");
+  const hash = startHls(hostPath, audioTrack, seekTo, probe.videoCodec, transcodeVideo, probe.videoColorTransfer ?? "", probe.videoColorPrimaries ?? "", probe.videoColorSpace ?? "", probe.videoCodecTag ?? "");
   return c.json({ hash, ...probe });
 });
 
@@ -2404,6 +2404,8 @@ media.get("/hls/:hash/:file", async (c) => {
   // For playlist.m3u8, wait briefly for ffmpeg to create it (race with hls-start)
   if (file === "playlist.m3u8") {
     for (let i = 0; i < 30; i++) {
+      const status = hlsJobStatus(hash);
+      if (status.error) return c.json({ error: status.error }, 500);
       try { await stat(fp); break; } catch { await new Promise((r) => setTimeout(r, 100)); }
     }
   }
@@ -2451,6 +2453,13 @@ media.post("/hls-ping", async (c) => {
   return c.json({ ok: true });
 });
 
+/** GET /hls-status/:hash — job readiness/error state for client polling. */
+media.get("/hls-status/:hash", (c) => {
+  const hash = c.req.param("hash");
+  if (!/^[a-f0-9]+$/.test(hash)) return c.json({ error: "Invalid hash" }, 400);
+  return c.json(hlsJobStatus(hash));
+});
+
 // ── Transmux endpoints (Chrome MKV direct play) ──────────────────────────
 
 /** GET /transmux-start — kick off MKV→MP4 transmux with container path resolution. */
@@ -2464,7 +2473,8 @@ media.get("/transmux-start", async (c) => {
   if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
   const probe = probeFile(hostPath);
-  const hash = startTransmux(hostPath, probe.videoCodec);
+  const primaryAudioCodec = probe.audio[0]?.codec ?? "";
+  const hash = startTransmux(hostPath, probe.videoCodec, probe.duration, primaryAudioCodec);
   return c.json({ hash, ...probe });
 });
 
@@ -2473,13 +2483,9 @@ media.get("/transmux-status/:hash", (c) => {
   const hash = c.req.param("hash");
   if (!/^[a-f0-9]+$/.test(hash)) return c.json({ error: "Invalid hash" }, 400);
 
-  const job = transmuxJobs.get(hash);
-  if (job) return c.json({ ready: job.done && !job.error, error: job.error });
-
-  const outPath = join(TRANSMUX_ROOT, `${hash}.mp4`);
-  if (existsSync(outPath)) return c.json({ ready: true, error: false });
-
-  return c.json({ error: "Not found" }, 404);
+  const status = transmuxStatus(hash);
+  if (!status.found) return c.json({ error: "Not found" }, 404);
+  return c.json({ ready: status.ready, error: status.error, progress: status.progress, done: status.done });
 });
 
 /** GET /transmux/:hash/stream — serve transmuxed MP4 with Range support. */
@@ -2487,8 +2493,8 @@ media.get("/transmux/:hash/stream", async (c) => {
   const hash = c.req.param("hash");
   if (!/^[a-f0-9]+$/.test(hash)) return c.json({ error: "Invalid hash" }, 400);
 
-  const outPath = join(TRANSMUX_ROOT, `${hash}.mp4`);
-  if (!existsSync(outPath)) return c.json({ error: "Not found" }, 404);
+  const outPath = findTransmuxOutput(hash);
+  if (!outPath) return c.json({ error: "Not found" }, 404);
 
   return buildStreamResponse(outPath, c.req.header("range"));
 });
@@ -2513,36 +2519,17 @@ media.get("/subtitle", async (c) => {
 
   const subIndex = parseInt(indexStr ?? "0", 10);
 
-  return new Promise<Response>((res) => {
-    const proc = spawn("ffmpeg", [
-      "-i", hostPath, "-map", `0:s:${subIndex}`, "-f", "webvtt", "pipe:1",
-    ], { stdio: ["ignore", "pipe", "pipe"] });
+  const vtt = await extractSubtitleVtt(hostPath, subIndex);
+  if (!vtt) return serverError(c, "Failed to extract subtitle");
 
-    const chunks: Buffer[] = [];
-    proc.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    proc.stderr.on("data", () => { /* drain */ });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ChildProcessByStdio lacks .on() in newer @types/node
-    const p = proc as any;
-    p.on("close", (code: number | null) => {
-      if (code !== 0 || chunks.length === 0) {
-        res(Response.json({ error: "Failed to extract subtitle" }, { status: 500 }));
-        return;
-      }
-      res(new Response(Buffer.concat(chunks), {
-        status: 200,
-        headers: {
-          "Content-Type": "text/vtt; charset=utf-8",
-          "Access-Control-Allow-Origin": c.req.header("origin") ?? "*",
-          "Access-Control-Allow-Credentials": "true",
-          "Cache-Control": "max-age=3600",
-        },
-      }));
-    });
-
-    p.on("error", () => {
-      res(Response.json({ error: "ffmpeg not available" }, { status: 500 }));
-    });
+  return new Response(new Uint8Array(vtt), {
+    status: 200,
+    headers: {
+      "Content-Type": "text/vtt; charset=utf-8",
+      "Access-Control-Allow-Origin": c.req.header("origin") ?? "*",
+      "Access-Control-Allow-Credentials": "true",
+      "Cache-Control": "max-age=3600",
+    },
   });
 });
 

@@ -250,7 +250,7 @@ export function AiProviderSection() {
       const res = await fetch(`${CORE_URL}/api/ollama/pull`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: pullName.trim() }),
+        body: JSON.stringify({ model: pullName.trim() }),
       });
       const d = await res.json();
       if (d.error) throw new Error(d.error);

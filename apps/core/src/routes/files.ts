@@ -363,25 +363,15 @@ files.get("/probe", async (c) => {
   return c.json(probeFile(abs));
 });
 
-/** GET /subtitle — extract a subtitle track as WebVTT. */
-files.get("/subtitle", async (c) => {
-  const filePath = c.req.query("path");
-  const indexStr = c.req.query("index");
-  if (!filePath) return c.json({ error: "path required" }, 400);
-
-  const abs = sanitizePath(filePath);
-  if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
-  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
-
-  const subIndex = parseInt(indexStr ?? "0", 10);
-
-  const vtt = await new Promise<Buffer | null>((resolve) => {
-    // Use -copyts -start_at_zero so subtitle timestamps are shifted by the
-    // container's global start_time (= video start PTS). This matches the HLS
-    // output which remaps video timestamps to 0 from the same reference point.
+/** Extract a subtitle track as WebVTT. Shared by the files and media routes.
+ *  Uses -copyts -start_at_zero so subtitle timestamps are shifted by the
+ *  container's global start_time (= video start PTS). This matches the HLS
+ *  output which remaps video timestamps to 0 from the same reference point. */
+export function extractSubtitleVtt(absPath: string, subIndex: number): Promise<Buffer | null> {
+  return new Promise<Buffer | null>((resolve) => {
     const proc = spawn(getFfmpegBin(), [
       "-copyts", "-start_at_zero",
-      "-i", abs,
+      "-i", absPath,
       "-map", `0:s:${subIndex}`,
       "-f", "webvtt",
       "pipe:1",
@@ -395,6 +385,21 @@ files.get("/subtitle", async (c) => {
     p.on("close", (code: number | null) => resolve(code === 0 && chunks.length > 0 ? Buffer.concat(chunks) : null));
     p.on("error", () => resolve(null));
   });
+}
+
+/** GET /subtitle — extract a subtitle track as WebVTT. */
+files.get("/subtitle", async (c) => {
+  const filePath = c.req.query("path");
+  const indexStr = c.req.query("index");
+  if (!filePath) return c.json({ error: "path required" }, 400);
+
+  const abs = sanitizePath(filePath);
+  if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
+  if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
+
+  const subIndex = parseInt(indexStr ?? "0", 10);
+
+  const vtt = await extractSubtitleVtt(abs, subIndex);
 
   if (!vtt) return serverError(c, "Failed to extract subtitle");
 
@@ -410,9 +415,19 @@ files.get("/subtitle", async (c) => {
 
 import type { ChildProcess } from "node:child_process";
 
-/** Resolve the HLS output root, using the user-configured directory if set. */
+/** Resolve the HLS output root, using the user-configured directory if set.
+ *  Falls back to the default when the configured dir can't be created — e.g.
+ *  a dedicated volume like /Volumes/TalomeHLS that isn't mounted right now. */
 function getHlsOutRoot(): string {
-  return getSetting("transcoding_hls_temp_dir") || "/tmp/talome/hls";
+  const configured = getSetting("transcoding_hls_temp_dir");
+  if (!configured || configured === HLS_OUT_ROOT) return HLS_OUT_ROOT;
+  try {
+    mkdirSync(configured, { recursive: true });
+    return configured;
+  } catch {
+    console.warn(`[hls] configured temp dir not writable (${configured}) — falling back to ${HLS_OUT_ROOT}`);
+    return HLS_OUT_ROOT;
+  }
 }
 /** Default constant for backward compat — use getHlsOutRoot() for runtime. */
 const HLS_OUT_ROOT = "/tmp/talome/hls";
@@ -431,6 +446,8 @@ interface HlsJob {
   createdAt: number;
   /** Last time a segment was fetched or a ping was received. */
   lastActivity: number;
+  /** Set when the job failed (setup error, spawn error, or ffmpeg non-zero exit). */
+  error?: string;
 }
 
 /** Track in-flight HLS jobs. Key = srcPath:aTrack:sSeek */
@@ -480,6 +497,27 @@ export function touchJob(hash: string) {
   for (const job of hlsJobs.values()) {
     if (job.hash === hash) { job.lastActivity = Date.now(); return; }
   }
+}
+
+/** Job status by hash — lets clients distinguish "still starting" from "failed". */
+export function hlsJobStatus(hash: string): { exists: boolean; done: boolean; error: string | null; playlistReady: boolean } {
+  for (const job of hlsJobs.values()) {
+    if (job.hash === hash) {
+      return {
+        exists: true,
+        done: job.done,
+        error: job.error ?? null,
+        playlistReady: existsSync(join(job.outDir, "playlist.m3u8")),
+      };
+    }
+  }
+  const outDir = hlsOutDirByHash(hash);
+  return {
+    exists: outDir !== null,
+    done: true,
+    error: null,
+    playlistReady: outDir !== null && existsSync(join(outDir, "playlist.m3u8")),
+  };
 }
 
 /** Kill an ffmpeg process and clean up its output directory. */
@@ -656,19 +694,37 @@ function detectHwEncoder(): string | null {
 
 // v5: no -copyts, timestamps start at 0 natively
 // v7: added hw tonemap pipeline — bust cache from v6
+// v10: SDR HEVC no longer fake-HDR tonemapped — bust cache from v9
 function hlsHash(srcPath: string, audioTrack: number, seekTo: number, transcodeVideo = false): string {
-  return createHash("md5").update(`v9:${srcPath}:a${audioTrack}:s${Math.floor(seekTo)}:tv${transcodeVideo ? 1 : 0}`).digest("hex");
+  return createHash("md5").update(`v10:${srcPath}:a${audioTrack}:s${Math.floor(seekTo)}:tv${transcodeVideo ? 1 : 0}`).digest("hex");
+}
+
+/** Dynamic-range classification from probe color metadata + container codec tag.
+ *  - hdr10/hlg: transfer explicitly signals HDR — tonemap directly.
+ *  - dolby-vision / wide-gamut: no usable transfer tag but bt2020 container/tag
+ *    signals HDR content (DV MKVs often strip transfer tags) — inject HDR10
+ *    metadata, then tonemap.
+ *  - sdr: everything else, including 10-bit bt709/untagged HEVC re-encodes —
+ *    must NOT be tonemapped (fake-HDR tonemap of SDR wrecks colors). */
+export type DynamicRangeKind = "hdr10" | "hlg" | "dolby-vision" | "wide-gamut" | "sdr";
+export function classifyDynamicRange(colorTransfer: string, colorPrimaries = "", colorSpace = "", codecTag = ""): DynamicRangeKind {
+  const tag = codecTag.toLowerCase();
+  if (tag === "dvhe" || tag === "dvh1") return "dolby-vision";
+  if (colorTransfer === "smpte2084") return "hdr10";
+  if (colorTransfer === "arib-std-b67") return "hlg";
+  if (colorPrimaries === "bt2020" || colorSpace === "bt2020nc" || colorSpace === "bt2020c") return "wide-gamut";
+  return "sdr";
 }
 
 /** Build video encoding args based on source codec + HW availability.
  *  Matches Jellyfin's approach: BSF for copy, profile/level/keyframes for transcode.
  *  When transcodeVideo=true, HEVC is transcoded to H.264 for browsers that can't play it. */
-function buildVideoArgs(videoCodec: string, transcodeVideo = false, colorTransfer = ""): string[] {
+function buildVideoArgs(videoCodec: string, transcodeVideo = false, colorTransfer = "", colorPrimaries = "", colorSpace = "", codecTag = ""): string[] {
   const isHevc = videoCodec === "hevc" || videoCodec === "h265";
 
   if (transcodeVideo) {
     if (isHevc) {
-      const hasKnownHdr = colorTransfer === "smpte2084" || colorTransfer === "arib-std-b67";
+      const range = classifyDynamicRange(colorTransfer, colorPrimaries, colorSpace, codecTag);
 
       // Use VideoToolbox for hw decode + encode, software zscale for tonemap.
       // ~3x faster than full software pipeline at 4K.
@@ -676,7 +732,14 @@ function buildVideoArgs(videoCodec: string, transcodeVideo = false, colorTransfe
 
       const jf = hasTonemapx();
 
-      if (hasKnownHdr) {
+      const encoderArgs = [
+        "-c:v", useHw ? "h264_videotoolbox" : "libx264",
+        ...(useHw ? ["-b:v", "20M"] : ["-preset", "fast", "-crf", "22"]),
+        "-profile:v", "high",
+        "-force_key_frames", "expr:gte(t,n_forced*6)",
+      ];
+
+      if (range === "hdr10" || range === "hlg") {
         // HDR10/HLG tonemap to SDR.
         // jellyfin-ffmpeg: tonemapx (SIMD optimized, ~67fps at 4K)
         // stock ffmpeg: zscale (slower but works)
@@ -686,24 +749,28 @@ function buildVideoArgs(videoCodec: string, transcodeVideo = false, colorTransfe
         return [
           ...(useHw ? ["-hwaccel", "videotoolbox"] : []),
           "-vf", vf,
-          "-c:v", useHw ? "h264_videotoolbox" : "libx264",
-          ...(useHw ? ["-b:v", "20M"] : ["-preset", "fast", "-crf", "22"]),
-          "-profile:v", "high",
-          "-force_key_frames", "expr:gte(t,n_forced*6)",
+          ...encoderArgs,
         ];
       }
 
-      // DV or missing color metadata — inject fake HDR10 metadata first.
-      const vf = jf
-        ? "setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,format=p010le,tonemapx=tonemap=hable:format=yuv420p"
-        : "setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,format=p010le,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p";
+      if (range === "dolby-vision" || range === "wide-gamut") {
+        // HDR content with stripped/absent transfer tag — inject HDR10 metadata, then tonemap.
+        const vf = jf
+          ? "setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,format=p010le,tonemapx=tonemap=hable:format=yuv420p"
+          : "setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,format=p010le,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p";
+        return [
+          ...(useHw ? ["-hwaccel", "videotoolbox"] : []),
+          "-vf", vf,
+          ...encoderArgs,
+        ];
+      }
+
+      // SDR HEVC (bt709 or untagged non-bt2020) — plain H.264 transcode, no tonemap.
+      // format=yuv420p downconverts 10-bit sources for H.264 High profile.
       return [
         ...(useHw ? ["-hwaccel", "videotoolbox"] : []),
-        "-vf", vf,
-        "-c:v", useHw ? "h264_videotoolbox" : "libx264",
-        ...(useHw ? ["-b:v", "20M"] : ["-preset", "fast", "-crf", "22"]),
-        "-profile:v", "high",
-        "-force_key_frames", "expr:gte(t,n_forced*6)",
+        "-vf", "format=yuv420p",
+        ...encoderArgs,
       ];
     }
     // Non-HEVC legacy codecs (MPEG4, MPEG2) — hardware encode if available
@@ -750,7 +817,7 @@ function buildVideoArgs(videoCodec: string, transcodeVideo = false, colorTransfe
 }
 
 /** Start HLS segmentation in background. Returns hash immediately. */
-export function startHls(srcPath: string, audioTrack = 0, seekTo = 0, videoCodec = "", transcodeVideo = false, colorTransfer = "", colorPrimaries = "", colorSpace = ""): string {
+export function startHls(srcPath: string, audioTrack = 0, seekTo = 0, videoCodec = "", transcodeVideo = false, colorTransfer = "", colorPrimaries = "", colorSpace = "", codecTag = ""): string {
   const hash = hlsHash(srcPath, audioTrack, seekTo, transcodeVideo);
   // Use hash as key so version bumps (v4→v5) naturally invalidate old entries
   const existing = hlsJobs.get(hash);
@@ -784,7 +851,7 @@ export function startHls(srcPath: string, audioTrack = 0, seekTo = 0, videoCodec
   ensureIdleReaper();
   hlsJobs.set(hash, job);
 
-  const videoArgs = buildVideoArgs(videoCodec, transcodeVideo, colorTransfer);
+  const videoArgs = buildVideoArgs(videoCodec, transcodeVideo, colorTransfer, colorPrimaries, colorSpace, codecTag);
   const isCopy = videoArgs.includes("copy");
   console.log("[hls] starting:", srcPath, "audio:", audioTrack, "seek:", seekTo, "video:", isCopy ? "copy" : videoArgs.join(" "), "transcode:", transcodeVideo, "→", outDir);
 
@@ -799,6 +866,24 @@ export function startHls(srcPath: string, audioTrack = 0, seekTo = 0, videoCodec
     await rm(outDir, { recursive: true, force: true }).catch((err) => log.debug("Failed to clean HLS output dir before transcode", err));
     await mkdir(outDir, { recursive: true });
     await new Promise<void>((res) => {
+      startHlsFfmpeg(job, videoArgs, audioTrack, seekTo, colorTransfer, colorPrimaries, colorSpace, res);
+    });
+  })().catch((e: unknown) => {
+    // Setup failed (e.g. output dir not creatable) — mark the job failed so the
+    // client can surface the error instead of polling a playlist that never appears.
+    job.done = true;
+    job.error = e instanceof Error ? e.message : String(e);
+    console.error("[hls] setup failed:", job.error);
+  });
+
+  return hash;
+}
+
+function startHlsFfmpeg(job: HlsJob, videoArgs: string[], audioTrack: number, seekTo: number, colorTransfer: string, colorPrimaries: string, colorSpace: string, res: () => void): void {
+  const { outDir, srcPath } = job;
+  const isCopy = videoArgs.includes("copy");
+  {
+    {
       const args: string[] = [];
 
       // Jellyfin-style HLS: exact same flags that Jellyfin uses for
@@ -865,14 +950,25 @@ export function startHls(srcPath: string, audioTrack = 0, seekTo = 0, videoCodec
         job.done = true;
         job.proc = null;
         if (code === 0) console.log("[hls] done:", outDir);
-        else if (code !== null) console.error("[hls] failed, code:", code, "\n", stderrTail);
+        else if (code !== null) {
+          console.error("[hls] failed, code:", code, "\n", stderrTail);
+          // Only surface as an error if no playable output was produced — a kill
+          // mid-stream (seek/stop) also exits non-zero but the playlist is fine.
+          if (!existsSync(join(outDir, "playlist.m3u8"))) {
+            job.error = `ffmpeg exited with code ${code}: ${stderrTail.slice(-300).trim()}`;
+          }
+        }
         res();
       });
-      p2.on("error", (e: Error) => { job.done = true; job.proc = null; console.error("[hls] spawn error:", e.message); res(); });
-    });
-  })();
-
-  return hash;
+      p2.on("error", (e: Error) => {
+        job.done = true;
+        job.proc = null;
+        job.error = `ffmpeg spawn failed: ${e.message}`;
+        console.error("[hls] spawn error:", e.message);
+        res();
+      });
+    }
+  }
 }
 
 /** GET /hls-start — kick off HLS conversion, return hash + probe data. */
@@ -888,7 +984,7 @@ files.get("/hls-start", async (c) => {
   const seekTo = parseFloat(c.req.query("seekTo") ?? "0");
   const transcodeVideo = c.req.query("transcodeVideo") === "1";
   const probe = probeFile(abs);
-  const hash = startHls(abs, audioTrack, seekTo, probe.videoCodec, transcodeVideo, probe.videoColorTransfer ?? "", probe.videoColorPrimaries ?? "", probe.videoColorSpace ?? "");
+  const hash = startHls(abs, audioTrack, seekTo, probe.videoCodec, transcodeVideo, probe.videoColorTransfer ?? "", probe.videoColorPrimaries ?? "", probe.videoColorSpace ?? "", probe.videoCodecTag ?? "");
   return c.json({ hash, ...probe });
 });
 
@@ -948,6 +1044,13 @@ files.post("/hls-ping", async (c) => {
   if (!body.hash) return c.json({ error: "hash required" }, 400);
   touchJob(body.hash);
   return c.json({ ok: true });
+});
+
+/** GET /hls-status/:hash — job readiness/error state for client polling. */
+files.get("/hls-status/:hash", (c) => {
+  const hash = c.req.param("hash");
+  if (!/^[a-f0-9]+$/.test(hash)) return c.json({ error: "Invalid hash" }, 400);
+  return c.json(hlsJobStatus(hash));
 });
 
 /** GET /hls-cache — return stats about HLS cache. */
@@ -1138,29 +1241,43 @@ files.get("/transmux-start", async (c) => {
   return c.json({ hash, ...probe });
 });
 
-/** GET /transmux-status/:hash — check if transmux is ready. */
-files.get("/transmux-status/:hash", (c) => {
-  const hash = c.req.param("hash");
-  if (!/^[a-f0-9]+$/.test(hash)) return c.json({ error: "Invalid hash" }, 400);
+/** Locate a transmux output file by hash — job map first (covers source-folder
+ *  mode), then the configured temp dir, then the default location. */
+export function findTransmuxOutput(hash: string): string | null {
+  const job = transmuxJobs.get(hash);
+  if (job && existsSync(job.outPath)) return job.outPath;
+  const txRoot = getTransmuxRoot();
+  const candidate = join(txRoot, `${hash}.mp4`);
+  if (existsSync(candidate)) return candidate;
+  if (txRoot !== TRANSMUX_ROOT) {
+    const defaultPath = join(TRANSMUX_ROOT, `${hash}.mp4`);
+    if (existsSync(defaultPath)) return defaultPath;
+  }
+  return null;
+}
 
+/** Transmux job status shared by the files and media routes. */
+export function transmuxStatus(hash: string): { found: boolean; ready: boolean; error: boolean; progress: number; done: boolean } {
   const job = transmuxJobs.get(hash);
   if (job) {
     const progress = job.durationSecs > 0 ? Math.min(job.progressSecs / job.durationSecs, 1) : 0;
     // Fragmented MP4: streamable as soon as the first fragment is written (>1KB = moov present)
     const streamable = !job.error && (job.done || (existsSync(job.outPath) && statSync(job.outPath).size > 1024));
-    return c.json({ ready: streamable, error: job.error, progress, done: job.done });
+    return { found: true, ready: streamable, error: job.error, progress, done: job.done };
   }
+  const outPath = findTransmuxOutput(hash);
+  if (outPath) return { found: true, ready: true, error: false, progress: 1, done: true };
+  return { found: false, ready: false, error: false, progress: 0, done: false };
+}
 
-  const txRoot = getTransmuxRoot();
-  const outPath = join(txRoot, `${hash}.mp4`);
-  if (existsSync(outPath)) return c.json({ ready: true, error: false });
-  // Check default location too
-  if (txRoot !== TRANSMUX_ROOT) {
-    const defaultPath = join(TRANSMUX_ROOT, `${hash}.mp4`);
-    if (existsSync(defaultPath)) return c.json({ ready: true, error: false });
-  }
+/** GET /transmux-status/:hash — check if transmux is ready. */
+files.get("/transmux-status/:hash", (c) => {
+  const hash = c.req.param("hash");
+  if (!/^[a-f0-9]+$/.test(hash)) return c.json({ error: "Invalid hash" }, 400);
 
-  return c.json({ error: "Not found" }, 404);
+  const status = transmuxStatus(hash);
+  if (!status.found) return c.json({ error: "Not found" }, 404);
+  return c.json({ ready: status.ready, error: status.error, progress: status.progress, done: status.done });
 });
 
 /** GET /transmux/:hash/stream — serve transmuxed MP4 with Range support. */
@@ -1168,14 +1285,8 @@ files.get("/transmux/:hash/stream", async (c) => {
   const hash = c.req.param("hash");
   if (!/^[a-f0-9]+$/.test(hash)) return c.json({ error: "Invalid hash" }, 400);
 
-  const txRoot = getTransmuxRoot();
-  let outPath = join(txRoot, `${hash}.mp4`);
-  if (!existsSync(outPath)) {
-    // Fall back to default location
-    const defaultPath = join(TRANSMUX_ROOT, `${hash}.mp4`);
-    if (existsSync(defaultPath)) outPath = defaultPath;
-    else return c.json({ error: "Not found" }, 404);
-  }
+  const outPath = findTransmuxOutput(hash);
+  if (!outPath) return c.json({ error: "Not found" }, 404);
 
   return buildStreamResponse(outPath, c.req.header("range"));
 });

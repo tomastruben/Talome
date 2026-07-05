@@ -72,6 +72,22 @@ export function needsHls(fileName: string): boolean {
   return false;
 }
 
+// ── Color / dynamic range ───────────────────────────────────────────────
+
+/** True when probe color metadata signals genuine HDR/wide-gamut content.
+ *  Mirrors the server's classifyDynamicRange: explicit HDR transfer functions
+ *  (PQ/HLG) or bt2020 primaries/matrix. Unknown metadata alone is NOT HDR —
+ *  10-bit SDR re-encodes commonly ship with no color tags at all. */
+export function isHdrColor(transfer: string, primaries: string, colorSpace: string): boolean {
+  return (
+    transfer === "smpte2084" ||
+    transfer === "arib-std-b67" ||
+    primaries === "bt2020" ||
+    colorSpace === "bt2020nc" ||
+    colorSpace === "bt2020c"
+  );
+}
+
 // ── Browser detection ───────────────────────────────────────────────────
 
 /** Only Safari has reliable HEVC HLS playback (including 10-bit Main 10 profile). */

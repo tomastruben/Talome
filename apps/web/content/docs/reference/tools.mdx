@@ -1,9 +1,15 @@
 ---
 title: Tools Reference
-description: Complete reference for all 219 Talome AI tools across 17 domains.
+description: Complete reference for all 221 Talome AI tools across 17 domains.
 ---
 
-Talome's AI assistant has access to 219 tools organized into 17 domains. Each tool has a defined purpose, Zod-validated input parameters, and returns structured data. Tools are classified into three security tiers that determine when and how they can execute.
+Talome's AI assistant has 221 registered tools organized into 17 domains. The active tool set is smaller because domains activate from settings and message routing. Each tool has a defined purpose, Zod-validated input parameters, and returns structured data. Tools are classified into three security tiers that determine when and how they can execute.
+
+<Accordions>
+<Accordion title="Sources">
+Verified on 2026-06-13 by importing `apps/core/dist/ai/agent.js` to register domains, then reading `getAllDomains()`, `getAllToolMeta()`, and `getActiveRegisteredTools()` from `apps/core/dist/ai/tool-registry.js`. Source definitions live in `apps/core/src/ai/agent.ts` and `apps/core/src/ai/tool-registry.ts`.
+</Accordion>
+</Accordions>
 
 ## Security Tiers
 
@@ -31,12 +37,12 @@ Every tool call follows the same pipeline:
 Tools are organized into domains. Each domain declares `settingsKeys` -- the settings that indicate the corresponding app is configured.
 
 - **Dashboard chat**: only loads tools from domains whose `settingsKeys` are present in the database. This keeps tool count low for better model selection accuracy.
-- **MCP server**: always loads all tools from all domains. Tools fail gracefully if the app isn't configured.
+- **MCP server**: imports `activeTools` from the agent, so it exposes the same configured-domain tool set rather than every registered tool.
 - **Keyword routing**: within active domains, the system matches the user's message against domain-specific keywords. If a message mentions "torrent", only core + qBittorrent tools load. If no keyword matches, all active tools load as a fallback.
 
 ---
 
-## Core Domain (112 tools)
+## Core Domain (114 tools)
 
 Always available, regardless of which integrations are configured. These tools are subdivided into categories.
 
@@ -520,7 +526,7 @@ Activates when `ollama_url` is configured.
 
 | Domain | Tools | Activation Settings | Always Active |
 |--------|-------|-------------------|---------------|
-| core | 112 | None | Yes |
+| core | 114 | None | Yes |
 | media | 5 | `sonarr_url`, `radarr_url` | No |
 | optimization | 9 | `sonarr_url`, `radarr_url` | No |
 | arr | 27 | `sonarr_url`, `radarr_url`, `readarr_url`, `prowlarr_url` | No |
@@ -532,10 +538,10 @@ Activates when `ollama_url` is configured.
 | homeassistant | 5 | `homeassistant_url` | No |
 | pihole | 5 | `pihole_url` | No |
 | vaultwarden | 4 | `vaultwarden_url` | No |
-| proxy | 5 | None | Yes |
-| tailscale | 3 | None | Yes |
+| proxy | 5 | `proxy_enabled` | No |
+| tailscale | 3 | `tailscale_auth_key` | No |
 | mdns | 4 | None | Yes |
-| ollama | 5 | None | Yes (auto-detects local Ollama) |
+| ollama | 5 | `ollama_url` | No |
 | setup | 2 | None | Yes (first-run wizard) |
 
-**Total: 219 registered tools across 17 domains.**
+**Total: 221 registered tools across 17 domains.**

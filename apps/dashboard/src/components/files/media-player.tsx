@@ -71,6 +71,7 @@ import {
   trackLabel,
   fileExt,
   needsHls,
+  isHdrColor,
   isSafari,
   supportsHevc,
   supportsPiP,
@@ -143,6 +144,9 @@ export function VideoPlayer({
   const hlsHashRef = useRef<string | null>(null);
   const [hlsRetry, setHlsRetry] = useState(0);
   const hlsRetryCount = useRef(0);
+  /** Fallback loop guards — each transcode backend gets one shot in the cascade. */
+  const jfHlsTried = useRef(false);
+  const localHlsTried = useRef(false);
 
   // ── Transmux state ─────────────────────────────────────────────────────
   const [transmuxSrc, setTransmuxSrc] = useState<string | null>(null);
@@ -286,18 +290,13 @@ export function VideoPlayer({
                   setPlaybackMode("jellyfin");
                   setCurrentQuality(-2);
                   setHlsReady(true);
-                } else if (jf.transcodeUrl) {
-                  setHlsSrc(jf.transcodeUrl);
-                  setPlaybackMode("jellyfin-hls");
-                  // Select the first Jellyfin quality preset if available, otherwise default
-                  setCurrentQuality(jf.transcodeQualities?.length ? 100 : -1);
-                } else {
-                  // Neither direct play nor transcode available — fall through to Talome probe
-                }
-
-                if (useDirectPlay || jf.transcodeUrl) {
                   return; // Jellyfin handles playback — skip Talome pipeline
                 }
+                // Jellyfin says Transcode — prefer Talome's local ffmpeg pipeline
+                // (VideoToolbox + tonemapx, ~realtime for 4K HDR). Jellyfin's own
+                // transcoder runs CPU-only inside Docker and stalls on heavy files,
+                // so its transcodeUrl is kept only as an error-cascade fallback.
+                // Fall through to the Talome probe below.
               }
             }
           } catch { /* Jellyfin unavailable — fall through to Talome pipeline */ }
@@ -308,8 +307,17 @@ export function VideoPlayer({
           { credentials: "include" },
         );
         if (!res.ok || cancelled) {
-          // Probe failed (e.g. no ffmpeg on host) — show error instead of staying in "deciding"
-          if (!cancelled) setError(true);
+          if (!cancelled) {
+            // Probe failed (e.g. no ffmpeg on host) — use Jellyfin's transcoder if
+            // we have one, otherwise show the error instead of staying in "deciding"
+            if (jfTranscodeUrl.current) {
+              setHlsSrc(jfTranscodeUrl.current);
+              setPlaybackMode("jellyfin-hls");
+              setCurrentQuality(-1);
+            } else {
+              setError(true);
+            }
+          }
           return;
         }
         const data = await res.json();
@@ -323,11 +331,8 @@ export function VideoPlayer({
         if (!cancelled) {
           if (data.optimized) {
             const vCodec = data.videoCodec ?? "";
-            const transfer = data.videoColorTransfer ?? "";
-            const pixFmt = data.videoPixFmt ?? "";
-            const is10bit = pixFmt.includes("10");
-            const isSdrTransfer = transfer === "bt709" || transfer === "bt2020-10" || transfer === "iec61966-2-1";
-            const isHdr = (vCodec === "hevc" || vCodec === "h265") && is10bit && !isSdrTransfer;
+            const isHdr = (vCodec === "hevc" || vCodec === "h265") &&
+              isHdrColor(data.videoColorTransfer ?? "", data.videoColorPrimaries ?? "", data.videoColorSpace ?? "");
 
             if (isHdr) {
               setPlaybackMode("hls");
@@ -340,12 +345,9 @@ export function VideoPlayer({
             const aCodec = (data.audio?.[0]?.codec ?? "").toLowerCase();
             const ext = fileExt(fileName);
             const safari = isSafari();
-            const transfer = data.videoColorTransfer ?? "";
-            const pixFmt = data.videoPixFmt ?? "";
-            const is10bit = pixFmt.includes("10");
             const isHevc = vCodec === "hevc" || vCodec === "h265";
-            const isSdrTransfer = transfer === "bt709" || transfer === "bt2020-10" || transfer === "iec61966-2-1";
-            const isHdr = isHevc && is10bit && !isSdrTransfer;
+            const isHdr = isHevc &&
+              isHdrColor(data.videoColorTransfer ?? "", data.videoColorPrimaries ?? "", data.videoColorSpace ?? "");
             const videoOk = vCodec === "h264" || (isHevc && (safari || supportsHevc()));
             const audioOk = BROWSER_AUDIO.has(aCodec);
             const isDirectContainer = DIRECT_PLAY_EXTS.has(ext);
@@ -376,8 +378,17 @@ export function VideoPlayer({
           }
         }
       } catch {
-        // Entire probe/Jellyfin flow failed — show error instead of staying in "deciding"
-        if (!cancelled) setError(true);
+        // Entire probe/Jellyfin flow failed — use Jellyfin's transcoder if we got
+        // one before the failure, otherwise show error instead of staying in "deciding"
+        if (!cancelled) {
+          if (jfTranscodeUrl.current) {
+            setHlsSrc(jfTranscodeUrl.current);
+            setPlaybackMode("jellyfin-hls");
+            setCurrentQuality(-1);
+          } else {
+            setError(true);
+          }
+        }
       }
     })();
 
@@ -542,9 +553,33 @@ export function VideoPlayer({
     if (playbackMode === "jellyfin-hls") return;
     if (!filePath) { setError(true); return; }
 
+    // Resume into a transcode by restarting ffmpeg at the offset — a raw
+    // currentTime seek would wait for everything up to that point to transcode
+    // from zero. Seeding the offset here means the very first job starts there.
+    if (!resumeApplied.current && resumePosition && resumePosition > 30 && hlsSeekOffset === 0) {
+      resumeApplied.current = true;
+      setHlsSeekOffset(resumePosition);
+      setCurrentTime(resumePosition);
+      return; // effect re-runs with the new offset
+    }
+
     let cancelled = false;
+    localHlsTried.current = true;
     setHlsReady(false);
     setHlsSrc(null);
+
+    // Local transcode failed or never produced output — hand off to Jellyfin's
+    // transcoder if we have one, otherwise surface the error screen.
+    const failLocalHls = (reason: string) => {
+      console.warn("[player] local HLS failed:", reason);
+      if (jfTranscodeUrl.current && !jfHlsTried.current) {
+        jfHlsTried.current = true;
+        setHlsSrc(jfTranscodeUrl.current);
+        setPlaybackMode("jellyfin-hls");
+      } else {
+        setError(true);
+      }
+    };
 
     const init = async () => {
       try {
@@ -554,7 +589,7 @@ export function VideoPlayer({
           `${apiBase}/hls-start?path=${encodeURIComponent(filePath)}&audioTrack=${selectedAudio}&seekTo=${hlsSeekOffset}${needsTranscode}`,
           { credentials: "include" },
         );
-        if (!startRes.ok) { setError(true); return; }
+        if (!startRes.ok) { failLocalHls(`hls-start ${startRes.status}`); return; }
         const { hash, duration: srcDuration } = await startRes.json();
         if (cancelled) return;
 
@@ -563,7 +598,9 @@ export function VideoPlayer({
         hlsStartedAt.current = Date.now();
 
         const playlistUrl = `${apiBase}/hls/${hash}/playlist.m3u8`;
-        const deadline = Date.now() + 15_000;
+        // Generous deadline for slow first segments (4K software transcode);
+        // the status poll below aborts early when the job actually failed.
+        const deadline = Date.now() + 60_000;
         while (!cancelled && Date.now() < deadline) {
           try {
             const res = await fetch(playlistUrl, { credentials: "include", method: "HEAD" });
@@ -573,11 +610,21 @@ export function VideoPlayer({
               return;
             }
           } catch { /* not ready yet */ }
-          await new Promise((r) => setTimeout(r, 300));
+          try {
+            const statusRes = await fetch(`${apiBase}/hls-status/${hash}`, { credentials: "include" });
+            if (statusRes.ok) {
+              const status = await statusRes.json();
+              if (status.error) {
+                if (!cancelled) failLocalHls(status.error);
+                return;
+              }
+            }
+          } catch { /* status check is best-effort */ }
+          await new Promise((r) => setTimeout(r, 500));
         }
-        if (!cancelled) setError(true);
+        if (!cancelled) failLocalHls("timed out waiting for first segment");
       } catch {
-        if (!cancelled) setError(true);
+        if (!cancelled) failLocalHls("hls-start request failed");
       }
     };
 
@@ -917,18 +964,15 @@ export function VideoPlayer({
   const handleError = useCallback(() => {
     // Auto-cascade through all playback modes before showing the error screen.
     // The user should never have to pick a technical fallback — we try everything.
+    // Preference order for transcodes: local ffmpeg (hw-accelerated) first,
+    // Jellyfin's transcoder (CPU-only in Docker) as the backstop.
     if (playbackMode === "direct" || playbackMode === "direct-mkv") {
-      // Direct failed → try Jellyfin transcode if available, else Talome transmux
-      if (jfTranscodeUrl.current) {
-        setHlsSrc(jfTranscodeUrl.current);
-        setPlaybackMode("jellyfin-hls");
-        return;
-      }
       setPlaybackMode("transmux");
       return;
     }
     if (playbackMode === "jellyfin" && jfTranscodeUrl.current) {
       // Jellyfin direct play failed → try Jellyfin transcode
+      jfHlsTried.current = true;
       setHlsSrc(jfTranscodeUrl.current);
       setPlaybackMode("jellyfin-hls");
       return;
@@ -939,8 +983,9 @@ export function VideoPlayer({
       setHlsRetry((n) => n + 1);
       return;
     }
-    if (playbackMode === "jellyfin-hls") {
+    if (playbackMode === "jellyfin-hls" && !localHlsTried.current) {
       // Jellyfin HLS exhausted → try Talome's local transcode
+      hlsRetryCount.current = 0;
       setPlaybackMode("hls");
       return;
     }
@@ -952,6 +997,14 @@ export function VideoPlayer({
     if (hlsRequired && hlsRetryCount.current < 1) {
       hlsRetryCount.current += 1;
       setHlsRetry((n) => n + 1);
+      return;
+    }
+    if (playbackMode === "hls" && jfTranscodeUrl.current && !jfHlsTried.current) {
+      // Local HLS exhausted → hand off to Jellyfin's transcoder
+      jfHlsTried.current = true;
+      hlsRetryCount.current = 0;
+      setHlsSrc(jfTranscodeUrl.current);
+      setPlaybackMode("jellyfin-hls");
       return;
     }
     // Everything failed — show the error screen
@@ -1064,11 +1117,26 @@ export function VideoPlayer({
       return;
     }
 
+    if (playbackMode === "jellyfin-hls") {
+      // Jellyfin transcodes: swap the audio track via the AudioStreamIndex
+      // param on the master playlist URL — the local hls-start effect skips
+      // this mode, so bumping selectedAudio alone would be a no-op.
+      const base = hlsSrc ?? jfTranscodeUrl.current;
+      if (base) {
+        const url = base.includes("AudioStreamIndex=")
+          ? base.replace(/AudioStreamIndex=\d+/, `AudioStreamIndex=${index}`)
+          : `${base}${base.includes("?") ? "&" : "?"}AudioStreamIndex=${index}`;
+        setHlsSrc(url);
+      }
+      setSelectedAudio(index);
+      return;
+    }
+
     const v = videoRef.current;
     const pos = v ? hlsSeekOffset + (v.currentTime ?? 0) : hlsSeekOffset;
     setHlsSeekOffset(pos);
     setSelectedAudio(index);
-  }, [selectedAudio, hlsRequired, hlsSeekOffset]);
+  }, [selectedAudio, hlsRequired, hlsSeekOffset, playbackMode, hlsSrc]);
 
   // ── Resume from beginning ─────────────────────────────────────────────
   const startFromBeginning = useCallback(() => {

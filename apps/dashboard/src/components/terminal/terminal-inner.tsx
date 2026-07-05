@@ -295,7 +295,11 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
       injectFnRef.current = injectTaskPrompt;
 
       async function getFreshAuthToken(): Promise<{ token: string; bootId?: string }> {
-        // Primary path: get a token from the core API
+        // Mint a fresh ephemeral token via the core API, which proxies to the
+        // daemon's /session with the internal auth header. There is no direct
+        // daemon fallback: /session requires auth (only core can forge it), so
+        // hitting it from the browser always 401s. If core is unreachable we
+        // reuse the token we already have.
         try {
           const res = await fetch(`${CORE_URL}/api/terminal/session`, { method: "POST" });
           if (res.ok) {
@@ -303,20 +307,7 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
             if (data.token) return { token: data.token, bootId: data.bootId };
           }
         } catch {
-          // Core is unreachable — try the daemon directly
-        }
-
-        // Fallback path: hit the daemon's /session endpoint directly.
-        // This allows reconnection even when the core server is down
-        // but the terminal daemon is still alive.
-        try {
-          const directRes = await fetch(`${getTerminalDaemonHttpUrl()}/session`, { method: "POST" });
-          if (directRes.ok) {
-            const data = (await directRes.json()) as { token?: string; bootId?: string };
-            if (data.token) return { token: data.token, bootId: data.bootId };
-          }
-        } catch {
-          // Daemon also unreachable — fall back to the original token
+          // Core unreachable — reuse the existing token below.
         }
 
         return { token };
@@ -508,7 +499,10 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
           const ext = blob.type.split("/")[1] || "png";
           formData.append("file", blob, `paste.${ext}`);
 
-          const res = await fetch(`${getTerminalDaemonHttpUrl()}/upload`, {
+          // Route through the core proxy (/api/terminal/*), which injects the
+          // x-daemon-auth header the daemon requires. Hitting the daemon's
+          // /upload directly returns 401 — it's not a public daemon path.
+          const res = await fetch(`${CORE_URL}/api/terminal/upload`, {
             method: "POST",
             body: formData,
           });

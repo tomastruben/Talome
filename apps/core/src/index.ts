@@ -55,7 +55,7 @@ import { health as healthRoute } from "./routes/health.js";
 import { diagnostics as diagnosticsRoute } from "./routes/diagnostics.js";
 import { search as searchRoute } from "./routes/search.js";
 import { supervisor as supervisorRoute } from "./routes/supervisor.js";
-import { startAutomationCron, stopAutomationCron } from "./automation/cron.js";
+import { startAutomationCron, stopAutomationCron, getLastCronTickAt } from "./automation/cron.js";
 import { startMonitor } from "./monitor.js";
 import { startAgentLoop } from "./agent-loop/index.js";
 import { startDigestScheduler } from "./digest.js";
@@ -370,11 +370,21 @@ app.get("/api/health", async (c) => {
     checks.docker = "error";
   }
 
-  // Only the DB check gates the overall status — Docker degradation is surfaced
-  // in the checks object but does not flip the server to "degraded".
+  // Scheduler heartbeat — informational. Surfaced so a wedged automation loop is
+  // visible (it self-heals via the cron watchdog); never gates overall status.
+  const lastTick = getLastCronTickAt();
+  const scheduler = {
+    lastTickAt: lastTick ? new Date(lastTick).toISOString() : null,
+    stale: lastTick > 0 && Date.now() - lastTick > 180_000,
+  };
+  checks.scheduler = scheduler.stale ? "error" : "ok";
+
+  // Only the DB check gates the overall status — Docker degradation and a stale
+  // scheduler are surfaced in the checks object but do not flip the server to
+  // "degraded".
   const healthy = checks.db === "ok";
   return c.json(
-    { status: healthy ? "ok" : "degraded", checks, uptime: process.uptime(), timestamp: new Date().toISOString() },
+    { status: healthy ? "ok" : "degraded", checks, scheduler, uptime: process.uptime(), timestamp: new Date().toISOString() },
     healthy ? 200 : 503,
   );
 });

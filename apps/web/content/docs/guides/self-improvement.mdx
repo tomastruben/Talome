@@ -7,7 +7,13 @@ Talome is the first self-hosted platform that improves its own source code. When
 
 This isn't theoretical. The AI has access to the full Talome monorepo, understands the architecture, and has purpose-built tools for safe code modification. You can watch it plan a change, review the diff, approve it, and see the result on your next page refresh.
 
-<VideoPlaceholder description="Watch: The AI identifying and fixing a performance issue in its own code" />
+![Talome Bug Hunt workflow](/docs/screenshots/talome-bug-hunt.jpg)
+
+<Accordions>
+<Accordion title="Screenshot source">
+Captured from the live Talome dashboard at `/dashboard/bug-hunt` on 2026-06-13.
+</Accordion>
+</Accordions>
 
 <Mermaid chart={`graph TD
     A[User requests change] --> B[plan_change]

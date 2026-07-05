@@ -9,17 +9,17 @@ description: Why tools are loaded dynamically based on configured settings and m
 
 <Accordions>
 <Accordion title="Source">
-`apps/core/src/ai/tool-registry.ts` — `registerDomain()` at line 65, `getToolsForMessage()` at line 148, `DOMAIN_KEYWORDS` at line 126, settings cache with 10s TTL at line 40. `apps/core/src/ai/agent.ts` — 17 `registerDomain()` calls starting at line 333, `getActiveTools()` called at line 1353.
+Verified on 2026-06-13. `apps/core/src/ai/tool-registry.ts` defines `registerDomain()`, `getActiveRegisteredTools()`, `getToolsForMessage()`, and `DOMAIN_KEYWORDS`. `apps/core/src/ai/agent.ts` registers 17 domains. Importing the built registry returned 221 registered tools and 120 active tools on the live setup used for screenshots.
 </Accordion>
 </Accordions>
 
 ## Context
 
-Talome's AI assistant has 219 tools across 17 domains. Loading all tools into every dashboard chat conversation degrades tool selection accuracy -- language models struggle to choose the right tool when presented with too many options. Testing showed that beyond ~50 tools, the model increasingly selects the wrong tool or hallucinates tool names that don't exist.
+Talome's AI assistant has 221 registered tools across 17 domains. Loading all tools into every dashboard chat conversation degrades tool selection accuracy -- language models struggle to choose the right tool when presented with too many options.
 
-At the same time, we need every tool available for the MCP server (Claude Code and other MCP clients), where the model has much larger context windows and better tool selection at scale.
+MCP originally exposed the full registry, but the current implementation imports `activeTools` from `apps/core/src/ai/agent.ts`, so MCP now follows configured-domain activation too.
 
-The core tension is: dashboard chat needs a small, focused tool set for accurate selection, while MCP needs the complete tool set for maximum capability.
+The core tension is: chat and MCP clients need enough tools to act usefully, but not so many unconfigured integration tools that tool selection becomes noisy.
 
 ## Decision
 
@@ -30,7 +30,7 @@ Tools are organized into **domains**. Each domain declares `settingsKeys` -- the
 1. **Settings-based domain activation**: only domains whose `settingsKeys` have values in the database are considered active. A user without Sonarr configured never sees arr tools. Domains with empty `settingsKeys` arrays (core, mdns) are always active.
 2. **Keyword-based message routing**: within active domains, the system matches the user's message against domain-specific keywords defined in `DOMAIN_KEYWORDS`. A message mentioning "torrent" loads core + qBittorrent tools, not the full active set. If no optional domain keywords match, the system falls back to loading all active tools as a catch-all for ambiguous messages.
 
-**MCP server** uses `getAllRegisteredTools()` which returns every tool from every domain, regardless of settings. Each tool's execute function handles the "not configured" case gracefully.
+**MCP server** uses `activeTools`, which is built from `getActiveRegisteredTools()`. It receives active domains, not the full registry.
 
 ## Implementation
 
@@ -40,7 +40,7 @@ The registry is in `tool-registry.ts`:
 registerDomain(domain)          -- registers a domain with tools, settings keys, and tiers
 getActiveRegisteredTools()      -- returns tools from settings-active domains
 getToolsForMessage(message)     -- returns keyword-filtered subset for a specific message
-getAllRegisteredTools()          -- returns all tools from all domains (for MCP)
+getAllRegisteredTools()          -- returns all tools from all domains (for registry metadata and diagnostics)
 getActiveDomainNames()          -- returns the set of currently active domain names
 ```
 
@@ -52,17 +52,17 @@ Domain keywords are defined in a `DOMAIN_KEYWORDS` map. Each domain maps to an a
 
 | Layer | Typical Tool Count | When |
 |-------|-------------------|------|
-| All tools | 219 | MCP server, always |
-| Active domains | 80-150 | Dashboard chat, settings-filtered |
-| Keyword-routed | 50-80 | Dashboard chat, message-filtered |
-| Core only | ~117 | Dashboard with no integrations configured |
+| All registered tools | 221 | Full registry metadata and diagnostics |
+| Active domains | 120 on the live setup used for this doc pass | Settings-filtered dashboard chat and MCP |
+| Keyword-routed | Depends on message and configured apps | Dashboard chat, message-filtered |
+| Core only | 120 when only always-active domains are present | Core + mDNS + setup |
 
 ## Consequences
 
 **Benefits:**
-- Dashboard chat typically sees 50-80 tools instead of 219, significantly improving tool selection accuracy
+- Dashboard chat sees an active or keyword-routed subset instead of all 221 registered tools, improving tool selection accuracy
 - Zero-config activation: configure Sonarr's URL and arr tools appear automatically on the next message
-- MCP server gets the full tool set without any filtering, keeping Claude Code fully capable
+- MCP server uses the same active-domain view, keeping external clients aligned with dashboard behavior
 - Keyword routing reduces tool count further for focused messages
 - Settings cache prevents database query overhead (single query per 10-second window instead of per tool per message)
 - New domains with no keywords fall through to the full active set, so nothing breaks

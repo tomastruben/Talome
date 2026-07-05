@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  219 purpose-built AI tools across 17 domains. Autonomous monitoring that fixes problems at 3AM.<br/>
+  221 registered AI tools across 17 domains. Autonomous monitoring that fixes problems at 3AM.<br/>
   The first home server that improves itself while you sleep.
 </p>
 
@@ -54,7 +54,7 @@ No YAML. No config files. No SSH. One message away.
 
 ## Why Talome?
 
-- **AI-native, not AI-bolted-on.** The agent isn't a chatbot wrapper — it has 219 tools with deep access to Docker, networking, media APIs, and the filesystem. It doesn't suggest commands for you to run. It runs them.
+- **AI-native, not AI-bolted-on.** The agent isn't a chatbot wrapper — it has 221 registered tools with deep access to Docker, networking, media APIs, and the filesystem. It doesn't suggest commands for you to run. It runs them.
 - **Self-improving.** Talome reads its own TypeScript source, identifies improvements, writes the code, compiles, tests, and commits. If anything breaks, it rolls back. No other server platform does this.
 - **Autonomous, not just reactive.** Three-layer monitoring catches problems in under 60 seconds, triages severity with a fast model, then dispatches a reasoning model to actually fix things. You wake up to a summary, not a page.
 - **Truly open source.** AGPL-3.0. Not "source available." Not "community edition with the good stuff locked behind a license." The whole thing.
@@ -127,7 +127,7 @@ Hundreds of additional apps are installable through the unified app store (Talom
 ## Architecture
 
 ```
-apps/core/          Hono backend — AI agent, 219 tools, Docker API, SQLite
+apps/core/          Hono backend — AI agent, 221 registered tools, Docker API, SQLite
 apps/dashboard/     Next.js 16 frontend — dashboard, chat, app store
 apps/web/           Documentation and marketing website
 packages/types/     Shared TypeScript types
@@ -168,7 +168,7 @@ Tools are organized into domains that activate based on what you have installed:
 
 ### MCP Server
 
-Talome includes a Model Context Protocol server. Claude Code sessions get full access to every tool — Docker management, app installation, system diagnostics — directly from your terminal. The MCP server auto-syncs with the tool registry; no extra configuration needed.
+Talome includes a Model Context Protocol server. Claude Code/Codex sessions get access to Talome's active tool set — Docker management, app installation, system diagnostics — directly from your terminal. The MCP server auto-syncs with the tool registry; no extra MCP-specific registration needed.
 
 ## Development
 

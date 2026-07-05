@@ -3,11 +3,17 @@ title: AI Assistant
 description: How Talome's agentic AI works — architecture, tools, memory, security, and conversation patterns.
 ---
 
-This is not a chatbot. Talome's AI assistant is an autonomous agent with 219 purpose-built tools that plans multi-step operations, selects the right tools for each step, executes against your real infrastructure, and reasons about failures to recover. When you say "set up a media stack," it doesn't hand you a checklist — it installs five apps, wires their APIs together, syncs indexers, verifies health, and reports back with URLs.
+This is not a chatbot. Talome's AI assistant is an autonomous agent with 221 registered tools that plans multi-step operations, selects tools for each step, executes against your real infrastructure, and reasons about failures to recover. When you say "set up a media stack," it can install apps, wire their APIs together, sync indexers, verify health, and report back with URLs.
 
 The difference between a chatbot and an agent: a chatbot answers questions. An agent does work.
 
-<VideoPlaceholder description="Watch: The AI diagnosing and fixing a container issue in real-time" />
+![Talome assistant interface](/docs/screenshots/talome-assistant.jpg)
+
+<Accordions>
+<Accordion title="Screenshot source">
+Captured from the live Talome dashboard at `/dashboard/assistant` on 2026-06-13.
+</Accordion>
+</Accordions>
 
 ## Architecture
 
@@ -27,9 +33,9 @@ Every message you send passes through a precise pipeline before a single tool ex
     H -->|No| K[Stream text response]
 `} />
 
-### 1. System Prompt (Cached)
+### 1. System Prompt
 
-The system prompt is approximately 5,000 tokens and is cached using Anthropic's prompt caching. It contains the AI's identity, every behavioral rule, response formatting patterns, app-specific instructions (media volume conventions, Audiobookshelf library setup flow, arr wiring sequences), and the zero-config execution policy. Because it's cached, the first tokens of every conversation cost near zero — you only pay for new messages and tool results.
+The system prompt contains the AI's identity, behavioral rules, response formatting patterns, app-specific instructions, media setup conventions, and the zero-config execution policy. Anthropic-backed chat uses provider-level prompt caching for the static prompt. Local Ollama chat uses a shorter local prompt and streams through Ollama's native `/api/chat` endpoint so small local models do not receive the full cloud-model prompt and tool payload.
 
 ### 2. Dynamic Context Injection
 
@@ -42,17 +48,17 @@ Before the AI sees your message, Talome injects live context into the conversati
 
 ### 3. Tool Selection (Keyword Routing + Domain Filtering)
 
-Not all 219 tools load for every message. The tool registry uses a two-layer filter:
+Not all 221 registered tools load for every message. The tool registry uses a two-layer filter:
 
 **Layer 1: Domain activation.** Each tool belongs to a domain. A domain's tools only load when the corresponding app is configured in Settings. If you haven't set up Jellyfin, the 6 Jellyfin tools don't exist in the AI's context.
 
 **Layer 2: Message keyword routing.** Even among active domains, tools are further filtered by scanning your message for domain-relevant keywords. If your message mentions "torrent" or "download speed," the qBittorrent domain loads. If it mentions "indexer" or "quality profile," the arr domain loads. If no optional domain matches (ambiguous message), all active tools load as a fallback.
 
-This keeps the per-message tool count low — typically 80-120 tools instead of 219 — which directly improves the AI's tool selection accuracy.
+This keeps the per-message tool count lower than the full registry and improves tool selection accuracy. On the live setup used for this documentation pass, importing the built registry returned 221 registered tools and 120 active tools before message-specific keyword routing.
 
 <Accordions>
 <Accordion title="Source">
-`apps/core/src/ai/agent.ts` — 17 `registerDomain()` calls starting at line 324 define all tool domains. The core domain alone registers 112 tools. Keyword routing is implemented via the `DOMAIN_KEYWORDS` map in `apps/core/src/ai/tool-registry.ts` and `getToolsForMessage()` performs the two-layer filtering. The system prompt is `DEFAULT_SYSTEM_PROMPT` (around line 995), approximately 5,000 tokens, and is cached via `cacheControl: { type: "ephemeral" }`. Specific line numbers drift as the agent grows — verify with `grep -n DEFAULT_SYSTEM_PROMPT apps/core/src/ai/agent.ts`.
+Verified on 2026-06-13. `apps/core/src/ai/agent.ts` registers 17 tool domains and exports `DEFAULT_SYSTEM_PROMPT`, `createChatStream()`, and `activeTools`. `apps/core/src/ai/tool-registry.ts` implements `getToolsForMessage()`, `getAllToolMeta()`, and `getActiveRegisteredTools()`. `apps/core/src/routes/chat.ts` contains the native Ollama streaming path. Specific line numbers drift as the agent grows; use `rg "registerDomain\\(|DEFAULT_SYSTEM_PROMPT|streamNativeOllamaChat" apps/core/src` to verify.
 </Accordion>
 </Accordions>
 
@@ -80,17 +86,17 @@ The AI streams responses using the Vercel AI SDK's `streamText()` with a maximum
 
 <Accordions>
 <Accordion title="Source">
-`apps/core/src/ai/agent.ts` — `streamText()` call at line 1391 with `stopWhen: stepCountIs(10)` at line 1397. Prompt caching is configured at line 1302-1306 via Anthropic's `cacheControl: { type: "ephemeral" }` provider option on the static system prompt.
+`apps/core/src/ai/agent.ts` calls `streamText()` with `stopWhen: stepCountIs(10)` for provider-backed chat. `apps/core/src/routes/chat.ts` handles native Ollama streaming and writes UI message stream chunks for reasoning and text.
 </Accordion>
 </Accordions>
 
 ## Tool Domains
 
-All 219 tools are organized into 17 domains. Each domain activates when you configure the corresponding app in Settings:
+All 221 registered tools are organized into 17 domains. Each domain activates when its settings keys are present. Domains with no settings keys are always active.
 
 | Domain | Tools | Activates When | What It Does |
 |--------|-------|---------------|-------------|
-| **Core** | 112 | Always | Docker, system, apps, filesystem, groups, backups, memory, widgets, automations, self-improvement, compose, config files, notifications, settings, updates, shell, storage, GPU |
+| **Core** | 114 | Always | Docker, system, apps, filesystem, groups, backups, memory, widgets, automations, self-improvement, compose, config files, notifications, settings, updates, shell, storage, GPU |
 | **Media** | 5 | `sonarr_url` or `radarr_url` | Library browsing, search, downloads, calendar, media requests |
 | **Optimization** | 9 | `sonarr_url` or `radarr_url` | Media analysis, transcoding, library health, batch optimization |
 | **Arr** | 27 | `sonarr_url`, `radarr_url`, `readarr_url`, or `prowlarr_url` | Root folders, download clients, indexers, quality profiles, queue management, release search, monitoring |
@@ -102,13 +108,13 @@ All 219 tools are organized into 17 domains. Each domain activates when you conf
 | **Home Assistant** | 5 | `homeassistant_url` | Status, entities, service calls, history, automations |
 | **Pi-hole** | 5 | `pihole_url` | Stats, enable/disable, whitelist/blacklist |
 | **Vaultwarden** | 4 | `vaultwarden_url` | Status, users, invitations, signup toggle |
-| **Proxy** | 5 | Always | Caddy reverse-proxy routes, TLS, reload |
-| **Tailscale** | 3 | Always | Setup, status, stop |
+| **Proxy** | 5 | `proxy_enabled` | Caddy reverse-proxy routes, TLS, reload |
+| **Tailscale** | 3 | `tailscale_auth_key` | Setup, status, stop |
 | **mDNS** | 4 | Always | Local DNS status, enable/disable, refresh |
-| **Ollama** | 5 | Always (auto-detects local Ollama) | Models, pull/delete, model info, running processes |
+| **Ollama** | 5 | `ollama_url` | Models, pull/delete, model info, running processes |
 | **Setup** | 2 | Always | First-run wizard status + start |
 
-The MCP server always loads all tools regardless of configuration — each tool fails gracefully with a clear error if its app isn't set up.
+The MCP server uses the same active tool export as dashboard chat, so configured-domain filtering applies there too.
 
 ## Tool Tiers
 
@@ -438,7 +444,7 @@ Custom prompts are appended after the default system prompt and do not override 
 
 <Cards>
   <Card title="Tools Reference" href="/docs/reference/tools">
-    Browse all 219 tools with parameters and examples.
+    Browse all 221 registered tools with parameters and examples.
   </Card>
   <Card title="Media Stack Guide" href="/docs/guides/media-stack">
     The most popular AI-orchestrated workflow.

@@ -1,9 +1,9 @@
 ---
 title: MCP Server
-description: Use all 219 Talome tools from Claude Code, Cursor, or Claude Desktop.
+description: Use Talome's active tools from Claude Code, Cursor, or Claude Desktop.
 ---
 
-Talome includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that exposes all 219 tools to external AI clients. Manage your entire home server from Claude Code, Cursor, Claude Desktop, or any MCP-compatible client — without opening the Talome dashboard.
+Talome includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that exposes the active Talome tool set to external AI clients. Manage your home server from Claude Code, Cursor, Claude Desktop, or any MCP-compatible client without opening the Talome dashboard.
 
 ## How It Works
 
@@ -17,9 +17,15 @@ The MCP server is **independent of the Talome web dashboard**. It works whether 
 
 ### Tool Loading
 
-The MCP server uses the **same dynamic tool filter** as the dashboard chat. Tools for an integration only load when that integration is configured (e.g. the 27 `arr_*` tools require `sonarr_url` or `radarr_url` to be set in Settings → AI Provider). The 112 core tools and the always-on domains (mDNS, Tailscale, Proxy, Ollama, Setup) are exposed unconditionally.
+The MCP server imports `activeTools` from the agent, which is built from `getActiveRegisteredTools()`. Tools for an integration only load when that integration is configured. For example, the 27 `arr_*` tools require one of `sonarr_url`, `radarr_url`, `readarr_url`, or `prowlarr_url`. The core, mDNS, and setup domains are always active because their `settingsKeys` arrays are empty.
 
-This keeps the per-session tool count low — typically 50–120 tools instead of all 219 — and the AI's tool selection accurate.
+This keeps the per-session tool count lower than the 221-tool full registry. On the live setup used for this documentation pass, 120 tools were active.
+
+<Accordions>
+<Accordion title="Sources">
+`apps/core/src/routes/mcp.ts` imports `activeTools` from `apps/core/src/ai/agent.ts`. `activeTools` is created with `getActiveRegisteredTools()` in `apps/core/src/ai/agent.ts`. Domain activation is implemented in `apps/core/src/ai/tool-registry.ts`.
+</Accordion>
+</Accordions>
 
 ## Setup
 
@@ -109,11 +115,11 @@ No environment variables or auth tokens are required for local stdio connections
 
 ## Available Tools
 
-All 219 tools are organized into 17 domains. The `core` domain is broken out by capability for readability — those are all part of the always-loaded core registration in `apps/core/src/ai/agent.ts`.
+The full registry currently contains 221 tools organized into 17 domains. MCP exposes the active subset for the current Talome configuration. The `core` domain is broken out by capability for readability — those are all part of the always-loaded core registration in `apps/core/src/ai/agent.ts`.
 
 | Domain | Count | Description | Example tools |
 |--------|-------|-------------|---------------|
-| **core** | 112 | Containers, system stats, app lifecycle, settings, memories, files, automations, notifications, widgets, self-improvement, app creation | `list_containers`, `install_app`, `get_system_stats`, `remember`, `browse_files`, `create_automation`, `send_notification`, `plan_change`, `apply_change`, `design_app_blueprint`, `create_widget_manifest` |
+| **core** | 114 | Containers, system stats, app lifecycle, settings, memories, files, automations, notifications, widgets, self-improvement, app creation | `list_containers`, `install_app`, `get_system_stats`, `remember`, `browse_files`, `create_automation`, `send_notification`, `plan_change`, `apply_change`, `design_app_blueprint`, `create_widget_manifest` |
 | **media** | 5 | Cross-app media search, library health | `search_media`, `get_library`, `get_library_health`, `analyze_watched_media`, `get_calendar` |
 | **optimization** | 9 | Codec analysis, transcoding queue, FFmpeg pipeline | `scan_library_for_optimization`, `queue_optimization`, `cancel_optimization`, `analyze_media_file` |
 | **arr** | 27 | Sonarr, Radarr, Readarr, Prowlarr | `arr_get_queue_details`, `arr_search_releases`, `arr_sync_indexers_from_prowlarr` |
@@ -219,7 +225,7 @@ If the MCP server itself goes down (rare), reinitialize with `/mcp` in Claude Co
 
 <Cards>
   <Card title="Tools Reference" href="/docs/reference/tools">
-    Complete list of all 219 tools with parameters.
+    Complete list of all 221 registered tools with parameters.
   </Card>
   <Card title="Terminal" href="/docs/guides/terminal">
     Launch Claude Code from the Talome dashboard.

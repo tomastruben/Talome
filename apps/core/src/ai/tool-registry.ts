@@ -139,13 +139,21 @@ const DOMAIN_KEYWORDS: Record<string, string[]> = {
   audiobookshelf: ["audiobookshelf", "audiobook", "audiobooks", "narrator", "chapter", "bookmark", "listening"],
 };
 
+interface ToolRoutingOptions {
+  fallbackToActive?: boolean;
+  includeAlwaysDomains?: boolean;
+}
+
 /**
  * Returns tools filtered by message relevance.
- * Always includes core + mdns domains. Other active domains are included
- * only if the message matches their keywords. If NO optional domain matches,
- * falls back to the full active tool set (catch-all for ambiguous messages).
+ * Always includes core + mdns domains by default. Other active domains are
+ * included only if the message matches their keywords. If NO optional domain
+ * matches, falls back to the full active tool set by default (catch-all for
+ * ambiguous messages).
  */
-export function getToolsForMessage(message: string): Record<string, Tool> {
+export function getToolsForMessage(message: string, options: ToolRoutingOptions = {}): Record<string, Tool> {
+  const fallbackToActive = options.fallbackToActive ?? true;
+  const includeAlwaysDomains = options.includeAlwaysDomains ?? true;
   const activeDomains = getActiveDomainNames();
   const lowerMessage = message.toLowerCase();
 
@@ -153,15 +161,21 @@ export function getToolsForMessage(message: string): Record<string, Tool> {
   for (const domain of domains) {
     // Always include domains with no settings keys (core, mdns)
     if (domain.settingsKeys.length === 0) {
-      matchedDomains.add(domain.name);
+      if (includeAlwaysDomains) {
+        matchedDomains.add(domain.name);
+      }
       continue;
     }
     if (!activeDomains.has(domain.name)) continue;
 
     const keywords = DOMAIN_KEYWORDS[domain.name];
     if (!keywords) {
-      // Unknown domain with no keywords — include it (future-proofing)
-      matchedDomains.add(domain.name);
+      // Unknown domain with no keywords — include it on the default catch-all
+      // path only. Strict routing callers use this function to avoid loading
+      // unrelated tool schemas into small local-model contexts.
+      if (fallbackToActive) {
+        matchedDomains.add(domain.name);
+      }
       continue;
     }
     if (keywords.some((kw) => lowerMessage.includes(kw))) {
@@ -173,7 +187,7 @@ export function getToolsForMessage(message: string): Record<string, Tool> {
   const optionalMatched = [...matchedDomains].some(
     (name) => domains.find((d) => d.name === name)?.settingsKeys.length ?? 0 > 0,
   );
-  if (!optionalMatched) {
+  if (!optionalMatched && fallbackToActive) {
     return getActiveRegisteredTools();
   }
 

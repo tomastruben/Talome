@@ -163,6 +163,17 @@ interface PtySession {
   rows: number;
   /** Whether this session was recovered from a previous daemon boot. */
   recovered: boolean;
+  /**
+   * Name of the tmux session this shell launched into, if any (captured from
+   * the launch command). Lets us re-attach after a daemon restart — Fix B.
+   */
+  tmuxName?: string;
+}
+
+/** Extract the tmux session name from a `tmux new-session ... -s <name>` command. */
+function sniffTmuxName(input: string): string | undefined {
+  const m = input.match(/\btmux\s+new-session\b[^\r\n]*?-s[=\s]+([A-Za-z0-9_.-]+)/);
+  return m?.[1];
 }
 
 const sessions = new Map<string, PtySession>();
@@ -182,6 +193,17 @@ sqlite.exec(`
     last_activity_at INTEGER NOT NULL
   )
 `);
+
+// Fix B — remember the tmux session a shell launched into, so we can re-attach
+// to it after a daemon restart. The daemon's WS session name (e.g. "default")
+// is NOT the tmux session name (e.g. "talome-claude"), so we must capture the
+// real tmux name from the launch command rather than guessing. Added via a
+// guarded migration so existing installs upgrade in place.
+try {
+  sqlite.exec("ALTER TABLE terminal_sessions ADD COLUMN tmux_name TEXT");
+} catch {
+  /* column already exists — ignore */
+}
 
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS daemon_auth (
@@ -219,8 +241,8 @@ function verifyBackupToken(token: string): boolean {
 
 const upsertSessionStmt = sqlite.prepare(`
   INSERT OR REPLACE INTO terminal_sessions
-    (id, name, display_name, scroll_buffer, cols, rows, created_at, last_activity_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    (id, name, display_name, scroll_buffer, cols, rows, created_at, last_activity_at, tmux_name)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 const deletePersistedSessionStmt = sqlite.prepare(
   "DELETE FROM terminal_sessions WHERE id = ?",
@@ -234,6 +256,7 @@ interface RecoveredSessionMeta {
   rows: number;
   createdAt: number;
   lastActivityAt: number;
+  tmuxName?: string;
 }
 
 /** Sessions from the previous daemon boot, loaded on startup. */
@@ -243,7 +266,7 @@ const recoveredSessions = new Map<string, RecoveredSessionMeta>();
 function loadRecoverableSessions() {
   const rows = sqlite
     .prepare(
-      "SELECT id, name, display_name, scroll_buffer, cols, rows, created_at, last_activity_at FROM terminal_sessions",
+      "SELECT id, name, display_name, scroll_buffer, cols, rows, created_at, last_activity_at, tmux_name FROM terminal_sessions",
     )
     .all() as {
     id: string;
@@ -254,6 +277,7 @@ function loadRecoverableSessions() {
     rows: number;
     created_at: number;
     last_activity_at: number;
+    tmux_name: string | null;
   }[];
 
   const now = Date.now();
@@ -274,6 +298,7 @@ function loadRecoverableSessions() {
       rows: row.rows,
       createdAt: row.created_at,
       lastActivityAt: row.last_activity_at,
+      tmuxName: row.tmux_name || undefined,
     });
   }
 
@@ -296,6 +321,7 @@ function persistSession(session: PtySession) {
     session.rows,
     session.createdAt,
     session.lastActivityAt,
+    session.tmuxName || null,
   );
 }
 
@@ -334,6 +360,12 @@ function getOrCreateSession(id: string, name: string): PtySession {
     if (typeof v === "string") scrubbedEnv[k] = v;
   }
   scrubbedEnv.TERM = "xterm-256color";
+  // launchd starts Talome with no locale (LC_CTYPE=C), so Claude Code and other
+  // TUIs render Unicode (em-dashes, arrows, box glyphs) as ASCII fallbacks like
+  // "_" / "-". Default to UTF-8 unless the user explicitly configured a locale.
+  if (!scrubbedEnv.LANG && !scrubbedEnv.LC_ALL && !scrubbedEnv.LC_CTYPE) {
+    scrubbedEnv.LANG = "en_US.UTF-8";
+  }
 
   const proc = pty.spawn(process.env.SHELL ?? "/bin/bash", [], {
     name: "xterm-256color",
@@ -358,6 +390,7 @@ function getOrCreateSession(id: string, name: string): PtySession {
     cols: recovered?.cols ?? 80,
     rows: recovered?.rows ?? 24,
     recovered: !!recovered,
+    tmuxName: recovered?.tmuxName,
   };
 
   // Pre-fill buffer with recovered scroll history so clients see old output
@@ -443,6 +476,31 @@ function getOrCreateSession(id: string, name: string): PtySession {
       sessions.delete(id);
     }
   });
+
+  // Fix B — re-attach to tmux on restore. When a session is recovered after a
+  // daemon restart, its PTY process is gone; but if the shell had launched work
+  // inside tmux (the "Launch Claude Code" flow runs
+  // `tmux new-session -A -s talome-claude ...`), the tmux server keeps that work
+  // alive independently of this daemon. We captured the real tmux session name
+  // from the launch command (sniffTmuxName) — it is NOT the daemon session name
+  // — so inject a guarded re-attach into the fresh shell: if that tmux session
+  // survived, attach to it (bringing Claude back); if not, it's a harmless
+  // no-op and the shell stays a plain shell with the scroll buffer replayed.
+  // The check runs inside the spawned shell, which has the correct interactive
+  // PATH — the daemon's own env may not resolve tmux. The captured name is
+  // already restricted to shell-safe characters by sniffTmuxName's pattern.
+  const reattachTarget = recovered ? session.tmuxName : undefined;
+  if (reattachTarget && /^[A-Za-z0-9_.-]+$/.test(reattachTarget)) {
+    setTimeout(() => {
+      try {
+        session.proc.write(
+          `command -v tmux >/dev/null 2>&1 && tmux has-session -t ${reattachTarget} 2>/dev/null && tmux attach -t ${reattachTarget}\r`,
+        );
+      } catch {
+        /* PTY already gone — nothing to re-attach */
+      }
+    }, 250);
+  }
 
   sessions.set(id, session);
   // Persist immediately so the session survives a crash within the first 30s
@@ -1157,6 +1215,15 @@ app.get(
           if (msg.type === "input" && msg.data) {
             session.proc.write(msg.data);
             session.lastActivityAt = Date.now();
+            // Fix B — remember the tmux session this shell launches into so we
+            // can re-attach after a daemon restart. Persist immediately: the
+            // launch may happen long before the next periodic flush, and if the
+            // daemon dies in between we'd otherwise lose the re-attach target.
+            const tmuxName = sniffTmuxName(msg.data);
+            if (tmuxName && tmuxName !== session.tmuxName) {
+              session.tmuxName = tmuxName;
+              persistSession(session);
+            }
           }
           if (msg.type === "resize" && msg.cols && msg.rows) {
             session.proc.resize(msg.cols, msg.rows);

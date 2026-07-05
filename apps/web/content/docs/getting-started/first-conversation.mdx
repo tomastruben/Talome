@@ -3,7 +3,13 @@ title: Your First Conversation
 description: From zero to a running app in one conversation. A step-by-step walkthrough of Talome's AI assistant.
 ---
 
-<VideoPlaceholder description="Watch: From fresh install to running Jellyfin in one conversation (2 minutes)" />
+![Talome assistant ready for a first conversation](/docs/screenshots/talome-assistant.jpg)
+
+<Accordions>
+<Accordion title="Screenshot source">
+Captured from the live Talome dashboard at `/dashboard/assistant` on 2026-06-13.
+</Accordion>
+</Accordions>
 
 This guide walks you through your first interaction with Talome — from creating your account to having a fully configured app running on your server. By the end, you will understand how the AI works, what it can do, and how to get the most out of it.
 
@@ -166,7 +172,7 @@ This means the AI always has your preferences and facts in context without you r
 
 ### 3. Dynamic tool loading
 
-Not all 219 tools are sent to the AI on every message. Talome uses **per-message tool routing**:
+Not all 221 registered tools are sent to the AI on every message. Talome uses **per-message tool routing**:
 - Core tools (Docker, apps, system, filesystem, memories) are always available
 - Domain-specific tools (arr, Jellyfin, qBittorrent, etc.) load only when that app is configured in Settings
 - Within active domains, keyword matching in your message further narrows the tool set — a message about "torrents" loads qBittorrent tools but not Home Assistant tools

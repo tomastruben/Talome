@@ -5,6 +5,8 @@ description: A visual walkthrough of the Talome dashboard — every page, every 
 
 The Talome dashboard is your control center. Everything about your server — apps, containers, media, system health, automations, and the AI assistant — is accessible from a single interface. This tour walks through each section so you know where everything lives.
 
+Screenshots on this page were captured from a running Talome dashboard at `http://localhost:3000` on 2026-06-13.
+
 ---
 
 ## Sidebar Navigation
@@ -14,12 +16,16 @@ The sidebar is the spine of the dashboard. It is always visible and provides qui
 | Icon | Page | Purpose |
 |------|------|---------|
 | Home | **Home** | Widget-based dashboard overview |
-| Grid | **Apps** | Multi-source app store |
-| Box | **Containers** | Docker container management |
+| Chat | **Assistant** | AI chat, suggested tasks, and conversation history |
 | Film | **Media** | Unified media library and downloads |
-| Clock | **Automations** | Scheduled tasks and event triggers |
+| Book | **Audiobooks** | Audiobook library views |
 | Folder | **Files** | File browser for server and mounted drives |
-| Terminal | **Terminal** | Persistent tmux shell and Claude Code |
+| Box | **Services** | Docker app and container management |
+| Grid | **App Store** | Multi-source app store |
+| Clock | **Automations** | Scheduled tasks and event triggers |
+| Sparkles | **Intelligence** | Activity, diagnostics, and assistant-derived insights |
+| Bug | **Bug Hunt** | Issue-hunting workflow entry point |
+| Terminal | **Terminal** | Persistent tmux shell and Codex |
 | Gear | **Settings** | AI provider, integrations, security, notifications |
 
 The sidebar collapses on smaller screens and can be toggled with the hamburger menu. Active page is highlighted with a subtle indicator.
@@ -30,9 +36,11 @@ The sidebar collapses on smaller screens and can be toggled with the hamburger m
 
 The home page is a customizable grid of widgets. Each widget shows a focused slice of your server's state — real-time, no polling delays.
 
+![Talome dashboard home](/docs/screenshots/talome-dashboard-home.jpg)
+
 ### Widget Categories
 
-Talome ships with **25 built-in widgets** organized into five categories. (Run `ls apps/dashboard/src/components/widgets/*-widget.tsx` if you want the canonical list — the doc below should match.)
+Talome currently ships with **25 built-in widget components** plus shared widget infrastructure. This count comes from `apps/dashboard/src/components/widgets/*-widget.tsx` and excludes helper files such as `widget-grid.tsx`.
 
 **System widgets** — real-time hardware monitoring
 - **CPU** — usage percentage with a sparkline history chart
@@ -83,6 +91,8 @@ The AI uses `create_widget_manifest` and `update_widget_manifest` to build your 
 
 The app store is the fastest way to add services to your server. It aggregates apps from multiple sources into a single, searchable catalog.
 
+![Talome app store](/docs/screenshots/talome-app-store.jpg)
+
 ### Multi-Source Architecture
 
 Every app card shows its source:
@@ -112,9 +122,9 @@ Click an app card to see its detail page: description, version, resource require
 
 ---
 
-## Containers Page
+## Services Page
 
-The containers page gives you direct visibility into every Docker container running on your server — not just apps installed through Talome.
+The Services page gives you direct visibility into every Docker app and container running on your server — not just apps installed through Talome.
 
 ### Real-Time Status
 
@@ -223,17 +233,19 @@ A persistent terminal with full shell access to your server.
 
 The terminal runs inside a tmux session that persists across page navigations and browser refreshes. Close the tab, come back later — your session is still running.
 
-### Claude Code Integration
+### Codex Integration
 
-Click **Launch Claude Code** to start an interactive Claude Code session inside the terminal. This gives you the full agentic AI coding experience — Claude Code reads the Talome codebase, uses MCP tools, and can make changes to the source code interactively.
+Click **Launch Codex** to start an interactive Codex session inside the terminal. This gives you the full agentic AI coding experience — Codex reads the Talome codebase, uses MCP tools, and can make changes to the source code interactively.
 
-The terminal and Claude Code share the same tmux session (`talome-claude`), so you can switch between shell commands and AI-assisted development seamlessly.
+The terminal and Codex share the same tmux session (`talome-Codex`), so you can switch between shell commands and AI-assisted development.
 
 ---
 
 ## Settings Page
 
 All configuration lives in Settings, organized into sections.
+
+![Talome settings](/docs/screenshots/talome-settings.jpg)
 
 ### AI Provider
 
@@ -265,6 +277,8 @@ View system information, manage data storage paths, configure the reverse proxy 
 ## The Assistant
 
 The AI assistant has its own page in the sidebar navigation. Click **Assistant** to open it.
+
+![Talome assistant](/docs/screenshots/talome-assistant.jpg)
 
 ### Chat Interface
 
@@ -302,6 +316,12 @@ The assistant knows which page you are on. If you open the chat from the Media p
     Customize your dashboard widgets for system monitoring and alerting.
   </Card>
   <Card title="AI Assistant Guide" href="/docs/guides/ai-assistant">
-    Learn the full scope of what the AI can do — 219 tools across 17 domains.
+    Learn the full scope of what the AI can do — 221 registered tools across 17 domains.
   </Card>
 </Cards>
+
+<Accordions>
+<Accordion title="Sources">
+`apps/dashboard/src/app/dashboard/` defines the dashboard routes. `apps/dashboard/src/components/app-sidebar.tsx` defines the sidebar labels. `apps/dashboard/src/components/widgets/` contains the widget components. `apps/dashboard/src/components/assistant/` and `apps/dashboard/src/app/dashboard/assistant/page.tsx` implement the assistant UI. `apps/dashboard/src/components/settings/` implements the settings sections.
+</Accordion>
+</Accordions>

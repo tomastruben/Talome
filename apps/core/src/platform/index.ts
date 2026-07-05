@@ -80,7 +80,10 @@ export function getDockerHostAddress(): string {
 export function sampleNetworkBytes(): { rx: number; tx: number } | null {
   try {
     if (isDarwin) {
-      const out = execSync("netstat -ib", { encoding: "utf-8" });
+      // Absolute path: `netstat` lives in /usr/sbin, which is absent from the
+      // launchd PATH the supervisor runs under — a bare "netstat" fails on every
+      // sample, flooding the error log and zeroing out network monitoring.
+      const out = execSync("/usr/sbin/netstat -ib", { encoding: "utf-8" });
       let rx = 0, tx = 0;
       for (const line of out.split("\n").slice(1)) {
         const cols = line.trim().split(/\s+/);

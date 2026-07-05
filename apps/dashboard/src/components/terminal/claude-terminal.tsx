@@ -144,7 +144,10 @@ export function ClaudeTerminal({
     if (!projectRoot) return;
     const unset = "unset CLAUDECODE;";
     const quoted = projectRoot.includes(" ") ? `"${projectRoot}"` : projectRoot;
-    const tmuxCmd = `cd ${quoted} && tmux new-session -A -s talome-claude "claude --continue"`;
+    // `set -g mouse on` enables wheel/touch scrolling — tmux runs on the
+    // alternate screen so xterm's scrollback is empty; without it the wheel
+    // has nothing to scroll. `\;` chains the set onto the tmux invocation.
+    const tmuxCmd = `cd ${quoted} && tmux new-session -A -s talome-claude "claude --continue" \\; set -g mouse on`;
     const fallback = `cd ${quoted} && claude --continue`;
     const cmd = `${unset} if command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
     termRef.current?.sendCommand(cmd);

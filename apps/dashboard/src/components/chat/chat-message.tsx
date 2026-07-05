@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { UIMessage, DynamicToolUIPart, FileUIPart } from "ai";
-import { isToolUIPart, getToolName } from "ai";
+import type { UIMessage, DynamicToolUIPart, FileUIPart, ReasoningUIPart } from "ai";
+import { isReasoningUIPart, isToolUIPart, getToolName } from "ai";
 import Image from "next/image";
 import {
   HugeiconsIcon,
@@ -11,6 +11,7 @@ import {
   FileAttachmentIcon,
   Refresh04Icon,
   PackageOpenIcon,
+  AiBrain01Icon,
 } from "@/components/icons";
 import {
   Message,
@@ -97,6 +98,25 @@ function MessageAttachment({ part }: { part: FileUIPart }) {
     <a href={part.url} rel="noreferrer" target="_blank">
       {content}
     </a>
+  );
+}
+
+function ReasoningBlock({ part }: { part: ReasoningUIPart }) {
+  if (!part.text.trim()) return null;
+
+  return (
+    <details
+      className="group rounded-lg border border-border/40 bg-card/30 px-3 py-2 text-sm"
+      open={part.state === "streaming"}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-muted-foreground">
+        <HugeiconsIcon icon={AiBrain01Icon} size={14} />
+        <span>{part.state === "streaming" ? "Thinking..." : "Thinking"}</span>
+      </summary>
+      <div className="mt-2 whitespace-pre-wrap border-t border-border/30 pt-2 text-muted-foreground">
+        {part.text}
+      </div>
+    </details>
   );
 }
 
@@ -261,6 +281,7 @@ export function ChatMessage({
   // Group consecutive text parts
   type RenderBlock =
     | { kind: "text"; key: string; text: string; toolContextNames: string[] }
+    | { kind: "reasoning"; key: string; part: ReasoningUIPart }
     | { kind: "file"; key: string; part: FileUIPart }
     | { kind: "tool"; key: string; part: DynamicToolUIPart };
 
@@ -280,6 +301,12 @@ export function ChatMessage({
           toolContextNames: lastToolName ? [lastToolName] : [],
         });
       }
+    } else if (isReasoningUIPart(part)) {
+      blocks.push({
+        kind: "reasoning",
+        key: `reasoning-${blocks.length}`,
+        part,
+      });
     } else if (part.type === "file") {
       blocks.push({
         kind: "file",
@@ -328,6 +355,10 @@ export function ChatMessage({
 
           if (block.kind === "file") {
             return <MessageAttachment key={block.key} part={block.part} />;
+          }
+
+          if (block.kind === "reasoning") {
+            return <ReasoningBlock key={block.key} part={block.part} />;
           }
 
           const p = block.part;

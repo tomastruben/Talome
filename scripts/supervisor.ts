@@ -89,6 +89,31 @@ function killTree(pid: number, signal: NodeJS.Signals): void {
   } catch { /* already dead */ }
 }
 
+// ── Terminal daemon liveness ─────────────────────────────────────────────────
+// The daemon writes its own PID file on startup. While it is alive it owns
+// every open PTY/WebSocket terminal (including Claude Code sessions), so it
+// must never be killed or respawned merely because a /health probe was slow —
+// its trivial event loop can stall briefly during heavy PTY output, scroll-
+// buffer DB writes, or bcrypt token verification. Killing a live daemon drops
+// all sessions, which defeats the entire point of running it detached. Check
+// the real process (via its PID file), not just the HTTP endpoint.
+const DAEMON_PID_FILE = join(TALOME_DIR, "terminal-daemon.pid");
+
+function isTerminalDaemonAlive(fallbackPid?: number | null): boolean {
+  let pid = fallbackPid ?? null;
+  try {
+    const filePid = Number(readFileSync(DAEMON_PID_FILE, "utf-8").trim());
+    if (filePid && !Number.isNaN(filePid)) pid = filePid;
+  } catch { /* no PID file — fall back to the supervisor's tracked pid */ }
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0); // signal 0 = existence check only, doesn't touch the process
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── State ────────────────────────────────────────────────────────────────────
 
 const processes = new Map<ProcessName, ProcessState>();
@@ -638,11 +663,21 @@ async function runHealthChecks(): Promise<void> {
           });
         }
 
-        // For detached processes (terminal daemon), we need to respawn
+        // For detached processes (terminal daemon): respawn ONLY if the process
+        // is actually dead. A live daemon serving WebSocket terminals must never
+        // be killed for a slow /health probe — respawning would drop every open
+        // session (incl. Claude Code). Verify the real process before acting.
         if (state.config.detached && state.consecutiveFailures >= config.failuresForUnhealthy + 2) {
-          console.log(`[supervisor] Respawning detached process: ${name}`);
-          state.consecutiveFailures = 0;
-          spawnManagedProcess(name);
+          if (isTerminalDaemonAlive(state.pid)) {
+            console.warn(
+              `[supervisor] ${name} slow to respond but its process is alive — leaving it running to preserve live sessions`,
+            );
+            state.consecutiveFailures = 0; // reset so we don't hot-loop this branch
+          } else {
+            console.log(`[supervisor] Respawning detached process: ${name} (process is dead)`);
+            state.consecutiveFailures = 0;
+            spawnManagedProcess(name);
+          }
         }
       }
     }
@@ -694,7 +729,13 @@ async function switchMode(): Promise<void> {
   }
 
   const stops: Promise<void>[] = [];
-  for (const [, state] of processes) {
+  for (const [name, state] of processes) {
+    // Keep the terminal daemon alive across a dev/build mode switch — it owns
+    // live PTY/WebSocket sessions (incl. Claude Code) and is mode-agnostic at
+    // runtime. Tearing it down here would drop every open terminal, which is
+    // exactly the "doesn't survive a restart" behaviour we're fixing. It stays
+    // on its old build until the next real daemon restart (e.g. reboot).
+    if (name === "terminal_daemon") continue;
     if (state.restartTimer) { clearTimeout(state.restartTimer); state.restartTimer = null; }
     const child = childProcesses.get(state.config.name);
     if (child && !child.killed) {
@@ -735,11 +776,28 @@ async function switchMode(): Promise<void> {
   }
   console.log(`[supervisor] Ports released in ${Date.now() - portCheckStart}ms`);
 
+  // The daemon was intentionally left running above — carry its live state and
+  // child handle across the map reset so we keep monitoring it and never spawn
+  // a second daemon (a duplicate would collide on the daemon port and die).
+  const daemonState = processes.get("terminal_daemon");
+  const daemonChild = childProcesses.get("terminal_daemon");
+  const daemonAlive = isTerminalDaemonAlive(daemonState?.pid);
+
   const configs = buildProcessConfigs(newMode);
   processes.clear();
   childProcesses.clear();
-  for (const cfg of configs) processes.set(cfg.name, createProcessState(cfg));
-  for (const name of processes.keys()) spawnManagedProcess(name);
+  for (const cfg of configs) {
+    if (cfg.name === "terminal_daemon" && daemonAlive && daemonState) {
+      processes.set("terminal_daemon", daemonState);
+      if (daemonChild) childProcesses.set("terminal_daemon", daemonChild);
+      continue;
+    }
+    processes.set(cfg.name, createProcessState(cfg));
+  }
+  for (const name of processes.keys()) {
+    if (name === "terminal_daemon" && daemonAlive) continue; // already running — don't respawn
+    spawnManagedProcess(name);
+  }
 
   console.log(`[supervisor] Restarted in ${newMode} mode`);
   switching = false;

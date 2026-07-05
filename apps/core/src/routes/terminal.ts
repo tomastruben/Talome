@@ -89,10 +89,12 @@ export function setupTerminal(
       const res = await fetch(url, {
         method: c.req.method,
         headers: (() => {
-          const h = new Headers();
-          for (const [k, v] of Object.entries(c.req.raw.headers)) {
-            if (k !== "host") h.set(k, v as string);
-          }
+          // Copy the incoming headers via the Headers constructor — it iterates
+          // the source correctly. (Object.entries() on a Headers object returns
+          // [], which previously dropped every forwarded header, including the
+          // multipart Content-Type boundary needed to parse uploads.)
+          const h = new Headers(c.req.raw.headers);
+          h.delete("host");
           if (DAEMON_INTERNAL_KEY) h.set("x-daemon-auth", DAEMON_INTERNAL_KEY);
           return h;
         })(),

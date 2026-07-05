@@ -190,17 +190,21 @@ async function fetchOllamaModels(url: string): Promise<ModelInfo[]> {
     const data = (await res.json()) as {
       models: Array<{
         name: string;
+        model?: string;
         size: number;
         details?: { parameter_size?: string; family?: string };
       }>;
     };
-    return (data.models || []).map((m) => ({
-      id: m.name,
-      name: m.name.split(":")[0],
-      description: [m.details?.parameter_size, m.details?.family, formatBytes(m.size)]
-        .filter(Boolean)
-        .join(" · "),
-    }));
+    return (data.models || []).map((m) => {
+      const id = m.model || m.name;
+      return {
+        id,
+        name: id,
+        description: [m.details?.parameter_size, m.details?.family, formatBytes(m.size)]
+          .filter(Boolean)
+          .join(" · "),
+      };
+    });
   } catch {
     return [];
   }

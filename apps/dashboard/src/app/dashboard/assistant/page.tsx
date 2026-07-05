@@ -95,7 +95,8 @@ function ThinkingMessage() {
   return (
     <Message from="assistant">
       <MessageContent>
-        <div className="flex items-center gap-1.5 py-1">
+        <div className="flex items-center gap-2 py-1 text-muted-foreground">
+          <span className="text-sm">Generating reply</span>
           {[0, 1, 2].map((i) => (
             <span
               key={i}
@@ -110,6 +111,14 @@ function ThinkingMessage() {
       </MessageContent>
     </Message>
   );
+}
+
+function hasVisibleAssistantOutput(message: { role: string; parts?: Array<{ type: string; text?: string }> } | undefined) {
+  if (!message || message.role !== "assistant") return false;
+  return message.parts?.some((part) => {
+    if ((part.type === "text" || part.type === "reasoning") && part.text?.trim()) return true;
+    return part.type !== "text" && part.type !== "reasoning" && part.type !== "step-start";
+  }) ?? false;
 }
 
 /** Extract blueprint section update from a design_app_blueprint tool input. */
@@ -639,6 +648,9 @@ export default function AssistantPage() {
           />
         ))}
         {isActive && messages[messages.length - 1]?.role === "user" && (
+          <ThinkingMessage />
+        )}
+        {isActive && messages[messages.length - 1]?.role === "assistant" && !hasVisibleAssistantOutput(messages[messages.length - 1]) && (
           <ThinkingMessage />
         )}
         {error && <AssistantChatError error={error} onDismiss={clearError} />}

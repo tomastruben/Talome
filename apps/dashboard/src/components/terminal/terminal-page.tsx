@@ -27,9 +27,14 @@ function buildClaudeCodeCommand(projectRoot: string, opts?: { auto?: boolean; re
   const flagStr = flags ? ` ${flags}` : "";
   const quoted = projectRoot.includes(" ") ? `"${projectRoot}"` : projectRoot;
   const sessionName = opts?.resume ? "talome-claude" : `talome-claude-${Date.now()}`;
+  // `set -g mouse on` enables wheel/touch scrolling. tmux runs on the alternate
+  // screen, so xterm's own scrollback is empty while attached — without mouse
+  // mode the wheel has nothing to scroll and the terminal feels frozen. The
+  // `\;` chains the option-set onto the same tmux invocation (escaped so the
+  // shell passes a literal `;` to tmux, not a command separator).
   const tmuxCmd = opts?.resume
-    ? `cd ${quoted} && tmux new-session -A -s talome-claude "claude${flagStr}"`
-    : `cd ${quoted} && tmux new-session -s ${sessionName} "claude${flagStr}"`;
+    ? `cd ${quoted} && tmux new-session -A -s talome-claude "claude${flagStr}" \\; set -g mouse on`
+    : `cd ${quoted} && tmux new-session -s ${sessionName} "claude${flagStr}" \\; set -g mouse on`;
   const fallback = `cd ${quoted} && claude${flagStr}`;
   return `${unset} if command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
 }

@@ -1,15 +1,15 @@
 ---
 title: "ADR-004: MCP Auto-Sync"
-description: Why the MCP server automatically includes all registered tools with zero manual configuration.
+description: Why the MCP server auto-syncs from the tool registry with zero manual MCP-specific registration.
 ---
 
-**Status:** Accepted
+**Status:** Accepted, amended by current `activeTools` implementation
 **Date:** 2025-03-22
 **Applies to:** `apps/core/src/mcp/`, `apps/core/src/ai/tool-registry.ts`, `.mcp.json`
 
 <Accordions>
 <Accordion title="Source">
-`apps/core/src/ai/tool-registry.ts` — `getAllRegisteredTools()` at line 101 returns every tool from every domain. `apps/core/src/mcp/` — the MCP server entry point calls `getAllRegisteredTools()` at startup, converts Zod schemas to JSON Schema, and serves tools via stdio. `.mcp.json` in the repo root configures Claude Code to launch the server automatically.
+Verified on 2026-06-13. `apps/core/src/routes/mcp.ts` imports `activeTools` from `apps/core/src/ai/agent.ts`; `activeTools` is built from `getActiveRegisteredTools()` in `apps/core/src/ai/tool-registry.ts`. `getAllRegisteredTools()` and `getAllToolMeta()` still exist for the full registry. `.mcp.json` in the repo root configures Claude Code/Codex to launch the stdio server automatically.
 </Accordion>
 </Accordions>
 
@@ -27,22 +27,22 @@ The MCP server is a critical integration point -- many developers use Claude Cod
 
 ## Decision
 
-The MCP server uses `getAllRegisteredTools()` which returns every tool from every registered domain. When a new domain is added to `agent.ts` via `registerDomain()`, it automatically appears in MCP with no additional code changes.
+The MCP server uses the same central registry as dashboard chat. When a new domain is added to `agent.ts` via `registerDomain()`, it automatically becomes eligible for MCP with no MCP-specific registration. The current MCP route imports `activeTools`, so settings-based domain activation applies before the tools are exposed to MCP clients.
 
-### Why "All Tools" Instead of "Active Tools"
+### Why "Active Tools"
 
-Unlike dashboard chat (which filters tools by settings and keywords to keep the tool count low), the MCP server always serves the complete set. The reasons:
+The original ADR favored serving every registered tool. The current implementation serves active tools instead. The reasons:
 
-1. **Larger context windows**: MCP clients like Claude Code have much larger context windows than the dashboard chat and handle many tools well
-2. **Developer expectations**: when using Claude Code for development or automation, users expect all tools to be available. A missing tool when you're trying to debug an integration is frustrating.
-3. **Graceful failure**: tools check their own configuration at execution time and return `{ error: "Not configured" }` if the app isn't set up. This is clear, recoverable, and informative.
-4. **Configuration flow**: users often use Claude Code to set up new integrations. They need the tools available _before_ the settings are configured, so they can call `set_setting("sonarr_url", "...")` and then immediately use `arr_get_status`.
+1. **Consistency**: dashboard chat and MCP use the same configured-domain view of Talome.
+2. **Lower tool noise**: unconfigured app domains are omitted instead of relying on "not configured" execution-time errors.
+3. **Still zero-maintenance**: developers register a domain once in `agent.ts`; activation remains driven by `settingsKeys`.
+4. **Core setup remains available**: settings, app lifecycle, filesystem, Docker, memory, setup, and other core tools stay active without integration settings.
 
 ### Schema Conversion
 
 The tool schema conversion happens at MCP server startup:
 
-1. `getAllRegisteredTools()` returns a flat `Record<string, Tool>` of all 219 tools
+1. `activeTools` returns a flat `Record<string, Tool>` for the current active domains
 2. Each tool's Zod input schema is converted to JSON Schema (MCP's native format) using `zod-to-json-schema`
 3. Tool descriptions are passed through directly
 4. The MCP server registers all tools and handles incoming call requests
@@ -69,7 +69,7 @@ The startup sequence:
 
 1. Node.js loads the compiled MCP server entry point
 2. Module initialization runs all `registerDomain()` calls from `agent.ts` (imported at module scope)
-3. The server calls `getAllRegisteredTools()` to get the complete tool set
+3. The server reads `activeTools` from the agent to get the configured-domain tool set
 4. Each tool is converted to MCP format (name, description, JSON Schema parameters)
 5. The server begins listening on stdin/stdout for MCP protocol messages
 
@@ -78,7 +78,7 @@ The startup sequence:
 When Claude Code calls a tool via MCP:
 
 1. The MCP server receives a `tools/call` message on stdin
-2. Looks up the tool by name in the complete tool map
+2. Looks up the tool by name in the active tool map
 3. Parses and validates parameters with the tool's Zod schema
 4. Executes the tool function (same code path as dashboard chat)
 5. Writes an audit log entry
@@ -105,16 +105,16 @@ The MCP server operates independently of the Hono web server. It works whether o
 ## Consequences
 
 **Benefits:**
-- Zero-config MCP tool availability -- register a domain once in `agent.ts`, it appears in MCP automatically
-- No sync drift -- both dashboard chat and MCP read from the same `getAllRegisteredTools()` registry
-- Claude Code users always have access to the latest tools immediately after a domain is registered
+- Zero-config MCP tool availability -- register a domain once in `agent.ts`, and it becomes available to MCP when its `settingsKeys` are active
+- No MCP-specific sync drift -- both dashboard chat and MCP read from the same registry system
+- Claude Code/Codex users get the latest eligible tools after domains are registered and active
 - The `.mcp.json` convention means tools are available as soon as Claude Code opens the project
 - No HTTP server, port configuration, or API token needed for local MCP -- stdio is simpler and more secure
-- Adding a new integration requires exactly one file change (`agent.ts`) to be accessible everywhere
+- Adding a new integration requires one domain registration in `agent.ts` to become eligible everywhere
 
 **Tradeoffs:**
-- The MCP server loads 219 tools at startup, which adds slight startup latency (~50-100ms). This is not noticeable in practice since the server starts once per Claude Code session.
-- All tools appear in MCP regardless of whether the underlying app is configured. Users may attempt to use unconfigured tools and receive "not configured" errors. The error messages are clear and suggest how to configure the app.
+- MCP clients do not see unconfigured integration tools until the corresponding settings exist.
+- Developers debugging an unconfigured integration may need to set the integration URL/API key first, or inspect the full registry from code.
 - Zod-to-JSON-Schema conversion may lose some Zod-specific validation features (refinements, transforms, branded types). In practice, tool parameter schemas are simple objects with primitives, so this hasn't been an issue.
 - The schema conversion runs at startup, not at registration time. If a domain is registered after the MCP server starts, it won't appear until the next restart. This is not a practical issue because all domains are registered at module load time.
 
@@ -122,7 +122,7 @@ The MCP server operates independently of the Hono web server. It works whether o
 
 1. **Separate MCP tool registration**: register tools for MCP independently from the dashboard in a dedicated file. Rejected because of maintenance burden and the inevitable sync drift that would result. Every integration PR would need to update two files.
 
-2. **Settings-filtered MCP tools**: apply the same settings-based domain activation as dashboard chat. Rejected because MCP clients work best with the full tool set, and developers need tools available before configuring the apps they integrate with.
+2. **Full-registry MCP tools**: expose all registered domains regardless of configuration. This was the original ADR decision, but the current implementation uses active tools to reduce tool noise and match dashboard behavior.
 
 3. **HTTP-based MCP server with token auth**: serve MCP over HTTP instead of stdio. Rejected for local development use because stdio is simpler, requires no port configuration, has no authentication complexity, and avoids firewall issues. HTTP-based MCP may be added later for remote access scenarios.
 

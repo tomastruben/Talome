@@ -21,11 +21,14 @@ SESSION can be:
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 from datetime import datetime
 
-PROJECT_DIR = Path.home() / ".claude" / "projects" / "-Users-tomas-dev-Talome"
+# Claude Code stores sessions per-project, keyed by the cwd with / and . replaced by -
+_slug = os.getcwd().replace("/", "-").replace(".", "-")
+PROJECT_DIR = Path.home() / ".claude" / "projects" / _slug
 OUTPUT_DIR = PROJECT_DIR / "session-summaries"
 
 

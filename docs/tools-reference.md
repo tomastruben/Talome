@@ -1,6 +1,8 @@
 # Talome MCP Tools Reference
 
-The MCP server auto-syncs from `allTools` in `apps/core/src/ai/agent.ts` — every tool the dashboard assistant has is also available here.
+The MCP server imports `activeTools` from `apps/core/src/ai/agent.ts`. That export is built from `getActiveRegisteredTools()` in `apps/core/src/ai/tool-registry.ts`, so MCP exposes the configured-domain tool set rather than every registered tool.
+
+Source-verified on 2026-06-13: importing the built registry returned 221 registered tools across 17 domains and 120 active tools on the live setup used for screenshots.
 
 ## Docker
 - `list_containers` — list all containers with status, ports, images
