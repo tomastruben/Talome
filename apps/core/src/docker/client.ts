@@ -29,6 +29,72 @@ const docker = new Docker({
   socketPath: detectedSocket,
 });
 
+const AUTO_PRUNE_MIN_STOPPED_AGE_MS = 24 * 60 * 60 * 1000;
+
+export interface ProtectedContainerRefs {
+  ids: string[];
+  appIds: string[];
+}
+
+export interface StoppedContainerCandidate {
+  id: string;
+  name: string;
+  labels: Record<string, string>;
+  stoppedAt: string;
+}
+
+export interface SafeContainerPruneResult {
+  prunable: StoppedContainerCandidate[];
+  protected: StoppedContainerCandidate[];
+  recent: StoppedContainerCandidate[];
+}
+
+function containerIdMatches(containerId: string, protectedId: string): boolean {
+  return containerId.startsWith(protectedId) || protectedId.startsWith(containerId);
+}
+
+/**
+ * Select stopped containers that are safe to remove.
+ *
+ * A managed app is protected by both its last-known container ID and its
+ * stable Compose project/name. The latter matters after a container has been
+ * recreated but before installed_apps has been reconciled with the new ID.
+ */
+export function classifyStoppedContainers(
+  candidates: StoppedContainerCandidate[],
+  protectedRefs: ProtectedContainerRefs,
+  nowMs = Date.now(),
+  minStoppedAgeMs = AUTO_PRUNE_MIN_STOPPED_AGE_MS,
+): SafeContainerPruneResult {
+  const protectedIds = protectedRefs.ids.filter(Boolean);
+  const protectedAppIds = new Set(protectedRefs.appIds.filter(Boolean));
+  const result: SafeContainerPruneResult = { prunable: [], protected: [], recent: [] };
+
+  for (const candidate of candidates) {
+    const composeProject = candidate.labels["com.docker.compose.project"];
+    const composeService = candidate.labels["com.docker.compose.service"];
+    const isProtected = protectedIds.some((id) => containerIdMatches(candidate.id, id))
+      || protectedAppIds.has(candidate.name)
+      || (composeProject ? protectedAppIds.has(composeProject) : false)
+      || (composeService ? protectedAppIds.has(composeService) : false);
+
+    if (isProtected) {
+      result.protected.push(candidate);
+      continue;
+    }
+
+    const stoppedAtMs = Date.parse(candidate.stoppedAt);
+    if (!Number.isFinite(stoppedAtMs) || nowMs - stoppedAtMs < minStoppedAgeMs) {
+      result.recent.push(candidate);
+      continue;
+    }
+
+    result.prunable.push(candidate);
+  }
+
+  return result;
+}
+
 /**
  * Returns true if the Docker daemon is OrbStack (detected via socket path).
  * OrbStack provides built-in *.orb.local DNS and mDNS — Talome can skip
@@ -800,17 +866,113 @@ export async function checkDockerConnection(): Promise<{ ok: boolean; error?: st
 
 let pruneInterval: ReturnType<typeof setInterval> | null = null;
 
-export function startPeriodicPrune(intervalMs = 24 * 60 * 60 * 1000): () => void {
+interface PeriodicPruneOptions {
+  intervalMs?: number;
+  initialDelayMs?: number;
+  minStoppedAgeMs?: number;
+  getProtectedContainerRefs: () => ProtectedContainerRefs;
+}
+
+async function getStoppedContainerCandidates(): Promise<StoppedContainerCandidate[]> {
+  const containers = await withRetry(() =>
+    withTimeout(docker.listContainers({ all: true }), 10_000, "list stopped containers"),
+  );
+  const stopped = containers.filter((container) =>
+    container.State === "created" || container.State === "exited" || container.State === "dead",
+  );
+
+  const candidates = await Promise.all(stopped.map(async (container) => {
+    try {
+      const details = await withTimeout(
+        docker.getContainer(container.Id).inspect(),
+        5_000,
+        `inspect stopped container ${container.Id.slice(0, 12)}`,
+      );
+      const finishedAt = details.State.FinishedAt;
+      const stoppedAt = finishedAt && !finishedAt.startsWith("0001-")
+        ? finishedAt
+        : details.Created;
+
+      return {
+        id: container.Id,
+        name: container.Names[0]?.replace(/^\//, "") ?? container.Id.slice(0, 12),
+        labels: container.Labels ?? {},
+        stoppedAt,
+      } satisfies StoppedContainerCandidate;
+    } catch (err) {
+      log.warn(`Skipping stopped container ${container.Id.slice(0, 12)} because it could not be inspected`, err);
+      return null;
+    }
+  }));
+
+  return candidates.filter((candidate): candidate is StoppedContainerCandidate => candidate !== null);
+}
+
+async function pruneOrphanedStoppedContainers(
+  protectedRefs: ProtectedContainerRefs,
+  minStoppedAgeMs: number,
+): Promise<SafeContainerPruneResult & { deleted: StoppedContainerCandidate[] }> {
+  const candidates = await getStoppedContainerCandidates();
+  const classified = classifyStoppedContainers(
+    candidates,
+    protectedRefs,
+    Date.now(),
+    minStoppedAgeMs,
+  );
+  const deleted: StoppedContainerCandidate[] = [];
+
+  for (const candidate of classified.prunable) {
+    try {
+      await withTimeout(
+        docker.getContainer(candidate.id).remove(),
+        15_000,
+        `remove orphaned container ${candidate.name}`,
+      );
+      deleted.push(candidate);
+    } catch (err) {
+      log.warn(`Failed to prune orphaned container ${candidate.name} (${candidate.id.slice(0, 12)})`, err);
+    }
+  }
+
+  return { ...classified, deleted };
+}
+
+export function startPeriodicPrune({
+  intervalMs = 24 * 60 * 60 * 1000,
+  initialDelayMs = 5 * 60 * 1000,
+  minStoppedAgeMs = AUTO_PRUNE_MIN_STOPPED_AGE_MS,
+  getProtectedContainerRefs,
+}: PeriodicPruneOptions): () => void {
   const pruneLog = createLogger("docker-prune");
 
   const doPrune = async () => {
     try {
-      const results = await pruneResources(["containers", "images"]);
+      // Fail closed: if the installed-app inventory cannot be read, do not
+      // run automatic cleanup at all.
+      const protectedRefs = getProtectedContainerRefs();
+      const containers = await pruneOrphanedStoppedContainers(protectedRefs, minStoppedAgeMs);
+      const imageResults = await pruneResources(["images"]);
       const reclaimedMb = Math.round(
-        ((results.containers?.spaceReclaimed ?? 0) + (results.images?.spaceReclaimed ?? 0)) / (1024 * 1024)
+        (imageResults.images?.spaceReclaimed ?? 0) / (1024 * 1024),
       );
-      if (reclaimedMb > 0 || (results.containers?.count ?? 0) > 0 || (results.images?.count ?? 0) > 0) {
-        pruneLog.info(`Pruned ${results.containers?.count ?? 0} containers, ${results.images?.count ?? 0} images (${reclaimedMb}MB reclaimed)`);
+
+      for (const container of containers.deleted) {
+        pruneLog.info(`Pruned orphaned container ${container.name} (${container.id.slice(0, 12)})`, {
+          stoppedAt: container.stoppedAt,
+        });
+      }
+
+      if (containers.protected.length > 0) {
+        pruneLog.debug(`Protected ${containers.protected.length} managed stopped container(s) from pruning`, {
+          containers: containers.protected.map((container) => ({
+            id: container.id.slice(0, 12),
+            name: container.name,
+          })),
+        });
+      }
+
+      if (containers.deleted.length > 0 || (imageResults.images?.count ?? 0) > 0) {
+        pruneLog.info(`Pruned ${containers.deleted.length} orphaned containers, ${imageResults.images?.count ?? 0} images (${reclaimedMb}MB reclaimed)`);
       }
     } catch (err) {
       pruneLog.warn("Periodic prune failed", err);
@@ -821,7 +983,7 @@ export function startPeriodicPrune(intervalMs = 24 * 60 * 60 * 1000): () => void
   const initialTimer = setTimeout(() => {
     void doPrune();
     pruneInterval = setInterval(() => void doPrune(), intervalMs);
-  }, 5 * 60 * 1000);
+  }, initialDelayMs);
 
   return () => {
     clearTimeout(initialTimer);

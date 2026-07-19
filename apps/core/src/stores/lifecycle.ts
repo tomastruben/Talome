@@ -626,9 +626,20 @@ async function composeActionInner(
     }
 
     const newStatus: InstalledAppStatus = action === "stop" ? "stopped" : "running";
+    const containerIds = action === "stop"
+      ? JSON.parse(installed.containerIds) as string[]
+      : await discoverContainers(appId);
+
+    if (action !== "stop" && containerIds.length === 0) {
+      throw new Error(`${app.name} started but its recreated container could not be discovered`);
+    }
 
     db.update(schema.installedApps)
-      .set({ status: newStatus, updatedAt: new Date().toISOString() })
+      .set({
+        status: newStatus,
+        containerIds: JSON.stringify(containerIds),
+        updatedAt: new Date().toISOString(),
+      })
       .where(eq(schema.installedApps.appId, appId))
       .run();
 

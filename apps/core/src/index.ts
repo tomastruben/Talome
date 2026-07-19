@@ -583,8 +583,36 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
   // Start auto-optimize if enabled
   try { startAutoOptimize(); } catch { /* non-fatal */ }
 
-  // Start periodic Docker prune (daily cleanup of stopped containers + dangling images)
-  try { stopPrune = startPeriodicPrune(); } catch { /* non-fatal */ }
+  // Start periodic Docker prune. Containers belonging to installed apps are
+  // protected by both stable app ID and last-known container ID; only old,
+  // orphaned stopped containers may be removed automatically.
+  try {
+    stopPrune = startPeriodicPrune({
+      getProtectedContainerRefs: () => {
+        const installed = db
+          .select({
+            appId: schema.installedApps.appId,
+            containerIds: schema.installedApps.containerIds,
+          })
+          .from(schema.installedApps)
+          .all();
+
+        return {
+          appIds: installed.map((app) => app.appId),
+          ids: installed.flatMap((app) => {
+            try {
+              const parsed = JSON.parse(app.containerIds) as unknown;
+              return Array.isArray(parsed)
+                ? parsed.filter((id): id is string => typeof id === "string" && id.length > 0)
+                : [];
+            } catch {
+              return [];
+            }
+          }),
+        };
+      },
+    });
+  } catch { /* non-fatal */ }
 
   // Periodic self-snapshots of talome.db so users can recover from a
   // volume-corruption / rm incident. Silent no-op if disabled via env.
