@@ -446,6 +446,11 @@ export function DesktopExperience() {
     const existing = windows.find((windowModel) => windowModel.appId === app.id);
     if (existing) {
       focusWindow(existing.id);
+      setWindows((current) => current.map((windowModel) =>
+        windowModel.id === existing.id
+          ? { ...windowModel, title: app.title, url: app.url }
+          : windowModel,
+      ));
       return;
     }
     const zIndex = zIndexRef.current++;
