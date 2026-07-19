@@ -68,7 +68,7 @@ describe("desktop layout persistence", () => {
     expect(isPersistedDesktopLayout({ version: 1, windows: null })).toBe(false);
   });
 
-  it("accepts only valid pinned service app snapshots", () => {
+  it("accepts valid pinned service and Talome app snapshots", () => {
     expect(isPersistedDesktopDock({
       version: 1,
       apps: [{
@@ -80,7 +80,17 @@ describe("desktop layout persistence", () => {
     })).toBe(true);
     expect(isPersistedDesktopDock({
       version: 1,
+      apps: [],
+      appIds: ["automations", "intelligence"],
+    })).toBe(true);
+    expect(isPersistedDesktopDock({
+      version: 1,
       apps: [{ id: "sonarr", name: "Sonarr", url: "javascript:alert(1)" }],
+    })).toBe(false);
+    expect(isPersistedDesktopDock({
+      version: 1,
+      apps: [],
+      appIds: ["automations", 42],
     })).toBe(false);
     expect(isPersistedDesktopDock({ version: 2, apps: [] })).toBe(false);
   });

@@ -257,6 +257,13 @@ function appDefinitionFromNav(item: NavItem): DesktopAppDefinition {
   );
 }
 
+const pinnableTalomeAppById = new Map(
+  allNav
+    .filter((item) => !item.action && item.url !== "/dashboard")
+    .map(appDefinitionFromNav)
+    .map((app) => [app.id, app]),
+);
+
 function serviceAppDefinition({
   id,
   name,
@@ -392,17 +399,23 @@ function readPersistedWindows(area: DesktopArea): DesktopWindowModel[] | null {
   }
 }
 
-function readPersistedDockApps(): PersistedDesktopServiceApp[] {
+function readPersistedDock(): {
+  serviceApps: PersistedDesktopServiceApp[];
+  appIds: string[];
+} {
   try {
     const raw = localStorage.getItem(DESKTOP_DOCK_STORAGE_KEY);
-    if (!raw) return [];
+    if (!raw) return { serviceApps: [], appIds: [] };
     const parsed: unknown = JSON.parse(raw);
-    if (!isPersistedDesktopDock(parsed)) return [];
-    return Array.from(
-      new Map(parsed.apps.map((app) => [app.id, app])).values(),
-    );
+    if (!isPersistedDesktopDock(parsed)) return { serviceApps: [], appIds: [] };
+    return {
+      serviceApps: Array.from(
+        new Map(parsed.apps.map((app) => [app.id, app])).values(),
+      ),
+      appIds: Array.from(new Set(parsed.appIds ?? [])).filter((appId) => appId !== "home"),
+    };
   } catch {
-    return [];
+    return { serviceApps: [], appIds: [] };
   }
 }
 
@@ -475,6 +488,7 @@ export function DesktopExperience() {
   const [pinnedServiceApps, setPinnedServiceApps] = useState<
     PersistedDesktopServiceApp[]
   >([]);
+  const [pinnedAppIds, setPinnedAppIds] = useState<string[]>([]);
   const [appChromeByWindow, setAppChromeByWindow] = useState<
     Record<string, DesktopAppChromeDescriptor>
   >({});
@@ -501,17 +515,26 @@ export function DesktopExperience() {
     () => new Set(pinnedServiceApps.map((app) => app.id)),
     [pinnedServiceApps],
   );
+  const pinnedAppIdSet = useMemo(() => new Set(pinnedAppIds), [pinnedAppIds]);
 
   const visibleDockApps = useMemo(() => {
     const fixedWithoutSettings = dockApps.filter((app) => app.id !== "settings");
     const fixedIds = new Set(dockApps.map((app) => app.id));
-    const pinnedApps = pinnedServiceApps.map((app) => {
+    const pinnedTalomeApps = pinnedAppIds.flatMap((appId): DesktopAppDefinition[] => {
+      const app = pinnableTalomeAppById.get(appId);
+      if (!app) return [];
+      return canUseApp(app) && !fixedIds.has(app.id) ? [app] : [];
+    });
+    const pinnedServiceDefinitions = pinnedServiceApps.map((app) => {
       const current = launchableServiceAppById.get(app.id);
       return serviceAppDefinition(current ?? app);
     });
-    const pinnedAppIds = new Set(pinnedApps.map((app) => app.id));
+    const pinnedDefinitionIds = new Set([
+      ...pinnedTalomeApps.map((app) => app.id),
+      ...pinnedServiceDefinitions.map((app) => app.id),
+    ]);
     const runningApps = windows.flatMap((windowModel): DesktopAppDefinition[] => {
-      if (fixedIds.has(windowModel.appId) || pinnedAppIds.has(windowModel.appId)) return [];
+      if (fixedIds.has(windowModel.appId) || pinnedDefinitionIds.has(windowModel.appId)) return [];
       const serviceId = windowModel.appId.startsWith(SERVICE_APP_PREFIX)
         ? windowModel.appId.slice(SERVICE_APP_PREFIX.length)
         : undefined;
@@ -528,11 +551,18 @@ export function DesktopExperience() {
       return app && canUseApp(app) ? [app] : [];
     });
     const settings = dockApps.filter((app) => app.id === "settings");
-    return [...fixedWithoutSettings, ...pinnedApps, ...runningApps, ...settings];
+    return [
+      ...fixedWithoutSettings,
+      ...pinnedTalomeApps,
+      ...pinnedServiceDefinitions,
+      ...runningApps,
+      ...settings,
+    ];
   }, [
     canUseApp,
     dockApps,
     launchableServiceAppById,
+    pinnedAppIds,
     pinnedServiceApps,
     windows,
   ]);
@@ -596,7 +626,9 @@ export function DesktopExperience() {
 
   useEffect(() => {
     if (!desktopModeAvailable) return;
-    setPinnedServiceApps(readPersistedDockApps());
+    const persistedDock = readPersistedDock();
+    setPinnedServiceApps(persistedDock.serviceApps);
+    setPinnedAppIds(persistedDock.appIds);
     setDockRestored(true);
   }, [desktopModeAvailable]);
 
@@ -625,9 +657,10 @@ export function DesktopExperience() {
       JSON.stringify({
         version: DESKTOP_DOCK_STORAGE_VERSION,
         apps: pinnedServiceApps,
+        appIds: pinnedAppIds,
       }),
     );
-  }, [dockRestored, pinnedServiceApps]);
+  }, [dockRestored, pinnedAppIds, pinnedServiceApps]);
 
   useEffect(() => {
     setWindows((current) => current.map((windowModel) => {
@@ -766,16 +799,24 @@ export function DesktopExperience() {
     openApp(serviceAppDefinition(app));
   }, [openApp]);
 
-  const toggleServiceDockPin = useCallback((app: DesktopAppDefinition) => {
+  const toggleDockPin = useCallback((app: DesktopAppDefinition) => {
     const serviceApp = app.serviceApp;
-    if (!serviceApp) return;
-    setPinnedServiceApps((current) => {
-      const pinned = current.some((candidate) => candidate.id === serviceApp.id);
-      if (pinned) {
-        return current.filter((candidate) => candidate.id !== serviceApp.id);
-      }
-      return [...current, serviceApp];
-    });
+    if (serviceApp) {
+      setPinnedServiceApps((current) => {
+        const pinned = current.some((candidate) => candidate.id === serviceApp.id);
+        if (pinned) {
+          return current.filter((candidate) => candidate.id !== serviceApp.id);
+        }
+        return [...current, serviceApp];
+      });
+      return;
+    }
+    if (appById.has(app.id)) return;
+    setPinnedAppIds((current) => (
+      current.includes(app.id)
+        ? current.filter((appId) => appId !== app.id)
+        : [...current, app.id]
+    ));
   }, []);
 
   const closeWindow = useCallback((id: string) => {
@@ -1327,7 +1368,7 @@ export function DesktopExperience() {
                   windowModel={windowModel}
                   pinned={app.serviceApp
                     ? pinnedServiceIds.has(app.serviceApp.id)
-                    : undefined}
+                    : pinnedAppIdSet.has(app.id)}
                   onOpen={() => openApp(app)}
                   onMinimize={windowModel
                     ? () => void minimizeWindow(windowModel.id, windowModel.appId)
@@ -1335,8 +1376,8 @@ export function DesktopExperience() {
                   onClose={windowModel
                     ? () => closeWindow(windowModel.id)
                     : undefined}
-                  onTogglePin={app.serviceApp
-                    ? () => toggleServiceDockPin(app)
+                  onTogglePin={app.serviceApp || !appById.has(app.id)
+                    ? () => toggleDockPin(app)
                     : undefined}
                 >
                   {dockButton}

@@ -37,6 +37,12 @@ export interface PersistedDesktopServiceApp {
   iconUrl?: string;
 }
 
+export interface PersistedDesktopDock {
+  version: number;
+  apps: PersistedDesktopServiceApp[];
+  appIds?: string[];
+}
+
 const EDGE_INSET = 16;
 const MIN_VISIBLE_TITLEBAR = 120;
 
@@ -151,15 +157,19 @@ function isPersistedDesktopServiceApp(
   );
 }
 
-export function isPersistedDesktopDock(value: unknown): value is {
-  version: number;
-  apps: PersistedDesktopServiceApp[];
-} {
+export function isPersistedDesktopDock(value: unknown): value is PersistedDesktopDock {
   if (!value || typeof value !== "object") return false;
-  const candidate = value as { version?: unknown; apps?: unknown };
+  const candidate = value as { version?: unknown; apps?: unknown; appIds?: unknown };
   return (
     candidate.version === DESKTOP_DOCK_STORAGE_VERSION &&
     Array.isArray(candidate.apps) &&
-    candidate.apps.every(isPersistedDesktopServiceApp)
+    candidate.apps.every(isPersistedDesktopServiceApp) &&
+    (
+      candidate.appIds === undefined ||
+      (
+        Array.isArray(candidate.appIds) &&
+        candidate.appIds.every((appId) => typeof appId === "string" && appId.length > 0)
+      )
+    )
   );
 }
