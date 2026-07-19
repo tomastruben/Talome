@@ -32,9 +32,9 @@ import {
   FolderAddIcon,
   PinIcon,
   PinOffIcon,
-  DashboardSquare02Icon,
   DashboardSquareEditIcon,
   Image01Icon,
+  SlidersHorizontalIcon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import type { FeaturePermission } from "@talome/types";
@@ -47,7 +47,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { SearchField } from "@/components/ui/search-field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   ContextMenu,
@@ -61,6 +60,7 @@ import {
 import { DesktopWindow } from "@/components/desktop/desktop-window";
 import { DesktopLaunchpad } from "@/components/desktop/desktop-launchpad";
 import { DesktopDriveIcons } from "@/components/desktop/desktop-drive-icons";
+import { DesktopControlCenter } from "@/components/desktop/desktop-control-center";
 import {
   DesktopWallpaperDialog,
   DesktopWidgetsPanel,
@@ -130,6 +130,8 @@ interface DesktopWindowModel {
   maximized: boolean;
   zIndex: number;
 }
+
+type DesktopControlCenterView = "main" | "widgets";
 
 const desktopActionIcons: Partial<Record<DesktopAppActionIcon, IconSvgElement>> = {
   projector: Projector01Icon,
@@ -488,7 +490,8 @@ export function DesktopExperience() {
   ]);
   const [activeWindowId, setActiveWindowId] = useState("files");
   const [launchpadOpen, setLaunchpadOpen] = useState(false);
-  const [widgetsOpen, setWidgetsOpen] = useState(false);
+  const [controlCenterOpen, setControlCenterOpen] = useState(false);
+  const [controlCenterView, setControlCenterView] = useState<DesktopControlCenterView>("main");
   const [widgetsEditing, setWidgetsEditing] = useState(false);
   const [wallpaperDialogOpen, setWallpaperDialogOpen] = useState(false);
   const [wallpaperUrl, setWallpaperUrl] = useState<string>();
@@ -866,6 +869,7 @@ export function DesktopExperience() {
   const activeAppActions = appActionsByWindow[activeWindowId] ?? [];
 
   const openSearch = () => {
+    setControlCenterOpen(false);
     document.dispatchEvent(
       new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }),
     );
@@ -873,13 +877,24 @@ export function DesktopExperience() {
 
   const openWidgetEditor = () => {
     setWidgetsEditing(true);
-    setWidgetsOpen(true);
+    setControlCenterView("widgets");
+    setControlCenterOpen(true);
   };
 
   const openWallpaperEditor = () => {
-    setWidgetsOpen(false);
+    setControlCenterOpen(false);
     setWallpaperDialogOpen(true);
   };
+
+  const openControlCenterApp = useCallback((url: string) => {
+    const pathname = url.split("?")[0];
+    const fixedApp = DESKTOP_APPS.find((app) => app.url === pathname);
+    const navItem = allNav.find((item) => item.url === pathname);
+    const app = fixedApp ?? (navItem ? appDefinitionFromNav(navItem) : undefined);
+    if (!app) return;
+    setControlCenterOpen(false);
+    openApp({ ...app, url });
+  }, [openApp]);
 
   const updateWallpaper = useCallback((nextWallpaperUrl?: string) => {
     try {
@@ -1069,47 +1084,73 @@ export function DesktopExperience() {
         )}
 
         <div className="ml-auto flex items-center gap-1">
-          <SearchField
-            containerClassName="hidden w-36 shrink-0 lg:block xl:w-44"
-            className="h-7 cursor-pointer border-border bg-card/70 pr-2 text-xs shadow-none hover:border-foreground/20 hover:bg-muted/30"
-            placeholder="Search Talome"
-            aria-label="Search Talome"
-            aria-haspopup="dialog"
-            readOnly
-            onClick={openSearch}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") return;
-              event.preventDefault();
-              openSearch();
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground"
+                aria-label="Search Talome"
+                aria-haspopup="dialog"
+                onClick={openSearch}
+              >
+                <HugeiconsIcon icon={Search01Icon} size={15} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={8}>
+              Search <span className="ml-2 text-dim-foreground">⌘K</span>
+            </TooltipContent>
+          </Tooltip>
+          <Popover
+            open={controlCenterOpen}
+            onOpenChange={(open) => {
+              if (open) setControlCenterView("main");
+              setControlCenterOpen(open);
             }}
-          />
-          <Popover open={widgetsOpen} onOpenChange={setWidgetsOpen}>
+          >
             <PopoverTrigger asChild>
               <button
                 type="button"
                 className={cn(
                   "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground",
-                  widgetsOpen && "bg-muted/60 text-foreground",
+                  controlCenterOpen && "bg-muted/60 text-foreground",
                 )}
-                aria-label="Widgets"
+                aria-label="Control Center"
                 aria-haspopup="dialog"
               >
-                <HugeiconsIcon icon={DashboardSquare02Icon} size={15} />
+                <HugeiconsIcon icon={SlidersHorizontalIcon} size={15} />
               </button>
             </PopoverTrigger>
             <PopoverContent
               align="end"
               side="bottom"
               sideOffset={8}
-              className="z-[1300] w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border-border/80 bg-background/95 p-0 shadow-xl backdrop-blur-md"
-              aria-label="Widgets panel"
+              className={cn(
+                "z-[1300] overflow-hidden rounded-2xl border-border/80 bg-background/95 p-0 shadow-xl backdrop-blur-md",
+                controlCenterView === "widgets"
+                  ? "w-[min(26rem,calc(100vw-2rem))]"
+                  : "w-[min(23rem,calc(100vw-2rem))]",
+              )}
+              aria-label="Control Center"
             >
-              <DesktopWidgetsPanel
-                controller={widgetLayoutController}
-                editing={widgetsEditing}
-                onEditingChange={setWidgetsEditing}
-                onOpenWallpaper={openWallpaperEditor}
-              />
+              {controlCenterView === "widgets" ? (
+                <DesktopWidgetsPanel
+                  controller={widgetLayoutController}
+                  editing={widgetsEditing}
+                  onEditingChange={setWidgetsEditing}
+                  onOpenWallpaper={openWallpaperEditor}
+                  onBack={() => setControlCenterView("main")}
+                />
+              ) : (
+                <DesktopControlCenter
+                  onOpenAudiobooks={() => openControlCenterApp("/dashboard/audiobooks")}
+                  onOpenDownloads={() => openControlCenterApp("/dashboard/media?tab=downloads")}
+                  onOpenWidgets={() => {
+                    setWidgetsEditing(false);
+                    setControlCenterView("widgets");
+                  }}
+                  onOpenWallpaper={openWallpaperEditor}
+                />
+              )}
             </PopoverContent>
           </Popover>
           <NotificationsBell triggerClassName="size-7" iconSize={15} />

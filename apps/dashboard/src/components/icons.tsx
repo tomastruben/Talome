@@ -96,6 +96,7 @@ export {
   DashboardSquareEditIcon,
   DashboardCircleIcon,
   Settings01Icon,
+  SlidersHorizontalIcon,
   SourceCodeCircleIcon,
   Orbit01Icon,
   Atom01Icon,
