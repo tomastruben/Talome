@@ -72,14 +72,14 @@ describe("DesktopWindow", () => {
     expect(screen.getByText("Assistant")).toHaveAttribute("data-title-placement", "leading");
   });
 
-  it("keeps the title centered when a window has no titlebar actions", () => {
+  it("keeps the title beside the window controls when there are no actions", () => {
     render(
       <DesktopWindow {...defaultProps}>
         <div>Files content</div>
       </DesktopWindow>,
     );
 
-    expect(screen.getByText("Files")).toHaveAttribute("data-title-placement", "center");
+    expect(screen.getByText("Files")).toHaveAttribute("data-title-placement", "leading");
   });
 
   it("renders a titlebar menu and dispatches its selected item", async () => {
