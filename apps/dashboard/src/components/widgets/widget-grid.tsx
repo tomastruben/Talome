@@ -223,6 +223,9 @@ const WidgetItem = React.memo(function WidgetItem({
   const hasHeightOptions = heightOptions.length > 1;
   const hasResizeControls = resizable && (hasWidthOptions || hasHeightOptions);
   const compact = size.cols === 1 && size.rows === 1;
+  const widgetLabel = widgetType.startsWith("widget:")
+    ? widgetType.slice("widget:".length)
+    : WIDGET_LABELS[widgetType as BuiltinWidgetType];
 
   return (
     <DraggableWrapper
@@ -239,6 +242,7 @@ const WidgetItem = React.memo(function WidgetItem({
         <>
           <button
             type="button"
+            aria-label={`Remove ${widgetLabel} widget`}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onRemove(); }}
             className="absolute -top-2 -right-2 z-20 flex items-center justify-center size-7 rounded-full bg-background border border-border/80 text-muted-foreground shadow-sm hover:text-destructive hover:border-destructive/40 transition-colors"
@@ -408,10 +412,14 @@ export function ControlledWidgetGrid({
   controller,
   editMode,
   compact = false,
+  showAddDock = true,
+  maxColumns = 4,
 }: {
   controller: WidgetLayoutController;
   editMode: boolean;
   compact?: boolean;
+  showAddDock?: boolean;
+  maxColumns?: 3 | 4;
 }) {
   const { layout, toggleWidget, addWidget, reorderLayout, resizeWidget } = controller;
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -460,7 +468,7 @@ export function ControlledWidgetGrid({
 
   const availableCols = compact
     ? 2
-    : windowWidth >= 1280
+    : maxColumns === 4 && windowWidth >= 1280
       ? 4
       : windowWidth >= 1024
         ? 3
@@ -469,7 +477,10 @@ export function ControlledWidgetGrid({
           : 1;
   const gridClassName = compact
     ? "grid grid-flow-row-dense grid-cols-2 auto-rows-[10rem] gap-3"
-    : "grid grid-flow-row-dense grid-cols-1 auto-rows-[11rem] gap-4 min-[370px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+    : cn(
+      "grid grid-flow-row-dense grid-cols-1 auto-rows-[11rem] gap-4 min-[370px]:grid-cols-2 lg:grid-cols-3",
+      maxColumns === 4 && "xl:grid-cols-4",
+    );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: POINTER_CONSTRAINT }),
@@ -581,7 +592,7 @@ export function ControlledWidgetGrid({
         )}
       </DndContext>
 
-      {editMode && (
+      {editMode && showAddDock && (
         <WidgetAddDock
           hiddenWidgetTypes={hiddenWidgetTypes}
           hiddenCustomIds={hiddenCustomIds}

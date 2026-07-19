@@ -70,9 +70,7 @@ import {
   type LaunchableApp,
 } from "@/components/widgets/launcher-widget";
 import { NotificationsBell } from "@/components/notifications/notifications-bell";
-import { CpuWidget } from "@/components/widgets/cpu-widget";
-import { MemoryWidget } from "@/components/widgets/memory-widget";
-import { DiskWidget } from "@/components/widgets/disk-widget";
+import { ControlledWidgetGrid } from "@/components/widgets/widget-grid";
 import { allNav, type NavItem } from "@/components/layout/nav-config";
 import {
   DESKTOP_MODE_MEDIA_QUERY,
@@ -80,7 +78,7 @@ import {
 } from "@/hooks/use-desktop-mode";
 import { useUser } from "@/hooks/use-user";
 import { useServiceStacks } from "@/hooks/use-service-stacks";
-import { useWidgetLayout } from "@/hooks/use-widget-layout";
+import { useDesktopWidgetLayout } from "@/hooks/use-desktop-widget-layout";
 import { CORE_URL } from "@/lib/constants";
 import {
   clampDesktopBounds,
@@ -141,7 +139,6 @@ const desktopActionIcons: Partial<Record<DesktopAppActionIcon, IconSvgElement>> 
 
 const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
-const DESKTOP_SYSTEM_WIDGET_TYPES = new Set(["cpu", "memory", "disk"]);
 const DESKTOP_WINDOW_MOTION_SECONDS = 0.19;
 const DESKTOP_WINDOW_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 
@@ -186,19 +183,6 @@ async function playDesktopWindowMotion(
     windowElement.style.pointerEvents = previousPointerEvents;
     clearAnimationStyles();
     window.requestAnimationFrame(clearAnimationStyles);
-  }
-}
-
-function DesktopSystemWidget({ widgetType }: { widgetType: string }) {
-  switch (widgetType) {
-    case "cpu":
-      return <CpuWidget />;
-    case "memory":
-      return <MemoryWidget />;
-    case "disk":
-      return <DiskWidget />;
-    default:
-      return null;
   }
 }
 
@@ -475,7 +459,7 @@ export function DesktopExperience() {
   const desktopModeAvailable = useDesktopModeAvailable();
   const { user, hasPermission } = useUser();
   const { stacks } = useServiceStacks();
-  const widgetLayoutController = useWidgetLayout();
+  const desktopWidgetLayoutController = useDesktopWidgetLayout();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const appFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
   const desktopWindowRefs = useRef(new Map<string, HTMLElement>());
@@ -562,15 +546,6 @@ export function DesktopExperience() {
     pinnedServiceApps,
     windows,
   ]);
-
-  const desktopSystemWidgets = useMemo(
-    () => widgetLayoutController.layout
-      .filter((item) => (
-        item.visible && DESKTOP_SYSTEM_WIDGET_TYPES.has(item.widgetType)
-      ))
-      .slice(0, 3),
-    [widgetLayoutController.layout],
-  );
 
   useEffect(() => {
     if (
@@ -1134,7 +1109,7 @@ export function DesktopExperience() {
             >
               {controlCenterView === "widgets" ? (
                 <DesktopWidgetsPanel
-                  controller={widgetLayoutController}
+                  controller={desktopWidgetLayoutController}
                   editing={widgetsEditing}
                   onEditingChange={setWidgetsEditing}
                   onOpenWallpaper={openWallpaperEditor}
@@ -1229,15 +1204,14 @@ export function DesktopExperience() {
           </ContextMenuContent>
         </ContextMenu>
 
-        {desktopSystemWidgets.length > 0 ? (
-          <div className="pointer-events-none absolute top-6 left-6 z-10 flex w-[min(44rem,calc(100%-3rem))] gap-3 opacity-75">
-            {desktopSystemWidgets.map((widget) => (
-              <div key={widget.instanceId} className="min-w-0 flex-1">
-                <DesktopSystemWidget widgetType={widget.widgetType} />
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <div className="absolute top-6 left-6 z-[1] w-[min(44rem,calc(100%-3rem))] opacity-90">
+          <ControlledWidgetGrid
+            controller={desktopWidgetLayoutController}
+            editMode={false}
+            showAddDock={false}
+            maxColumns={3}
+          />
+        </div>
 
         {showDesktopDrives ? (
           <DesktopDriveIcons
