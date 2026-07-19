@@ -49,6 +49,7 @@ import { SearchField } from "@/components/ui/search-field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   ContextMenu,
+  ContextMenuCheckboxItem,
   ContextMenuContent,
   ContextMenuGroup,
   ContextMenuItem,
@@ -57,6 +58,7 @@ import {
 } from "@/components/ui/context-menu";
 import { DesktopWindow } from "@/components/desktop/desktop-window";
 import { DesktopLaunchpad } from "@/components/desktop/desktop-launchpad";
+import { DesktopDriveIcons } from "@/components/desktop/desktop-drive-icons";
 import {
   DesktopWallpaperDialog,
   DesktopWidgetsPanel,
@@ -132,6 +134,7 @@ const desktopActionIcons: Partial<Record<DesktopAppActionIcon, IconSvgElement>> 
 };
 
 const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
+const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
 const DESKTOP_SYSTEM_WIDGET_TYPES = new Set(["cpu", "memory", "disk"]);
 
 function DesktopSystemWidget({ widgetType }: { widgetType: string }) {
@@ -438,6 +441,7 @@ export function DesktopExperience() {
   const [widgetsEditing, setWidgetsEditing] = useState(false);
   const [wallpaperDialogOpen, setWallpaperDialogOpen] = useState(false);
   const [wallpaperUrl, setWallpaperUrl] = useState<string>();
+  const [showDesktopDrives, setShowDesktopDrives] = useState(true);
   const [restored, setRestored] = useState(false);
   const [dockRestored, setDockRestored] = useState(false);
   const [pinnedServiceApps, setPinnedServiceApps] = useState<
@@ -575,8 +579,10 @@ export function DesktopExperience() {
   useEffect(() => {
     try {
       setWallpaperUrl(localStorage.getItem(DESKTOP_WALLPAPER_STORAGE_KEY) ?? undefined);
+      setShowDesktopDrives(localStorage.getItem(DESKTOP_DRIVES_STORAGE_KEY) !== "false");
     } catch {
       setWallpaperUrl(undefined);
+      setShowDesktopDrives(true);
     }
   }, []);
 
@@ -822,6 +828,24 @@ export function DesktopExperience() {
       return false;
     }
   }, []);
+
+  const updateShowDesktopDrives = useCallback((show: boolean) => {
+    try {
+      localStorage.setItem(DESKTOP_DRIVES_STORAGE_KEY, String(show));
+    } catch {
+      // Keep the current-session preference even when storage is unavailable.
+    }
+    setShowDesktopDrives(show);
+  }, []);
+
+  const openDesktopDrive = useCallback((path: string) => {
+    const filesApp = appById.get("files");
+    if (!filesApp) return;
+    openApp({
+      ...filesApp,
+      url: `/dashboard/files?path=${encodeURIComponent(path)}`,
+    });
+  }, [openApp]);
 
   const logOut = async () => {
     await fetch(`${CORE_URL}/api/auth/logout`, {
@@ -1071,6 +1095,13 @@ export function DesktopExperience() {
           </ContextMenuTrigger>
           <ContextMenuContent className="z-[1300] w-56">
             <ContextMenuGroup>
+              <ContextMenuCheckboxItem
+                checked={showDesktopDrives}
+                onCheckedChange={(checked) => updateShowDesktopDrives(checked === true)}
+              >
+                Show Drives on Desktop
+              </ContextMenuCheckboxItem>
+              <ContextMenuSeparator />
               <ContextMenuItem onSelect={openWidgetEditor}>
                 <HugeiconsIcon icon={DashboardSquareEditIcon} size={16} />
                 Edit Widgets…
@@ -1099,6 +1130,13 @@ export function DesktopExperience() {
               </div>
             ))}
           </div>
+        ) : null}
+
+        {showDesktopDrives ? (
+          <DesktopDriveIcons
+            onOpen={openDesktopDrive}
+            onHide={() => updateShowDesktopDrives(false)}
+          />
         ) : null}
 
         {windows.map((windowModel) => {
