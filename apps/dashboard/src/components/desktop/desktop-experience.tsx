@@ -42,6 +42,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { SearchField } from "@/components/ui/search-field";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -848,15 +849,20 @@ export function DesktopExperience() {
         )}
 
         <div className="ml-auto flex items-center gap-1">
-          <button
-            type="button"
-            className="hidden h-7 items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground xl:flex"
+          <SearchField
+            containerClassName="hidden w-36 shrink-0 lg:block xl:w-44"
+            className="h-7 cursor-pointer border-border bg-card/70 pr-2 text-xs shadow-none hover:border-foreground/20 hover:bg-muted/30"
+            placeholder="Search Talome"
+            aria-label="Search Talome"
+            aria-haspopup="dialog"
+            readOnly
             onClick={openSearch}
-          >
-            <HugeiconsIcon icon={Search01Icon} size={14} />
-            <span>Search</span>
-            <kbd className="rounded border border-border px-1 text-dim-foreground">⌘K</kbd>
-          </button>
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              openSearch();
+            }}
+          />
           <NotificationsBell triggerClassName="size-7" iconSize={15} />
           <DesktopClock />
           <DropdownMenu>
