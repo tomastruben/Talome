@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
@@ -291,12 +292,25 @@ function DesktopWallpaperPicker({
               className="text-background opacity-0 transition-opacity duration-150 group-hover/control:opacity-100"
             />
           </button>
-          <span className="size-3.5 rounded-full bg-status-warning/70" aria-hidden="true" />
-          <span className="size-3.5 rounded-full bg-status-healthy/70" aria-hidden="true" />
+          <button
+            type="button"
+            aria-label="Minimize Desktop Wallpaper"
+            className="size-3.5 cursor-default rounded-full bg-muted-foreground/20"
+            disabled
+          />
+          <button
+            type="button"
+            aria-label="Maximize Desktop Wallpaper"
+            className="size-3.5 cursor-default rounded-full bg-muted-foreground/20"
+            disabled
+          />
         </div>
         <DialogTitle className="pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
           Desktop Wallpaper
         </DialogTitle>
+        <DialogDescription className="sr-only">
+          Choose a Talome wallpaper or upload a custom image.
+        </DialogDescription>
         <span />
       </header>
 
