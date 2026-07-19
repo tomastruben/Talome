@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -27,6 +28,7 @@ import {
   Search01Icon,
   UserIcon,
   Logout01Icon,
+  ArrowLeft01Icon,
   ArrowRight01Icon,
   Package01Icon,
   PinIcon,
@@ -91,6 +93,9 @@ import {
   isPersistedDesktopDock,
   isPersistedDesktopLayout,
   maximizedDesktopBounds,
+  orderDesktopDockIds,
+  reorderDesktopDockIds,
+  type DesktopDockPlacement,
   type PersistedDesktopServiceApp,
   type DesktopArea,
   type DesktopBounds,
@@ -402,20 +407,24 @@ function readPersistedWindows(area: DesktopArea): DesktopWindowModel[] | null {
 function readPersistedDock(): {
   serviceApps: PersistedDesktopServiceApp[];
   appIds: string[];
+  order: string[];
 } {
   try {
     const raw = localStorage.getItem(DESKTOP_DOCK_STORAGE_KEY);
-    if (!raw) return { serviceApps: [], appIds: [] };
+    if (!raw) return { serviceApps: [], appIds: [], order: [] };
     const parsed: unknown = JSON.parse(raw);
-    if (!isPersistedDesktopDock(parsed)) return { serviceApps: [], appIds: [] };
+    if (!isPersistedDesktopDock(parsed)) return { serviceApps: [], appIds: [], order: [] };
     return {
       serviceApps: Array.from(
         new Map(parsed.apps.map((app) => [app.id, app])).values(),
       ),
       appIds: Array.from(new Set(parsed.appIds ?? [])).filter((appId) => appId !== "home"),
+      order: Array.from(new Set(parsed.order ?? [])).filter(
+        (appId) => appId !== "home" && appId !== "settings",
+      ),
     };
   } catch {
-    return { serviceApps: [], appIds: [] };
+    return { serviceApps: [], appIds: [], order: [] };
   }
 }
 
@@ -466,6 +475,7 @@ export function DesktopExperience() {
   const appFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
   const desktopWindowRefs = useRef(new Map<string, HTMLElement>());
   const dockButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const draggingDockAppIdRef = useRef<string | undefined>(undefined);
   const minimizingWindowIdsRef = useRef(new Set<string>());
   const restoringWindowIdsRef = useRef(new Set<string>());
   const zIndexRef = useRef(4);
@@ -489,6 +499,8 @@ export function DesktopExperience() {
     PersistedDesktopServiceApp[]
   >([]);
   const [pinnedAppIds, setPinnedAppIds] = useState<string[]>([]);
+  const [dockOrder, setDockOrder] = useState<string[]>([]);
+  const [draggingDockAppId, setDraggingDockAppId] = useState<string>();
   const [appChromeByWindow, setAppChromeByWindow] = useState<
     Record<string, DesktopAppChromeDescriptor>
   >({});
@@ -551,21 +563,40 @@ export function DesktopExperience() {
       return app && canUseApp(app) ? [app] : [];
     });
     const settings = dockApps.filter((app) => app.id === "settings");
-    return [
+    const naturalApps = [
       ...fixedWithoutSettings,
       ...pinnedTalomeApps,
       ...pinnedServiceDefinitions,
       ...runningApps,
+    ];
+    const naturalById = new Map(naturalApps.map((app) => [app.id, app]));
+    const orderedIds = orderDesktopDockIds(
+      naturalApps.map((app) => app.id),
+      dockOrder,
+    );
+    return [
+      ...orderedIds.flatMap((appId) => {
+        const app = naturalById.get(appId);
+        return app ? [app] : [];
+      }),
       ...settings,
     ];
   }, [
     canUseApp,
+    dockOrder,
     dockApps,
     launchableServiceAppById,
     pinnedAppIds,
     pinnedServiceApps,
     windows,
   ]);
+
+  const reorderableDockAppIds = useMemo(
+    () => visibleDockApps
+      .filter((app) => app.id !== "settings")
+      .map((app) => app.id),
+    [visibleDockApps],
+  );
 
   const windowByAppId = useMemo(
     () => new Map(windows.map((windowModel) => [windowModel.appId, windowModel])),
@@ -629,6 +660,7 @@ export function DesktopExperience() {
     const persistedDock = readPersistedDock();
     setPinnedServiceApps(persistedDock.serviceApps);
     setPinnedAppIds(persistedDock.appIds);
+    setDockOrder(persistedDock.order);
     setDockRestored(true);
   }, [desktopModeAvailable]);
 
@@ -658,9 +690,10 @@ export function DesktopExperience() {
         version: DESKTOP_DOCK_STORAGE_VERSION,
         apps: pinnedServiceApps,
         appIds: pinnedAppIds,
+        order: dockOrder,
       }),
     );
-  }, [dockRestored, pinnedAppIds, pinnedServiceApps]);
+  }, [dockOrder, dockRestored, pinnedAppIds, pinnedServiceApps]);
 
   useEffect(() => {
     setWindows((current) => current.map((windowModel) => {
@@ -817,6 +850,61 @@ export function DesktopExperience() {
         ? current.filter((appId) => appId !== app.id)
         : [...current, app.id]
     ));
+  }, []);
+
+  const reorderDockApp = useCallback((
+    sourceId: string,
+    targetId: string,
+    placement: DesktopDockPlacement,
+  ) => {
+    setDockOrder(reorderDesktopDockIds(
+      reorderableDockAppIds,
+      sourceId,
+      targetId,
+      placement,
+    ));
+  }, [reorderableDockAppIds]);
+
+  const moveDockApp = useCallback((appId: string, direction: "left" | "right") => {
+    const appIndex = reorderableDockAppIds.indexOf(appId);
+    const targetIndex = appIndex + (direction === "left" ? -1 : 1);
+    const targetId = reorderableDockAppIds[targetIndex];
+    if (!targetId) return;
+    reorderDockApp(
+      appId,
+      targetId,
+      direction === "left" ? "before" : "after",
+    );
+  }, [reorderableDockAppIds, reorderDockApp]);
+
+  const handleDockDragStart = useCallback((
+    event: ReactDragEvent<HTMLDivElement>,
+    appId: string,
+  ) => {
+    draggingDockAppIdRef.current = appId;
+    setDraggingDockAppId(appId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", appId);
+  }, []);
+
+  const handleDockDragOver = useCallback((
+    event: ReactDragEvent<HTMLDivElement>,
+    targetId: string,
+  ) => {
+    const sourceId = draggingDockAppIdRef.current;
+    if (!sourceId || sourceId === targetId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const placement = event.clientX < bounds.left + bounds.width / 2
+      ? "before"
+      : "after";
+    reorderDockApp(sourceId, targetId, placement);
+  }, [reorderDockApp]);
+
+  const finishDockDrag = useCallback(() => {
+    draggingDockAppIdRef.current = undefined;
+    setDraggingDockAppId(undefined);
   }, []);
 
   const closeWindow = useCallback((id: string) => {
@@ -1322,6 +1410,8 @@ export function DesktopExperience() {
           </ContextMenu>
           {visibleDockApps.map((app) => {
             const windowModel = windowByAppId.get(app.id);
+            const dockIndex = reorderableDockAppIds.indexOf(app.id);
+            const canReorder = dockIndex >= 0;
             const dockButton = (
               <DockButton
                 label={app.title}
@@ -1343,7 +1433,30 @@ export function DesktopExperience() {
               />
             );
             return (
-              <div key={app.id} className="flex items-center gap-1">
+              <div
+                key={app.id}
+                data-dock-app-id={app.id}
+                draggable={canReorder}
+                aria-grabbed={canReorder ? draggingDockAppId === app.id : undefined}
+                className={cn(
+                  "flex items-center gap-1",
+                  canReorder && "cursor-grab active:cursor-grabbing",
+                  draggingDockAppId === app.id && "opacity-60",
+                )}
+                onDragStart={canReorder
+                  ? (event) => handleDockDragStart(event, app.id)
+                  : undefined}
+                onDragOver={canReorder
+                  ? (event) => handleDockDragOver(event, app.id)
+                  : undefined}
+                onDrop={canReorder
+                  ? (event) => {
+                    event.preventDefault();
+                    finishDockDrag();
+                  }
+                  : undefined}
+                onDragEnd={canReorder ? finishDockDrag : undefined}
+              >
                 {app.id === "settings" && (
                   <span className="mx-1 h-9 w-px bg-border" />
                 )}
@@ -1362,6 +1475,13 @@ export function DesktopExperience() {
                     : undefined}
                   onTogglePin={app.serviceApp || !appById.has(app.id)
                     ? () => toggleDockPin(app)
+                    : undefined}
+                  showReorder={canReorder}
+                  onMoveLeft={dockIndex > 0
+                    ? () => moveDockApp(app.id, "left")
+                    : undefined}
+                  onMoveRight={dockIndex < reorderableDockAppIds.length - 1
+                    ? () => moveDockApp(app.id, "right")
                     : undefined}
                 >
                   {dockButton}
@@ -1391,6 +1511,9 @@ interface DockAppContextMenuProps {
   onMinimize?: () => void;
   onClose?: () => void;
   onTogglePin?: () => void;
+  showReorder?: boolean;
+  onMoveLeft?: () => void;
+  onMoveRight?: () => void;
 }
 
 function DockAppContextMenu({
@@ -1402,6 +1525,9 @@ function DockAppContextMenu({
   onMinimize,
   onClose,
   onTogglePin,
+  showReorder,
+  onMoveLeft,
+  onMoveRight,
 }: DockAppContextMenuProps) {
   const primaryLabel = windowModel
     ? windowModel.minimized
@@ -1424,6 +1550,21 @@ function DockAppContextMenu({
             <ContextMenuItem onSelect={onClose}>Close {title}</ContextMenuItem>
           ) : null}
         </ContextMenuGroup>
+        {showReorder ? (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuGroup>
+              <ContextMenuItem disabled={!onMoveLeft} onSelect={onMoveLeft}>
+                <HugeiconsIcon icon={ArrowLeft01Icon} size={16} />
+                Move Left
+              </ContextMenuItem>
+              <ContextMenuItem disabled={!onMoveRight} onSelect={onMoveRight}>
+                <HugeiconsIcon icon={ArrowRight01Icon} size={16} />
+                Move Right
+              </ContextMenuItem>
+            </ContextMenuGroup>
+          </>
+        ) : null}
         {onTogglePin ? (
           <>
             <ContextMenuSeparator />

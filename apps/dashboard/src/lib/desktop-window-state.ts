@@ -41,6 +41,49 @@ export interface PersistedDesktopDock {
   version: number;
   apps: PersistedDesktopServiceApp[];
   appIds?: string[];
+  order?: string[];
+}
+
+export type DesktopDockPlacement = "before" | "after";
+
+export function orderDesktopDockIds(
+  visibleIds: string[],
+  preferredOrder: string[],
+): string[] {
+  const visible = new Set(visibleIds);
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+
+  for (const appId of preferredOrder) {
+    if (!visible.has(appId) || seen.has(appId)) continue;
+    seen.add(appId);
+    ordered.push(appId);
+  }
+
+  for (const appId of visibleIds) {
+    if (seen.has(appId)) continue;
+    seen.add(appId);
+    ordered.push(appId);
+  }
+
+  return ordered;
+}
+
+export function reorderDesktopDockIds(
+  visibleIds: string[],
+  sourceId: string,
+  targetId: string,
+  placement: DesktopDockPlacement,
+): string[] {
+  const ordered = Array.from(new Set(visibleIds));
+  if (sourceId === targetId || !ordered.includes(sourceId) || !ordered.includes(targetId)) {
+    return ordered;
+  }
+
+  const withoutSource = ordered.filter((appId) => appId !== sourceId);
+  const targetIndex = withoutSource.indexOf(targetId);
+  withoutSource.splice(targetIndex + (placement === "after" ? 1 : 0), 0, sourceId);
+  return withoutSource;
 }
 
 const EDGE_INSET = 16;
@@ -159,7 +202,12 @@ function isPersistedDesktopServiceApp(
 
 export function isPersistedDesktopDock(value: unknown): value is PersistedDesktopDock {
   if (!value || typeof value !== "object") return false;
-  const candidate = value as { version?: unknown; apps?: unknown; appIds?: unknown };
+  const candidate = value as {
+    version?: unknown;
+    apps?: unknown;
+    appIds?: unknown;
+    order?: unknown;
+  };
   return (
     candidate.version === DESKTOP_DOCK_STORAGE_VERSION &&
     Array.isArray(candidate.apps) &&
@@ -169,6 +217,13 @@ export function isPersistedDesktopDock(value: unknown): value is PersistedDeskto
       (
         Array.isArray(candidate.appIds) &&
         candidate.appIds.every((appId) => typeof appId === "string" && appId.length > 0)
+      )
+    ) &&
+    (
+      candidate.order === undefined ||
+      (
+        Array.isArray(candidate.order) &&
+        candidate.order.every((appId) => typeof appId === "string" && appId.length > 0)
       )
     )
   );

@@ -6,6 +6,8 @@ import {
   isPersistedDesktopDock,
   isPersistedDesktopLayout,
   maximizedDesktopBounds,
+  orderDesktopDockIds,
+  reorderDesktopDockIds,
 } from "@/lib/desktop-window-state";
 
 describe("desktop window geometry", () => {
@@ -82,6 +84,7 @@ describe("desktop layout persistence", () => {
       version: 1,
       apps: [],
       appIds: ["automations", "intelligence"],
+      order: ["media", "assistant", "automations"],
     })).toBe(true);
     expect(isPersistedDesktopDock({
       version: 1,
@@ -92,6 +95,34 @@ describe("desktop layout persistence", () => {
       apps: [],
       appIds: ["automations", 42],
     })).toBe(false);
+    expect(isPersistedDesktopDock({
+      version: 1,
+      apps: [],
+      order: ["media", 42],
+    })).toBe(false);
     expect(isPersistedDesktopDock({ version: 2, apps: [] })).toBe(false);
+  });
+
+  it("orders visible Dock apps from a saved preference and appends new apps", () => {
+    expect(orderDesktopDockIds(
+      ["files", "media", "assistant", "audiobooks"],
+      ["audiobooks", "files", "missing", "audiobooks"],
+    )).toEqual(["audiobooks", "files", "media", "assistant"]);
+  });
+
+  it("reorders Dock apps before or after a target", () => {
+    const ids = ["files", "media", "assistant", "audiobooks"];
+    expect(reorderDesktopDockIds(ids, "audiobooks", "media", "before")).toEqual([
+      "files",
+      "audiobooks",
+      "media",
+      "assistant",
+    ]);
+    expect(reorderDesktopDockIds(ids, "files", "assistant", "after")).toEqual([
+      "media",
+      "assistant",
+      "files",
+      "audiobooks",
+    ]);
   });
 });
