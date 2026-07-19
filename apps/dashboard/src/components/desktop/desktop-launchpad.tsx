@@ -25,6 +25,7 @@ export function DesktopLaunchpad({
   const { user, hasPermission } = useUser();
   const apps = allNav.filter((item) => {
     if (item.action) return false;
+    if (item.url === "/dashboard") return false;
     if (item.adminOnly && user?.role !== "admin") return false;
     return !item.permission || hasPermission(item.permission);
   });

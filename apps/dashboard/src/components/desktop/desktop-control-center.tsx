@@ -21,7 +21,7 @@ import { useDownloads } from "@/hooks/use-downloads";
 interface DesktopControlCenterProps {
   onOpenAudiobooks: () => void;
   onOpenDownloads: () => void;
-  onOpenWidgets: () => void;
+  onOpenDashboard: () => void;
   onOpenWallpaper: () => void;
 }
 
@@ -96,7 +96,7 @@ function ControlCenterSection({ children }: { children: ReactNode }) {
 export function DesktopControlCenter({
   onOpenAudiobooks,
   onOpenDownloads,
-  onOpenWidgets,
+  onOpenDashboard,
   onOpenWallpaper,
 }: DesktopControlCenterProps) {
   const { book, state, togglePlay, stop } = useAudiobookPlayer();
@@ -134,9 +134,9 @@ export function DesktopControlCenter({
       <div className="grid grid-cols-2 gap-2">
         <ControlCenterTile
           icon={DashboardSquare02Icon}
-          label="Widgets"
-          detail="Arrange desktop"
-          onClick={onOpenWidgets}
+          label="Dashboard"
+          detail="Classic widget layout"
+          onClick={onOpenDashboard}
         />
         <ControlCenterTile
           icon={Image01Icon}

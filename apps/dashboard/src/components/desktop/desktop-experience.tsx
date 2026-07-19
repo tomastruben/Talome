@@ -78,6 +78,7 @@ import {
 import { useUser } from "@/hooks/use-user";
 import { useServiceStacks } from "@/hooks/use-service-stacks";
 import { useDesktopWidgetLayout } from "@/hooks/use-desktop-widget-layout";
+import { useWidgetLayout } from "@/hooks/use-widget-layout";
 import { CORE_URL } from "@/lib/constants";
 import {
   clampDesktopBounds,
@@ -127,7 +128,7 @@ interface DesktopWindowModel {
   zIndex: number;
 }
 
-type DesktopControlCenterView = "main" | "widgets";
+type DesktopControlCenterView = "main" | "dashboard" | "desktop-widgets";
 
 const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
@@ -191,14 +192,6 @@ function removeWindowChrome(
 }
 
 const DESKTOP_APPS: DesktopAppDefinition[] = [
-  {
-    id: "home",
-    title: "Home",
-    url: "/dashboard",
-    icon: Home01Icon,
-    permission: "dashboard",
-    minimum: { width: 480, height: 340 },
-  },
   {
     id: "files",
     title: "Files",
@@ -363,6 +356,7 @@ function readPersistedWindows(area: DesktopArea): DesktopWindowModel[] | null {
     const windows = parsed.windows.flatMap((value): DesktopWindowModel[] => {
       if (!value || typeof value !== "object") return [];
       const candidate = value as Partial<DesktopWindowModel>;
+      if (candidate.appId === "home" || candidate.url === "/dashboard") return [];
       const app = candidate.appId && candidate.url
         ? resolveAppDefinition(candidate.appId, candidate.url, candidate.title)
         : undefined;
@@ -453,6 +447,7 @@ export function DesktopExperience() {
   const desktopModeAvailable = useDesktopModeAvailable();
   const { user, hasPermission } = useUser();
   const { stacks } = useServiceStacks();
+  const dashboardWidgetLayoutController = useWidgetLayout();
   const desktopWidgetLayoutController = useDesktopWidgetLayout();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const appFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
@@ -470,7 +465,8 @@ export function DesktopExperience() {
   const [launchpadOpen, setLaunchpadOpen] = useState(false);
   const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [controlCenterView, setControlCenterView] = useState<DesktopControlCenterView>("main");
-  const [widgetsEditing, setWidgetsEditing] = useState(false);
+  const [dashboardEditing, setDashboardEditing] = useState(false);
+  const [desktopWidgetsEditing, setDesktopWidgetsEditing] = useState(false);
   const [wallpaperDialogOpen, setWallpaperDialogOpen] = useState(false);
   const [wallpaperUrl, setWallpaperUrl] = useState<string>();
   const [showDesktopDrives, setShowDesktopDrives] = useState(true);
@@ -761,6 +757,7 @@ export function DesktopExperience() {
 
   const launchNavItem = useCallback((item: NavItem) => {
     setLaunchpadOpen(false);
+    if (item.url === "/dashboard") return;
     openApp(appDefinitionFromNav(item));
   }, [openApp]);
 
@@ -856,9 +853,9 @@ export function DesktopExperience() {
     );
   };
 
-  const openWidgetEditor = () => {
-    setWidgetsEditing(true);
-    setControlCenterView("widgets");
+  const openDesktopWidgetEditor = () => {
+    setDesktopWidgetsEditing(true);
+    setControlCenterView("desktop-widgets");
     setControlCenterOpen(true);
   };
 
@@ -1078,26 +1075,37 @@ export function DesktopExperience() {
               sideOffset={8}
               className={cn(
                 "z-[1300] overflow-hidden rounded-2xl border-border/80 bg-background/95 p-0 shadow-xl backdrop-blur-md",
-                controlCenterView === "widgets"
+                controlCenterView !== "main"
                   ? "w-[min(26rem,calc(100vw-2rem))]"
                   : "w-[min(23rem,calc(100vw-2rem))]",
               )}
               aria-label="Control Center"
             >
-              {controlCenterView === "widgets" ? (
+              {controlCenterView === "dashboard" ? (
+                <DesktopWidgetsPanel
+                  controller={dashboardWidgetLayoutController}
+                  title="Dashboard"
+                  subtitle={`${dashboardWidgetLayoutController.layout.filter((widget) => widget.visible).length} widgets · same layout as classic mode`}
+                  editing={dashboardEditing}
+                  onEditingChange={setDashboardEditing}
+                  onBack={() => setControlCenterView("main")}
+                />
+              ) : controlCenterView === "desktop-widgets" ? (
                 <DesktopWidgetsPanel
                   controller={desktopWidgetLayoutController}
-                  editing={widgetsEditing}
-                  onEditingChange={setWidgetsEditing}
+                  title="Desktop Widgets"
+                  subtitle={`${desktopWidgetLayoutController.layout.filter((widget) => widget.visible).length} shown on Desktop`}
+                  editing={desktopWidgetsEditing}
+                  onEditingChange={setDesktopWidgetsEditing}
                   onBack={() => setControlCenterView("main")}
                 />
               ) : (
                 <DesktopControlCenter
                   onOpenAudiobooks={() => openControlCenterApp("/dashboard/audiobooks")}
                   onOpenDownloads={() => openControlCenterApp("/dashboard/media?tab=downloads")}
-                  onOpenWidgets={() => {
-                    setWidgetsEditing(false);
-                    setControlCenterView("widgets");
+                  onOpenDashboard={() => {
+                    setDashboardEditing(false);
+                    setControlCenterView("dashboard");
                   }}
                   onOpenWallpaper={openWallpaperEditor}
                 />
@@ -1160,9 +1168,9 @@ export function DesktopExperience() {
                 Show Drives on Desktop
               </ContextMenuCheckboxItem>
               <ContextMenuSeparator />
-              <ContextMenuItem onSelect={openWidgetEditor}>
+              <ContextMenuItem onSelect={openDesktopWidgetEditor}>
                 <HugeiconsIcon icon={DashboardSquareEditIcon} size={16} />
-                Edit Widgets…
+                Edit Desktop Widgets…
               </ContextMenuItem>
               <ContextMenuItem onSelect={openWallpaperEditor}>
                 <HugeiconsIcon icon={Image01Icon} size={16} />

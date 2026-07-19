@@ -141,6 +141,8 @@ function WallpaperPresetButton({
 
 interface DesktopWidgetsPanelProps {
   controller: WidgetLayoutController;
+  title: string;
+  subtitle: string;
   editing: boolean;
   onEditingChange: (editing: boolean) => void;
   onBack?: () => void;
@@ -148,12 +150,12 @@ interface DesktopWidgetsPanelProps {
 
 export function DesktopWidgetsPanel({
   controller,
+  title,
+  subtitle,
   editing,
   onEditingChange,
   onBack,
 }: DesktopWidgetsPanelProps) {
-  const visibleWidgetCount = controller.layout.filter((widget) => widget.visible).length;
-
   return (
     <div className="flex h-[min(44rem,calc(100dvh-4rem))] min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-3 border-b border-border/70 px-4 py-3">
@@ -170,10 +172,8 @@ export function DesktopWidgetsPanel({
           </Button>
         ) : null}
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-medium">Widgets</h2>
-          <p className="text-xs text-muted-foreground">
-            {visibleWidgetCount} shown on Desktop
-          </p>
+          <h2 className="text-base font-medium">{title}</h2>
+          <p className="text-xs text-muted-foreground">{subtitle}</p>
         </div>
         <Button
           type="button"
