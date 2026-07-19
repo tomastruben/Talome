@@ -61,6 +61,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 const POINTER_CONSTRAINT = { distance: 8 } as const;
 const TWO_COL_BREAKPOINT = 370;
 
+export type WidgetLayoutController = ReturnType<typeof useWidgetLayout>;
+
 const WIDGET_LABELS: Record<BuiltinWidgetType, string> = {
   cpu:                  "CPU",
   memory:               "Memory",
@@ -326,11 +328,13 @@ function WidgetAddDock({
   hiddenCustomIds,
   availableManifestIds,
   onAdd,
+  inline = false,
 }: {
   hiddenWidgetTypes: BuiltinWidgetType[];
   hiddenCustomIds: string[];
   availableManifestIds: string[];
   onAdd: (widgetType: WidgetType) => void;
+  inline?: boolean;
 }) {
   const addableIds: BuiltinWidgetType[] = [...hiddenWidgetTypes];
   if (!addableIds.includes("divider")) addableIds.push("divider");
@@ -339,7 +343,11 @@ function WidgetAddDock({
   const totalAddable = addableIds.length + (DECLARATIVE_WIDGETS_ENABLED ? addableCustomIds.length : 0);
 
   return (
-    <div className="fixed bottom-6 right-6 z-40">
+    <div className={cn(
+      inline
+        ? "sticky bottom-0 z-20 flex justify-end bg-background/95 pt-3"
+        : "fixed right-6 bottom-6 z-40",
+    )}>
       <Popover>
         <PopoverTrigger asChild>
           <button
@@ -355,9 +363,9 @@ function WidgetAddDock({
         </PopoverTrigger>
         <PopoverContent
           align="end"
-          side="top"
+          side={inline ? "left" : "top"}
           sideOffset={10}
-          className="w-[min(28rem,calc(100vw-2rem))] rounded-xl border border-border/70 bg-background/95 p-3 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-background/80"
+          className="z-[1400] w-[min(28rem,calc(100vw-2rem))] rounded-xl border border-border/70 bg-background/95 p-3 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-background/80"
         >
           <p className="mb-3 text-xs font-medium uppercase tracking-widest text-muted-foreground">
             Add widget
@@ -396,9 +404,16 @@ function WidgetAddDock({
 
 // ── Main Grid ─────────────────────────────────────────────────────────────────
 
-export function WidgetGrid() {
-  const { layout, toggleWidget, addWidget, reorderLayout, resizeWidget } = useWidgetLayout();
-  const { editMode } = useWidgetEdit();
+export function ControlledWidgetGrid({
+  controller,
+  editMode,
+  compact = false,
+}: {
+  controller: WidgetLayoutController;
+  editMode: boolean;
+  compact?: boolean;
+}) {
+  const { layout, toggleWidget, addWidget, reorderLayout, resizeWidget } = controller;
   const [activeId, setActiveId] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [windowWidth, setWindowWidth] = useState<number>(0);
@@ -443,7 +458,18 @@ export function WidgetGrid() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
-  const availableCols = windowWidth >= 1280 ? 4 : windowWidth >= 1024 ? 3 : windowWidth >= TWO_COL_BREAKPOINT ? 2 : 1;
+  const availableCols = compact
+    ? 2
+    : windowWidth >= 1280
+      ? 4
+      : windowWidth >= 1024
+        ? 3
+        : windowWidth >= TWO_COL_BREAKPOINT
+          ? 2
+          : 1;
+  const gridClassName = compact
+    ? "grid grid-flow-row-dense grid-cols-2 auto-rows-[10rem] gap-3"
+    : "grid grid-flow-row-dense grid-cols-1 auto-rows-[11rem] gap-4 min-[370px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: POINTER_CONSTRAINT }),
@@ -491,7 +517,7 @@ export function WidgetGrid() {
   }, [layout, reorderLayout, resizeWidget, availableCols]);
 
   const gridContent = (
-    <div className="grid grid-cols-1 min-[370px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 grid-flow-row-dense gap-4 auto-rows-[11rem]">
+    <div className={gridClassName}>
       {visibleItems.map((w) => {
         const size = w.size ?? defaultSize(w.widgetType);
         return (
@@ -515,8 +541,8 @@ export function WidgetGrid() {
 
   if (!mounted) {
     return (
-      <div className="grid grid-cols-1 min-[370px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 grid-flow-row-dense gap-4 auto-rows-[11rem]">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className={gridClassName}>
+        {Array.from({ length: compact ? 4 : 6 }).map((_, i) => (
           <Widget key={`widget-skeleton-${i}`}>
             <div className="px-4 py-3 border-b border-border/60">
               <Skeleton className="h-3 w-20" />
@@ -561,8 +587,20 @@ export function WidgetGrid() {
           hiddenCustomIds={hiddenCustomIds}
           availableManifestIds={availableManifestIds}
           onAdd={(widgetType) => addWidget(widgetType)}
+          inline={compact}
         />
       )}
     </div>
+  );
+}
+
+export function WidgetGrid() {
+  const controller = useWidgetLayout();
+  const { editMode } = useWidgetEdit();
+  return (
+    <ControlledWidgetGrid
+      controller={controller}
+      editMode={editMode}
+    />
   );
 }

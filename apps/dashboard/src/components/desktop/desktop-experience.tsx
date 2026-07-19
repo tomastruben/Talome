@@ -30,6 +30,9 @@ import {
   FolderAddIcon,
   PinIcon,
   PinOffIcon,
+  DashboardSquare02Icon,
+  DashboardSquareEditIcon,
+  Image01Icon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import type { FeaturePermission } from "@talome/types";
@@ -43,6 +46,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SearchField } from "@/components/ui/search-field";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -53,6 +57,10 @@ import {
 } from "@/components/ui/context-menu";
 import { DesktopWindow } from "@/components/desktop/desktop-window";
 import { DesktopLaunchpad } from "@/components/desktop/desktop-launchpad";
+import {
+  DesktopWallpaperDialog,
+  DesktopWidgetsPanel,
+} from "@/components/desktop/desktop-customization";
 import {
   extractLaunchableApps,
   type LaunchableApp,
@@ -68,6 +76,7 @@ import {
 } from "@/hooks/use-desktop-mode";
 import { useUser } from "@/hooks/use-user";
 import { useServiceStacks } from "@/hooks/use-service-stacks";
+import { useWidgetLayout } from "@/hooks/use-widget-layout";
 import { CORE_URL } from "@/lib/constants";
 import {
   clampDesktopBounds,
@@ -121,6 +130,22 @@ const desktopActionIcons: Partial<Record<DesktopAppActionIcon, IconSvgElement>> 
   upload: CloudUploadIcon,
   "new-folder": FolderAddIcon,
 };
+
+const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
+const DESKTOP_SYSTEM_WIDGET_TYPES = new Set(["cpu", "memory", "disk"]);
+
+function DesktopSystemWidget({ widgetType }: { widgetType: string }) {
+  switch (widgetType) {
+    case "cpu":
+      return <CpuWidget />;
+    case "memory":
+      return <MemoryWidget />;
+    case "disk":
+      return <DiskWidget />;
+    default:
+      return null;
+  }
+}
 
 function removeWindowActions(
   current: Record<string, DesktopAppActionDescriptor[]>,
@@ -395,6 +420,7 @@ export function DesktopExperience() {
   const desktopModeAvailable = useDesktopModeAvailable();
   const { user, hasPermission } = useUser();
   const { stacks } = useServiceStacks();
+  const widgetLayoutController = useWidgetLayout();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const appFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
   const desktopWindowRefs = useRef(new Map<string, HTMLElement>());
@@ -408,6 +434,10 @@ export function DesktopExperience() {
   ]);
   const [activeWindowId, setActiveWindowId] = useState("files");
   const [launchpadOpen, setLaunchpadOpen] = useState(false);
+  const [widgetsOpen, setWidgetsOpen] = useState(false);
+  const [widgetsEditing, setWidgetsEditing] = useState(false);
+  const [wallpaperDialogOpen, setWallpaperDialogOpen] = useState(false);
+  const [wallpaperUrl, setWallpaperUrl] = useState<string>();
   const [restored, setRestored] = useState(false);
   const [dockRestored, setDockRestored] = useState(false);
   const [pinnedServiceApps, setPinnedServiceApps] = useState<
@@ -475,6 +505,15 @@ export function DesktopExperience() {
     windows,
   ]);
 
+  const desktopSystemWidgets = useMemo(
+    () => widgetLayoutController.layout
+      .filter((item) => (
+        item.visible && DESKTOP_SYSTEM_WIDGET_TYPES.has(item.widgetType)
+      ))
+      .slice(0, 3),
+    [widgetLayoutController.layout],
+  );
+
   useEffect(() => {
     if (
       !desktopModeAvailable &&
@@ -532,6 +571,14 @@ export function DesktopExperience() {
     setPinnedServiceApps(readPersistedDockApps());
     setDockRestored(true);
   }, [desktopModeAvailable]);
+
+  useEffect(() => {
+    try {
+      setWallpaperUrl(localStorage.getItem(DESKTOP_WALLPAPER_STORAGE_KEY) ?? undefined);
+    } catch {
+      setWallpaperUrl(undefined);
+    }
+  }, []);
 
   useEffect(() => {
     if (!restored) return;
@@ -752,6 +799,30 @@ export function DesktopExperience() {
     );
   };
 
+  const openWidgetEditor = () => {
+    setWidgetsEditing(true);
+    setWidgetsOpen(true);
+  };
+
+  const openWallpaperEditor = () => {
+    setWidgetsOpen(false);
+    setWallpaperDialogOpen(true);
+  };
+
+  const updateWallpaper = useCallback((nextWallpaperUrl?: string) => {
+    try {
+      if (nextWallpaperUrl) {
+        localStorage.setItem(DESKTOP_WALLPAPER_STORAGE_KEY, nextWallpaperUrl);
+      } else {
+        localStorage.removeItem(DESKTOP_WALLPAPER_STORAGE_KEY);
+      }
+      setWallpaperUrl(nextWallpaperUrl);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const logOut = async () => {
     await fetch(`${CORE_URL}/api/auth/logout`, {
       method: "POST",
@@ -922,6 +993,35 @@ export function DesktopExperience() {
               openSearch();
             }}
           />
+          <Popover open={widgetsOpen} onOpenChange={setWidgetsOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground",
+                  widgetsOpen && "bg-muted/60 text-foreground",
+                )}
+                aria-label="Widgets"
+                aria-haspopup="dialog"
+              >
+                <HugeiconsIcon icon={DashboardSquare02Icon} size={15} />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              side="bottom"
+              sideOffset={8}
+              className="z-[1300] w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border-border/80 bg-background/95 p-0 shadow-xl backdrop-blur-md"
+              aria-label="Widgets panel"
+            >
+              <DesktopWidgetsPanel
+                controller={widgetLayoutController}
+                editing={widgetsEditing}
+                onEditingChange={setWidgetsEditing}
+                onOpenWallpaper={openWallpaperEditor}
+              />
+            </PopoverContent>
+          </Popover>
           <NotificationsBell triggerClassName="size-7" iconSize={15} />
           <DesktopClock />
           <DropdownMenu>
@@ -951,11 +1051,55 @@ export function DesktopExperience() {
       </header>
 
       <div ref={workspaceRef} className="relative flex-1 min-h-0 overflow-hidden bg-background">
-        <div className="pointer-events-none absolute top-6 left-6 z-0 grid w-[min(44rem,calc(100%-3rem))] grid-cols-3 gap-3 opacity-75">
-          <CpuWidget />
-          <MemoryWidget />
-          <DiskWidget />
-        </div>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              className="absolute inset-0 z-0 overflow-hidden"
+              aria-label="Desktop background"
+            >
+              {wallpaperUrl ? (
+                <Image
+                  src={wallpaperUrl}
+                  alt=""
+                  fill
+                  unoptimized
+                  sizes="100vw"
+                  className="object-cover"
+                />
+              ) : null}
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="z-[1300] w-56">
+            <ContextMenuGroup>
+              <ContextMenuItem onSelect={openWidgetEditor}>
+                <HugeiconsIcon icon={DashboardSquareEditIcon} size={16} />
+                Edit Widgets…
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={openWallpaperEditor}>
+                <HugeiconsIcon icon={Image01Icon} size={16} />
+                Change Wallpaper…
+              </ContextMenuItem>
+            </ContextMenuGroup>
+            {wallpaperUrl ? (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => updateWallpaper(undefined)}>
+                  Use Default Wallpaper
+                </ContextMenuItem>
+              </>
+            ) : null}
+          </ContextMenuContent>
+        </ContextMenu>
+
+        {desktopSystemWidgets.length > 0 ? (
+          <div className="pointer-events-none absolute top-6 left-6 z-10 flex w-[min(44rem,calc(100%-3rem))] gap-3 opacity-75">
+            {desktopSystemWidgets.map((widget) => (
+              <div key={widget.instanceId} className="min-w-0 flex-1">
+                <DesktopSystemWidget widgetType={widget.widgetType} />
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         {windows.map((windowModel) => {
           if (windowModel.minimized) return null;
@@ -1088,6 +1232,13 @@ export function DesktopExperience() {
           })}
         </nav>
       </div>
+
+      <DesktopWallpaperDialog
+        open={wallpaperDialogOpen}
+        wallpaperUrl={wallpaperUrl}
+        onOpenChange={setWallpaperDialogOpen}
+        onWallpaperChange={updateWallpaper}
+      />
     </div>
   );
 }
