@@ -1086,7 +1086,6 @@ export function DesktopExperience() {
                   controller={desktopWidgetLayoutController}
                   editing={widgetsEditing}
                   onEditingChange={setWidgetsEditing}
-                  onOpenWallpaper={openWallpaperEditor}
                   onBack={() => setControlCenterView("main")}
                 />
               ) : (

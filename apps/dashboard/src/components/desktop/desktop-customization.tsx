@@ -125,7 +125,6 @@ interface DesktopWidgetsPanelProps {
   controller: WidgetLayoutController;
   editing: boolean;
   onEditingChange: (editing: boolean) => void;
-  onOpenWallpaper: () => void;
   onBack?: () => void;
 }
 
@@ -133,7 +132,6 @@ export function DesktopWidgetsPanel({
   controller,
   editing,
   onEditingChange,
-  onOpenWallpaper,
   onBack,
 }: DesktopWidgetsPanelProps) {
   const visibleWidgetCount = controller.layout.filter((widget) => widget.visible).length;
@@ -159,16 +157,6 @@ export function DesktopWidgetsPanel({
             {visibleWidgetCount} shown on Desktop
           </p>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 text-muted-foreground hover:text-foreground"
-          aria-label="Change wallpaper"
-          onClick={onOpenWallpaper}
-        >
-          <HugeiconsIcon icon={Image01Icon} size={16} />
-        </Button>
         <Button
           type="button"
           variant={editing ? "secondary" : "ghost"}
