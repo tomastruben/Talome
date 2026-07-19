@@ -1240,11 +1240,12 @@ export function DesktopExperience() {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuLabel>{user?.username ?? "Account"}</DropdownMenuLabel>
-              <DropdownMenuItem onSelect={() => openApp(appById.get("settings")!)}>
-                <HugeiconsIcon icon={Settings01Icon} size={14} />
-                Settings
-              </DropdownMenuItem>
+              <DropdownMenuLabel className="flex items-center justify-between gap-3">
+                <span className="truncate">{user?.username ?? "Account"}</span>
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  {user?.role === "admin" ? "Administrator" : "Member"}
+                </span>
+              </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => void logOut()}>
                 <HugeiconsIcon icon={Logout01Icon} size={14} />
