@@ -961,9 +961,9 @@ export function DesktopExperience() {
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => void logOut()}>
-              <HugeiconsIcon icon={Logout01Icon} size={14} />
-              Log out
+            <DropdownMenuItem onSelect={() => openApp(appById.get("settings")!)}>
+              <HugeiconsIcon icon={Settings01Icon} size={14} />
+              Settings
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
