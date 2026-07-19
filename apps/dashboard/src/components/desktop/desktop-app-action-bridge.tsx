@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { useAtomValue } from "jotai";
 import {
   desktopAppActionsAtom,
+  desktopShellActionsAtom,
   parseDesktopAppActionTriggerMessage,
   type DesktopAppAction,
   type DesktopAppActionDescriptor,
@@ -22,11 +23,13 @@ function publishActions(title: string | undefined, actions: DesktopAppActionDesc
 
 export function DesktopAppActionBridge() {
   const actions = useAtomValue(desktopAppActionsAtom);
+  const shellActions = useAtomValue(desktopShellActionsAtom);
   const pageBack = useAtomValue(pageBackAtom);
   const pageTitle = useAtomValue(pageTitleAtom);
   const actionsRef = useRef<DesktopAppAction[]>([]);
 
   useEffect(() => {
+    const appActions = [...shellActions, ...actions];
     const bridgeActions: DesktopAppAction[] = pageBack
       ? [{
         id: BACK_ACTION_ID,
@@ -34,8 +37,8 @@ export function DesktopAppActionBridge() {
         icon: "back",
         placement: "leading",
         onSelect: pageBack,
-      }, ...actions]
-      : actions;
+      }, ...appActions]
+      : appActions;
     actionsRef.current = bridgeActions;
     publishActions(pageTitle ?? undefined, bridgeActions.map((action) => ({
       id: action.id,
@@ -52,7 +55,7 @@ export function DesktopAppActionBridge() {
         disabled: item.disabled,
       })),
     })));
-  }, [actions, pageBack, pageTitle]);
+  }, [actions, pageBack, pageTitle, shellActions]);
 
   useEffect(() => {
     const handlePointerDown = () => {
