@@ -327,17 +327,19 @@ function DragGhost({
 
 // ── Widget Picker ─────────────────────────────────────────────────────────────
 
-function WidgetAddDock({
+export function WidgetAddDock({
   hiddenWidgetTypes,
   hiddenCustomIds,
   availableManifestIds,
   onAdd,
+  onEditDoneRequested,
   inline = false,
 }: {
   hiddenWidgetTypes: BuiltinWidgetType[];
   hiddenCustomIds: string[];
   availableManifestIds: string[];
   onAdd: (widgetType: WidgetType) => void;
+  onEditDoneRequested?: () => void;
   inline?: boolean;
 }) {
   const addableIds: BuiltinWidgetType[] = [...hiddenWidgetTypes];
@@ -370,6 +372,16 @@ function WidgetAddDock({
           side={inline ? "left" : "top"}
           sideOffset={10}
           className="z-[1400] w-[min(28rem,calc(100vw-2rem))] rounded-xl border border-border/70 bg-background/95 p-3 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-background/80"
+          onPointerDownOutside={(event) => {
+            const target = event.target;
+            if (
+              target instanceof Element
+              && target.closest("[data-desktop-widget-edit-done]")
+            ) {
+              event.preventDefault();
+              onEditDoneRequested?.();
+            }
+          }}
         >
           <p className="mb-3 text-xs font-medium uppercase tracking-widest text-muted-foreground">
             Add widget
@@ -414,12 +426,14 @@ export function ControlledWidgetGrid({
   compact = false,
   showAddDock = true,
   maxColumns = 4,
+  onEditDoneRequested,
 }: {
   controller: WidgetLayoutController;
   editMode: boolean;
   compact?: boolean;
   showAddDock?: boolean;
   maxColumns?: 3 | 4;
+  onEditDoneRequested?: () => void;
 }) {
   const { layout, toggleWidget, addWidget, reorderLayout, resizeWidget } = controller;
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -598,6 +612,7 @@ export function ControlledWidgetGrid({
           hiddenCustomIds={hiddenCustomIds}
           availableManifestIds={availableManifestIds}
           onAdd={(widgetType) => addWidget(widgetType)}
+          onEditDoneRequested={onEditDoneRequested}
           inline={compact}
         />
       )}

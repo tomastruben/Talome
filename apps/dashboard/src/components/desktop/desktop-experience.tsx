@@ -36,6 +36,7 @@ import {
   DashboardSquareEditIcon,
   Image01Icon,
   SlidersHorizontalIcon,
+  Tick01Icon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import type { FeaturePermission } from "@talome/types";
@@ -133,7 +134,7 @@ interface DesktopWindowModel {
   zIndex: number;
 }
 
-type DesktopControlCenterView = "main" | "dashboard" | "desktop-widgets";
+type DesktopControlCenterView = "main" | "dashboard";
 
 const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
@@ -675,6 +676,16 @@ export function DesktopExperience() {
   }, []);
 
   useEffect(() => {
+    if (!desktopWidgetsEditing) return;
+
+    const finishEditing = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDesktopWidgetsEditing(false);
+    };
+    window.addEventListener("keydown", finishEditing, true);
+    return () => window.removeEventListener("keydown", finishEditing, true);
+  }, [desktopWidgetsEditing]);
+
+  useEffect(() => {
     if (!restored) return;
     localStorage.setItem(
       DESKTOP_WINDOW_STORAGE_KEY,
@@ -983,9 +994,9 @@ export function DesktopExperience() {
   };
 
   const openDesktopWidgetEditor = () => {
+    setControlCenterOpen(false);
+    setLaunchpadOpen(false);
     setDesktopWidgetsEditing(true);
-    setControlCenterView("desktop-widgets");
-    setControlCenterOpen(true);
   };
 
   const openWallpaperEditor = () => {
@@ -1203,15 +1214,6 @@ export function DesktopExperience() {
                   onEditingChange={setDashboardEditing}
                   onBack={() => setControlCenterView("main")}
                 />
-              ) : controlCenterView === "desktop-widgets" ? (
-                <DesktopWidgetsPanel
-                  controller={desktopWidgetLayoutController}
-                  title="Desktop Widgets"
-                  subtitle={`${desktopWidgetLayoutController.layout.filter((widget) => widget.visible).length} shown on Desktop`}
-                  editing={desktopWidgetsEditing}
-                  onEditingChange={setDesktopWidgetsEditing}
-                  onBack={() => setControlCenterView("main")}
-                />
               ) : (
                 <DesktopControlCenter
                   onOpenAudiobooks={() => openControlCenterApp("/dashboard/audiobooks")}
@@ -1290,25 +1292,79 @@ export function DesktopExperience() {
                 Change Wallpaper…
               </ContextMenuItem>
             </ContextMenuGroup>
-            {wallpaperUrl ? (
-              <>
-                <ContextMenuSeparator />
-                <ContextMenuItem onSelect={() => updateWallpaper(undefined)}>
-                  Use Default Wallpaper
-                </ContextMenuItem>
-              </>
-            ) : null}
           </ContextMenuContent>
         </ContextMenu>
 
-        <div className="absolute top-6 left-6 z-[1] w-[min(44rem,calc(100%-3rem))] opacity-90">
+        <AnimatePresence>
+          {desktopWidgetsEditing ? (
+            <motion.div
+              key="desktop-widget-edit-backdrop"
+              className="absolute inset-0 z-[1000] bg-background/45 backdrop-blur-[2px]"
+              aria-hidden="true"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            />
+          ) : null}
+        </AnimatePresence>
+
+        <div
+          data-desktop-widget-canvas
+          data-drive-lane-reserved={showDesktopDrives ? "true" : "false"}
+          aria-label="Desktop widgets"
+          className={cn(
+            "absolute top-6 left-6 opacity-90 transition-opacity duration-150",
+            desktopWidgetsEditing
+              ? "z-[1100] max-h-[calc(100%-7rem)] overflow-y-auto p-1 pr-3 opacity-100"
+              : "z-[1]",
+          )}
+          style={{
+            width: showDesktopDrives
+              ? "min(44rem, calc(100% - 10.5rem))"
+              : "min(44rem, calc(100% - 3rem))",
+          }}
+        >
           <ControlledWidgetGrid
             controller={desktopWidgetLayoutController}
-            editMode={false}
-            showAddDock={false}
+            editMode={desktopWidgetsEditing}
+            showAddDock={desktopWidgetsEditing}
             maxColumns={3}
+            onEditDoneRequested={() => setDesktopWidgetsEditing(false)}
           />
         </div>
+
+        <AnimatePresence>
+          {desktopWidgetsEditing ? (
+            <motion.div
+              key="desktop-widget-edit-toolbar"
+              role="toolbar"
+              aria-label="Desktop widget editing"
+              className="absolute bottom-20 left-1/2 z-[1200] flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-border bg-card/95 p-2 pl-3 shadow-xl backdrop-blur-md"
+              initial={{ opacity: 0, y: 10, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.97 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+            >
+              <HugeiconsIcon icon={DashboardSquareEditIcon} size={16} />
+              <span className="whitespace-nowrap text-sm font-medium">Desktop Widgets</span>
+              <span className="h-5 w-px bg-border" />
+              <span className="whitespace-nowrap text-xs text-muted-foreground">
+                Drag to reorder · Esc to finish
+              </span>
+              <button
+                type="button"
+                data-desktop-widget-edit-done
+                className="flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-85"
+                onPointerDown={() => setDesktopWidgetsEditing(false)}
+                onClick={() => setDesktopWidgetsEditing(false)}
+              >
+                <HugeiconsIcon icon={Tick01Icon} size={13} />
+                Done
+              </button>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
 
         {showDesktopDrives ? (
           <DesktopDriveIcons
@@ -1388,7 +1444,10 @@ export function DesktopExperience() {
 
         <nav
           aria-label="Desktop applications"
-          className="absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border border-border bg-card/90 p-2 backdrop-blur-md"
+          className={cn(
+            "absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border border-border bg-card/90 p-2 backdrop-blur-md transition-opacity duration-150",
+            desktopWidgetsEditing && "pointer-events-none opacity-45",
+          )}
         >
           <ContextMenu>
             <ContextMenuTrigger asChild>
