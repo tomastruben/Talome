@@ -33,6 +33,7 @@ The desktop should be inspired by the clarity and spatial model of macOS, Synolo
 2. **Existing mobile UI is an asset, not a fallback.** Compact window sizes should deliberately activate the same condensed toolbars, single-column flows, sheets, and player controls that already work on mobile.
 3. **Desktop value comes from composition.** The priority is detachable file previews, persistent media players, multiple file browsers and terminals, assistant sidecars, and service windows—not decorative desktop chrome.
 4. **Window presentation is additive.** A feature must continue to work in classic and mobile modes before it is considered ready for desktop mode.
+5. **Desktop mode is unavailable on mobile.** Mobile devices always use the existing mobile experience; they do not show a desktop-mode switch, desktop route, or forced override.
 
 ## Why this fits Talome
 
@@ -200,18 +201,17 @@ The player is a persistent activity owned by the media engine, not disposable st
 
 A dock application may own several related windows. For example, Files can own browser and preview windows; Media can own library, detail, and player windows. The dock should group them under one app icon while the window switcher exposes individual titles. This avoids treating every preview or player as an unrelated application.
 
-### Mobile and tablet
+### Availability by device
 
-Talome already has mobile presentations. Desktop work should reuse them, not redesign mobile navigation. A free-floating desktop is a pointer-first interaction model, so the outer phone shell remains unchanged while the same compact content is reused inside narrow desktop windows.
+Talome already has mobile presentations. Desktop work should reuse their component behavior, not redesign mobile navigation or make desktop mode available on mobile. The mobile shell remains the only mode on mobile devices. Compact desktop windows can still reuse the same condensed content patterns when a desktop user resizes a window narrowly.
 
 | Surface | Recommended behavior |
 |---|---|
-| Phone / narrow touch | Existing mobile shell and full-screen pages; no desktop window manager |
-| Tablet portrait | Existing mobile/compact pages, with optional desktop mode only when explicitly selected |
-| Tablet landscape | Existing compact layouts can power up to two snapped desktop windows |
-| Desktop browser / installed PWA | Full desktop, multiple windows, dock, keyboard commands |
+| Mobile phone or mobile browser | Existing mobile shell and full-screen pages only; desktop mode is not exposed |
+| Tablet / touch-first mobile device | Existing mobile/compact experience only; desktop mode is not exposed |
+| Desktop-class browser / installed desktop PWA | Classic mode and desktop mode are both available |
 
-Inside desktop mode, responsive behavior is based on each window's content width. A 480px Files window should render the same condensed controls and single-column flow as the established 480px mobile view, even when the browser itself is 1440px wide. The outer mode choice remains a user preference; it does not remove or supersede classic mode.
+Inside desktop mode, responsive behavior is based on each window's content width. A 480px Files window should render the same condensed controls and single-column flow as the established 480px mobile view, even when the browser itself is 1440px wide. Mode choice is available only in a desktop-class environment, where it remains a user preference and does not remove or supersede classic mode.
 
 ## Application model
 
@@ -477,7 +477,7 @@ The browser desktop must remain viable on home-server clients and low-power tabl
 - Player minimize/restore behavior that preserves active playback.
 - Local workspace persistence and off-screen recovery.
 - Classic mode remains permanently available and is not treated as a rollback path.
-- Phone continues to use the current mobile views unchanged.
+- Mobile devices continue to use the current mobile experience exclusively; the desktop setting and shell are unavailable there.
 
 **Exit:** a user can browse files, detach a preview or player, keep Terminal or Services open beside it, reload, and recover the workspace without losing active application state.
 
@@ -519,6 +519,7 @@ The first production-capable slice should not be judged only by appearance.
 9. Active video or audiobook playback survives minimize/restore and switching between desktop and classic modes.
 10. Terminal streaming and Assistant activity continue correctly while another window is focused.
 11. Classic and desktop modes can be switched instantly from Settings; neither is described or implemented as recovery for the other.
+12. On mobile, no desktop-mode control or route is available and the existing mobile shell is unchanged.
 
 ## Risks and mitigations
 
@@ -562,4 +563,4 @@ Recommended defaults: four restrained widgets; prove movie/video playback first 
 
 ## Bottom line
 
-Build a Talome desktop, not a macOS skin and not a replacement for classic mode. Reuse the existing mobile layouts, browsers, previews, players, terminal, content, and providers; introduce a typed app/window/surface model; treat external framing as a capability rather than an assumption; and ship desktop mode incrementally beside the classic and mobile shells. Once the fundamentals are reliable, the assistant can turn these already-rich components into something materially more powerful than Umbrel or DSM: a composable workspace that understands and operates the home server as one system.
+Build a Talome desktop, not a macOS skin and not a replacement for classic mode. Reuse the existing mobile layouts, browsers, previews, players, terminal, content, and providers; introduce a typed app/window/surface model; treat external framing as a capability rather than an assumption; and ship desktop mode incrementally beside classic mode on desktop-class environments only. Mobile keeps its existing shell exclusively, even though its responsive components are reused inside narrow desktop windows. Once the fundamentals are reliable, the assistant can turn these already-rich components into something materially more powerful than Umbrel or DSM: a composable workspace that understands and operates the home server as one system.
