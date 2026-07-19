@@ -144,6 +144,7 @@ interface PlexContinueWatchingItem {
   grandparentTitle?: string;
   parentIndex?: number;
   index?: number;
+  tmdbId?: number | null;
 }
 
 interface PlexWatchingData {
@@ -1345,6 +1346,24 @@ function MediaPageInner({
     }
   }, [selectionMode, toggleSelect, navigateToDetail]);
 
+  // Continue Watching: match the Plex on-deck item to the local library by TMDB
+  // id, then open Talome's internal player and resume from the saved offset.
+  const playContinueWatching = useCallback((cw: PlexContinueWatchingItem) => {
+    const pool: MediaItem[] = (cw.type === "movie" ? library?.movies : library?.tv) ?? [];
+    const match = cw.tmdbId != null ? pool.find((m) => m.tmdbId === cw.tmdbId) : undefined;
+    if (!match) {
+      toast.info("Not in your local library", { description: cw.title ?? undefined });
+      return;
+    }
+    const startAt = cw.viewOffset && cw.viewOffset > 0 ? Math.floor(cw.viewOffset / 1000) : 0;
+    if (match.type === "movie" && match.hasFile && match.filePath) {
+      router.push(`/dashboard/media/movie/${match.id}?autoplay=1&startAt=${startAt}`);
+    } else {
+      // TV episodes (and movies without a local file) — open the detail page.
+      router.push(`/dashboard/media/${match.type}/${match.id}`);
+    }
+  }, [library, router]);
+
   const handleDiscoveryClick = useCallback((item: MediaSearchResult) => {
     const lookup: LookupItem = {
       tmdbId: item.tmdbId,
@@ -1407,7 +1426,7 @@ function MediaPageInner({
   }
 
   return (
-    <div className="grid gap-5">
+    <div className="flex flex-col gap-5 min-w-0">
       {/* Controls: tabs + search + sort */}
       <DesktopAppToolbar className="page-controls-row flex-wrap justify-between gap-2">
         <Tabs
@@ -1506,7 +1525,7 @@ function MediaPageInner({
         ) ?? [];
         if (items.length === 0) return null;
         return (
-          <div className="space-y-2">
+          <div className="space-y-2 min-w-0">
             <p className="text-sm text-muted-foreground font-medium px-1">Continue Watching</p>
             <div className="flex gap-3 overflow-x-auto scrollbar-none pb-1 -mx-1 px-1">
               {items.map((cw, i) => {
@@ -1517,7 +1536,13 @@ function MediaPageInner({
                   ? `${CORE_URL}/api/media/poster?service=plex&path=${encodeURIComponent(cw.thumb)}&w=120`
                   : null;
                 return (
-                  <div key={cw.ratingKey ?? i} className="shrink-0 w-[90px]">
+                  <button
+                    key={cw.ratingKey ?? i}
+                    type="button"
+                    onClick={() => playContinueWatching(cw)}
+                    aria-label={`Resume ${cw.title ?? "playback"}`}
+                    className="shrink-0 w-[90px] text-left rounded-lg transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-ring active:opacity-80"
+                  >
                     <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-muted/30">
                       {thumb ? (
                         <Image src={thumb} alt={cw.title ?? ""} fill className="object-cover" sizes="90px" />
@@ -1526,6 +1551,11 @@ function MediaPageInner({
                           <HugeiconsIcon icon={cw.type === "tv" ? Tv01Icon : Film01Icon} size={16} className="text-dim-foreground" />
                         </div>
                       )}
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/0 active:bg-black/30 transition-colors">
+                        <span className="flex size-7 items-center justify-center rounded-full bg-black/55 opacity-0 active:opacity-100">
+                          <HugeiconsIcon icon={PlayIcon} size={14} className="text-white translate-x-px" />
+                        </span>
+                      </div>
                       {pct > 0 && (
                         <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/60">
                           <div className="h-full bg-white/80 rounded-r-full" style={{ width: `${pct}%` }} />
@@ -1539,7 +1569,7 @@ function MediaPageInner({
                         {cw.episodeTitle}
                       </p>
                     )}
-                  </div>
+                  </button>
                 );
               })}
             </div>
