@@ -9,6 +9,13 @@ export interface DesktopArea {
   height: number;
 }
 
+export interface DesktopRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 export const DESKTOP_WINDOW_STORAGE_KEY = "talome-desktop-windows-v1";
 export const DESKTOP_WINDOW_STORAGE_VERSION = 1;
 export const DESKTOP_DOCK_STORAGE_KEY = "talome-desktop-dock-v1";
@@ -24,6 +31,18 @@ export interface PersistedDesktopServiceApp {
 
 const EDGE_INSET = 16;
 const MIN_VISIBLE_TITLEBAR = 120;
+
+export function desktopMinimizeOffset(
+  windowRect: DesktopRect,
+  dockRect: DesktopRect,
+) {
+  return {
+    x: dockRect.left + dockRect.width / 2 -
+      (windowRect.left + windowRect.width / 2),
+    y: dockRect.top + dockRect.height / 2 -
+      (windowRect.top + windowRect.height / 2),
+  };
+}
 
 export function clampDesktopBounds(
   bounds: DesktopBounds,

@@ -1,7 +1,45 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+
 @import "shadcn/tailwind.css";
 @import "streamdown/styles.css";
+
+@keyframes desktop-window-minimize {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 1;
+  }
+
+  72% {
+    transform: translate3d(
+      var(--desktop-minimize-mid-x),
+      var(--desktop-minimize-mid-y),
+      0
+    ) scale(0.3);
+    opacity: 0.72;
+  }
+
+  to {
+    transform: translate3d(
+      var(--desktop-minimize-x),
+      var(--desktop-minimize-y),
+      0
+    ) scale(0.04);
+    opacity: 0;
+  }
+}
+
+.desktop-window-minimizing {
+  animation: desktop-window-minimize 190ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-window-minimizing {
+    animation: none;
+  }
+}
 
 @custom-variant dark (&:is(.dark *));
 

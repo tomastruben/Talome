@@ -38,6 +38,7 @@ interface DesktopWindowProps {
   onMinimize: () => void;
   onBoundsChange: (bounds: DesktopBounds) => void;
   onMaximizeChange: (maximized: boolean, restoreBounds?: DesktopBounds) => void;
+  windowRef?: (element: HTMLElement | null) => void;
 }
 
 interface PointerOrigin {
@@ -62,6 +63,7 @@ export const DesktopWindow = memo(function DesktopWindow({
   onMinimize,
   onBoundsChange,
   onMaximizeChange,
+  windowRef,
 }: DesktopWindowProps) {
   const dragOrigin = useRef<PointerOrigin | null>(null);
   const resizeOrigin = useRef<PointerOrigin | null>(null);
@@ -146,6 +148,7 @@ export const DesktopWindow = memo(function DesktopWindow({
 
   return (
     <section
+      ref={windowRef}
       data-desktop-window={id}
       aria-label={`${title} window`}
       className={cn(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clampDesktopBounds,
+  desktopMinimizeOffset,
   isPersistedDesktopDock,
   isPersistedDesktopLayout,
   maximizedDesktopBounds,
@@ -34,6 +35,13 @@ describe("desktop window geometry", () => {
       width: 1408,
       height: 828,
     });
+  });
+
+  it("targets the center of the matching Dock icon when minimizing", () => {
+    expect(desktopMinimizeOffset(
+      { left: 100, top: 60, width: 1000, height: 700 },
+      { left: 748, top: 840, width: 48, height: 48 },
+    )).toEqual({ x: 172, y: 454 });
   });
 });
 

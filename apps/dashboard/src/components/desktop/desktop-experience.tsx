@@ -71,6 +71,7 @@ import { useServiceStacks } from "@/hooks/use-service-stacks";
 import { CORE_URL } from "@/lib/constants";
 import {
   clampDesktopBounds,
+  desktopMinimizeOffset,
   DESKTOP_DOCK_STORAGE_KEY,
   DESKTOP_DOCK_STORAGE_VERSION,
   DESKTOP_WINDOW_STORAGE_KEY,
@@ -396,6 +397,9 @@ export function DesktopExperience() {
   const { stacks } = useServiceStacks();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const appFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
+  const desktopWindowRefs = useRef(new Map<string, HTMLElement>());
+  const dockButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const minimizingWindowIdsRef = useRef(new Set<string>());
   const zIndexRef = useRef(4);
   const [area, setArea] = useState<DesktopArea>(DEFAULT_AREA);
   const [windows, setWindows] = useState<DesktopWindowModel[]>(() => [
@@ -661,7 +665,7 @@ export function DesktopExperience() {
     });
   }, []);
 
-  const minimizeWindow = useCallback((id: string) => {
+  const finishMinimizingWindow = useCallback((id: string) => {
     setWindows((current) => {
       const next = current.map((windowModel) =>
         windowModel.id === id ? { ...windowModel, minimized: true } : windowModel,
@@ -673,6 +677,61 @@ export function DesktopExperience() {
       return next;
     });
   }, []);
+
+  const minimizeWindow = useCallback(async (id: string, appId: string) => {
+    if (minimizingWindowIdsRef.current.has(id)) return;
+    minimizingWindowIdsRef.current.add(id);
+
+    const windowElement = desktopWindowRefs.current.get(id);
+    const dockButton = dockButtonRefs.current.get(appId);
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (!windowElement || !dockButton || reduceMotion) {
+      finishMinimizingWindow(id);
+      minimizingWindowIdsRef.current.delete(id);
+      return;
+    }
+
+    const offset = desktopMinimizeOffset(
+      windowElement.getBoundingClientRect(),
+      dockButton.getBoundingClientRect(),
+    );
+    const previousPointerEvents = windowElement.style.pointerEvents;
+    windowElement.style.pointerEvents = "none";
+    windowElement.style.setProperty("--desktop-minimize-x", `${offset.x}px`);
+    windowElement.style.setProperty("--desktop-minimize-y", `${offset.y}px`);
+    windowElement.style.setProperty("--desktop-minimize-mid-x", `${offset.x * 0.72}px`);
+    windowElement.style.setProperty("--desktop-minimize-mid-y", `${offset.y * 0.72}px`);
+
+    try {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(fallbackTimer);
+          windowElement.removeEventListener("animationend", handleAnimationEnd);
+          resolve();
+        };
+        const handleAnimationEnd = (event: AnimationEvent) => {
+          if (event.animationName === "desktop-window-minimize") finish();
+        };
+        const fallbackTimer = window.setTimeout(finish, 240);
+
+        windowElement.addEventListener("animationend", handleAnimationEnd);
+        windowElement.classList.add("desktop-window-minimizing");
+      });
+    } finally {
+      windowElement.classList.remove("desktop-window-minimizing");
+      windowElement.style.removeProperty("--desktop-minimize-x");
+      windowElement.style.removeProperty("--desktop-minimize-y");
+      windowElement.style.removeProperty("--desktop-minimize-mid-x");
+      windowElement.style.removeProperty("--desktop-minimize-mid-y");
+      windowElement.style.pointerEvents = previousPointerEvents;
+      finishMinimizingWindow(id);
+      minimizingWindowIdsRef.current.delete(id);
+    }
+  }, [finishMinimizingWindow]);
 
   const updateWindow = useCallback((
     id: string,
@@ -921,9 +980,13 @@ export function DesktopExperience() {
               active={windowModel.id === activeWindowId}
               maximized={windowModel.maximized}
               zIndex={windowModel.zIndex}
+              windowRef={(element) => {
+                if (element) desktopWindowRefs.current.set(windowModel.id, element);
+                else desktopWindowRefs.current.delete(windowModel.id);
+              }}
               onFocus={() => focusWindow(windowModel.id)}
               onClose={() => closeWindow(windowModel.id)}
-              onMinimize={() => minimizeWindow(windowModel.id)}
+              onMinimize={() => void minimizeWindow(windowModel.id, windowModel.appId)}
               onBoundsChange={(bounds) => updateWindow(windowModel.id, (current) => ({
                 ...current,
                 bounds,
@@ -982,6 +1045,10 @@ export function DesktopExperience() {
                 active={windowModel?.id === activeWindowId && !windowModel.minimized}
                 running={!!windowModel}
                 minimized={windowModel?.minimized}
+                buttonRef={(button) => {
+                  if (button) dockButtonRefs.current.set(app.id, button);
+                  else dockButtonRefs.current.delete(app.id);
+                }}
                 onClick={() => openApp(app)}
               />
             );
@@ -1033,6 +1100,7 @@ interface DockButtonProps {
   active: boolean;
   running: boolean;
   minimized?: boolean;
+  buttonRef?: (button: HTMLButtonElement | null) => void;
   onClick: () => void;
 }
 
@@ -1044,10 +1112,12 @@ function DockButton({
   active,
   running,
   minimized,
+  buttonRef,
   onClick,
 }: DockButtonProps) {
   const button = (
     <button
+      ref={buttonRef}
       type="button"
       aria-label={label}
       className={cn(
