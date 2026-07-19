@@ -13,8 +13,10 @@ const jellyfinContainer = {
   image: "jellyfin/jellyfin:10.10.7",
   status: "running" as const,
   ports: [
+    { host: 1901, container: 1900, protocol: "tcp" as const },
+    { host: 7359, container: 7359, protocol: "tcp" as const },
     { host: 8096, container: 8096, protocol: "tcp" as const },
-    { host: 0, container: 7359, protocol: "udp" as const },
+    { host: 8921, container: 8920, protocol: "tcp" as const },
   ],
   created: "2026-07-19T10:00:00.000Z",
   labels: {},
