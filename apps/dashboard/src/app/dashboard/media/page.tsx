@@ -1500,7 +1500,7 @@ function MediaPageInner({
       )}
 
       {/* Continue Watching — horizontal row from Plex on-deck */}
-      {(() => {
+      {(tab === "movies" || tab === "tv") && (() => {
         const items = plexWatchingData?.continueWatching?.filter(
           (cw) => (tab === "movies" ? cw.type === "movie" : cw.type === "tv")
         ) ?? [];

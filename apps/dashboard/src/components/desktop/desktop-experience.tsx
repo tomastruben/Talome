@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
 import { animate } from "motion";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   HugeiconsIcon,
   LayoutGridIcon,
@@ -132,6 +133,8 @@ const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
 const DESKTOP_WINDOW_MOTION_SECONDS = 0.19;
 const DESKTOP_WINDOW_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
+const DESKTOP_DOCK_MOTION_SECONDS = 0.16;
+const DESKTOP_DOCK_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 
 async function playDesktopWindowMotion(
   windowElement: HTMLElement,
@@ -1292,7 +1295,11 @@ export function DesktopExperience() {
                 icon={app.icon}
                 iconText={app.iconText}
                 iconUrl={app.iconUrl}
-                active={windowModel?.id === activeWindowId && !windowModel.minimized}
+                active={
+                  !launchpadOpen
+                  && windowModel?.id === activeWindowId
+                  && !windowModel.minimized
+                }
                 running={!!windowModel}
                 minimized={windowModel?.minimized}
                 buttonRef={(button) => {
@@ -1423,30 +1430,61 @@ function DockButton({
   buttonRef,
   onClick,
 }: DockButtonProps) {
+  const reduceMotion = useReducedMotion();
+  const motionTransition = {
+    duration: reduceMotion ? 0 : DESKTOP_DOCK_MOTION_SECONDS,
+    ease: DESKTOP_DOCK_MOTION_EASE,
+  };
   const button = (
-    <button
+    <motion.button
       ref={buttonRef}
       type="button"
       aria-label={label}
+      aria-pressed={active}
+      initial={false}
+      animate={reduceMotion ? undefined : { y: active ? -2 : 0 }}
+      whileHover={reduceMotion ? undefined : { y: -7, scale: 1.12 }}
+      whileTap={reduceMotion ? undefined : { scale: 0.94 }}
+      transition={motionTransition}
       className={cn(
-        "relative flex size-12 items-center justify-center rounded-xl border transition-[background-color,border-color,transform] duration-150 ease-out",
-        active
-          ? "border-foreground/20 bg-muted/70"
-          : "border-transparent bg-transparent hover:-translate-y-1 hover:border-border hover:bg-muted/40",
+        "relative isolate flex size-12 origin-bottom transform-gpu items-center justify-center rounded-xl border border-transparent bg-transparent transition-[background-color,border-color,opacity] duration-150 ease-out will-change-transform hover:border-border hover:bg-muted/40",
         minimized && "opacity-70",
       )}
       onClick={onClick}
     >
-      <DockAppIcon
-        label={label}
-        icon={icon}
-        iconText={iconText}
-        iconUrl={iconUrl}
-      />
-      {running && (
-        <span className="absolute -bottom-1 size-1 rounded-full bg-foreground/80" />
-      )}
-    </button>
+      <AnimatePresence initial={false}>
+        {active ? (
+          <motion.span
+            key="active"
+            layoutId="desktop-dock-active"
+            data-dock-active-indicator
+            className="pointer-events-none absolute inset-0 z-0 rounded-xl border border-foreground/20 bg-muted/70"
+            transition={motionTransition}
+          />
+        ) : null}
+      </AnimatePresence>
+      <span className="relative z-10 flex">
+        <DockAppIcon
+          label={label}
+          icon={icon}
+          iconText={iconText}
+          iconUrl={iconUrl}
+        />
+      </span>
+      <AnimatePresence initial={false}>
+        {running ? (
+          <motion.span
+            key="running"
+            data-dock-running-indicator
+            initial={reduceMotion ? false : { opacity: 0, scale: 0.5 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={reduceMotion ? undefined : { opacity: 0, scale: 0.5 }}
+            transition={motionTransition}
+            className="absolute -bottom-1 z-10 size-1 rounded-full bg-foreground/80"
+          />
+        ) : null}
+      </AnimatePresence>
+    </motion.button>
   );
 
   return (
