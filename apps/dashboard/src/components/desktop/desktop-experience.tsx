@@ -1035,22 +1035,6 @@ export function DesktopExperience() {
 
         <DropdownMenu>
           <DropdownMenuTrigger className="h-8 rounded-md px-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground">
-            View
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-48">
-            <DropdownMenuItem onSelect={openSearch}>
-              <HugeiconsIcon icon={Search01Icon} size={14} />
-              Search
-              <span className="ml-auto text-xs text-dim-foreground">⌘K</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href="/dashboard">Classic mode</Link>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger className="h-8 rounded-md px-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground">
             Window
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-52">
