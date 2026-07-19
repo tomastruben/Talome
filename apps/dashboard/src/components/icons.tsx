@@ -84,6 +84,8 @@ export {
   Notification01Icon,
   NotificationSnooze01Icon,
   LayoutGridIcon,
+  PinIcon,
+  PinOffIcon,
   Tick01Icon,
   ComputerTerminal01Icon,
   FlashIcon,

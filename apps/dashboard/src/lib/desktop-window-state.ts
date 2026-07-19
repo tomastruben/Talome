@@ -11,6 +11,16 @@ export interface DesktopArea {
 
 export const DESKTOP_WINDOW_STORAGE_KEY = "talome-desktop-windows-v1";
 export const DESKTOP_WINDOW_STORAGE_VERSION = 1;
+export const DESKTOP_DOCK_STORAGE_KEY = "talome-desktop-dock-v1";
+export const DESKTOP_DOCK_STORAGE_VERSION = 1;
+
+export interface PersistedDesktopServiceApp {
+  id: string;
+  name: string;
+  url: string;
+  icon?: string;
+  iconUrl?: string;
+}
 
 const EDGE_INSET = 16;
 const MIN_VISIBLE_TITLEBAR = 120;
@@ -55,5 +65,44 @@ export function isPersistedDesktopLayout(value: unknown): value is {
   return (
     candidate.version === DESKTOP_WINDOW_STORAGE_VERSION &&
     Array.isArray(candidate.windows)
+  );
+}
+
+function isHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isPersistedDesktopServiceApp(
+  value: unknown,
+): value is PersistedDesktopServiceApp {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PersistedDesktopServiceApp>;
+  return (
+    typeof candidate.id === "string" &&
+    candidate.id.length > 0 &&
+    typeof candidate.name === "string" &&
+    candidate.name.length > 0 &&
+    typeof candidate.url === "string" &&
+    isHttpUrl(candidate.url) &&
+    (candidate.icon === undefined || typeof candidate.icon === "string") &&
+    (candidate.iconUrl === undefined || typeof candidate.iconUrl === "string")
+  );
+}
+
+export function isPersistedDesktopDock(value: unknown): value is {
+  version: number;
+  apps: PersistedDesktopServiceApp[];
+} {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { version?: unknown; apps?: unknown };
+  return (
+    candidate.version === DESKTOP_DOCK_STORAGE_VERSION &&
+    Array.isArray(candidate.apps) &&
+    candidate.apps.every(isPersistedDesktopServiceApp)
   );
 }

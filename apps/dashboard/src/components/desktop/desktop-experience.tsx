@@ -8,6 +8,7 @@ import {
   useState,
   type SyntheticEvent,
 } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -27,6 +28,8 @@ import {
   Projector01Icon,
   CloudUploadIcon,
   FolderAddIcon,
+  PinIcon,
+  PinOffIcon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import type { FeaturePermission } from "@talome/types";
@@ -39,9 +42,20 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { DesktopWindow } from "@/components/desktop/desktop-window";
 import { DesktopLaunchpad } from "@/components/desktop/desktop-launchpad";
-import type { LaunchableApp } from "@/components/widgets/launcher-widget";
+import {
+  extractLaunchableApps,
+  type LaunchableApp,
+} from "@/components/widgets/launcher-widget";
 import { NotificationsBell } from "@/components/notifications/notifications-bell";
 import { CpuWidget } from "@/components/widgets/cpu-widget";
 import { MemoryWidget } from "@/components/widgets/memory-widget";
@@ -52,13 +66,18 @@ import {
   useDesktopModeAvailable,
 } from "@/hooks/use-desktop-mode";
 import { useUser } from "@/hooks/use-user";
+import { useServiceStacks } from "@/hooks/use-service-stacks";
 import { CORE_URL } from "@/lib/constants";
 import {
   clampDesktopBounds,
+  DESKTOP_DOCK_STORAGE_KEY,
+  DESKTOP_DOCK_STORAGE_VERSION,
   DESKTOP_WINDOW_STORAGE_KEY,
   DESKTOP_WINDOW_STORAGE_VERSION,
+  isPersistedDesktopDock,
   isPersistedDesktopLayout,
   maximizedDesktopBounds,
+  type PersistedDesktopServiceApp,
   type DesktopArea,
   type DesktopBounds,
 } from "@/lib/desktop-window-state";
@@ -75,6 +94,9 @@ interface DesktopAppDefinition {
   title: string;
   url: string;
   icon: IconSvgElement;
+  iconText?: string;
+  iconUrl?: string;
+  serviceApp?: PersistedDesktopServiceApp;
   permission?: FeaturePermission;
   adminOnly?: boolean;
   minimum: Pick<DesktopBounds, "width" | "height">;
@@ -186,12 +208,17 @@ function serviceAppDefinition({
   id,
   name,
   url,
-}: Pick<LaunchableApp, "id" | "name" | "url">): DesktopAppDefinition {
+  icon,
+  iconUrl,
+}: PersistedDesktopServiceApp): DesktopAppDefinition {
   return {
     id: `${SERVICE_APP_PREFIX}${id}`,
     title: name,
     url,
     icon: Package01Icon,
+    iconText: icon,
+    iconUrl,
+    serviceApp: { id, name, url, icon, iconUrl },
     minimum: { width: 520, height: 360 },
   };
 }
@@ -311,6 +338,20 @@ function readPersistedWindows(area: DesktopArea): DesktopWindowModel[] | null {
   }
 }
 
+function readPersistedDockApps(): PersistedDesktopServiceApp[] {
+  try {
+    const raw = localStorage.getItem(DESKTOP_DOCK_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPersistedDesktopDock(parsed)) return [];
+    return Array.from(
+      new Map(parsed.apps.map((app) => [app.id, app])).values(),
+    );
+  } catch {
+    return [];
+  }
+}
+
 function TalomeMark() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -351,6 +392,7 @@ export function DesktopExperience() {
   const router = useRouter();
   const desktopModeAvailable = useDesktopModeAvailable();
   const { user, hasPermission } = useUser();
+  const { stacks } = useServiceStacks();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const appFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
   const zIndexRef = useRef(4);
@@ -362,6 +404,10 @@ export function DesktopExperience() {
   const [activeWindowId, setActiveWindowId] = useState("files");
   const [launchpadOpen, setLaunchpadOpen] = useState(false);
   const [restored, setRestored] = useState(false);
+  const [dockRestored, setDockRestored] = useState(false);
+  const [pinnedServiceApps, setPinnedServiceApps] = useState<
+    PersistedDesktopServiceApp[]
+  >([]);
   const [appActionsByWindow, setAppActionsByWindow] = useState<
     Record<string, DesktopAppActionDescriptor[]>
   >({});
@@ -376,21 +422,53 @@ export function DesktopExperience() {
     [canUseApp],
   );
 
+  const launchableServiceApps = useMemo(
+    () => extractLaunchableApps(stacks),
+    [stacks],
+  );
+  const launchableServiceAppById = useMemo(
+    () => new Map(launchableServiceApps.map((app) => [app.id, app])),
+    [launchableServiceApps],
+  );
+  const pinnedServiceIds = useMemo(
+    () => new Set(pinnedServiceApps.map((app) => app.id)),
+    [pinnedServiceApps],
+  );
+
   const visibleDockApps = useMemo(() => {
     const fixedWithoutSettings = dockApps.filter((app) => app.id !== "settings");
     const fixedIds = new Set(dockApps.map((app) => app.id));
+    const pinnedApps = pinnedServiceApps.map((app) => {
+      const current = launchableServiceAppById.get(app.id);
+      return serviceAppDefinition(current ?? app);
+    });
+    const pinnedAppIds = new Set(pinnedApps.map((app) => app.id));
     const runningApps = windows.flatMap((windowModel): DesktopAppDefinition[] => {
-      if (fixedIds.has(windowModel.appId)) return [];
-      const app = resolveAppDefinition(
-        windowModel.appId,
-        windowModel.url,
-        windowModel.title,
-      );
+      if (fixedIds.has(windowModel.appId) || pinnedAppIds.has(windowModel.appId)) return [];
+      const serviceId = windowModel.appId.startsWith(SERVICE_APP_PREFIX)
+        ? windowModel.appId.slice(SERVICE_APP_PREFIX.length)
+        : undefined;
+      const currentService = serviceId
+        ? launchableServiceAppById.get(serviceId)
+        : undefined;
+      const app = currentService
+        ? serviceAppDefinition(currentService)
+        : resolveAppDefinition(
+          windowModel.appId,
+          windowModel.url,
+          windowModel.title,
+        );
       return app && canUseApp(app) ? [app] : [];
     });
     const settings = dockApps.filter((app) => app.id === "settings");
-    return [...fixedWithoutSettings, ...runningApps, ...settings];
-  }, [canUseApp, dockApps, windows]);
+    return [...fixedWithoutSettings, ...pinnedApps, ...runningApps, ...settings];
+  }, [
+    canUseApp,
+    dockApps,
+    launchableServiceAppById,
+    pinnedServiceApps,
+    windows,
+  ]);
 
   useEffect(() => {
     if (
@@ -445,12 +523,29 @@ export function DesktopExperience() {
   }, [desktopModeAvailable]);
 
   useEffect(() => {
+    if (!desktopModeAvailable) return;
+    setPinnedServiceApps(readPersistedDockApps());
+    setDockRestored(true);
+  }, [desktopModeAvailable]);
+
+  useEffect(() => {
     if (!restored) return;
     localStorage.setItem(
       DESKTOP_WINDOW_STORAGE_KEY,
       JSON.stringify({ version: DESKTOP_WINDOW_STORAGE_VERSION, windows }),
     );
   }, [restored, windows]);
+
+  useEffect(() => {
+    if (!dockRestored) return;
+    localStorage.setItem(
+      DESKTOP_DOCK_STORAGE_KEY,
+      JSON.stringify({
+        version: DESKTOP_DOCK_STORAGE_VERSION,
+        apps: pinnedServiceApps,
+      }),
+    );
+  }, [dockRestored, pinnedServiceApps]);
 
   useEffect(() => {
     setWindows((current) => current.map((windowModel) => {
@@ -537,6 +632,18 @@ export function DesktopExperience() {
     setLaunchpadOpen(false);
     openApp(serviceAppDefinition(app));
   }, [openApp]);
+
+  const toggleServiceDockPin = useCallback((app: DesktopAppDefinition) => {
+    const serviceApp = app.serviceApp;
+    if (!serviceApp) return;
+    setPinnedServiceApps((current) => {
+      const pinned = current.some((candidate) => candidate.id === serviceApp.id);
+      if (pinned) {
+        return current.filter((candidate) => candidate.id !== serviceApp.id);
+      }
+      return [...current, serviceApp];
+    });
+  }, []);
 
   const closeWindow = useCallback((id: string) => {
     appFrameRefs.current.delete(id);
@@ -860,19 +967,49 @@ export function DesktopExperience() {
           />
           {visibleDockApps.map((app) => {
             const windowModel = windows.find((candidate) => candidate.appId === app.id);
+            const dockButton = (
+              <DockButton
+                label={app.title}
+                icon={app.icon}
+                iconText={app.iconText}
+                iconUrl={app.iconUrl}
+                active={windowModel?.id === activeWindowId && !windowModel.minimized}
+                running={!!windowModel}
+                minimized={windowModel?.minimized}
+                onClick={() => openApp(app)}
+              />
+            );
             return (
               <div key={app.id} className="flex items-center gap-1">
                 {app.id === "settings" && (
                   <span className="mx-1 h-9 w-px bg-border" />
                 )}
-                <DockButton
-                  label={app.title}
-                  icon={app.icon}
-                  active={windowModel?.id === activeWindowId && !windowModel.minimized}
-                  running={!!windowModel}
-                  minimized={windowModel?.minimized}
-                  onClick={() => openApp(app)}
-                />
+                {app.serviceApp ? (
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <span className="flex">{dockButton}</span>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="z-[1200] w-48">
+                      <ContextMenuGroup>
+                        <ContextMenuItem onSelect={() => openApp(app)}>
+                          Open {app.title}
+                        </ContextMenuItem>
+                      </ContextMenuGroup>
+                      <ContextMenuSeparator />
+                      <ContextMenuGroup>
+                        <ContextMenuItem onSelect={() => toggleServiceDockPin(app)}>
+                          <HugeiconsIcon
+                            icon={pinnedServiceIds.has(app.serviceApp.id) ? PinOffIcon : PinIcon}
+                            size={16}
+                          />
+                          {pinnedServiceIds.has(app.serviceApp.id)
+                            ? "Remove from Dock"
+                            : "Keep in Dock"}
+                        </ContextMenuItem>
+                      </ContextMenuGroup>
+                    </ContextMenuContent>
+                  </ContextMenu>
+                ) : dockButton}
               </div>
             );
           })}
@@ -885,6 +1022,8 @@ export function DesktopExperience() {
 interface DockButtonProps {
   label: string;
   icon: IconSvgElement;
+  iconText?: string;
+  iconUrl?: string;
   active: boolean;
   running: boolean;
   minimized?: boolean;
@@ -894,6 +1033,8 @@ interface DockButtonProps {
 function DockButton({
   label,
   icon,
+  iconText,
+  iconUrl,
   active,
   running,
   minimized,
@@ -912,7 +1053,12 @@ function DockButton({
       )}
       onClick={onClick}
     >
-      <HugeiconsIcon icon={icon} size={24} strokeWidth={1.4} />
+      <DockAppIcon
+        label={label}
+        icon={icon}
+        iconText={iconText}
+        iconUrl={iconUrl}
+      />
       {running && (
         <span className="absolute -bottom-1 size-1 rounded-full bg-foreground/80" />
       )}
@@ -925,4 +1071,39 @@ function DockButton({
       <TooltipContent side="top" sideOffset={8}>{label}</TooltipContent>
     </Tooltip>
   );
+}
+
+function DockAppIcon({
+  label,
+  icon,
+  iconText,
+  iconUrl,
+}: Pick<DockButtonProps, "label" | "icon" | "iconText" | "iconUrl">) {
+  const [failedUrl, setFailedUrl] = useState<string>();
+  const realIconUrl = iconUrl &&
+    !iconUrl.startsWith("file://") &&
+    failedUrl !== iconUrl
+    ? iconUrl
+    : undefined;
+
+  if (realIconUrl) {
+    return (
+      <span className="relative size-9 overflow-hidden rounded-lg bg-muted/30">
+        <Image
+          src={realIconUrl}
+          alt={`${label} icon`}
+          fill
+          sizes="36px"
+          className="object-contain p-0.5"
+          onError={() => setFailedUrl(realIconUrl)}
+        />
+      </span>
+    );
+  }
+
+  if (iconText && iconText !== "📦") {
+    return <span className="text-2xl leading-none">{iconText}</span>;
+  }
+
+  return <HugeiconsIcon icon={icon} size={24} strokeWidth={1.4} />;
 }

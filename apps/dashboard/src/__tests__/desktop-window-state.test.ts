@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clampDesktopBounds,
+  isPersistedDesktopDock,
   isPersistedDesktopLayout,
   maximizedDesktopBounds,
 } from "@/lib/desktop-window-state";
@@ -41,5 +42,22 @@ describe("desktop layout persistence", () => {
     expect(isPersistedDesktopLayout({ version: 1, windows: [] })).toBe(true);
     expect(isPersistedDesktopLayout({ version: 2, windows: [] })).toBe(false);
     expect(isPersistedDesktopLayout({ version: 1, windows: null })).toBe(false);
+  });
+
+  it("accepts only valid pinned service app snapshots", () => {
+    expect(isPersistedDesktopDock({
+      version: 1,
+      apps: [{
+        id: "sonarr",
+        name: "Sonarr",
+        url: "http://localhost:8989",
+        iconUrl: "https://example.com/sonarr.png",
+      }],
+    })).toBe(true);
+    expect(isPersistedDesktopDock({
+      version: 1,
+      apps: [{ id: "sonarr", name: "Sonarr", url: "javascript:alert(1)" }],
+    })).toBe(false);
+    expect(isPersistedDesktopDock({ version: 2, apps: [] })).toBe(false);
   });
 });
