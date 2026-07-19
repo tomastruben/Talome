@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAtomValue } from "jotai";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/app-sidebar";
@@ -23,10 +23,15 @@ import { hideShellHeaderAtom } from "@/atoms/shell";
 import { registerServiceWorker } from "@/lib/register-sw";
 import { GlobalAudioPlayer } from "@/components/audiobooks/global-audio-player";
 import { useUser } from "@/hooks/use-user";
+import { EmbeddedAppHeader } from "@/components/desktop/embedded-app-header";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
+  const embeddedFrame = useIsEmbeddedFrame();
+  const desktopRoute = pathname === "/dashboard/desktop";
   const { user, isLoading: userLoading } = useUser();
   useEffect(() => setMounted(true), []);
   useEffect(() => { registerServiceWorker(); }, []);
@@ -54,25 +59,38 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <QuickLookModal />
           <BugHuntOverlay />
           <CinemaBrowserOverlay />
-          <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
-            <a
-              href="#main-content"
-              className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:rounded-lg focus:bg-card focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:ring-2 focus:ring-ring"
-            >
-              Skip to main content
-            </a>
-            <AppSidebar />
-            <SidebarInset className="overflow-hidden flex flex-col pt-[env(safe-area-inset-top)] md:pt-0">
-              {!hideHeader && <SiteHeader />}
-              <SystemHealthBanner />
-              <main id="main-content" className={`flex-1 min-h-0 min-w-0 overflow-hidden relative flex flex-col ${hideHeader ? "" : "[container-type:inline-size]"}`}>
-                <div className={`flex-1 min-h-0 min-w-0 flex flex-col ${hideHeader ? "" : "overflow-y-auto p-4 pb-8 sm:p-6 sm:pb-10 overscroll-none"}`}>
-                  {children}
-                </div>
-              </main>
-              <GlobalAudioPlayer />
-            </SidebarInset>
-          </SidebarProvider>
+          {desktopRoute ? (
+            <main id="main-content" className="h-dvh min-h-0 overflow-hidden">
+              {children}
+            </main>
+          ) : embeddedFrame ? (
+            <main id="main-content" className="relative flex h-dvh min-h-0 flex-col overflow-hidden bg-background [container-type:inline-size]">
+              <EmbeddedAppHeader />
+              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 overscroll-none">
+                {children}
+              </div>
+            </main>
+          ) : (
+            <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
+              <a
+                href="#main-content"
+                className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:rounded-lg focus:bg-card focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:ring-2 focus:ring-ring"
+              >
+                Skip to main content
+              </a>
+              <AppSidebar />
+              <SidebarInset className="overflow-hidden flex flex-col pt-[env(safe-area-inset-top)] md:pt-0">
+                {!hideHeader && <SiteHeader />}
+                <SystemHealthBanner />
+                <main id="main-content" className={`flex-1 min-h-0 min-w-0 overflow-hidden relative flex flex-col ${hideHeader ? "" : "[container-type:inline-size]"}`}>
+                  <div className={`flex-1 min-h-0 min-w-0 flex flex-col ${hideHeader ? "" : "overflow-y-auto p-4 pb-8 sm:p-6 sm:pb-10 overscroll-none"}`}>
+                    {children}
+                  </div>
+                </main>
+                <GlobalAudioPlayer />
+              </SidebarInset>
+            </SidebarProvider>
+          )}
           </AutomationProvider>
         </WidgetEditProvider>
         </CinemaBrowserProvider>

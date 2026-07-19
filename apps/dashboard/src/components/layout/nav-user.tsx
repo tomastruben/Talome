@@ -22,12 +22,15 @@ import {
   MoreHorizontalIcon,
   Sun01Icon,
   Moon02Icon,
+  DashboardSquare02Icon,
 } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
+import { useDesktopModeAvailable } from "@/hooks/use-desktop-mode";
 
 export function NavUser() {
   const { resolvedTheme, setTheme } = useTheme();
   const router = useRouter();
+  const desktopModeAvailable = useDesktopModeAvailable();
   // Track hydration so theme-dependent content renders correctly.
   // The DropdownMenu wrapper is always rendered to keep a stable component
   // tree — the previous conditional early-return produced a different tree
@@ -54,6 +57,13 @@ export function NavUser() {
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56" side="top" align="start" sideOffset={4}>
+            {desktopModeAvailable && (
+              <DropdownMenuItem onSelect={() => router.push("/dashboard/desktop")}>
+                <HugeiconsIcon icon={DashboardSquare02Icon} size={16} />
+                <span>Desktop mode</span>
+              </DropdownMenuItem>
+            )}
+            {desktopModeAvailable && <DropdownMenuSeparator />}
             <DropdownMenuItem onSelect={() => setTheme(isDark ? "light" : "dark")}>
               <HugeiconsIcon icon={isDark ? Sun01Icon : Moon02Icon} size={16} />
               <span>{isDark ? "Light mode" : "Dark mode"}</span>
