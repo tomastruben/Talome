@@ -1407,9 +1407,9 @@ function MediaPageInner({
   }
 
   return (
-    <div className="grid gap-5">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5">
       {/* Controls: tabs + search + sort */}
-      <DesktopAppToolbar className="page-controls-row flex-wrap justify-between gap-2">
+      <DesktopAppToolbar className="page-controls-row min-w-0 max-w-full flex-wrap justify-between gap-2">
         <Tabs
           value={tab}
           onValueChange={(v) => {
@@ -1438,7 +1438,7 @@ function MediaPageInner({
           </TabsList>
         </Tabs>
 
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-2">
+        <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-2">
           {(tab === "movies" || tab === "tv") && (
             <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-2">
               <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
@@ -1506,7 +1506,7 @@ function MediaPageInner({
         ) ?? [];
         if (items.length === 0) return null;
         return (
-          <div className="space-y-2">
+          <div className="min-w-0 space-y-2">
             <p className="text-sm text-muted-foreground font-medium px-1">Continue Watching</p>
             <div className="flex gap-3 overflow-x-auto scrollbar-none pb-1 -mx-1 px-1">
               {items.map((cw, i) => {
