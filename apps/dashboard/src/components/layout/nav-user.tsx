@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import {
@@ -27,6 +27,8 @@ import {
 import { CORE_URL } from "@/lib/constants";
 import { useDesktopModeAvailable } from "@/hooks/use-desktop-mode";
 
+const subscribeToHydration = () => () => {};
+
 export function NavUser() {
   const { resolvedTheme, setTheme } = useTheme();
   const router = useRouter();
@@ -36,8 +38,11 @@ export function NavUser() {
   // tree — the previous conditional early-return produced a different tree
   // depth for SidebarMenuButton, shifting every subsequent React.useId()
   // and causing Radix UI ID mismatches during hydration.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useSyncExternalStore(
+    subscribeToHydration,
+    () => true,
+    () => false,
+  );
   const isDark = mounted && resolvedTheme === "dark";
 
   return (

@@ -44,11 +44,11 @@ const TV_BACK_KEYCODES = new Set([10009, 461]);
 type CinemaRenderMode = "quality" | "performance";
 const CINEMA_MODE_KEY = "talome-cinema-render-mode";
 function getCinemaRenderMode(): CinemaRenderMode {
-  if (typeof localStorage === "undefined") return "quality";
-  return (localStorage.getItem(CINEMA_MODE_KEY) as CinemaRenderMode) ?? "quality";
+  if (typeof window === "undefined") return "quality";
+  return (window.localStorage.getItem(CINEMA_MODE_KEY) as CinemaRenderMode) ?? "quality";
 }
 function setCinemaRenderMode(mode: CinemaRenderMode) {
-  if (typeof localStorage !== "undefined") localStorage.setItem(CINEMA_MODE_KEY, mode);
+  if (typeof window !== "undefined") window.localStorage.setItem(CINEMA_MODE_KEY, mode);
 }
 
 function formatRuntimeMinutes(minutes: number | null | undefined): string {

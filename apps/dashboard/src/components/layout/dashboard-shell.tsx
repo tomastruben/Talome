@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAtomValue } from "jotai";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
@@ -26,14 +26,19 @@ import { useUser } from "@/hooks/use-user";
 import { EmbeddedAppHeader } from "@/components/desktop/embedded-app-header";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 
+const subscribeToHydration = () => () => {};
+
 export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    subscribeToHydration,
+    () => true,
+    () => false,
+  );
   const router = useRouter();
   const pathname = usePathname();
   const embeddedFrame = useIsEmbeddedFrame();
   const desktopRoute = pathname === "/dashboard/desktop";
   const { user, isLoading: userLoading } = useUser();
-  useEffect(() => setMounted(true), []);
   useEffect(() => { registerServiceWorker(); }, []);
 
   // Client-side auth guard: redirect to login if user session is invalid.
