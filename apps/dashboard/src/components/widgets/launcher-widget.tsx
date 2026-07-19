@@ -9,28 +9,30 @@ import {
   HugeiconsIcon,
   Package01Icon,
   PackageOpenIcon,
-  DownloadSquare01Icon,
 } from "@/components/icons";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getHostUrl } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import type { Container, ServiceStack } from "@talome/types";
 
-interface LaunchableApp {
+export interface LaunchableApp {
   id: string;
   name: string;
+  url: string;
   icon?: string;
   iconUrl?: string;
   container: Container;
 }
 
 /** Extract individual launchable apps (running containers with web ports) from stacks. */
-function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
+export function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
   const apps: LaunchableApp[] = [];
 
   for (const stack of stacks) {
     for (const container of stack.containers) {
       if (container.status !== "running") continue;
-      if (!container.ports.some((p) => p.protocol === "tcp" && p.host > 0)) continue;
+      const webPort = container.ports.find((p) => p.protocol === "tcp" && p.host > 0)?.host;
+      if (!webPort) continue;
 
       // Resolve icon: per-container icon from stack, then stack-level icon
       const containerIcon = stack.containerIcons?.[container.id];
@@ -38,7 +40,15 @@ function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
       const icon = containerIcon?.icon ?? stack.icon;
       const name = containerIcon?.name ?? (stack.containers.length === 1 ? stack.name : container.name);
 
-      apps.push({ id: container.id, name, icon, iconUrl, container });
+      apps.push({
+        // Container names survive image upgrades/recreation, unlike Docker IDs.
+        id: container.name,
+        name,
+        url: getHostUrl(webPort),
+        icon,
+        iconUrl,
+        container,
+      });
     }
   }
 
@@ -78,7 +88,11 @@ function AppIcon({ app }: { app: LaunchableApp }) {
   );
 }
 
-export function LauncherWidget() {
+interface LauncherWidgetProps {
+  onLaunch?: (app: LaunchableApp) => void;
+}
+
+export function LauncherWidget({ onLaunch }: LauncherWidgetProps = {}) {
   const { stacks, isLoading } = useServiceStacks();
   const quickLook = useQuickLook();
 
@@ -120,12 +134,13 @@ export function LauncherWidget() {
             <button
               key={app.id}
               type="button"
+              aria-label={app.name}
               className={cn(
                 "flex flex-col items-center gap-1.5 py-1 rounded-lg",
                 "transition-all duration-150 ease-out",
                 "hover:bg-muted/30 active:scale-95",
               )}
-              onClick={() => quickLook.open(app.container)}
+              onClick={() => onLaunch ? onLaunch(app) : quickLook.open(app.container)}
             >
               <AppIcon app={app} />
               <span className="text-xs text-muted-foreground leading-tight text-center truncate w-full px-0.5">

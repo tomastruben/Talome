@@ -22,6 +22,7 @@ import {
   UserIcon,
   Logout01Icon,
   ArrowRight01Icon,
+  Package01Icon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import type { FeaturePermission } from "@talome/types";
@@ -36,6 +37,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DesktopWindow } from "@/components/desktop/desktop-window";
 import { DesktopLaunchpad } from "@/components/desktop/desktop-launchpad";
+import type { LaunchableApp } from "@/components/widgets/launcher-widget";
 import { NotificationsBell } from "@/components/notifications/notifications-bell";
 import { CpuWidget } from "@/components/widgets/cpu-widget";
 import { MemoryWidget } from "@/components/widgets/memory-widget";
@@ -130,6 +132,7 @@ const DESKTOP_APPS: DesktopAppDefinition[] = [
 
 const appById = new Map(DESKTOP_APPS.map((app) => [app.id, app]));
 const DEFAULT_AREA: DesktopArea = { width: 1440, height: 820 };
+const SERVICE_APP_PREFIX = "service:";
 
 function appIdFromUrl(url: string) {
   if (url === "/dashboard") return "home";
@@ -150,11 +153,41 @@ function appDefinitionFromNav(item: NavItem): DesktopAppDefinition {
   );
 }
 
-function resolveAppDefinition(appId: string, url: string) {
+function serviceAppDefinition({
+  id,
+  name,
+  url,
+}: Pick<LaunchableApp, "id" | "name" | "url">): DesktopAppDefinition {
+  return {
+    id: `${SERVICE_APP_PREFIX}${id}`,
+    title: name,
+    url,
+    icon: Package01Icon,
+    minimum: { width: 520, height: 360 },
+  };
+}
+
+function resolveAppDefinition(appId: string, url: string, title?: string) {
   const fixed = appById.get(appId);
   if (fixed) return fixed;
   const navItem = allNav.find((item) => item.url === url);
-  return navItem ? appDefinitionFromNav(navItem) : undefined;
+  if (navItem) return appDefinitionFromNav(navItem);
+
+  if (appId.startsWith(SERVICE_APP_PREFIX) && title) {
+    try {
+      const parsedUrl = new URL(url);
+      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") return undefined;
+      return serviceAppDefinition({
+        id: appId.slice(SERVICE_APP_PREFIX.length),
+        name: title,
+        url,
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
 }
 
 function defaultBounds(appId: string, area: DesktopArea): DesktopBounds {
@@ -215,7 +248,7 @@ function readPersistedWindows(area: DesktopArea): DesktopWindowModel[] | null {
       if (!value || typeof value !== "object") return [];
       const candidate = value as Partial<DesktopWindowModel>;
       const app = candidate.appId && candidate.url
-        ? resolveAppDefinition(candidate.appId, candidate.url)
+        ? resolveAppDefinition(candidate.appId, candidate.url, candidate.title)
         : undefined;
       if (!app || !candidate.bounds) return [];
       const bounds = candidate.bounds as Partial<DesktopBounds>;
@@ -315,7 +348,11 @@ export function DesktopExperience() {
     const fixedIds = new Set(dockApps.map((app) => app.id));
     const runningApps = windows.flatMap((windowModel): DesktopAppDefinition[] => {
       if (fixedIds.has(windowModel.appId)) return [];
-      const app = resolveAppDefinition(windowModel.appId, windowModel.url);
+      const app = resolveAppDefinition(
+        windowModel.appId,
+        windowModel.url,
+        windowModel.title,
+      );
       return app && canUseApp(app) ? [app] : [];
     });
     const settings = dockApps.filter((app) => app.id === "settings");
@@ -345,7 +382,11 @@ export function DesktopExperience() {
     const saved = readPersistedWindows(area);
     if (saved) {
       const accessible = saved.filter((windowModel) => {
-        const app = resolveAppDefinition(windowModel.appId, windowModel.url);
+        const app = resolveAppDefinition(
+          windowModel.appId,
+          windowModel.url,
+          windowModel.title,
+        );
         return app ? canUseApp(app) : false;
       });
       setWindows(accessible);
@@ -375,7 +416,11 @@ export function DesktopExperience() {
 
   useEffect(() => {
     setWindows((current) => current.map((windowModel) => {
-      const app = resolveAppDefinition(windowModel.appId, windowModel.url);
+      const app = resolveAppDefinition(
+        windowModel.appId,
+        windowModel.url,
+        windowModel.title,
+      );
       if (!app) return windowModel;
       return {
         ...windowModel,
@@ -412,6 +457,11 @@ export function DesktopExperience() {
   const launchNavItem = useCallback((item: NavItem) => {
     setLaunchpadOpen(false);
     openApp(appDefinitionFromNav(item));
+  }, [openApp]);
+
+  const launchService = useCallback((app: LaunchableApp) => {
+    setLaunchpadOpen(false);
+    openApp(serviceAppDefinition(app));
   }, [openApp]);
 
   const closeWindow = useCallback((id: string) => {
@@ -604,14 +654,15 @@ export function DesktopExperience() {
 
         {windows.map((windowModel) => {
           if (windowModel.minimized) return null;
-          const navItem = allNav.find((item) => item.url === windowModel.url);
-          const app = appById.get(windowModel.appId) ?? (navItem
-            ? appDefinitionFromNav(navItem)
-            : appDefinitionFromNav({
-                title: windowModel.title,
-                url: windowModel.url,
-                icon: Home01Icon,
-              }));
+          const app = resolveAppDefinition(
+            windowModel.appId,
+            windowModel.url,
+            windowModel.title,
+          ) ?? appDefinitionFromNav({
+            title: windowModel.title,
+            url: windowModel.url,
+            icon: Home01Icon,
+          });
           return (
             <DesktopWindow
               key={windowModel.id}
@@ -655,6 +706,7 @@ export function DesktopExperience() {
           open={launchpadOpen}
           onOpenChange={setLaunchpadOpen}
           onLaunch={launchNavItem}
+          onLaunchService={launchService}
         />
 
         <nav

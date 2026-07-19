@@ -3,7 +3,10 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { HugeiconsIcon, Cancel01Icon } from "@/components/icons";
 import { allNav, type NavItem } from "@/components/layout/nav-config";
-import { LauncherWidget } from "@/components/widgets/launcher-widget";
+import {
+  LauncherWidget,
+  type LaunchableApp,
+} from "@/components/widgets/launcher-widget";
 import { Button } from "@/components/ui/button";
 import { useUser } from "@/hooks/use-user";
 
@@ -11,11 +14,13 @@ interface DesktopLaunchpadProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onLaunch: (item: NavItem) => void;
+  onLaunchService: (app: LaunchableApp) => void;
 }
 export function DesktopLaunchpad({
   open,
   onOpenChange,
   onLaunch,
+  onLaunchService,
 }: DesktopLaunchpadProps) {
   const { user, hasPermission } = useUser();
   const apps = allNav.filter((item) => {
@@ -85,7 +90,7 @@ export function DesktopLaunchpad({
                 Installed services
               </h2>
               <div className="min-h-36 overflow-hidden rounded-xl">
-                <LauncherWidget />
+                <LauncherWidget onLaunch={onLaunchService} />
               </div>
             </section>
           </motion.div>
