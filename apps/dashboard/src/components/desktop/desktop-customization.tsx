@@ -1,6 +1,12 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import Image from "next/image";
 import {
   ArrowLeft01Icon,
@@ -27,6 +33,19 @@ import {
 import { cn } from "@/lib/utils";
 
 const MAX_WALLPAPER_BYTES = 2 * 1024 * 1024;
+const WALLPAPER_DIALOG_VIEWPORT_MARGIN = 16;
+
+interface WallpaperDialogPosition {
+  x: number;
+  y: number;
+}
+
+interface WallpaperDialogDragOrigin {
+  pointerX: number;
+  pointerY: number;
+  position: WallpaperDialogPosition;
+  bounds: DOMRect;
+}
 
 interface WallpaperPreset {
   id: string;
@@ -194,7 +213,10 @@ function DesktopWallpaperPicker({
   wallpaperUrl,
   onOpenChange,
   onWallpaperChange,
-}: Omit<DesktopWallpaperDialogProps, "open">) {
+  onTitlebarPointerDown,
+}: Omit<DesktopWallpaperDialogProps, "open"> & {
+  onTitlebarPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [source, setSource] = useState<WallpaperSource>(() => (
     isPresetWallpaper(wallpaperUrl) ? "talome" : "custom"
@@ -252,7 +274,11 @@ function DesktopWallpaperPicker({
 
   return (
     <>
-      <header className="flex items-start gap-3 border-b border-border/70 px-6 pt-5 pb-4 pr-12">
+      <header
+        data-wallpaper-drag-handle
+        className="flex touch-none cursor-grab select-none items-start gap-3 border-b border-border/70 px-6 pt-5 pb-4 pr-12 active:cursor-grabbing"
+        onPointerDown={onTitlebarPointerDown}
+      >
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
           <HugeiconsIcon icon={Image01Icon} size={18} />
         </span>
@@ -371,9 +397,80 @@ export function DesktopWallpaperDialog({
   onOpenChange,
   onWallpaperChange,
 }: DesktopWallpaperDialogProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const positionRef = useRef<WallpaperDialogPosition>({ x: 0, y: 0 });
+  const dragOriginRef = useRef<WallpaperDialogDragOrigin | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      positionRef.current = { x: 0, y: 0 };
+      dragOriginRef.current = null;
+      return;
+    }
+
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
+      const dragOrigin = dragOriginRef.current;
+      const content = contentRef.current;
+      if (!dragOrigin || !content) return;
+
+      const pointerDeltaX = event.clientX - dragOrigin.pointerX;
+      const pointerDeltaY = event.clientY - dragOrigin.pointerY;
+      const minimumDeltaX = WALLPAPER_DIALOG_VIEWPORT_MARGIN - dragOrigin.bounds.left;
+      const maximumDeltaX = window.innerWidth
+        - WALLPAPER_DIALOG_VIEWPORT_MARGIN
+        - dragOrigin.bounds.right;
+      const minimumDeltaY = WALLPAPER_DIALOG_VIEWPORT_MARGIN - dragOrigin.bounds.top;
+      const maximumDeltaY = window.innerHeight
+        - WALLPAPER_DIALOG_VIEWPORT_MARGIN
+        - dragOrigin.bounds.bottom;
+      const nextPosition = {
+        x: dragOrigin.position.x + Math.min(
+          maximumDeltaX,
+          Math.max(minimumDeltaX, pointerDeltaX),
+        ),
+        y: dragOrigin.position.y + Math.min(
+          maximumDeltaY,
+          Math.max(minimumDeltaY, pointerDeltaY),
+        ),
+      };
+
+      positionRef.current = nextPosition;
+      content.style.translate = `calc(-50% + ${nextPosition.x}px) calc(-50% + ${nextPosition.y}px)`;
+    };
+
+    const handlePointerUp = () => {
+      dragOriginRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+      dragOriginRef.current = null;
+    };
+  }, [open]);
+
+  const startDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const content = contentRef.current;
+    if (event.button !== 0 || !content) return;
+
+    event.preventDefault();
+    dragOriginRef.current = {
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      position: positionRef.current,
+      bounds: content.getBoundingClientRect(),
+    };
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        ref={contentRef}
+        data-wallpaper-dialog
         className="z-[1500] max-h-[calc(100dvh-3rem)] gap-0 overflow-y-auto p-0 sm:max-w-3xl"
         overlayClassName="z-[1450]"
         showCloseButton
@@ -382,6 +479,7 @@ export function DesktopWallpaperDialog({
           wallpaperUrl={wallpaperUrl}
           onOpenChange={onOpenChange}
           onWallpaperChange={onWallpaperChange}
+          onTitlebarPointerDown={startDrag}
         />
       </DialogContent>
     </Dialog>
