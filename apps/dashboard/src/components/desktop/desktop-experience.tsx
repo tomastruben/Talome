@@ -11,6 +11,8 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { flushSync } from "react-dom";
+import { animate } from "motion";
 import {
   HugeiconsIcon,
   LayoutGridIcon,
@@ -83,6 +85,7 @@ import { CORE_URL } from "@/lib/constants";
 import {
   clampDesktopBounds,
   desktopMinimizeOffset,
+  desktopWindowMotionKeyframes,
   DESKTOP_DOCK_STORAGE_KEY,
   DESKTOP_DOCK_STORAGE_VERSION,
   DESKTOP_WINDOW_STORAGE_KEY,
@@ -93,6 +96,7 @@ import {
   type PersistedDesktopServiceApp,
   type DesktopArea,
   type DesktopBounds,
+  type DesktopWindowMotionDirection,
 } from "@/lib/desktop-window-state";
 import { cn } from "@/lib/utils";
 import {
@@ -136,6 +140,52 @@ const desktopActionIcons: Partial<Record<DesktopAppActionIcon, IconSvgElement>> 
 const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
 const DESKTOP_SYSTEM_WIDGET_TYPES = new Set(["cpu", "memory", "disk"]);
+const DESKTOP_WINDOW_MOTION_SECONDS = 0.19;
+const DESKTOP_WINDOW_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
+
+async function playDesktopWindowMotion(
+  windowElement: HTMLElement,
+  offset: { x: number; y: number },
+  direction: DesktopWindowMotionDirection,
+) {
+  const keyframes = desktopWindowMotionKeyframes(offset, direction);
+  const previousPointerEvents = windowElement.style.pointerEvents;
+  windowElement.style.pointerEvents = "none";
+  windowElement.style.transformOrigin = "center";
+  windowElement.style.willChange = "transform, opacity";
+  windowElement.style.transform = keyframes.transform[0];
+  windowElement.style.opacity = String(keyframes.opacity[0]);
+
+  const playback = animate(
+    windowElement,
+    {
+      transform: keyframes.transform,
+      opacity: keyframes.opacity,
+    },
+    {
+      duration: DESKTOP_WINDOW_MOTION_SECONDS,
+      ease: DESKTOP_WINDOW_MOTION_EASE,
+      times: keyframes.times,
+    },
+  );
+
+  try {
+    await playback;
+  } catch {
+    // A window can be closed while its transition is in flight.
+  } finally {
+    const clearAnimationStyles = () => {
+      windowElement.style.removeProperty("transform");
+      windowElement.style.removeProperty("transform-origin");
+      windowElement.style.removeProperty("will-change");
+      windowElement.style.removeProperty("opacity");
+    };
+    playback.cancel();
+    windowElement.style.pointerEvents = previousPointerEvents;
+    clearAnimationStyles();
+    window.requestAnimationFrame(clearAnimationStyles);
+  }
+}
 
 function DesktopSystemWidget({ widgetType }: { widgetType: string }) {
   switch (widgetType) {
@@ -429,6 +479,7 @@ export function DesktopExperience() {
   const desktopWindowRefs = useRef(new Map<string, HTMLElement>());
   const dockButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const minimizingWindowIdsRef = useRef(new Set<string>());
+  const restoringWindowIdsRef = useRef(new Set<string>());
   const zIndexRef = useRef(4);
   const [area, setArea] = useState<DesktopArea>(DEFAULT_AREA);
   const [windows, setWindows] = useState<DesktopWindowModel[]>(() => [
@@ -632,6 +683,46 @@ export function DesktopExperience() {
     ));
   }, []);
 
+  const restoreWindow = useCallback(async (
+    id: string,
+    appId: string,
+    app: DesktopAppDefinition,
+  ) => {
+    if (restoringWindowIdsRef.current.has(id)) return;
+    restoringWindowIdsRef.current.add(id);
+
+    const zIndex = zIndexRef.current++;
+    flushSync(() => {
+      setActiveWindowId(id);
+      setWindows((current) => current.map((windowModel) =>
+        windowModel.id === id
+          ? {
+            ...windowModel,
+            title: app.title,
+            url: app.url,
+            minimized: false,
+            zIndex,
+          }
+          : windowModel,
+      ));
+    });
+
+    const windowElement = desktopWindowRefs.current.get(id);
+    const dockButton = dockButtonRefs.current.get(appId);
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    try {
+      if (!windowElement || !dockButton || reduceMotion) return;
+      const offset = desktopMinimizeOffset(
+        windowElement.getBoundingClientRect(),
+        dockButton.getBoundingClientRect(),
+      );
+      await playDesktopWindowMotion(windowElement, offset, "restore");
+    } finally {
+      restoringWindowIdsRef.current.delete(id);
+    }
+  }, []);
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
@@ -667,6 +758,10 @@ export function DesktopExperience() {
     if (!canUseApp(app)) return;
     const existing = windows.find((windowModel) => windowModel.appId === app.id);
     if (existing) {
+      if (existing.minimized) {
+        void restoreWindow(existing.id, existing.appId, app);
+        return;
+      }
       focusWindow(existing.id);
       setWindows((current) => current.map((windowModel) =>
         windowModel.id === existing.id
@@ -679,7 +774,7 @@ export function DesktopExperience() {
     const next = createWindow(app, area, zIndex);
     setWindows((current) => [...current, next]);
     setActiveWindowId(next.id);
-  }, [area, canUseApp, focusWindow, windows]);
+  }, [area, canUseApp, focusWindow, restoreWindow, windows]);
 
   const launchNavItem = useCallback((item: NavItem) => {
     setLaunchpadOpen(false);
@@ -749,38 +844,9 @@ export function DesktopExperience() {
       windowElement.getBoundingClientRect(),
       dockButton.getBoundingClientRect(),
     );
-    const previousPointerEvents = windowElement.style.pointerEvents;
-    windowElement.style.pointerEvents = "none";
-    windowElement.style.setProperty("--desktop-minimize-x", `${offset.x}px`);
-    windowElement.style.setProperty("--desktop-minimize-y", `${offset.y}px`);
-    windowElement.style.setProperty("--desktop-minimize-mid-x", `${offset.x * 0.72}px`);
-    windowElement.style.setProperty("--desktop-minimize-mid-y", `${offset.y * 0.72}px`);
-
     try {
-      await new Promise<void>((resolve) => {
-        let settled = false;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          window.clearTimeout(fallbackTimer);
-          windowElement.removeEventListener("animationend", handleAnimationEnd);
-          resolve();
-        };
-        const handleAnimationEnd = (event: AnimationEvent) => {
-          if (event.animationName === "desktop-window-minimize") finish();
-        };
-        const fallbackTimer = window.setTimeout(finish, 240);
-
-        windowElement.addEventListener("animationend", handleAnimationEnd);
-        windowElement.classList.add("desktop-window-minimizing");
-      });
+      await playDesktopWindowMotion(windowElement, offset, "minimize");
     } finally {
-      windowElement.classList.remove("desktop-window-minimizing");
-      windowElement.style.removeProperty("--desktop-minimize-x");
-      windowElement.style.removeProperty("--desktop-minimize-y");
-      windowElement.style.removeProperty("--desktop-minimize-mid-x");
-      windowElement.style.removeProperty("--desktop-minimize-mid-y");
-      windowElement.style.pointerEvents = previousPointerEvents;
       finishMinimizingWindow(id);
       minimizingWindowIdsRef.current.delete(id);
     }

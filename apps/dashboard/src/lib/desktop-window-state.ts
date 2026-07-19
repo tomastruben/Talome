@@ -16,6 +16,14 @@ export interface DesktopRect {
   height: number;
 }
 
+export type DesktopWindowMotionDirection = "minimize" | "restore";
+
+export interface DesktopWindowMotionKeyframes {
+  transform: string[];
+  opacity: number[];
+  times: number[];
+}
+
 export const DESKTOP_WINDOW_STORAGE_KEY = "talome-desktop-windows-v1";
 export const DESKTOP_WINDOW_STORAGE_VERSION = 1;
 export const DESKTOP_DOCK_STORAGE_KEY = "talome-desktop-dock-v1";
@@ -41,6 +49,36 @@ export function desktopMinimizeOffset(
       (windowRect.left + windowRect.width / 2),
     y: dockRect.top + dockRect.height / 2 -
       (windowRect.top + windowRect.height / 2),
+  };
+}
+
+function windowTransform(x: number, y: number, scale: number): string {
+  return `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+}
+
+export function desktopWindowMotionKeyframes(
+  offset: { x: number; y: number },
+  direction: DesktopWindowMotionDirection,
+): DesktopWindowMotionKeyframes {
+  const minimizeTransforms = [
+    windowTransform(0, 0, 1),
+    windowTransform(offset.x * 0.72, offset.y * 0.72, 0.3),
+    windowTransform(offset.x, offset.y, 0.04),
+  ];
+  const minimizeOpacity = [1, 0.72, 0];
+
+  if (direction === "minimize") {
+    return {
+      transform: minimizeTransforms,
+      opacity: minimizeOpacity,
+      times: [0, 0.72, 1],
+    };
+  }
+
+  return {
+    transform: [...minimizeTransforms].reverse(),
+    opacity: [...minimizeOpacity].reverse(),
+    times: [0, 0.28, 1],
   };
 }
 

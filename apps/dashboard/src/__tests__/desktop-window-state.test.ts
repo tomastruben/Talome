@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clampDesktopBounds,
   desktopMinimizeOffset,
+  desktopWindowMotionKeyframes,
   isPersistedDesktopDock,
   isPersistedDesktopLayout,
   maximizedDesktopBounds,
@@ -42,6 +43,21 @@ describe("desktop window geometry", () => {
       { left: 100, top: 60, width: 1000, height: 700 },
       { left: 748, top: 840, width: 48, height: 48 },
     )).toEqual({ x: 172, y: 454 });
+  });
+
+  it("restores a window by reversing its minimize geometry", () => {
+    const minimize = desktopWindowMotionKeyframes(
+      { x: 172, y: 454 },
+      "minimize",
+    );
+    const restore = desktopWindowMotionKeyframes(
+      { x: 172, y: 454 },
+      "restore",
+    );
+
+    expect(restore.transform).toEqual([...minimize.transform].reverse());
+    expect(restore.opacity).toEqual([...minimize.opacity].reverse());
+    expect(restore.times).toEqual([0, 0.28, 1]);
   });
 });
 
