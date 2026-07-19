@@ -8,28 +8,45 @@ import {
   type DesktopAppAction,
   type DesktopAppActionDescriptor,
 } from "@/atoms/desktop-app-actions";
+import { pageBackAtom } from "@/atoms/page-back";
+import { pageTitleAtom } from "@/atoms/page-title";
 
-function publishActions(actions: DesktopAppActionDescriptor[]) {
+const BACK_ACTION_ID = "talome-page-back";
+
+function publishActions(title: string | undefined, actions: DesktopAppActionDescriptor[]) {
   window.parent.postMessage(
-    { type: "talome:desktop-app-actions", actions },
+    { type: "talome:desktop-app-actions", title, actions },
     window.location.origin,
   );
 }
 
 export function DesktopAppActionBridge() {
   const actions = useAtomValue(desktopAppActionsAtom);
+  const pageBack = useAtomValue(pageBackAtom);
+  const pageTitle = useAtomValue(pageTitleAtom);
   const actionsRef = useRef<DesktopAppAction[]>([]);
 
   useEffect(() => {
-    actionsRef.current = actions;
-    publishActions(actions.map((action) => ({
+    const bridgeActions: DesktopAppAction[] = pageBack
+      ? [{
+        id: BACK_ACTION_ID,
+        label: "Back",
+        icon: "back",
+        placement: "leading",
+        onSelect: pageBack,
+      }, ...actions]
+      : actions;
+    actionsRef.current = bridgeActions;
+    publishActions(pageTitle ?? undefined, bridgeActions.map((action) => ({
       id: action.id,
       label: action.label,
       icon: action.icon,
+      kind: action.kind,
+      placement: action.placement,
       active: action.active,
       disabled: action.disabled,
     })));
-  }, [actions]);
+  }, [actions, pageBack, pageTitle]);
 
   useEffect(() => {
     const handlePointerDown = () => {
@@ -52,7 +69,7 @@ export function DesktopAppActionBridge() {
     return () => {
       window.removeEventListener("pointerdown", handlePointerDown, true);
       window.removeEventListener("message", handleMessage);
-      publishActions([]);
+      publishActions(undefined, []);
     };
   }, []);
 

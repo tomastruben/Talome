@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
@@ -29,7 +30,6 @@ import {
   Delete01Icon,
 } from "@/components/icons";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger, TabsBadge } from "@/components/ui/tabs";
@@ -38,6 +38,7 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useFeatureStack } from "@/hooks/use-feature-stacks";
+import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { StackSetup } from "@/components/ui/stack-setup";
 
 /* ── Types ─────────────────────────────────────────────── */
@@ -65,6 +66,11 @@ interface AudiobookItem {
   addedAt: number;
   updatedAt: number;
   numFiles?: number;
+  mediaProgress?: {
+    progress?: number;
+    currentTime?: number;
+    isFinished?: boolean;
+  };
 }
 
 interface LibraryData {
@@ -779,7 +785,7 @@ export default function AudiobooksPage() {
   const progressMap: ProgressMap = {};
   if (continueListening?.entities) {
     for (const item of continueListening.entities) {
-      const progress = (item as any).mediaProgress;
+      const progress = item.mediaProgress;
       if (progress) {
         progressMap[item.id] = {
           progress: progress.progress ?? 0,
@@ -995,7 +1001,7 @@ export default function AudiobooksPage() {
   return (
     <div className="grid gap-5 pb-12">
       {/* Controls — tabs + search/sort */}
-      <div className="page-controls-row flex-wrap justify-between gap-2">
+      <DesktopAppToolbar className="page-controls-row flex-wrap justify-between gap-2">
         <Tabs
           value={tab}
           onValueChange={(v) => setTab(v as PageTab)}
@@ -1080,7 +1086,7 @@ export default function AudiobooksPage() {
             </Select>
           </div>
         )}
-      </div>
+      </DesktopAppToolbar>
 
       {/* ═══ Library Tab ═══ */}
       {tab === "library" && (
@@ -1171,7 +1177,7 @@ export default function AudiobooksPage() {
                   description="Add your Audiobookshelf server in Settings to browse your audiobook library."
                   action={
                     <Button variant="outline" size="sm" asChild>
-                      <a href="/dashboard/settings">Go to Settings</a>
+                      <Link href="/dashboard/settings">Go to Settings</Link>
                     </Button>
                   }
                 />
@@ -1261,7 +1267,7 @@ export default function AudiobooksPage() {
               description="Add Prowlarr and qBittorrent in Settings to search and download audiobooks."
               action={
                 <Button variant="outline" size="sm" asChild>
-                  <a href="/dashboard/settings">Go to Settings</a>
+                  <Link href="/dashboard/settings">Go to Settings</Link>
                 </Button>
               }
             />
@@ -1434,7 +1440,7 @@ export default function AudiobooksPage() {
               description="Add qBittorrent in Settings to manage audiobook downloads."
               action={
                 <Button variant="outline" size="sm" asChild>
-                  <a href="/dashboard/settings">Go to Settings</a>
+                  <Link href="/dashboard/settings">Go to Settings</Link>
                 </Button>
               }
             />

@@ -67,6 +67,7 @@ import { Projector01Icon } from "@/components/icons";
 import { useSetAtom } from "jotai";
 import { pageActionAtom } from "@/atoms/page-action";
 import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
+import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { useFeatureStack } from "@/hooks/use-feature-stacks";
 import { StackSetup } from "@/components/ui/stack-setup";
 
@@ -1408,7 +1409,7 @@ function MediaPageInner({
   return (
     <div className="grid gap-5">
       {/* Controls: tabs + search + sort */}
-      <div className="page-controls-row flex-wrap justify-between gap-2">
+      <DesktopAppToolbar className="page-controls-row flex-wrap justify-between gap-2">
         <Tabs
           value={tab}
           onValueChange={(v) => {
@@ -1477,7 +1478,7 @@ function MediaPageInner({
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-      </div>
+      </DesktopAppToolbar>
 
       {(tab === "movies" || tab === "tv") && (
         <MediaFiltersRow

@@ -34,6 +34,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { blueprintAtom } from "@/atoms/artifact";
+import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
+import { pageBackAtom } from "@/atoms/page-back";
+import { pageTitleAtom } from "@/atoms/page-title";
 import { hideShellHeaderAtom } from "@/atoms/shell";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { CORE_URL } from "@/lib/constants";
@@ -42,6 +45,7 @@ import { BlueprintDraftBar } from "@/components/creator/blueprint-draft-bar";
 import { ClaudeTerminal } from "@/components/terminal/claude-terminal";
 import { Switch } from "@/components/ui/switch";
 import { useConfirmAction } from "@/hooks/use-confirm-action";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import useSWR from "swr";
 
 interface SuggestionItem {
@@ -316,13 +320,17 @@ export default function AssistantPage() {
     messages, status, error, clearError, stop,
     conversations, activeId, setActiveId, deleteConversation,
     handleSubmit, addToolApprovalResponse, regenerate,
-    model, setModel, modelOptions, startNew, autoMode, isSubmitting,
+    model, setModel, modelOptions, startNew, autoMode, setAutoMode,
   } = useAssistant();
+  const embeddedFrame = useIsEmbeddedFrame();
   const keyboard = useKeyboardMode();
   const { confirmAction, ConfirmDialog } = useConfirmAction(autoMode);
   const suggestions = useSuggestions();
 
   const [blueprint, setBlueprint] = useAtom(blueprintAtom);
+  const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
+  const setPageBack = useSetAtom(pageBackAtom);
+  const setPageTitle = useSetAtom(pageTitleAtom);
   const setHideShellHeader = useSetAtom(hideShellHeaderAtom);
   const [building, setBuilding] = useState(false);
   const [autoExec, setAutoExec] = useState(false);
@@ -357,6 +365,9 @@ export default function AssistantPage() {
   // or submitting a message clears the flag and shows the chat again.
   const [dismissed, setDismissed] = useState(false);
   const showingChat = !dismissed && (messages.length > 0 || activeId !== null);
+  const activeConversationTitle = activeId
+    ? conversations.find((conversation) => conversation.id === activeId)?.title
+    : undefined;
 
   const handleBack = useCallback(() => {
     if (originRef.current) {
@@ -387,6 +398,48 @@ export default function AssistantPage() {
     startNew();
     setDismissed(false);
   }, [startNew, status, confirmAction]);
+
+  useEffect(() => {
+    if (!embeddedFrame) return;
+
+    setPageTitle(showingChat && activeConversationTitle
+      ? activeConversationTitle
+      : "Assistant");
+    if (showingChat) setPageBack(() => handleBack);
+    else setPageBack(null);
+    setDesktopAppActions([
+      {
+        id: "auto-mode",
+        label: "Auto",
+        kind: "toggle",
+        active: autoMode,
+        onSelect: () => setAutoMode(!autoMode),
+      },
+      ...(showingChat ? [{
+        id: "new-conversation",
+        label: "New",
+        icon: "add" as const,
+        onSelect: () => void handleNew(),
+      }] : []),
+    ]);
+
+    return () => {
+      setDesktopAppActions([]);
+      setPageBack(null);
+      setPageTitle(null);
+    };
+  }, [
+    activeConversationTitle,
+    autoMode,
+    embeddedFrame,
+    handleBack,
+    handleNew,
+    setAutoMode,
+    setDesktopAppActions,
+    setPageBack,
+    setPageTitle,
+    showingChat,
+  ]);
 
   // Hide the shell header — this page renders its own
   useEffect(() => {
@@ -537,7 +590,7 @@ export default function AssistantPage() {
     } finally {
       setBuilding(false);
     }
-  }, [blueprint, building, router, setBlueprint, handleSubmit]);
+  }, [autoExec, blueprint, building, router, setBlueprint, handleSubmit]);
 
   const [completing, setCompleting] = useState(false);
 
@@ -806,7 +859,9 @@ export default function AssistantPage() {
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden overscroll-none">
       <ConfirmDialog />
-      <AssistantHeader showingChat={showingChat} onBack={handleBack} onNew={handleNew} />
+      {!embeddedFrame && (
+        <AssistantHeader showingChat={showingChat} onBack={handleBack} onNew={handleNew} />
+      )}
       {chatContent}
       {/* Inline Claude Code terminal — replaces chat when building */}
       {buildSession && (

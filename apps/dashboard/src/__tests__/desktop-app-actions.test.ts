@@ -9,15 +9,21 @@ describe("desktop app action messages", () => {
   it("accepts a valid app action list", () => {
     expect(parseDesktopAppActionsMessage({
       type: "talome:desktop-app-actions",
+      title: "Media Vault",
       actions: [
         { id: "cinema", label: "Cinema", icon: "projector" },
         { id: "select", label: "Cancel", active: true },
+        { id: "auto", label: "Auto", kind: "toggle", placement: "trailing" },
+        { id: "back", label: "Back", icon: "back", placement: "leading" },
       ],
     })).toEqual({
       type: "talome:desktop-app-actions",
+      title: "Media Vault",
       actions: [
         { id: "cinema", label: "Cinema", icon: "projector" },
         { id: "select", label: "Cancel", active: true },
+        { id: "auto", label: "Auto", kind: "toggle", placement: "trailing" },
+        { id: "back", label: "Back", icon: "back", placement: "leading" },
       ],
     });
   });
@@ -30,6 +36,15 @@ describe("desktop app action messages", () => {
     expect(parseDesktopAppActionsMessage({
       type: "talome:desktop-app-actions",
       actions: [{ id: "", label: "Cinema" }],
+    })).toBeNull();
+    expect(parseDesktopAppActionsMessage({
+      type: "talome:desktop-app-actions",
+      actions: [{ id: "auto", label: "Auto", kind: "slider" }],
+    })).toBeNull();
+    expect(parseDesktopAppActionsMessage({
+      type: "talome:desktop-app-actions",
+      title: "",
+      actions: [],
     })).toBeNull();
   });
 

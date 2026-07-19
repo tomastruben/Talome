@@ -27,9 +27,6 @@ import {
   Logout01Icon,
   ArrowRight01Icon,
   Package01Icon,
-  Projector01Icon,
-  CloudUploadIcon,
-  FolderAddIcon,
   PinIcon,
   PinOffIcon,
   DashboardSquareEditIcon,
@@ -100,8 +97,7 @@ import { cn } from "@/lib/utils";
 import {
   parseDesktopAppFocusMessage,
   parseDesktopAppActionsMessage,
-  type DesktopAppActionDescriptor,
-  type DesktopAppActionIcon,
+  type DesktopAppChromeDescriptor,
 } from "@/atoms/desktop-app-actions";
 
 interface DesktopAppDefinition {
@@ -130,12 +126,6 @@ interface DesktopWindowModel {
 }
 
 type DesktopControlCenterView = "main" | "widgets";
-
-const desktopActionIcons: Partial<Record<DesktopAppActionIcon, IconSvgElement>> = {
-  projector: Projector01Icon,
-  upload: CloudUploadIcon,
-  "new-folder": FolderAddIcon,
-};
 
 const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
@@ -186,8 +176,8 @@ async function playDesktopWindowMotion(
   }
 }
 
-function removeWindowActions(
-  current: Record<string, DesktopAppActionDescriptor[]>,
+function removeWindowChrome(
+  current: Record<string, DesktopAppChromeDescriptor>,
   windowId: string,
 ) {
   if (!(windowId in current)) return current;
@@ -485,8 +475,8 @@ export function DesktopExperience() {
   const [pinnedServiceApps, setPinnedServiceApps] = useState<
     PersistedDesktopServiceApp[]
   >([]);
-  const [appActionsByWindow, setAppActionsByWindow] = useState<
-    Record<string, DesktopAppActionDescriptor[]>
+  const [appChromeByWindow, setAppChromeByWindow] = useState<
+    Record<string, DesktopAppChromeDescriptor>
   >({});
 
   const canUseApp = useCallback((app: DesktopAppDefinition) => {
@@ -720,11 +710,17 @@ export function DesktopExperience() {
       }
 
       if (!actionsMessage) return;
-      setAppActionsByWindow((current) => {
-        if (actionsMessage.actions.length === 0) {
-          return removeWindowActions(current, windowId);
+      setAppChromeByWindow((current) => {
+        if (actionsMessage.actions.length === 0 && !actionsMessage.title) {
+          return removeWindowChrome(current, windowId);
         }
-        return { ...current, [windowId]: actionsMessage.actions };
+        return {
+          ...current,
+          [windowId]: {
+            title: actionsMessage.title,
+            actions: actionsMessage.actions,
+          },
+        };
       });
     };
 
@@ -778,8 +774,8 @@ export function DesktopExperience() {
 
   const closeWindow = useCallback((id: string) => {
     appFrameRefs.current.delete(id);
-    setAppActionsByWindow((current) => {
-      return removeWindowActions(current, id);
+    setAppChromeByWindow((current) => {
+      return removeWindowChrome(current, id);
     });
     setWindows((current) => {
       const remaining = current.filter((windowModel) => windowModel.id !== id);
@@ -840,8 +836,9 @@ export function DesktopExperience() {
   }, []);
 
   const activeWindow = windows.find((windowModel) => windowModel.id === activeWindowId);
-  const activeTitle = activeWindow?.title ?? "Desktop";
-  const activeAppActions = appActionsByWindow[activeWindowId] ?? [];
+  const activeTitle = appChromeByWindow[activeWindowId]?.title
+    ?? activeWindow?.title
+    ?? "Desktop";
 
   const openSearch = () => {
     setControlCenterOpen(false);
@@ -911,20 +908,20 @@ export function DesktopExperience() {
     router.push("/");
   };
 
-  const triggerActiveAppAction = useCallback((actionId: string) => {
-    const frame = appFrameRefs.current.get(activeWindowId);
+  const triggerAppAction = useCallback((windowId: string, actionId: string) => {
+    const frame = appFrameRefs.current.get(windowId);
     frame?.contentWindow?.postMessage(
       { type: "talome:desktop-app-action-trigger", actionId },
       window.location.origin,
     );
-  }, [activeWindowId]);
+  }, []);
 
   const handleAppFrameLoad = useCallback((
     windowId: string,
     event: SyntheticEvent<HTMLIFrameElement>,
   ) => {
-    setAppActionsByWindow((current) => {
-      return removeWindowActions(current, windowId);
+    setAppChromeByWindow((current) => {
+      return removeWindowChrome(current, windowId);
     });
     try {
       const pathname = event.currentTarget.contentWindow?.location.pathname;
@@ -1028,35 +1025,6 @@ export function DesktopExperience() {
 
         <span className="mx-2 h-4 w-px bg-border" />
         <span className="truncate text-sm font-medium">{activeTitle}</span>
-
-        {activeAppActions.length > 0 && (
-          <>
-            <span className="mx-1 h-4 w-px bg-border" />
-            <div
-              className="flex min-w-0 items-center gap-0.5"
-              aria-label={`${activeTitle} actions`}
-            >
-              {activeAppActions.map((action) => {
-                const icon = action.icon ? desktopActionIcons[action.icon] : undefined;
-                return (
-                  <button
-                    key={action.id}
-                    type="button"
-                    className={cn(
-                      "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
-                      action.active && "bg-muted/60 text-foreground",
-                    )}
-                    disabled={action.disabled}
-                    onClick={() => triggerActiveAppAction(action.id)}
-                  >
-                    {icon && <HugeiconsIcon icon={icon} size={14} />}
-                    {action.label}
-                  </button>
-                );
-              })}
-            </div>
-          </>
-        )}
 
         <div className="ml-auto flex items-center gap-1">
           <Tooltip>
@@ -1222,6 +1190,7 @@ export function DesktopExperience() {
 
         {windows.map((windowModel) => {
           if (windowModel.minimized) return null;
+          const appChrome = appChromeByWindow[windowModel.id];
           const app = resolveAppDefinition(
             windowModel.appId,
             windowModel.url,
@@ -1235,7 +1204,7 @@ export function DesktopExperience() {
             <DesktopWindow
               key={windowModel.id}
               id={windowModel.id}
-              title={windowModel.title}
+              title={appChrome?.title ?? windowModel.title}
               bounds={windowModel.bounds}
               restoreBounds={windowModel.restoreBounds}
               area={area}
@@ -1243,6 +1212,7 @@ export function DesktopExperience() {
               active={windowModel.id === activeWindowId}
               maximized={windowModel.maximized}
               zIndex={windowModel.zIndex}
+              actions={appChrome?.actions}
               windowRef={(element) => {
                 if (element) desktopWindowRefs.current.set(windowModel.id, element);
                 else desktopWindowRefs.current.delete(windowModel.id);
@@ -1262,6 +1232,7 @@ export function DesktopExperience() {
                   ? clampDesktopBounds(restoreBounds, area, app.minimum)
                   : current.bounds,
               }))}
+              onAction={(actionId) => triggerAppAction(windowModel.id, actionId)}
             >
               <iframe
                 ref={(frame) => {
