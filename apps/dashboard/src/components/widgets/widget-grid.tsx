@@ -351,7 +351,7 @@ export function WidgetAddDock({
   return (
     <div className={cn(
       inline
-        ? "sticky bottom-0 z-20 flex justify-end bg-background/95 pt-3"
+        ? "relative flex shrink-0 justify-end pb-1"
         : "fixed right-6 bottom-6 z-40",
     )}>
       <Popover>
