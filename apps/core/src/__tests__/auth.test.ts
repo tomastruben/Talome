@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createSessionToken, verifySessionToken } from "../middleware/session.js";
+import {
+  createSessionToken,
+  SESSION_TTL_SECONDS,
+  verifySessionToken,
+} from "../middleware/session.js";
 
 // ── Session token tests ───────────────────────────────────────────────────────
 describe("session JWT", () => {
@@ -31,9 +35,9 @@ describe("session JWT", () => {
     const payload = await verifySessionToken(token);
     expect(payload?.iat).toBeDefined();
     expect(payload?.exp).toBeDefined();
-    // exp should be roughly 24 hours in the future
-    const oneDaySec = 24 * 60 * 60;
-    expect(payload!.exp - payload!.iat).toBeCloseTo(oneDaySec, -2);
+    // JWT lifetime must match the seven-day session cookie lifetime.
+    expect(SESSION_TTL_SECONDS).toBe(7 * 24 * 60 * 60);
+    expect(payload!.exp - payload!.iat).toBeCloseTo(SESSION_TTL_SECONDS, -2);
   });
 });
 

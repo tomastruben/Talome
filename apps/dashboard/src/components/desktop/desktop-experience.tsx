@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type SyntheticEvent,
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -519,6 +520,17 @@ export function DesktopExperience() {
     router.push("/");
   };
 
+  const handleAppFrameLoad = useCallback((event: SyntheticEvent<HTMLIFrameElement>) => {
+    try {
+      const pathname = event.currentTarget.contentWindow?.location.pathname;
+      if (pathname === "/login") {
+        router.replace("/login?from=%2Fdashboard%2Fdesktop");
+      }
+    } catch {
+      // Cross-origin service windows cannot expose their location, which is expected.
+    }
+  }, [router]);
+
   if (!desktopModeAvailable) return null;
 
   return (
@@ -702,6 +714,7 @@ export function DesktopExperience() {
                 className="size-full border-0 bg-background"
                 allow="autoplay; fullscreen; picture-in-picture"
                 allowFullScreen
+                onLoad={handleAppFrameLoad}
               />
             </DesktopWindow>
           );

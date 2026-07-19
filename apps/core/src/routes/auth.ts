@@ -5,7 +5,13 @@ import { setCookie, deleteCookie } from "hono/cookie";
 import { hash as bcryptHash, compare as bcryptCompare } from "bcryptjs";
 import { db, schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
-import { createSessionToken, SESSION_COOKIE, verifySessionToken, revokeSession } from "../middleware/session.js";
+import {
+  createSessionToken,
+  revokeSession,
+  SESSION_COOKIE,
+  SESSION_TTL_SECONDS,
+  verifySessionToken,
+} from "../middleware/session.js";
 import { getCookie } from "hono/cookie";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { UserPermissions } from "@talome/types";
@@ -30,7 +36,7 @@ function sessionCookieOptions(c: Context) {
     secure: isSecure,
     sameSite: "Lax" as const,
     path: "/",
-    maxAge: 60 * 60 * 24 * 7,
+    maxAge: SESSION_TTL_SECONDS,
   };
 }
 

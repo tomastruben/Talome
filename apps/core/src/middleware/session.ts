@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 
 const SESSION_COOKIE = "talome_session";
 const JWT_ALG = "HS256";
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.TALOME_SECRET;
@@ -69,7 +70,7 @@ export async function createSessionToken(userId: string, role: "admin" | "member
     .setProtectedHeader({ alg: JWT_ALG })
     .setJti(randomUUID())
     .setIssuedAt()
-    .setExpirationTime("24h")
+    .setExpirationTime(`${SESSION_TTL_SECONDS}s`)
     .sign(secret);
 }
 
@@ -132,4 +133,4 @@ export const requireSession: MiddlewareHandler = async (c, next) => {
   return next();
 };
 
-export { SESSION_COOKIE };
+export { SESSION_COOKIE, SESSION_TTL_SECONDS };
