@@ -4,6 +4,7 @@ import { useAtomValue } from "jotai";
 import { pageActionAtom } from "@/atoms/page-action";
 import { pageBackAtom } from "@/atoms/page-back";
 import { pageTitleAtom } from "@/atoms/page-title";
+import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { Button } from "@/components/ui/button";
 import { HugeiconsIcon, ArrowLeft01Icon } from "@/components/icons";
 
@@ -11,8 +12,10 @@ export function EmbeddedAppHeader() {
   const pageAction = useAtomValue(pageActionAtom);
   const pageBack = useAtomValue(pageBackAtom);
   const pageTitle = useAtomValue(pageTitleAtom);
+  const desktopActions = useAtomValue(desktopAppActionsAtom);
+  const embeddedPageAction = desktopActions.length === 0 ? pageAction : null;
 
-  if (!pageAction && !pageBack && !pageTitle) return null;
+  if (!embeddedPageAction && !pageBack && !pageTitle) return null;
 
   return (
     <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background/80 px-3 backdrop-blur-sm">
@@ -32,7 +35,7 @@ export function EmbeddedAppHeader() {
           {pageTitle}
         </span>
       )}
-      {pageAction}
+      {embeddedPageAction}
     </header>
   );
 }

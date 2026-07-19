@@ -64,6 +64,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { pageActionAtom } from "@/atoms/page-action";
+import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { pageBackAtom } from "@/atoms/page-back";
 import { Progress } from "@/components/ui/progress";
@@ -793,6 +794,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   const dragCounter = useRef(0);
   const lastSelectedIdx = useRef<number | null>(null);
   const setPageAction = useSetAtom(pageActionAtom);
+  const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
   const setPageTitle = useSetAtom(pageTitleAtom);
   const setPageBack = useSetAtom(pageBackAtom);
 
@@ -1090,6 +1092,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   useEffect(() => {
     if (isAtVirtualRoot) {
       setPageAction(null);
+      setDesktopAppActions([]);
     } else {
       setPageAction(
         <FileActions
@@ -1097,9 +1100,26 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
           onUpload={() => fileInputRef.current?.click()}
         />,
       );
+      setDesktopAppActions([
+        {
+          id: "upload",
+          label: "Upload",
+          icon: "upload",
+          onSelect: () => fileInputRef.current?.click(),
+        },
+        {
+          id: "new-folder",
+          label: "New",
+          icon: "new-folder",
+          onSelect: () => void handleNewFolder(),
+        },
+      ]);
     }
-    return () => setPageAction(null);
-  }, [setPageAction, handleNewFolder, isAtVirtualRoot]);
+    return () => {
+      setPageAction(null);
+      setDesktopAppActions([]);
+    };
+  }, [setPageAction, setDesktopAppActions, handleNewFolder, isAtVirtualRoot]);
 
   // Wire atom-based drilldown: show folder name + back button in header.
   // Uses useLayoutEffect + currentPath (not data?.path) so the title is set

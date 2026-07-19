@@ -66,6 +66,7 @@ import { useCinemaBrowser } from "@/components/media/cinema-browser-context";
 import { Projector01Icon } from "@/components/icons";
 import { useSetAtom } from "jotai";
 import { pageActionAtom } from "@/atoms/page-action";
+import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { useFeatureStack } from "@/hooks/use-feature-stacks";
 import { StackSetup } from "@/components/ui/stack-setup";
 
@@ -1233,9 +1234,11 @@ function MediaPageInner({
 
   // Header actions — Cinema + Select in the shell header
   const setPageAction = useSetAtom(pageActionAtom);
+  const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
   useEffect(() => {
     if (tab !== "movies" && tab !== "tv") {
       setPageAction(null);
+      setDesktopAppActions([]);
       return;
     }
     setPageAction(
@@ -1259,8 +1262,32 @@ function MediaPageInner({
         </Button>
       </div>,
     );
-    return () => setPageAction(null);
-  }, [tab, selectionMode, setPageAction, cinemaBrowser, exitSelectionMode]);
+    setDesktopAppActions([
+      {
+        id: "cinema",
+        label: "Cinema",
+        icon: "projector",
+        onSelect: () => cinemaBrowser.open(tab as "movies" | "tv"),
+      },
+      {
+        id: "select",
+        label: selectionMode ? "Cancel" : "Select",
+        active: selectionMode,
+        onSelect: () => selectionMode ? exitSelectionMode() : setSelectionMode(true),
+      },
+    ]);
+    return () => {
+      setPageAction(null);
+      setDesktopAppActions([]);
+    };
+  }, [
+    tab,
+    selectionMode,
+    setPageAction,
+    setDesktopAppActions,
+    cinemaBrowser,
+    exitSelectionMode,
+  ]);
 
   // Escape to exit selection
   useEffect(() => {

@@ -24,6 +24,7 @@ import { registerServiceWorker } from "@/lib/register-sw";
 import { GlobalAudioPlayer } from "@/components/audiobooks/global-audio-player";
 import { useUser } from "@/hooks/use-user";
 import { EmbeddedAppHeader } from "@/components/desktop/embedded-app-header";
+import { DesktopAppActionBridge } from "@/components/desktop/desktop-app-action-bridge";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 
 const subscribeToHydration = () => () => {};
@@ -71,6 +72,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </main>
             ) : embeddedFrame ? (
               <main id="main-content" className="relative flex h-dvh min-h-0 flex-1 flex-col overflow-hidden bg-background [container-type:inline-size]">
+                <DesktopAppActionBridge />
                 <EmbeddedAppHeader />
                 <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 overscroll-none">
                   {children}

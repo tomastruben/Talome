@@ -24,6 +24,9 @@ import {
   Logout01Icon,
   ArrowRight01Icon,
   Package01Icon,
+  Projector01Icon,
+  CloudUploadIcon,
+  FolderAddIcon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import type { FeaturePermission } from "@talome/types";
@@ -60,6 +63,12 @@ import {
   type DesktopBounds,
 } from "@/lib/desktop-window-state";
 import { cn } from "@/lib/utils";
+import {
+  parseDesktopAppFocusMessage,
+  parseDesktopAppActionsMessage,
+  type DesktopAppActionDescriptor,
+  type DesktopAppActionIcon,
+} from "@/atoms/desktop-app-actions";
 
 interface DesktopAppDefinition {
   id: string;
@@ -81,6 +90,22 @@ interface DesktopWindowModel {
   minimized: boolean;
   maximized: boolean;
   zIndex: number;
+}
+
+const desktopActionIcons: Partial<Record<DesktopAppActionIcon, IconSvgElement>> = {
+  projector: Projector01Icon,
+  upload: CloudUploadIcon,
+  "new-folder": FolderAddIcon,
+};
+
+function removeWindowActions(
+  current: Record<string, DesktopAppActionDescriptor[]>,
+  windowId: string,
+) {
+  if (!(windowId in current)) return current;
+  return Object.fromEntries(
+    Object.entries(current).filter(([candidateId]) => candidateId !== windowId),
+  );
 }
 
 const DESKTOP_APPS: DesktopAppDefinition[] = [
@@ -327,6 +352,7 @@ export function DesktopExperience() {
   const desktopModeAvailable = useDesktopModeAvailable();
   const { user, hasPermission } = useUser();
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const appFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
   const zIndexRef = useRef(4);
   const [area, setArea] = useState<DesktopArea>(DEFAULT_AREA);
   const [windows, setWindows] = useState<DesktopWindowModel[]>(() => [
@@ -336,6 +362,9 @@ export function DesktopExperience() {
   const [activeWindowId, setActiveWindowId] = useState("files");
   const [launchpadOpen, setLaunchpadOpen] = useState(false);
   const [restored, setRestored] = useState(false);
+  const [appActionsByWindow, setAppActionsByWindow] = useState<
+    Record<string, DesktopAppActionDescriptor[]>
+  >({});
 
   const canUseApp = useCallback((app: DesktopAppDefinition) => {
     if (app.adminOnly && user?.role !== "admin") return false;
@@ -450,6 +479,37 @@ export function DesktopExperience() {
     ));
   }, []);
 
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const actionsMessage = parseDesktopAppActionsMessage(event.data);
+      const focusMessage = parseDesktopAppFocusMessage(event.data);
+      if (!actionsMessage && !focusMessage) return;
+
+      const frameEntry = Array.from(appFrameRefs.current.entries()).find(
+        ([, frame]) => frame.contentWindow === event.source,
+      );
+      if (!frameEntry) return;
+
+      const [windowId] = frameEntry;
+      if (focusMessage) {
+        if (activeWindowId !== windowId) focusWindow(windowId);
+        return;
+      }
+
+      if (!actionsMessage) return;
+      setAppActionsByWindow((current) => {
+        if (actionsMessage.actions.length === 0) {
+          return removeWindowActions(current, windowId);
+        }
+        return { ...current, [windowId]: actionsMessage.actions };
+      });
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [activeWindowId, focusWindow]);
+
   const openApp = useCallback((app: DesktopAppDefinition) => {
     if (!canUseApp(app)) return;
     const existing = windows.find((windowModel) => windowModel.appId === app.id);
@@ -479,6 +539,10 @@ export function DesktopExperience() {
   }, [openApp]);
 
   const closeWindow = useCallback((id: string) => {
+    appFrameRefs.current.delete(id);
+    setAppActionsByWindow((current) => {
+      return removeWindowActions(current, id);
+    });
     setWindows((current) => {
       const remaining = current.filter((windowModel) => windowModel.id !== id);
       const nextActive = remaining
@@ -513,6 +577,7 @@ export function DesktopExperience() {
 
   const activeWindow = windows.find((windowModel) => windowModel.id === activeWindowId);
   const activeTitle = activeWindow?.title ?? "Desktop";
+  const activeAppActions = appActionsByWindow[activeWindowId] ?? [];
 
   const openSearch = () => {
     document.dispatchEvent(
@@ -528,7 +593,21 @@ export function DesktopExperience() {
     router.push("/");
   };
 
-  const handleAppFrameLoad = useCallback((event: SyntheticEvent<HTMLIFrameElement>) => {
+  const triggerActiveAppAction = useCallback((actionId: string) => {
+    const frame = appFrameRefs.current.get(activeWindowId);
+    frame?.contentWindow?.postMessage(
+      { type: "talome:desktop-app-action-trigger", actionId },
+      window.location.origin,
+    );
+  }, [activeWindowId]);
+
+  const handleAppFrameLoad = useCallback((
+    windowId: string,
+    event: SyntheticEvent<HTMLIFrameElement>,
+  ) => {
+    setAppActionsByWindow((current) => {
+      return removeWindowActions(current, windowId);
+    });
     try {
       const pathname = event.currentTarget.contentWindow?.location.pathname;
       if (pathname === "/login") {
@@ -632,6 +711,35 @@ export function DesktopExperience() {
         <span className="mx-2 h-4 w-px bg-border" />
         <span className="truncate text-sm font-medium">{activeTitle}</span>
 
+        {activeAppActions.length > 0 && (
+          <>
+            <span className="mx-1 h-4 w-px bg-border" />
+            <div
+              className="flex min-w-0 items-center gap-0.5"
+              aria-label={`${activeTitle} actions`}
+            >
+              {activeAppActions.map((action) => {
+                const icon = action.icon ? desktopActionIcons[action.icon] : undefined;
+                return (
+                  <button
+                    key={action.id}
+                    type="button"
+                    className={cn(
+                      "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+                      action.active && "bg-muted/60 text-foreground",
+                    )}
+                    disabled={action.disabled}
+                    onClick={() => triggerActiveAppAction(action.id)}
+                  >
+                    {icon && <HugeiconsIcon icon={icon} size={14} />}
+                    {action.label}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+
         <div className="ml-auto flex items-center gap-1">
           <button
             type="button"
@@ -717,12 +825,16 @@ export function DesktopExperience() {
               }))}
             >
               <iframe
+                ref={(frame) => {
+                  if (frame) appFrameRefs.current.set(windowModel.id, frame);
+                  else appFrameRefs.current.delete(windowModel.id);
+                }}
                 src={windowModel.url}
                 title={windowModel.title}
                 className="size-full border-0 bg-background"
                 allow="autoplay; fullscreen; picture-in-picture"
                 allowFullScreen
-                onLoad={handleAppFrameLoad}
+                onLoad={(event) => handleAppFrameLoad(windowModel.id, event)}
               />
             </DesktopWindow>
           );
