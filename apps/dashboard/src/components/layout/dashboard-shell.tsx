@@ -59,24 +59,25 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         <CinemaBrowserProvider>
         <WidgetEditProvider>
           <AutomationProvider>
-          {mounted && <CommandPalette />}
-          <NotificationToastBridge />
-          <QuickLookModal />
-          <BugHuntOverlay />
-          <CinemaBrowserOverlay />
-          {desktopRoute ? (
-            <main id="main-content" className="h-dvh min-h-0 overflow-hidden">
-              {children}
-            </main>
-          ) : embeddedFrame ? (
-            <main id="main-content" className="relative flex h-dvh min-h-0 flex-col overflow-hidden bg-background [container-type:inline-size]">
-              <EmbeddedAppHeader />
-              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 overscroll-none">
+          <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
+            {mounted && <CommandPalette />}
+            <NotificationToastBridge />
+            <QuickLookModal />
+            <BugHuntOverlay />
+            <CinemaBrowserOverlay />
+            {desktopRoute ? (
+              <main id="main-content" className="h-dvh min-h-0 flex-1 overflow-hidden">
                 {children}
-              </div>
-            </main>
-          ) : (
-            <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
+              </main>
+            ) : embeddedFrame ? (
+              <main id="main-content" className="relative flex h-dvh min-h-0 flex-1 flex-col overflow-hidden bg-background [container-type:inline-size]">
+                <EmbeddedAppHeader />
+                <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 overscroll-none">
+                  {children}
+                </div>
+              </main>
+            ) : (
+              <>
               <a
                 href="#main-content"
                 className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:rounded-lg focus:bg-card focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:ring-2 focus:ring-ring"
@@ -94,8 +95,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 </main>
                 <GlobalAudioPlayer />
               </SidebarInset>
-            </SidebarProvider>
-          )}
+              </>
+            )}
+          </SidebarProvider>
           </AutomationProvider>
         </WidgetEditProvider>
         </CinemaBrowserProvider>
