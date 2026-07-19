@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type SyntheticEvent,
 } from "react";
 import Image from "next/image";
@@ -536,6 +537,11 @@ export function DesktopExperience() {
     pinnedServiceApps,
     windows,
   ]);
+
+  const windowByAppId = useMemo(
+    () => new Map(windows.map((windowModel) => [windowModel.appId, windowModel])),
+    [windows],
+  );
 
   useEffect(() => {
     if (
@@ -1261,15 +1267,26 @@ export function DesktopExperience() {
           aria-label="Desktop applications"
           className="absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border border-border bg-card/90 p-2 backdrop-blur-md"
         >
-          <DockButton
-            label="Launchpad"
-            icon={LayoutGridIcon}
-            active={launchpadOpen}
-            running={false}
-            onClick={() => setLaunchpadOpen((current) => !current)}
-          />
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <span className="flex">
+                <DockButton
+                  label="Launchpad"
+                  icon={LayoutGridIcon}
+                  active={launchpadOpen}
+                  running={false}
+                  onClick={() => setLaunchpadOpen((current) => !current)}
+                />
+              </span>
+            </ContextMenuTrigger>
+            <ContextMenuContent className="z-[1200] w-48">
+              <ContextMenuItem onSelect={() => setLaunchpadOpen((current) => !current)}>
+                {launchpadOpen ? "Close Launchpad" : "Open Launchpad"}
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
           {visibleDockApps.map((app) => {
-            const windowModel = windows.find((candidate) => candidate.appId === app.id);
+            const windowModel = windowByAppId.get(app.id);
             const dockButton = (
               <DockButton
                 label={app.title}
@@ -1291,32 +1308,25 @@ export function DesktopExperience() {
                 {app.id === "settings" && (
                   <span className="mx-1 h-9 w-px bg-border" />
                 )}
-                {app.serviceApp ? (
-                  <ContextMenu>
-                    <ContextMenuTrigger asChild>
-                      <span className="flex">{dockButton}</span>
-                    </ContextMenuTrigger>
-                    <ContextMenuContent className="z-[1200] w-48">
-                      <ContextMenuGroup>
-                        <ContextMenuItem onSelect={() => openApp(app)}>
-                          Open {app.title}
-                        </ContextMenuItem>
-                      </ContextMenuGroup>
-                      <ContextMenuSeparator />
-                      <ContextMenuGroup>
-                        <ContextMenuItem onSelect={() => toggleServiceDockPin(app)}>
-                          <HugeiconsIcon
-                            icon={pinnedServiceIds.has(app.serviceApp.id) ? PinOffIcon : PinIcon}
-                            size={16}
-                          />
-                          {pinnedServiceIds.has(app.serviceApp.id)
-                            ? "Remove from Dock"
-                            : "Keep in Dock"}
-                        </ContextMenuItem>
-                      </ContextMenuGroup>
-                    </ContextMenuContent>
-                  </ContextMenu>
-                ) : dockButton}
+                <DockAppContextMenu
+                  title={app.title}
+                  windowModel={windowModel}
+                  pinned={app.serviceApp
+                    ? pinnedServiceIds.has(app.serviceApp.id)
+                    : undefined}
+                  onOpen={() => openApp(app)}
+                  onMinimize={windowModel
+                    ? () => void minimizeWindow(windowModel.id, windowModel.appId)
+                    : undefined}
+                  onClose={windowModel
+                    ? () => closeWindow(windowModel.id)
+                    : undefined}
+                  onTogglePin={app.serviceApp
+                    ? () => toggleServiceDockPin(app)
+                    : undefined}
+                >
+                  {dockButton}
+                </DockAppContextMenu>
               </div>
             );
           })}
@@ -1330,6 +1340,64 @@ export function DesktopExperience() {
         onWallpaperChange={updateWallpaper}
       />
     </div>
+  );
+}
+
+interface DockAppContextMenuProps {
+  title: string;
+  windowModel?: DesktopWindowModel;
+  pinned?: boolean;
+  children: ReactNode;
+  onOpen: () => void;
+  onMinimize?: () => void;
+  onClose?: () => void;
+  onTogglePin?: () => void;
+}
+
+function DockAppContextMenu({
+  title,
+  windowModel,
+  pinned,
+  children,
+  onOpen,
+  onMinimize,
+  onClose,
+  onTogglePin,
+}: DockAppContextMenuProps) {
+  const primaryLabel = windowModel
+    ? windowModel.minimized
+      ? `Restore ${title}`
+      : `Show ${title}`
+    : `Open ${title}`;
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <span className="flex">{children}</span>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="z-[1200] w-48">
+        <ContextMenuGroup>
+          <ContextMenuItem onSelect={onOpen}>{primaryLabel}</ContextMenuItem>
+          {windowModel && !windowModel.minimized && onMinimize ? (
+            <ContextMenuItem onSelect={onMinimize}>Minimize {title}</ContextMenuItem>
+          ) : null}
+          {windowModel && onClose ? (
+            <ContextMenuItem onSelect={onClose}>Close {title}</ContextMenuItem>
+          ) : null}
+        </ContextMenuGroup>
+        {onTogglePin ? (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuGroup>
+              <ContextMenuItem onSelect={onTogglePin}>
+                <HugeiconsIcon icon={pinned ? PinOffIcon : PinIcon} size={16} />
+                {pinned ? "Remove from Dock" : "Keep in Dock"}
+              </ContextMenuItem>
+            </ContextMenuGroup>
+          </>
+        ) : null}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
