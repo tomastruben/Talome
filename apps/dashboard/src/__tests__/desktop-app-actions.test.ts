@@ -15,6 +15,16 @@ describe("desktop app action messages", () => {
         { id: "select", label: "Cancel", active: true },
         { id: "auto", label: "Auto", kind: "toggle", placement: "trailing" },
         { id: "back", label: "Back", icon: "back", placement: "leading" },
+        {
+          id: "sessions",
+          label: "default",
+          kind: "menu",
+          placement: "leading",
+          items: [
+            { id: "session-default", label: "default", active: true },
+            { id: "session-refresh", label: "Refresh sessions" },
+          ],
+        },
       ],
     })).toEqual({
       type: "talome:desktop-app-actions",
@@ -24,6 +34,16 @@ describe("desktop app action messages", () => {
         { id: "select", label: "Cancel", active: true },
         { id: "auto", label: "Auto", kind: "toggle", placement: "trailing" },
         { id: "back", label: "Back", icon: "back", placement: "leading" },
+        {
+          id: "sessions",
+          label: "default",
+          kind: "menu",
+          placement: "leading",
+          items: [
+            { id: "session-default", label: "default", active: true },
+            { id: "session-refresh", label: "Refresh sessions" },
+          ],
+        },
       ],
     });
   });
@@ -40,6 +60,14 @@ describe("desktop app action messages", () => {
     expect(parseDesktopAppActionsMessage({
       type: "talome:desktop-app-actions",
       actions: [{ id: "auto", label: "Auto", kind: "slider" }],
+    })).toBeNull();
+    expect(parseDesktopAppActionsMessage({
+      type: "talome:desktop-app-actions",
+      actions: [{ id: "sessions", label: "default", kind: "menu" }],
+    })).toBeNull();
+    expect(parseDesktopAppActionsMessage({
+      type: "talome:desktop-app-actions",
+      actions: [{ id: "sessions", label: "default", items: [{ id: "one", label: "One" }] }],
     })).toBeNull();
     expect(parseDesktopAppActionsMessage({
       type: "talome:desktop-app-actions",

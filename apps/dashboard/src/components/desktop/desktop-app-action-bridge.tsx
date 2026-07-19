@@ -45,6 +45,12 @@ export function DesktopAppActionBridge() {
       placement: action.placement,
       active: action.active,
       disabled: action.disabled,
+      items: action.items?.map((item) => ({
+        id: item.id,
+        label: item.label,
+        active: item.active,
+        disabled: item.disabled,
+      })),
     })));
   }, [actions, pageBack, pageTitle]);
 
@@ -61,7 +67,17 @@ export function DesktopAppActionBridge() {
       }
       const message = parseDesktopAppActionTriggerMessage(event.data);
       if (!message) return;
-      actionsRef.current.find((action) => action.id === message.actionId)?.onSelect();
+      for (const action of actionsRef.current) {
+        if (action.id === message.actionId) {
+          action.onSelect?.();
+          return;
+        }
+        const menuItem = action.items?.find((item) => item.id === message.actionId);
+        if (menuItem) {
+          menuItem.onSelect();
+          return;
+        }
+      }
     };
 
     window.addEventListener("pointerdown", handlePointerDown, true);

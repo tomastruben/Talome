@@ -18,6 +18,8 @@ import {
   MaximizeScreenIcon,
   MinimizeScreenIcon,
   Projector01Icon,
+  ArrowDown01Icon,
+  Tick01Icon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import type {
@@ -25,6 +27,12 @@ import type {
   DesktopAppActionIcon,
 } from "@/atoms/desktop-app-actions";
 import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
   clampDesktopBounds,
@@ -171,6 +179,7 @@ export const DesktopWindow = memo(function DesktopWindow({
 
   const leadingActions = actions.filter((action) => action.placement === "leading");
   const trailingActions = actions.filter((action) => action.placement !== "leading");
+  const titlePlacement = actions.length > 0 ? "leading" : "center";
 
   const renderAction = (action: DesktopAppActionDescriptor) => {
     const icon = action.icon ? desktopActionIcons[action.icon] : undefined;
@@ -179,6 +188,48 @@ export const DesktopWindow = memo(function DesktopWindow({
       onFocus();
       event.stopPropagation();
     };
+
+    if (action.kind === "menu") {
+      return (
+        <DropdownMenu key={action.id}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "flex h-7 min-w-0 max-w-44 shrink items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+                action.active && "bg-muted/60 text-foreground",
+              )}
+              disabled={action.disabled}
+              aria-label={action.label}
+              onPointerDown={stopTitlebarGesture}
+              onDoubleClick={(event) => event.stopPropagation()}
+            >
+              {icon && <HugeiconsIcon icon={icon} size={14} />}
+              <span className="truncate">{action.label}</span>
+              <HugeiconsIcon icon={ArrowDown01Icon} size={11} className="shrink-0" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align={isLeading ? "start" : "end"}
+            className="z-[1400] min-w-52"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            {action.items?.map((item) => (
+              <DropdownMenuItem
+                key={item.id}
+                disabled={item.disabled}
+                onSelect={() => onAction?.(item.id)}
+              >
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {item.active && (
+                  <HugeiconsIcon icon={Tick01Icon} size={13} className="ml-auto" />
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      );
+    }
 
     if (action.kind === "toggle") {
       return (
@@ -245,7 +296,10 @@ export const DesktopWindow = memo(function DesktopWindow({
     >
       <div
         className={cn(
-          "group/titlebar grid h-11 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-border/70 px-3",
+          "group/titlebar grid h-11 shrink-0 touch-none select-none items-center border-b border-border/70 px-3",
+          titlePlacement === "leading"
+            ? "grid-cols-[minmax(0,1fr)_auto]"
+            : "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
           active ? "bg-card" : "bg-card/80",
         )}
         onPointerDown={startDrag}
@@ -316,11 +370,24 @@ export const DesktopWindow = memo(function DesktopWindow({
               {leadingActions.map(renderAction)}
             </div>
           )}
+          {titlePlacement === "leading" && (
+            <span
+              data-title-placement="leading"
+              className="pointer-events-none min-w-0 truncate text-sm font-medium"
+            >
+              {title}
+            </span>
+          )}
         </div>
 
-        <span className="pointer-events-none max-w-56 truncate px-2 text-center text-sm font-medium">
-          {title}
-        </span>
+        {titlePlacement === "center" && (
+          <span
+            data-title-placement="center"
+            className="pointer-events-none max-w-56 truncate px-2 text-center text-sm font-medium"
+          >
+            {title}
+          </span>
+        )}
 
         <div
           className="flex min-w-0 items-center justify-self-end gap-0.5"

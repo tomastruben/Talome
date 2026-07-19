@@ -8,12 +8,19 @@ const desktopAppActionIcons = [
   "new-folder",
 ] as const;
 
-const desktopAppActionKinds = ["button", "toggle"] as const;
+const desktopAppActionKinds = ["button", "toggle", "menu"] as const;
 const desktopAppActionPlacements = ["leading", "trailing"] as const;
 
 export type DesktopAppActionIcon = (typeof desktopAppActionIcons)[number];
 export type DesktopAppActionKind = (typeof desktopAppActionKinds)[number];
 export type DesktopAppActionPlacement = (typeof desktopAppActionPlacements)[number];
+
+export interface DesktopAppActionMenuItemDescriptor {
+  id: string;
+  label: string;
+  active?: boolean;
+  disabled?: boolean;
+}
 
 export interface DesktopAppActionDescriptor {
   id: string;
@@ -23,10 +30,16 @@ export interface DesktopAppActionDescriptor {
   placement?: DesktopAppActionPlacement;
   active?: boolean;
   disabled?: boolean;
+  items?: DesktopAppActionMenuItemDescriptor[];
+}
+
+export interface DesktopAppActionMenuItem extends DesktopAppActionMenuItemDescriptor {
+  onSelect: () => void;
 }
 
 export interface DesktopAppAction extends DesktopAppActionDescriptor {
-  onSelect: () => void;
+  onSelect?: () => void;
+  items?: DesktopAppActionMenuItem[];
 }
 
 export interface DesktopAppChromeDescriptor {
@@ -75,14 +88,39 @@ function parseDesktopAppActionDescriptor(
   if (value.active !== undefined && typeof value.active !== "boolean") return null;
   if (value.disabled !== undefined && typeof value.disabled !== "boolean") return null;
 
+  let items: DesktopAppActionMenuItemDescriptor[] | undefined;
+  if (value.items !== undefined) {
+    if (!Array.isArray(value.items) || value.items.length === 0 || value.items.length > 24) {
+      return null;
+    }
+    items = [];
+    for (const item of value.items) {
+      if (!isRecord(item) || !isBoundedString(item.id) || !isBoundedString(item.label)) {
+        return null;
+      }
+      if (item.active !== undefined && typeof item.active !== "boolean") return null;
+      if (item.disabled !== undefined && typeof item.disabled !== "boolean") return null;
+      items.push({
+        id: item.id,
+        label: item.label,
+        active: item.active,
+        disabled: item.disabled,
+      });
+    }
+  }
+
+  const kind = value.kind as DesktopAppActionKind | undefined;
+  if ((kind === "menu") !== (items !== undefined)) return null;
+
   return {
     id: value.id,
     label: value.label,
     icon: value.icon as DesktopAppActionIcon | undefined,
-    kind: value.kind as DesktopAppActionKind | undefined,
+    kind,
     placement: value.placement as DesktopAppActionPlacement | undefined,
     active: value.active,
     disabled: value.disabled,
+    items,
   };
 }
 

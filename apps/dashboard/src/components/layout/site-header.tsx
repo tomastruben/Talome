@@ -25,10 +25,11 @@ import { useAssistant } from "@/components/assistant/assistant-context";
 import { useWidgetEdit } from "@/components/widgets/widget-edit-context";
 import { useWidgetLayout } from "@/hooks/use-widget-layout";
 import { useAutomation } from "@/components/automations/automation-context";
-import { launchClaudeCodeAtom, terminalAutoAtom, terminalRemoteAtom, terminalRemoteActiveAtom } from "@/atoms/terminal";
+import { terminalAutoAtom, terminalRemoteAtom, terminalRemoteActiveAtom } from "@/atoms/terminal";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useTerminalHeaderAction } from "@/components/terminal/use-terminal-header-action";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { pageActionAtom } from "@/atoms/page-action";
 import { pageBackAtom } from "@/atoms/page-back";
@@ -204,7 +205,7 @@ function HomeEditControls() {
 }
 
 function TerminalHeaderAction() {
-  const launchClaudeCode = useAtomValue(launchClaudeCodeAtom);
+  const headerAction = useTerminalHeaderAction();
   const [autoMode, setAutoMode] = useAtom(terminalAutoAtom);
   const [remote, setRemote] = useAtom(terminalRemoteAtom);
   const remoteActive = useAtomValue(terminalRemoteActiveAtom);
@@ -290,19 +291,29 @@ function TerminalHeaderAction() {
                   ? "text-status-warning/80 hover:text-status-warning hover:bg-status-warning/10"
                   : "text-muted-foreground hover:text-foreground"
               )}
-              disabled={!launchClaudeCode}
+              disabled={headerAction.disabled}
             >
               <HugeiconsIcon icon={SourceCodeCircleIcon} size={14} />
-              Claude Code
+              {headerAction.label}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={6} className="min-w-40">
-            <DropdownMenuItem onClick={() => launchClaudeCode?.(true)}>
-              Continue session
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => launchClaudeCode?.(false)}>
-              New conversation
-            </DropdownMenuItem>
+            {headerAction.agentItems.map((item) => (
+              <DropdownMenuItem key={item.id} onSelect={item.onSelect}>
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {item.active && <HugeiconsIcon icon={Tick01Icon} size={13} className="ml-auto" />}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            {headerAction.commandItems.map((item) => (
+              <DropdownMenuItem
+                key={item.id}
+                disabled={item.disabled}
+                onSelect={item.onSelect}
+              >
+                {item.label}
+              </DropdownMenuItem>
+            ))}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

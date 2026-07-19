@@ -25,6 +25,8 @@ describe("DesktopWallpaperDialog", () => {
     const dialog = screen.getByRole("dialog", { name: "Desktop Wallpaper" });
     const titlebar = dialog.querySelector<HTMLElement>("[data-wallpaper-drag-handle]");
     expect(titlebar).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Close Desktop Wallpaper" })).toBeVisible();
+    expect(screen.queryByText("Choose a Talome scene or use your own image stored in this browser.")).not.toBeInTheDocument();
 
     vi.spyOn(dialog, "getBoundingClientRect").mockReturnValue({
       bottom: 740,

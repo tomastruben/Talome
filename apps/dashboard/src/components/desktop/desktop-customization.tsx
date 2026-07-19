@@ -10,6 +10,7 @@ import {
 import Image from "next/image";
 import {
   ArrowLeft01Icon,
+  Cancel01Icon,
   CheckmarkCircle02Icon,
   DashboardSquareEditIcon,
   HugeiconsIcon,
@@ -21,8 +22,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
@@ -222,8 +221,6 @@ function DesktopWallpaperPicker({
     isPresetWallpaper(wallpaperUrl) ? "talome" : "custom"
   ));
   const [error, setError] = useState("");
-  const currentPreset = WALLPAPER_PRESETS.find((preset) => preset.url === wallpaperUrl);
-  const previewName = currentPreset?.name ?? (wallpaperUrl ? "Custom wallpaper" : "Talome");
 
   const chooseWallpaper = () => {
     setError("");
@@ -276,21 +273,34 @@ function DesktopWallpaperPicker({
     <>
       <header
         data-wallpaper-drag-handle
-        className="flex touch-none cursor-grab select-none items-start gap-3 border-b border-border/70 px-6 pt-5 pb-4 pr-12 active:cursor-grabbing"
+        className="grid h-11 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-border/70 px-3 active:cursor-grabbing"
         onPointerDown={onTitlebarPointerDown}
       >
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <HugeiconsIcon icon={Image01Icon} size={18} />
-        </span>
-        <DialogHeader className="min-w-0 flex-1 gap-1">
-          <DialogTitle>Desktop Wallpaper</DialogTitle>
-          <DialogDescription>
-            Choose a Talome scene or use your own image stored in this browser.
-          </DialogDescription>
-        </DialogHeader>
+        <div className="flex items-center gap-2" aria-label="Window controls">
+          <button
+            type="button"
+            aria-label="Close Desktop Wallpaper"
+            className="group/control flex size-3.5 items-center justify-center rounded-full bg-status-critical/70 transition-colors duration-150 hover:bg-status-critical"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => onOpenChange(false)}
+          >
+            <HugeiconsIcon
+              icon={Cancel01Icon}
+              size={8}
+              strokeWidth={2}
+              className="text-background opacity-0 transition-opacity duration-150 group-hover/control:opacity-100"
+            />
+          </button>
+          <span className="size-3.5 rounded-full bg-status-warning/70" aria-hidden="true" />
+          <span className="size-3.5 rounded-full bg-status-healthy/70" aria-hidden="true" />
+        </div>
+        <DialogTitle className="pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
+          Desktop Wallpaper
+        </DialogTitle>
+        <span />
       </header>
 
-      <div className="grid gap-4 px-6 py-5">
+      <div className="grid gap-4 p-4">
         <Tabs
           value={source}
           onValueChange={(value) => setSource(value as WallpaperSource)}
@@ -301,19 +311,7 @@ function DesktopWallpaperPicker({
             <TabsTab value="custom" className="min-w-24">Custom</TabsTab>
           </TabsList>
 
-          <div className="relative h-64 overflow-hidden rounded-xl border border-border bg-card sm:h-72">
-            <WallpaperImage
-              wallpaperUrl={wallpaperUrl}
-              alt={`${previewName} preview`}
-              sizes="720px"
-            />
-            <span className="absolute right-3 bottom-3 rounded-md border border-border/70 bg-background/80 px-2 py-1 text-xs text-foreground backdrop-blur-sm">
-              {previewName}
-            </span>
-          </div>
-
-          <TabsPanel value="talome" className="grid gap-3">
-            <h3 className="text-sm font-medium">Choose a wallpaper</h3>
+          <TabsPanel value="talome">
             <div
               className="grid grid-cols-2 gap-3 sm:grid-cols-5"
               role="radiogroup"
@@ -330,7 +328,16 @@ function DesktopWallpaperPicker({
             </div>
           </TabsPanel>
 
-          <TabsPanel value="custom">
+          <TabsPanel value="custom" className="grid gap-3">
+            {wallpaperUrl && !isPresetWallpaper(wallpaperUrl) ? (
+              <div className="relative h-36 overflow-hidden rounded-lg border border-border bg-card">
+                <WallpaperImage
+                  wallpaperUrl={wallpaperUrl}
+                  alt="Custom wallpaper preview"
+                  sizes="640px"
+                />
+              </div>
+            ) : null}
             <button
               type="button"
               className="flex w-full items-center gap-3 rounded-xl border border-dashed border-border bg-card/45 p-4 text-left transition-colors duration-150 hover:border-foreground/25 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
@@ -362,19 +369,12 @@ function DesktopWallpaperPicker({
         ) : null}
       </div>
 
-      <footer className="flex items-center gap-2 border-t border-border/70 px-6 py-4">
-        <Button
-          type="button"
-          variant="outline"
-          className="mr-auto"
-          onClick={chooseWallpaper}
-        >
-          <HugeiconsIcon icon={ImageAdd01Icon} size={16} />
-          Upload Image
-        </Button>
+      <footer className="flex items-center gap-2 border-t border-border/70 px-4 py-3">
         <Button
           type="button"
           variant="ghost"
+          size="sm"
+          className="mr-auto"
           disabled={!wallpaperUrl}
           onClick={() => {
             selectWallpaper(undefined);
@@ -383,7 +383,7 @@ function DesktopWallpaperPicker({
         >
           Reset
         </Button>
-        <Button type="button" onClick={() => onOpenChange(false)}>
+        <Button type="button" size="sm" onClick={() => onOpenChange(false)}>
           Done
         </Button>
       </footer>
@@ -471,9 +471,9 @@ export function DesktopWallpaperDialog({
       <DialogContent
         ref={contentRef}
         data-wallpaper-dialog
-        className="z-[1500] max-h-[calc(100dvh-3rem)] gap-0 overflow-y-auto p-0 sm:max-w-3xl"
+        className="z-[1500] max-h-[calc(100dvh-3rem)] gap-0 overflow-y-auto rounded-xl p-0 sm:max-w-2xl"
         overlayClassName="z-[1450]"
-        showCloseButton
+        showCloseButton={false}
       >
         <DesktopWallpaperPicker
           wallpaperUrl={wallpaperUrl}

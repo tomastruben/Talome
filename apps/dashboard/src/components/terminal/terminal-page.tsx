@@ -3,14 +3,17 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { terminalCommandAtom, launchClaudeCodeAtom, terminalSessionAtom, terminalFollowUpAtom, terminalAutoAtom, terminalRemoteAtom, terminalRemoteActiveAtom } from "@/atoms/terminal";
+import { terminalCommandAtom, launchTerminalAgentAtom, terminalSessionAtom, terminalFollowUpAtom, terminalAutoAtom, terminalRemoteAtom, terminalRemoteActiveAtom, type TerminalAgent } from "@/atoms/terminal";
 import { HugeiconsIcon, ComputerTerminal01Icon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { CORE_URL } from "@/lib/constants";
 import { useKeyboardMode } from "@/hooks/use-keyboard-mode";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { desktopAppActionsAtom, type DesktopAppAction } from "@/atoms/desktop-app-actions";
 import type { TerminalInnerHandle, TerminalConnectionStatus } from "./terminal-inner";
 import { TerminalSessionToolbar } from "./terminal-session-toolbar";
 import { useTerminalSessions } from "./use-terminal-sessions";
+import { useTerminalHeaderAction } from "./use-terminal-header-action";
 
 const TerminalInner = dynamic(
   () => import("./terminal-inner").then((m) => ({ default: m.TerminalInner })),
@@ -34,6 +37,17 @@ function buildClaudeCodeCommand(projectRoot: string, opts?: { auto?: boolean; re
   return `${unset} if command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
 }
 
+function buildCodexCommand(projectRoot: string, resume: boolean): string {
+  const quoted = projectRoot.includes(" ") ? `"${projectRoot}"` : projectRoot;
+  const command = resume ? "codex resume --last" : "codex";
+  const sessionName = resume ? "talome-codex" : `talome-codex-${Date.now()}`;
+  const tmuxCmd = resume
+    ? `cd ${quoted} && tmux new-session -A -s ${sessionName} "${command}"`
+    : `cd ${quoted} && tmux new-session -s ${sessionName} "${command}"`;
+  const fallback = `cd ${quoted} && ${command}`;
+  return `if command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
+}
+
 export function TerminalPage() {
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +59,9 @@ export function TerminalPage() {
   const [projectRoot, setProjectRoot] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const termRef = useRef<TerminalInnerHandle>(null);
-  const setLaunchClaudeCode = useSetAtom(launchClaudeCodeAtom);
+  const setLaunchTerminalAgent = useSetAtom(launchTerminalAgentAtom);
+  const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
+  const embeddedFrame = useIsEmbeddedFrame();
   const {
     userSessions,
     systemSessions,
@@ -59,6 +75,7 @@ export function TerminalPage() {
   } = useTerminalSessions({ enabled: true, persistent: true });
   const keyboard = useKeyboardMode();
   const [connectionStatus, setConnectionStatus] = useState<TerminalConnectionStatus | null>(null);
+  const terminalHeaderAction = useTerminalHeaderAction();
   const [autoMode] = useAtom(terminalAutoAtom);
   const remote = useAtomValue(terminalRemoteAtom);
   const setRemoteActive = useSetAtom(terminalRemoteActiveAtom);
@@ -129,6 +146,15 @@ export function TerminalPage() {
     termRef.current?.sendCommand(buildClaudeCodeCommand(projectRoot, { auto: autoMode, remote, resume }));
   }, [projectRoot, autoMode, remote]);
 
+  const launchTerminalAgent = useCallback((agent: TerminalAgent, resume: boolean) => {
+    if (!projectRoot) return;
+    if (agent === "codex") {
+      termRef.current?.sendCommand(buildCodexCommand(projectRoot, resume));
+      return;
+    }
+    launchClaudeCode(resume);
+  }, [launchClaudeCode, projectRoot]);
+
   const handleCreateSession = useCallback(async (name?: string) => {
     try {
       await createNewSession(name);
@@ -157,13 +183,44 @@ export function TerminalPage() {
     }
   }, [refreshSessions]);
 
-  // Register the launch callback in the atom so the SiteHeader can access it
+  const handleImageUpload = useCallback((file: File) => {
+    termRef.current?.uploadImage(file);
+  }, []);
+
+  useEffect(() => {
+    if (!embeddedFrame) return;
+
+    const actions: DesktopAppAction[] = [
+      {
+        id: "terminal-agent",
+        label: terminalHeaderAction.label,
+        kind: "menu",
+        disabled: terminalHeaderAction.disabled,
+        items: [
+          ...terminalHeaderAction.agentItems,
+          ...terminalHeaderAction.commandItems,
+        ],
+      },
+    ];
+
+    setDesktopAppActions(actions);
+    return () => setDesktopAppActions([]);
+  }, [
+    embeddedFrame,
+    setDesktopAppActions,
+    terminalHeaderAction.agentItems,
+    terminalHeaderAction.commandItems,
+    terminalHeaderAction.disabled,
+    terminalHeaderAction.label,
+  ]);
+
+  // Register one launch callback for both the classic SiteHeader and Desktop titlebar bridge.
   useEffect(() => {
     if (projectRoot && token) {
-      setLaunchClaudeCode(() => launchClaudeCode);
+      setLaunchTerminalAgent(() => launchTerminalAgent);
     }
-    return () => setLaunchClaudeCode(null);
-  }, [projectRoot, token, launchClaudeCode, setLaunchClaudeCode]);
+    return () => setLaunchTerminalAgent(null);
+  }, [projectRoot, token, launchTerminalAgent, setLaunchTerminalAgent]);
 
   function retry() {
     setToken(null);
@@ -207,8 +264,8 @@ export function TerminalPage() {
             onCreate={handleCreateSession}
             onDelete={handleDeleteSession}
             onRefresh={handleRefreshSessions}
-            onImageUpload={(file) => termRef.current?.uploadImage(file)}
-            showKeyboardToggle={keyboard.showToggle}
+            onImageUpload={handleImageUpload}
+            showKeyboardToggle={!embeddedFrame && keyboard.showToggle}
             keyboardMode={keyboard.mode}
             onToggleKeyboard={keyboard.toggle}
             connectionStatus={connectionStatus}

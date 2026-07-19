@@ -2,7 +2,9 @@ import { atom } from "jotai";
 
 export const terminalCommandAtom = atom<string | null>(null);
 export const terminalOpenAtom = atom(false);
-export const launchClaudeCodeAtom = atom<((resume?: boolean) => void) | null>(null);
+export type TerminalAgent = "claude-code" | "codex";
+export const terminalAgentAtom = atom<TerminalAgent>("claude-code");
+export const launchTerminalAgentAtom = atom<((agent: TerminalAgent, resume: boolean) => void) | null>(null);
 /** When set, the Terminal page will switch to this session on mount */
 export const terminalSessionAtom = atom<string | null>(null);
 /** Sent as terminal input after a delay once the initial command has been dispatched */

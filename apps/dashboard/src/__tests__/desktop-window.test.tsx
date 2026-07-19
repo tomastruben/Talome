@@ -69,5 +69,48 @@ describe("DesktopWindow", () => {
     fireEvent.click(screen.getByRole("button", { name: "New" }));
 
     expect(onAction.mock.calls).toEqual([["back"], ["auto"], ["new"]]);
+    expect(screen.getByText("Assistant")).toHaveAttribute("data-title-placement", "leading");
+  });
+
+  it("keeps the title centered when a window has no titlebar actions", () => {
+    render(
+      <DesktopWindow {...defaultProps}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    expect(screen.getByText("Files")).toHaveAttribute("data-title-placement", "center");
+  });
+
+  it("renders a titlebar menu and dispatches its selected item", async () => {
+    const onAction = vi.fn();
+
+    render(
+      <DesktopWindow
+        {...defaultProps}
+        title="Terminal"
+        actions={[{
+          id: "sessions",
+          label: "default",
+          kind: "menu",
+          placement: "leading",
+          items: [
+            { id: "session-default", label: "default", active: true },
+            { id: "session-refresh", label: "Refresh sessions" },
+          ],
+        }]}
+        onAction={onAction}
+      >
+        <div>Terminal content</div>
+      </DesktopWindow>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "default" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Refresh sessions" }));
+
+    expect(onAction).toHaveBeenCalledWith("session-refresh");
   });
 });
