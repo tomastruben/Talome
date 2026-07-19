@@ -10,7 +10,7 @@
 
 ## Executive recommendation
 
-Talome can credibly become a browser-based home-server desktop without replacing the product that already exists. The recommended direction is an **optional desktop shell** that treats existing Talome screens and installed services as applications:
+Talome can credibly become a browser-based home-server desktop without replacing the product that already exists. The recommended direction is a **permanent complementary desktop mode** that treats existing Talome screens and installed services as applications:
 
 - a restrained top status bar;
 - a desktop canvas that can host the existing widgets and pinned shortcuts;
@@ -19,11 +19,20 @@ Talome can credibly become a browser-based home-server desktop without replacing
 - the existing command palette promoted into system-wide search and actions;
 - resizable, movable, minimizable windows for Talome-native screens;
 - framed windows for compatible external services, with a first-class new-tab fallback;
-- a single-window, full-screen navigation model on phones.
+- the existing classic and mobile shells continuing as first-class experiences.
 
-The decisive architecture choice is to **render Talome-native app content directly as React components inside windows**. Do not iframe Talome's own routes and do not rewrite the dashboard as micro-frontends. External services may use iframes only when their security policy and authentication model permit it.
+Desktop mode is not a migration away from classic mode and should never be presented as its successor. It is another way to use the same capabilities: classic mode is optimized for direct, page-based administration; desktop mode is optimized for spatial workflows, persistent tools, detachable previews, and simultaneous activities. Users can switch modes without losing access to any feature.
 
-The desktop should be inspired by the clarity and spatial model of macOS, Synology DSM, and Umbrel, but it should remain recognizably Talome. Copying macOS chrome literally would create the wrong expectations and compete with the host operating system. Talome's differentiator is not a more realistic desktop metaphor; it is a desktop whose assistant, service health, files, media, automations, and terminal share one system context.
+The decisive architecture choice is to **render Talome-native app content directly as React components inside windows**. Do not iframe Talome's own routes and do not rewrite the dashboard as micro-frontends. External services may use iframes only when their security policy and authentication model permit it. Existing mobile and compact presentations should become the starting point for narrow window layouts, so responsive windows mostly reuse proven UI rather than create a third presentation of every feature.
+
+The desktop should be inspired by the clarity and spatial model of macOS, Synology DSM, and Umbrel, but it should remain recognizably Talome. Copying macOS chrome literally would create the wrong expectations and compete with the host operating system. Talome's differentiator is not a more realistic desktop metaphor; it is a desktop whose assistant, service health, files, previews, media players, automations, and terminal can stay live and work together in one system context.
+
+## Accepted product decisions
+
+1. **Desktop complements classic mode permanently.** Both modes use the same routes, data, permissions, and feature components.
+2. **Existing mobile UI is an asset, not a fallback.** Compact window sizes should deliberately activate the same condensed toolbars, single-column flows, sheets, and player controls that already work on mobile.
+3. **Desktop value comes from composition.** The priority is detachable file previews, persistent media players, multiple file browsers and terminals, assistant sidecars, and service windows—not decorative desktop chrome.
+4. **Window presentation is additive.** A feature must continue to work in classic and mobile modes before it is considered ready for desktop mode.
 
 ## Why this fits Talome
 
@@ -42,7 +51,23 @@ Talome already contains most of the required product primitives:
 | Full-screen applications | terminal, media cinema, file preview | Add a window-aware full-screen/maximize contract |
 | PWA presentation | `public/manifest.json` already uses `display: "standalone"` | Preserve and improve the installed-app experience |
 
-This makes the concept less risky than a visual redesign from scratch. The largest cost is adapting existing page layouts to the size of their **window container**, not implementing drag and resize.
+This makes the concept less risky than a visual redesign from scratch. The main frontend task is teaching existing responsive presentations to react to their **window container** instead of only the browser viewport. In many cases the compact/mobile design already exists; the work is to expose and trigger it in the correct context.
+
+### Existing rich surfaces to promote into windows
+
+| Existing capability | Current implementation | Desktop opportunity |
+|---|---|---|
+| File browser | `app/dashboard/files/page.tsx` | Allow multiple folder windows and independent navigation history |
+| File Quick Look | `FileQuickLook` in the Files page | Extract into a reusable preview window for images, PDF, Markdown, code, audio, and video |
+| Video and movie player | `components/files/media-player.tsx` | Play inline in a window, minimize with live progress, maximize into the existing full-screen/cinema presentation |
+| Cinema library | `components/media/cinema-browser.tsx` | Use the library as one window and detach detail or playback into another |
+| Audiobook player | `AudiobookPlayerControls`, `GlobalAudioPlayer`, and the singleton audio engine | Keep playback alive across modes; offer mini-player, full player window, and library window |
+| Terminal | `TerminalSheet`, `TerminalPage`, and persistent terminal sessions | Multiple resizable terminal windows without inventing a new terminal implementation |
+| External service browser | `QuickLookModal` | Promote compatible service previews into persistent service windows |
+| Media detail | `UnifiedMediaSheet` | Support sheet presentation in compact windows and a detachable detail window in larger workspaces |
+| Assistant | global `AssistantProvider` and command-palette chat mode | Open as a normal app or pin as a sidecar aware of the focused window |
+
+The first prototypes should be built from these surfaces. They exercise the hardest and most interesting desktop behaviors—persistent state, playback, preview, multiple instances, full-screen handoff, and cross-window context—while reusing code Talome already trusts.
 
 ## Product model
 
@@ -134,18 +159,59 @@ Windows should support the behaviors users actually need:
 
 Opening a new window must be deliberate. Apple's current window guidance recommends separate windows when they preserve context or enable multitasking, while warning that opening them excessively creates clutter. That is exactly the right rule for Talome.
 
+### Desktop-native compositions to explore
+
+These workflows make desktop mode meaningfully different from opening the classic dashboard in a wider viewport.
+
+#### Files and Quick Look
+
+- Open two independent Files windows to move or compare content across folders.
+- Space bar or the existing preview action opens a detachable Quick Look window.
+- A preview window can move through sibling files with the existing previous/next behavior while the file browser remains usable.
+- Video and audio files use the existing players; PDF, image, Markdown, code, and text reuse the existing preview components.
+- A preview may be pinned above other windows or minimized without closing the underlying Files window.
+
+The extraction boundary should be a reusable `FilePreview` component. The current `FileQuickLook` is private to the Files route and already contains nearly all of the content selection and navigation behavior.
+
+#### Media library and movie player
+
+- Keep the cinema or media library open while a movie detail window is visible beside it.
+- Start playback in a normal resizable player window using the existing compact controls.
+- Maximize the player into the existing cinema/full-screen presentation rather than implement a second large-player UI.
+- Minimize playback into a live dock item or small “Now Playing” surface with progress and transport controls.
+- Restore the player without restarting playback or losing subtitle, quality, speed, chapter, HLS, Jellyfin, Picture-in-Picture, or AirPlay state.
+
+The player is a persistent activity owned by the media engine, not disposable state owned by window chrome. Closing a player window should ask whether to stop playback or keep it minimized when media is active.
+
+#### Audiobooks and persistent audio
+
+- Keep the audiobook library in one window and the current book/player in another.
+- Reuse the singleton audio engine so switching classic/desktop mode or minimizing a window does not restart playback.
+- Offer the existing compact player as a dock/status-bar mini-player and `AudiobookPlayerControls` inside an expanded player window.
+- Let chapters or book details open beside the player without duplicating playback state.
+
+#### Operate and troubleshoot
+
+- Open Services, a container detail/log window, Terminal, and an Assistant sidecar together.
+- Let “Ask Talome” include the focused service, selected log lines, terminal session, or file as structured context.
+- Keep external service Quick Look windows alongside Talome-native monitoring tools when framing is supported.
+
+#### Window families
+
+A dock application may own several related windows. For example, Files can own browser and preview windows; Media can own library, detail, and player windows. The dock should group them under one app icon while the window switcher exposes individual titles. This avoids treating every preview or player as an unrelated application.
+
 ### Mobile and tablet
 
-A free-floating desktop is a pointer-first interaction model. It should not be forced onto every device.
+Talome already has mobile presentations. Desktop work should reuse them, not redesign mobile navigation. A free-floating desktop is a pointer-first interaction model, so the outer phone shell remains unchanged while the same compact content is reused inside narrow desktop windows.
 
 | Surface | Recommended behavior |
 |---|---|
-| Phone / narrow touch | One app full-screen; current mobile launcher becomes app switcher/launchpad; no free resize |
-| Tablet portrait | One app, with optional slide-over utility panels |
-| Tablet landscape | At most two snapped apps; no arbitrary overlapping by default |
+| Phone / narrow touch | Existing mobile shell and full-screen pages; no desktop window manager |
+| Tablet portrait | Existing mobile/compact pages, with optional desktop mode only when explicitly selected |
+| Tablet landscape | Existing compact layouts can power up to two snapped desktop windows |
 | Desktop browser / installed PWA | Full desktop, multiple windows, dock, keyboard commands |
 
-The breakpoint should be based on capability and available shell size, not user agent. A desktop-mode preference can override the automatic choice.
+Inside desktop mode, responsive behavior is based on each window's content width. A 480px Files window should render the same condensed controls and single-column flow as the established 480px mobile view, even when the browser itself is 1440px wide. The outer mode choice remains a user preference; it does not remove or supersede classic mode.
 
 ## Application model
 
@@ -232,9 +298,26 @@ export default function FilesPage() {
 
 The extraction must preserve current URLs for deep links, reloads, browser history, sharing, and the classic shell. A desktop launch can update a compact route such as `/dashboard?app=files&path=...` for the focused app, while the complete workspace remains persisted separately. Do not serialize every window movement into browser history.
 
+The `presentation` prop does not select a separate visual design. It supplies shell behavior—where page actions render, whether global breadcrumbs are present, how full-screen is requested, and whether a detail opens as a sheet or sibling window. Content density should continue to follow responsive size.
+
+```ts
+type AppPresentation = "classic" | "desktop-window";
+type AppSizeClass = "compact" | "regular" | "wide";
+
+interface AppSurfaceContextValue {
+  presentation: AppPresentation;
+  sizeClass: AppSizeClass;
+  requestOpenSurface(input: SurfaceRequest): void;
+  requestFullscreen(): void;
+  requestMinimize(): void;
+}
+```
+
+This contract allows existing content to request “preview this file”, “play this movie”, or “open this terminal” without knowing whether the result should be a classic sheet, a mobile full-screen view, or a desktop sibling window.
+
 ### Container responsiveness is the main migration
 
-The current shell declares a container on its main area, but only a small number of explicit `@container` rules exist. Most Tailwind `sm:`, `md:`, and `lg:` utilities still respond to the browser viewport. Therefore a narrow window inside a wide browser can render the wide page layout and overflow.
+The current shell declares a container on its main area, but only a small number of explicit `@container` rules exist. Most Tailwind `sm:`, `md:`, and `lg:` utilities still respond to the browser viewport. Therefore a narrow window inside a wide browser can fail to activate the mobile/compact presentation that already exists.
 
 Each app needs a supported size contract:
 
@@ -244,9 +327,9 @@ Each app needs a supported size contract:
 | Regular | 560–899px | Primary layout, optional collapsible secondary pane |
 | Wide | 900px+ | Current multi-column/table layouts where appropriate |
 
-`DesktopWindowBody` should establish `container-type: inline-size`, and app screens should migrate to named container variants or CSS container queries. Browser-viewport media queries remain appropriate only for the outer shell.
+`DesktopWindowBody` should establish `container-type: inline-size`, and app screens should migrate existing breakpoint decisions to named container variants, CSS container queries, or a shared `useAppSizeClass()` hook. The goal is to reuse established compact behavior, not manually maintain parallel mobile and window markup. Browser-viewport media queries remain appropriate only for the outer classic/mobile/desktop shell choice.
 
-Start with screens that are already naturally bounded: Services, Settings, Terminal, and the dashboard widgets. Files, Media, Audiobooks, Assistant, and Intelligence require dedicated audits because their route components are large and contain full-screen or nested navigation assumptions.
+Start with screens and sub-surfaces that are already naturally bounded: Terminal, the compact media player, the audiobook controls, file previews, Services, and dashboard widgets. Files, Media, Audiobooks, Assistant, and Intelligence still require dedicated container audits because their route components are large and contain full-screen or nested navigation assumptions, but their existing mobile presentations substantially reduce design work.
 
 ## Window geometry and library choice
 
@@ -377,35 +460,37 @@ The browser desktop must remain viable on home-server clients and low-power tabl
 **Goal:** remove unknowns before a visual rewrite.
 
 - Create the app registry type and map current navigation/services without changing the UI.
-- Inventory minimum/ideal sizes for each native screen.
+- Inventory existing mobile/compact behavior and minimum/ideal sizes for each native screen.
+- Define the surface request contract for previews, players, details, terminal sessions, and external services.
 - Test iframe compatibility for the highest-use store apps.
-- Build a disposable window geometry playground with two synthetic windows.
-- Validate pointer, touch, keyboard alternative, snapping, viewport resize, PWA standalone mode, and reduced motion.
+- Build a disposable window geometry playground around real bounded surfaces: Terminal, file preview, and compact video or audiobook player.
+- Validate pointer, touch, keyboard alternative, snapping, viewport resize, active playback, PWA standalone mode, and reduced motion.
 
 **Exit:** library and state model selected; responsive and embed inventories written down.
 
-### Phase 1 — optional desktop shell MVP
+### Phase 1 — complementary desktop shell MVP
 
 **Goal:** a useful desktop behind a user setting or feature flag.
 
 - Status bar, desktop surface, dock, launchpad, and Talome Search shell.
-- Desktop windows for Services, Settings, Terminal, and one utility/System Monitor app.
+- Desktop windows for Terminal, Files, detachable file preview, one media player, Services, and one utility/System Monitor app.
+- Player minimize/restore behavior that preserves active playback.
 - Local workspace persistence and off-screen recovery.
-- Classic shell remains the default and rollback path.
-- Phone continues to use the current full-screen/mobile model.
+- Classic mode remains permanently available and is not treated as a rollback path.
+- Phone continues to use the current mobile views unchanged.
 
-**Exit:** a user can complete service management and terminal tasks with two simultaneous native windows, reload, and recover the workspace.
+**Exit:** a user can browse files, detach a preview or player, keep Terminal or Services open beside it, reload, and recover the workspace without losing active application state.
 
 ### Phase 2 — content apps and external services
 
-**Goal:** make the desktop the primary desktop-sized experience for opt-in users.
+**Goal:** expand the complementary desktop experience to the complete Talome content set.
 
 - Extract and container-adapt Files, Assistant, Media, Audiobooks, App Store, Automations, and Intelligence incrementally.
 - Convert Quick Look into external app windows.
 - Add launch-mode settings and the compatibility/fallback UX.
-- Add window switcher, snap layouts, multiple Files/Terminal instances, and deep links.
+- Add window switcher, snap layouts, multiple Files/Terminal instances, dock player controls, and deep links.
 
-**Exit:** the majority of everyday Talome workflows no longer require the classic sidebar.
+**Exit:** desktop mode supports the majority of everyday Talome workflows while classic mode remains equally available and shares the same feature components.
 
 ### Phase 3 — Talome-native advantages
 
@@ -423,26 +508,27 @@ This phase is the product moat. A polished dock alone is easy to copy; contextua
 
 The first production-capable slice should not be judged only by appearance.
 
-1. Open Services and Terminal from the dock; both remain live.
+1. Open Files, a detachable preview/player, and Terminal or Services from the dock; all remain live.
 2. Move, resize, focus, minimize, maximize, tile, restore, and close with pointer and non-drag controls.
 3. Reload and restore a valid layout without off-screen windows.
-4. Shrink the browser across desktop/tablet/mobile thresholds without clipped primary actions.
+4. Resize a window through compact, regular, and wide sizes; it reuses the established responsive presentation without clipped primary actions.
 5. Use keyboard-only navigation to launch, switch, operate, and close windows.
 6. Search focuses an already-open app rather than creating duplicates by default.
 7. Permission changes remove inaccessible apps and close/replace their restored windows safely.
 8. An incompatible external app produces a clear new-tab fallback, not a blank window.
-9. Terminal streaming and Assistant activity continue correctly while another window is focused.
-10. The classic shell can be restored instantly from Settings or a recovery query parameter.
+9. Active video or audiobook playback survives minimize/restore and switching between desktop and classic modes.
+10. Terminal streaming and Assistant activity continue correctly while another window is focused.
+11. Classic and desktop modes can be switched instantly from Settings; neither is described or implemented as recovery for the other.
 
 ## Risks and mitigations
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Existing pages overflow in narrow windows | High | Container-size inventory and per-app migration before launch |
+| Existing pages fail to activate compact layouts in narrow windows | High | Reuse mobile behavior through container size classes and per-app audits |
 | Many mounted screens over-poll APIs | High | Shared SWR keys, centralized system subscriptions, hidden-window lifecycle policy |
 | External services reject or break in iframes | High | Explicit launch capability, compatibility inventory, first-class external fallback |
 | Desktop feels like novelty chrome | High | Keep shell restrained; prioritize real multitasking and assistant workflows |
-| Mobile experience regresses | High | Preserve single-window mobile shell; desktop is adaptive/optional |
+| Mobile experience regresses | High | Leave the mobile shell intact and reuse its content patterns inside compact desktop windows |
 | Keyboard and screen-reader use becomes confusing | High | Window focus contract, non-drag controls, accessibility tests from Phase 0 |
 | Route/page extraction causes broad regressions | Medium | Thin route adapters, one application at a time, classic shell retained |
 | Window state becomes corrupted or off-screen | Medium | Versioned schema, validation, clamping, reset command, safe default workspace |
@@ -450,14 +536,15 @@ The first production-capable slice should not be judged only by appearance.
 
 ## Decisions to make before implementation
 
-1. Is desktop mode opt-in permanently, or intended to replace the classic shell on desktop after validation?
-2. Should the default home surface be mostly empty, or ship with a restrained four-widget system overview?
-3. Which external apps are important enough to include in the initial iframe compatibility matrix?
-4. Should closed apps restore after sign-in, or only after a browser refresh on the same device?
-5. Are multiple named workspaces an MVP requirement or a Phase 3 feature?
-6. Should the top-left use an active-app menu model, or only a Talome system menu for simplicity?
+1. Should the default desktop surface be mostly empty, or ship with a restrained four-widget system overview?
+2. Which existing player should prove persistent minimize/restore first: movie/video or audiobook?
+3. Should file previews always open as sibling windows, or use Quick Look first with an explicit detach action?
+4. Which external apps are important enough to include in the initial iframe compatibility matrix?
+5. Should closed apps restore after sign-in, or only after a browser refresh on the same device?
+6. Are multiple named workspaces an MVP requirement or a Phase 3 feature?
+7. Should the top-left use an active-app menu model, or only a Talome system menu for simplicity?
 
-Recommended defaults: opt-in through Phase 2; four restrained widgets; test the most common media, networking, and home-automation services; restore on the same device; defer named workspaces; use only a Talome system menu in MVP.
+Recommended defaults: four restrained widgets; prove movie/video playback first because it exercises compact, full-screen, cinema, HLS, Picture-in-Picture, and external playback behavior; open Quick Look with an explicit detach action; test the most common media, networking, and home-automation services; restore on the same device; defer named workspaces; use only a Talome system menu in MVP.
 
 ## Research sources
 
@@ -475,4 +562,4 @@ Recommended defaults: opt-in through Phase 2; four restrained widgets; test the 
 
 ## Bottom line
 
-Build a Talome desktop, not a macOS skin. Reuse the existing content and providers, introduce a typed app/window model, make native screens container-responsive, treat external framing as a capability rather than an assumption, and ship the shell incrementally behind an escape hatch. Once the fundamentals are reliable, the assistant can turn the desktop metaphor into something materially more powerful than Umbrel or DSM: a workspace that understands and operates the home server as one system.
+Build a Talome desktop, not a macOS skin and not a replacement for classic mode. Reuse the existing mobile layouts, browsers, previews, players, terminal, content, and providers; introduce a typed app/window/surface model; treat external framing as a capability rather than an assumption; and ship desktop mode incrementally beside the classic and mobile shells. Once the fundamentals are reliable, the assistant can turn these already-rich components into something materially more powerful than Umbrel or DSM: a composable workspace that understands and operates the home server as one system.
