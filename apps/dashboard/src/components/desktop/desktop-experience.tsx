@@ -44,7 +44,10 @@ import { CpuWidget } from "@/components/widgets/cpu-widget";
 import { MemoryWidget } from "@/components/widgets/memory-widget";
 import { DiskWidget } from "@/components/widgets/disk-widget";
 import { allNav, type NavItem } from "@/components/layout/nav-config";
-import { useDesktopModeAvailable } from "@/hooks/use-desktop-mode";
+import {
+  DESKTOP_MODE_MEDIA_QUERY,
+  useDesktopModeAvailable,
+} from "@/hooks/use-desktop-mode";
 import { useUser } from "@/hooks/use-user";
 import { CORE_URL } from "@/lib/constants";
 import {
@@ -361,7 +364,12 @@ export function DesktopExperience() {
   }, [canUseApp, dockApps, windows]);
 
   useEffect(() => {
-    if (!desktopModeAvailable) router.replace("/dashboard");
+    if (
+      !desktopModeAvailable &&
+      !window.matchMedia(DESKTOP_MODE_MEDIA_QUERY).matches
+    ) {
+      router.replace("/dashboard");
+    }
   }, [desktopModeAvailable, router]);
 
   useEffect(() => {
