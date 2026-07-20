@@ -84,6 +84,7 @@ import {
   DesktopAudiobooksControlCenter,
   DesktopControlCenter,
   DesktopDownloadsControlCenter,
+  type DesktopAudiobookPlayerController,
 } from "@/components/desktop/desktop-control-center";
 import {
   DesktopWallpaperDialog,
@@ -131,6 +132,15 @@ import {
   parseDesktopPlayerOpenMessage,
   type DesktopAppChromeDescriptor,
 } from "@/atoms/desktop-app-actions";
+import {
+  parseDesktopAudiobookStateMessage,
+  type DesktopAudiobookCommand,
+} from "@/atoms/desktop-audiobook-player";
+import {
+  INITIAL_AUDIO_PLAYER_STATE,
+  type AudioPlayerBook,
+  type AudioPlayerState,
+} from "@/atoms/audio-player";
 
 interface DesktopAppDefinition {
   id: string;
@@ -155,6 +165,13 @@ interface DesktopWindowModel {
   minimized: boolean;
   maximized: boolean;
   zIndex: number;
+}
+
+interface DesktopAudiobookPlayback {
+  windowId: string;
+  book: AudioPlayerBook | null;
+  state: AudioPlayerState;
+  error: string | null;
 }
 
 type DesktopControlCenterView = "main" | "dashboard" | "audiobooks" | "downloads";
@@ -636,6 +653,9 @@ export function DesktopExperience() {
   const [appChromeByWindow, setAppChromeByWindow] = useState<
     Record<string, DesktopAppChromeDescriptor>
   >({});
+  const [desktopAudiobookPlayback, setDesktopAudiobookPlayback] = useState<
+    DesktopAudiobookPlayback
+  >();
   const reduceMotion = useReducedMotion();
   const dockSensors = useSensors(
     useSensor(PointerSensor, {
@@ -945,7 +965,8 @@ export function DesktopExperience() {
       const actionsMessage = parseDesktopAppActionsMessage(event.data);
       const focusMessage = parseDesktopAppFocusMessage(event.data);
       const playerMessage = parseDesktopPlayerOpenMessage(event.data);
-      if (!actionsMessage && !focusMessage && !playerMessage) return;
+      const audiobookMessage = parseDesktopAudiobookStateMessage(event.data);
+      if (!actionsMessage && !focusMessage && !playerMessage && !audiobookMessage) return;
 
       const frameEntry = Array.from(appFrameRefs.current.entries()).find(
         ([, frame]) => frame.contentWindow === event.source,
@@ -953,6 +974,15 @@ export function DesktopExperience() {
       if (!frameEntry) return;
 
       const [windowId] = frameEntry;
+      if (audiobookMessage) {
+        setDesktopAudiobookPlayback({
+          windowId,
+          book: audiobookMessage.book,
+          state: audiobookMessage.state,
+          error: audiobookMessage.error,
+        });
+        return;
+      }
       if (playerMessage) {
         const params = new URLSearchParams({
           path: playerMessage.filePath,
@@ -1007,6 +1037,24 @@ export function DesktopExperience() {
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [activeWindowId, area, focusWindow]);
+
+  const desktopAudiobookWindowId = desktopAudiobookPlayback?.windowId;
+  const sendDesktopAudiobookCommand = useCallback((command: DesktopAudiobookCommand["type"]) => {
+    if (!desktopAudiobookWindowId) return;
+    appFrameRefs.current.get(desktopAudiobookWindowId)?.contentWindow?.postMessage(
+      { type: "talome:desktop-audiobook-command", command },
+      window.location.origin,
+    );
+  }, [desktopAudiobookWindowId]);
+  const desktopAudiobookPlayer = useMemo<DesktopAudiobookPlayerController>(() => ({
+    book: desktopAudiobookPlayback?.book ?? null,
+    state: desktopAudiobookPlayback?.state ?? INITIAL_AUDIO_PLAYER_STATE,
+    error: desktopAudiobookPlayback?.error ?? null,
+    togglePlay: () => sendDesktopAudiobookCommand(
+      desktopAudiobookPlayback?.state.isPlaying ? "pause" : "play",
+    ),
+    stop: () => sendDesktopAudiobookCommand("stop"),
+  }), [desktopAudiobookPlayback, sendDesktopAudiobookCommand]);
 
   const openApp = useCallback((app: DesktopAppDefinition) => {
     if (!canUseApp(app)) return;
@@ -1107,6 +1155,7 @@ export function DesktopExperience() {
 
   const closeWindow = useCallback((id: string) => {
     appFrameRefs.current.delete(id);
+    setDesktopAudiobookPlayback((current) => current?.windowId === id ? undefined : current);
     setAppChromeByWindow((current) => {
       return removeWindowChrome(current, id);
     });
@@ -1476,6 +1525,7 @@ export function DesktopExperience() {
                       />
                     ) : controlCenterView === "audiobooks" ? (
                       <DesktopAudiobooksControlCenter
+                        audiobookPlayer={desktopAudiobookPlayer}
                         onBack={popControlCenterView}
                         onOpenApp={() => openControlCenterApp("/dashboard/audiobooks")}
                       />
@@ -1486,6 +1536,7 @@ export function DesktopExperience() {
                       />
                     ) : (
                       <DesktopControlCenter
+                        audiobookPlayer={desktopAudiobookPlayer}
                         onOpenAudiobooks={() => pushControlCenterView("audiobooks")}
                         onOpenDownloads={() => pushControlCenterView("downloads")}
                         onOpenDashboard={() => pushControlCenterView("dashboard")}

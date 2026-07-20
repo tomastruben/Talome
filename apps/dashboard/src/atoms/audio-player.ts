@@ -51,7 +51,7 @@ export type AudioPlayerCommand =
 export const audioPlayerBookAtom = atom<AudioPlayerBook | null>(null);
 
 /** Frequently-changing playback state (subscribed by player UI). */
-export const audioPlayerStateAtom = atom<AudioPlayerState>({
+export const INITIAL_AUDIO_PLAYER_STATE: AudioPlayerState = {
   isPlaying: false,
   isBuffering: false,
   currentTime: 0,
@@ -59,7 +59,9 @@ export const audioPlayerStateAtom = atom<AudioPlayerState>({
   speed: 1,
   volume: 1,
   muted: false,
-});
+};
+
+export const audioPlayerStateAtom = atom<AudioPlayerState>(INITIAL_AUDIO_PLAYER_STATE);
 
 /** One-shot command atom — written by pages, consumed by the audio engine. */
 export const audioPlayerCommandAtom = atom<AudioPlayerCommand | null>(null);

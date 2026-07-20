@@ -20,15 +20,24 @@ import {
 } from "@/components/icons";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
-import { useAudiobookPlayer } from "@/hooks/use-audiobook-player";
+import type { AudioPlayerBook, AudioPlayerState } from "@/atoms/audio-player";
 import { useDownloads } from "@/hooks/use-downloads";
 import { formatBytes } from "@/lib/format";
 
 interface DesktopControlCenterProps {
+  audiobookPlayer: DesktopAudiobookPlayerController;
   onOpenAudiobooks: () => void;
   onOpenDownloads: () => void;
   onOpenDashboard: () => void;
   onOpenWallpaper: () => void;
+}
+
+export interface DesktopAudiobookPlayerController {
+  book: AudioPlayerBook | null;
+  state: AudioPlayerState;
+  error: string | null;
+  togglePlay: () => void;
+  stop: () => void;
 }
 
 const subscribeToHydration = () => () => {};
@@ -140,6 +149,7 @@ function ControlCenterSection({ children }: { children: ReactNode }) {
 }
 
 export function DesktopControlCenter({
+  audiobookPlayer,
   onOpenAudiobooks,
   onOpenDownloads,
   onOpenDashboard,
@@ -152,7 +162,7 @@ export function DesktopControlCenter({
     () => false,
   );
   const isDark = mounted && resolvedTheme === "dark";
-  const { book, state, togglePlay, stop } = useAudiobookPlayer();
+  const { book, state, togglePlay, stop } = audiobookPlayer;
   const {
     queue,
     torrents,
@@ -337,13 +347,15 @@ export function DesktopControlCenter({
 }
 
 export function DesktopAudiobooksControlCenter({
+  audiobookPlayer,
   onBack,
   onOpenApp,
 }: {
+  audiobookPlayer: DesktopAudiobookPlayerController;
   onBack: () => void;
   onOpenApp: () => void;
 }) {
-  const { book, state, togglePlay, stop } = useAudiobookPlayer();
+  const { book, state, togglePlay, stop } = audiobookPlayer;
   const audiobookProgress = book && book.totalDuration > 0
     ? Math.min(100, (state.currentTime / book.totalDuration) * 100)
     : 0;

@@ -27,6 +27,7 @@ import {
 } from "@/components/audiobooks/global-audio-player";
 import { useUser } from "@/hooks/use-user";
 import { DesktopAppActionBridge } from "@/components/desktop/desktop-app-action-bridge";
+import { DesktopAudiobookPlayerBridge } from "@/components/desktop/desktop-audiobook-player-bridge";
 import { DesktopShellHeaderActions } from "@/components/desktop/desktop-shell-header-actions";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 
@@ -77,7 +78,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </main>
             ) : embeddedFrame ? (
               <main id="main-content" className="relative flex h-dvh min-h-0 flex-1 flex-col overflow-hidden bg-background [container-type:inline-size]">
-                {embeddedAudiobookRoute ? <AudiobookAudioEngine /> : null}
+                {embeddedAudiobookRoute ? (
+                  <>
+                    <AudiobookAudioEngine />
+                    <DesktopAudiobookPlayerBridge />
+                  </>
+                ) : null}
                 <DesktopShellHeaderActions />
                 <DesktopAppActionBridge />
                 <div className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${embeddedPlayerRoute ? "overflow-hidden bg-black" : "overflow-y-auto p-4"}`}>
