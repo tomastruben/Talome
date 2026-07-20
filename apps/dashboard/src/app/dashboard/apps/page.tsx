@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useSetAtom } from "jotai";
 import useSWR from "swr";
 import { motion } from "framer-motion";
 import { SearchField } from "@/components/ui/search-field";
@@ -16,12 +17,21 @@ import { StackCard } from "@/components/dashboard/stack-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { ErrorState } from "@/components/ui/empty-state";
+import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
+import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { CORE_URL } from "@/lib/constants";
 import type { CatalogApp, StoreSource, StackListItem } from "@talome/types";
 
 type Tab = "all" | "installed" | string;
 
 const PAGE_CHUNK = 60;
+const SOURCE_TAB_ORDER: Record<string, number> = {
+  umbrel: 0,
+  talome: 1,
+  casaos: 2,
+  "user-created": 3,
+};
 
 function sourceLabel(type: string) {
   if (type === "casaos") return "CasaOS";
@@ -69,8 +79,9 @@ export default function AppsPage() {
 function AppsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const embeddedFrame = useIsEmbeddedFrame();
+  const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
   const [sourceCache, setSourceCache] = useState<Record<string, CatalogApp[]>>({});
-  const [sourceLoading, setSourceLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [tab, setTab] = useState<Tab>(searchParams.get("tab") || "all");
@@ -131,7 +142,6 @@ function AppsPageContent() {
     if (sourceCache[tab]) return;
 
     let cancelled = false;
-    setSourceLoading(true);
     fetch(`${CORE_URL}/api/apps?limit=2000&source=${encodeURIComponent(tab)}`)
       .then(async (r) => {
         if (!r.ok) throw new Error("Failed to load source apps");
@@ -144,9 +154,6 @@ function AppsPageContent() {
       .catch(() => {
         if (cancelled) return;
         setSourceCache((prev) => ({ ...prev, [tab]: [] }));
-      })
-      .finally(() => {
-        if (!cancelled) setSourceLoading(false);
       });
 
     return () => {
@@ -160,7 +167,6 @@ function AppsPageContent() {
     return () => clearInterval(interval);
   }, [tab, mutateInstalled]);
 
-  const SOURCE_TAB_ORDER: Record<string, number> = { umbrel: 0, talome: 1, casaos: 2, "user-created": 3 };
   const sourceTypes = useMemo(
     () => [...new Set(stores.map((s) => s.type))].sort(
       (a, b) => (SOURCE_TAB_ORDER[a] ?? 9) - (SOURCE_TAB_ORDER[b] ?? 9),
@@ -182,7 +188,10 @@ function AppsPageContent() {
   }, [mutateApps]);
 
   const isInstalled = tab === "installed";
-  const currentApps = isInstalled ? installedApps : tab === "all" ? apps : (sourceCache[tab] || []);
+  const currentApps = useMemo(
+    () => (isInstalled ? installedApps : tab === "all" ? apps : (sourceCache[tab] || [])),
+    [apps, installedApps, isInstalled, sourceCache, tab],
+  );
 
   const filtered = useMemo(() => {
     return currentApps.filter((app) => {
@@ -197,10 +206,14 @@ function AppsPageContent() {
     });
   }, [currentApps, search, category]);
 
-  // Reset visible count when filters change
-  useEffect(() => {
+  const changeSearch = useCallback((value: string) => {
+    setSearch(value);
     setVisibleCount(PAGE_CHUNK);
-  }, [search, category, tab]);
+  }, []);
+  const changeCategory = useCallback((value: string) => {
+    setCategory(value);
+    setVisibleCount(PAGE_CHUNK);
+  }, []);
 
   const loadNextChunk = useCallback(() => {
     setVisibleCount((current) => Math.min(current + PAGE_CHUNK, filtered.length));
@@ -217,77 +230,99 @@ function AppsPageContent() {
 
   const totalInstalled = installedApps.length;
   const hasSourceCache = tab === "all" || tab === "installed" || !!sourceCache[tab];
-  const showSourceLoading = !isInstalled && !loading && !hasSourceCache && sourceLoading;
+  const showSourceLoading = !isInstalled && !loading && !hasSourceCache;
   const leftFadeOpacity = hoveredStackIndex === 0 ? 0 : hoveredStackIndex === null ? 1 : 0.72;
   const rightFadeOpacity = hoveredStackIndex === stacks.length - 1 ? 0 : hoveredStackIndex === null ? 1 : 0.72;
+  useEffect(() => {
+    setDesktopAppActions([
+      {
+        id: "app-store-my-apps",
+        label: "My Apps",
+        active: tab === "user-created",
+        onSelect: () => changeTab("user-created"),
+      },
+      {
+        id: "app-store-installed",
+        label: totalInstalled > 0 ? `Installed ${totalInstalled}` : "Installed",
+        active: tab === "installed",
+        onSelect: () => changeTab("installed"),
+      },
+    ]);
+
+    return () => setDesktopAppActions([]);
+  }, [changeTab, setDesktopAppActions, tab, totalInstalled]);
 
   return (
     <div className="min-w-0 grid gap-5">
-      {/* ── Tabs + search ──────────────────────────────── */}
-      <div className="page-controls-row flex-wrap justify-between gap-2">
-        <Tabs value={tab} onValueChange={changeTab}>
-          <TabsList>
-            <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
-            {sourceTypes.map((t) => (
-              t === "user-created" ? (
-                <TabsTrigger key={t} value={t} className="text-xs" aria-label="My Apps" title="My Apps">
-                  My Apps
-                </TabsTrigger>
-              ) : (
-                <TabsTrigger key={t} value={t} className="text-xs">
-                  {sourceLabel(t)}
-                </TabsTrigger>
-              )
-            ))}
-            <TabsTrigger value="installed" className="text-xs px-2" aria-label="Installed" title="Installed">
-              <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} />
-              {totalInstalled > 0 && <TabsBadge>{totalInstalled}</TabsBadge>}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-2">
-          <SearchField
-            containerClassName="flex-1 w-full sm:w-auto"
-            placeholder="Search apps..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* ── Category pills — "all" pinned, rest scroll ── */}
-      {!isInstalled && tab !== "user-created" && categories.length > 0 && (
-        <div className="flex items-center gap-1.5 min-w-0">
-          <button
-            className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
-              category === "all"
-                ? "border-foreground/30 bg-foreground/8 text-foreground"
-                : "border-border text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => setCategory("all")}
-          >
-            all
-          </button>
-          <div className="filter-rail min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none">
-              {categories.map((cat) => (
-                <button
-                  key={cat}
-                  className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
-                    category === cat
-                      ? "border-foreground/30 bg-foreground/8 text-foreground"
-                      : "border-border text-muted-foreground hover:text-foreground"
-                  }`}
-                  onClick={() => setCategory(cat)}
-                >
-                  {cat}
-                </button>
+      <DesktopAppToolbar className="grid min-w-0 gap-3">
+        {/* ── Source tabs + search ─────────────────────── */}
+        <div className="page-controls-row min-w-0 flex-wrap justify-between gap-2">
+          <Tabs value={tab} onValueChange={changeTab}>
+            <TabsList>
+              <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
+              {sourceTypes.filter((t) => !embeddedFrame || t !== "user-created").map((t) => (
+                t === "user-created" ? (
+                  <TabsTrigger key={t} value={t} className="text-xs" aria-label="My Apps" title="My Apps">
+                    My Apps
+                  </TabsTrigger>
+                ) : (
+                  <TabsTrigger key={t} value={t} className="text-xs">
+                    {sourceLabel(t)}
+                  </TabsTrigger>
+                )
               ))}
-            </div>
+              {!embeddedFrame && (
+                <TabsTrigger value="installed" className="text-xs px-2" aria-label="Installed" title="Installed">
+                  <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} />
+                  {totalInstalled > 0 && <TabsBadge>{totalInstalled}</TabsBadge>}
+                </TabsTrigger>
+              )}
+            </TabsList>
+          </Tabs>
+
+          <div className="ml-auto flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-2">
+            <SearchField
+              containerClassName="flex-1 w-full sm:w-auto"
+              placeholder="Search apps..."
+              value={search}
+              onChange={(e) => changeSearch(e.target.value)}
+            />
           </div>
         </div>
-      )}
+
+        {/* ── Category pills — "all" pinned, rest scroll ── */}
+        {!isInstalled && tab !== "user-created" && categories.length > 0 && (
+          <div className="flex items-center gap-1.5 min-w-0">
+            <button
+              className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
+                category === "all"
+                  ? "border-foreground/30 bg-foreground/8 text-foreground"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => changeCategory("all")}
+            >
+              all
+            </button>
+            <div className="filter-rail min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none">
+                {categories.map((cat) => (
+                  <button
+                    key={cat}
+                    className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
+                      category === cat
+                        ? "border-foreground/30 bg-foreground/8 text-foreground"
+                        : "border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => changeCategory(cat)}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </DesktopAppToolbar>
 
       {/* ── Featured stacks ─────────────────────────────── */}
       {tab === "all" && !search && category === "all" && stacks.length > 0 && (
