@@ -1297,7 +1297,7 @@ export function DesktopExperience() {
         aria-disabled={desktopWidgetsEditing || undefined}
         inert={desktopWidgetsEditing}
         className={cn(
-          "relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b border-black/10 bg-background/90 px-3 shadow-[inset_0_-1px_0_rgba(255,255,255,0.2),0_1px_12px_rgba(0,0,0,0.08)] backdrop-blur-2xl backdrop-saturate-150 transition-[background-color,border-color,box-shadow,opacity] duration-150 supports-[backdrop-filter]:bg-background/60 dark:border-white/10 dark:bg-background/85 dark:supports-[backdrop-filter]:bg-background/55",
+          "relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b border-white/45 bg-white/70 px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-1px_0_rgba(0,0,0,0.08),0_1px_16px_rgba(0,0,0,0.08)] backdrop-blur-[28px] backdrop-saturate-[1.8] transition-[background-color,border-color,box-shadow,opacity] duration-150 supports-[backdrop-filter]:bg-white/45 dark:border-white/10 dark:bg-background/85 dark:shadow-[inset_0_-1px_0_rgba(255,255,255,0.2),0_1px_12px_rgba(0,0,0,0.08)] dark:supports-[backdrop-filter]:bg-background/55",
           desktopWidgetsEditing && "pointer-events-none select-none opacity-35 saturate-0",
         )}
       >
