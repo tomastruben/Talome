@@ -313,7 +313,16 @@ export default function MediaDetailPage() {
   useEffect(() => {
     if (!item?.filePath || type !== "movie") return;
     let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5_000);
     const api = `${getDirectCoreUrl()}/api/media`;
+
+    // Playback through Talome is available independently of Jellyfin. Render
+    // those choices immediately so a slow Jellyfin server cannot hide the
+    // selector (or make the movie appear less playable than it is).
+    setPreQuality({ qualities: [], hasDirectPlay: true });
+    setSelectedPreQuality("original");
+
     void (async () => {
       try {
         const res = await fetch(`${api}/jellyfin-playback`, {
@@ -321,7 +330,8 @@ export default function MediaDetailPage() {
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path: item.filePath }),
-        });
+          signal: controller.signal,
+        }).finally(() => window.clearTimeout(timeout));
         if (!res.ok || cancelled) return;
         const jf = await res.json();
         if (cancelled) return;
@@ -336,10 +346,14 @@ export default function MediaDetailPage() {
         }
       } catch {
         // Jellyfin unreachable — offer direct + local HLS
-        setPreQuality({ qualities: [], hasDirectPlay: true });
+        if (!cancelled) setPreQuality({ qualities: [], hasDirectPlay: true });
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
   }, [item?.filePath, type]);
 
   // Auto-advance countdown
@@ -658,14 +672,22 @@ export default function MediaDetailPage() {
             {preQuality && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="absolute z-10 top-3 right-3 px-2 py-0.5 rounded bg-black/40 backdrop-blur-sm text-[11px] text-white/50 hover:text-white/80 transition-colors tabular-nums tracking-wide">
-                    {selectedPreQuality === "original"
-                      ? "Original"
-                      : selectedPreQuality === "direct"
-                        ? "Direct"
-                        : selectedPreQuality === "local"
-                          ? "Local"
-                          : selectedPreQuality}
+                  <button
+                    type="button"
+                    aria-label={`Playback option: ${selectedPreQuality}`}
+                    className="absolute z-10 top-3 right-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-black/45 px-2.5 text-xs text-white/75 shadow-sm backdrop-blur-md transition-colors hover:bg-black/60 hover:text-white"
+                  >
+                    <span className="text-white/50">Playback</span>
+                    <span className="font-medium tabular-nums text-white">
+                      {selectedPreQuality === "original"
+                        ? "Original"
+                        : selectedPreQuality === "direct"
+                          ? "Direct"
+                          : selectedPreQuality === "local"
+                            ? "Local"
+                            : selectedPreQuality}
+                    </span>
+                    <HugeiconsIcon icon={ArrowDown01Icon} size={12} className="text-white/50" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" sideOffset={4} className="min-w-36">

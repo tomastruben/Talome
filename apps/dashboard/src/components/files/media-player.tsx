@@ -229,12 +229,15 @@ export function VideoPlayer({
         }
         if (isMediaLibrary) {
           try {
+            const controller = new AbortController();
+            const timeout = window.setTimeout(() => controller.abort(), 5_000);
             const jfRes = await fetch(`${apiBase}/jellyfin-playback`, {
               method: "POST",
               credentials: "include",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ path: filePath }),
-            });
+              signal: controller.signal,
+            }).finally(() => window.clearTimeout(timeout));
             if (jfRes.ok && !cancelled) {
               const jf = await jfRes.json();
               if (jf.available) {

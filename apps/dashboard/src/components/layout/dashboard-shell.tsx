@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAtomValue } from "jotai";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
@@ -46,7 +46,15 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const embeddedPlayerRoute = embeddedFrame && pathname === "/dashboard/player";
   const embeddedAudiobookRoute = embeddedFrame && pathname.startsWith("/dashboard/audiobooks");
   const { user, isLoading: userLoading } = useUser();
+  const contentScrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { registerServiceWorker(); }, []);
+
+  // The shell owns scrolling, so Next.js cannot reset it automatically when
+  // an app navigates from a long list into a detail route. Always present a
+  // new route from the top, especially inside desktop windows.
+  useEffect(() => {
+    if (contentScrollRef.current) contentScrollRef.current.scrollTop = 0;
+  }, [pathname]);
 
   // Client-side auth guard: redirect to login if user session is invalid.
   // This catches cases where the JWT expired or was invalidated but the
@@ -86,7 +94,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 ) : null}
                 <DesktopShellHeaderActions />
                 <DesktopAppActionBridge />
-                <div className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${embeddedPlayerRoute ? "overflow-hidden bg-black" : "overflow-y-auto p-4"}`}>
+                <div ref={contentScrollRef} className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${embeddedPlayerRoute ? "overflow-hidden bg-black" : "overflow-y-auto p-4"}`}>
                   {children}
                 </div>
               </main>
@@ -103,7 +111,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 {!hideHeader && <SiteHeader />}
                 <SystemHealthBanner />
                 <main id="main-content" className={`flex-1 min-h-0 min-w-0 overflow-hidden relative flex flex-col ${hideHeader ? "" : "[container-type:inline-size]"}`}>
-                  <div className={`flex-1 min-h-0 min-w-0 flex flex-col ${hideHeader ? "" : "overflow-y-auto p-4 pb-8 sm:p-6 sm:pb-10 overscroll-none"}`}>
+                  <div ref={contentScrollRef} className={`flex-1 min-h-0 min-w-0 flex flex-col ${hideHeader ? "" : "overflow-y-auto p-4 pb-8 sm:p-6 sm:pb-10 overscroll-none"}`}>
                     {children}
                   </div>
                 </main>
