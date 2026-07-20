@@ -243,8 +243,8 @@ function FilesTableSkeleton({ rows = 12 }: { rows?: number }) {
   // Varying name widths for visual realism
   const nameWidths = ["w-28", "w-36", "w-24", "w-40", "w-32", "w-20", "w-44", "w-28", "w-36", "w-32", "w-24", "w-40"];
   return (
-    <Table className="table-fixed">
-      <TableHeader>
+    <Table className="table-fixed" containerClassName="overflow-visible">
+      <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/85">
         <TableRow className="hover:bg-transparent border-border/50">
           <TableHead className="w-9 pl-3 pr-0">
             <div className="flex items-center justify-center">
@@ -1244,8 +1244,8 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                   }
                 />
               ) : (
-                <Table className="table-fixed">
-                  <TableHeader>
+                <Table className="table-fixed" containerClassName="overflow-visible">
+                  <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/85">
                     <TableRow className="hover:bg-transparent border-border/50">
                       <TableHead className="w-9 pl-3 pr-0">
                         <div className="flex items-center justify-center">
