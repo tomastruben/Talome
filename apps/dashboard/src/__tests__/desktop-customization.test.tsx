@@ -1,6 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopWallpaperDialog } from "@/components/desktop/desktop-customization";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("DesktopWallpaperDialog", () => {
   it("moves by its titlebar and stays inside the viewport", () => {
@@ -60,5 +64,73 @@ describe("DesktopWallpaperDialog", () => {
       clientY: 300,
     });
     expect(dialog.style.translate).toBe("calc(-50% + 240px) calc(-50% + 44px)");
+  });
+
+  it("searches Unsplash, tracks the download, and applies the wallpaper with attribution", async () => {
+    const wallpaperUrl = "https://images.unsplash.com/photo-example?ixid=test&w=2560";
+    const downloadLocation = "https://api.unsplash.com/photos/example/download";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        configured: true,
+        query: "nature wallpaper",
+        page: 1,
+        total: 1,
+        totalPages: 1,
+        photos: [{
+          id: "example",
+          description: "Mountain lake",
+          color: "#334155",
+          width: 3000,
+          height: 2000,
+          thumbnailUrl: "https://images.unsplash.com/photo-example?ixid=test&w=400",
+          wallpaperUrl,
+          photoUrl: "https://unsplash.com/photos/example?utm_source=talome&utm_medium=referral",
+          downloadLocation,
+          photographer: {
+            name: "Ada Photo",
+            username: "adaphoto",
+            profileUrl: "https://unsplash.com/@adaphoto?utm_source=talome&utm_medium=referral",
+          },
+        }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tracked: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const onWallpaperChange = vi.fn(() => true);
+
+    render(
+      <DesktopWallpaperDialog
+        open
+        wallpaperUrl="/wallpapers/dune.jpg"
+        onOpenChange={vi.fn()}
+        onWallpaperChange={onWallpaperChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Unsplash" }));
+    const wallpaper = await screen.findByRole("radio", {
+      name: "Use photo by Ada Photo from Unsplash",
+    });
+    expect(screen.getByRole("link", { name: "Ada Photo" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("utm_source=talome"),
+    );
+
+    fireEvent.click(wallpaper);
+    await waitFor(() => {
+      expect(onWallpaperChange).toHaveBeenCalledWith(wallpaperUrl, {
+        photoUrl: expect.stringContaining("unsplash.com/photos/example"),
+        photographerName: "Ada Photo",
+        photographerUrl: expect.stringContaining("unsplash.com/@adaphoto"),
+      });
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/dashboard/desktop/api/unsplash/wallpapers",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ downloadLocation }),
+      },
+    );
   });
 });

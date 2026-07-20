@@ -92,6 +92,7 @@ import {
 import {
   DesktopWallpaperDialog,
   DesktopWidgetsPanel,
+  type DesktopWallpaperAttribution,
 } from "@/components/desktop/desktop-customization";
 import {
   extractLaunchableApps,
@@ -181,6 +182,7 @@ type DesktopControlCenterView = "main" | "dashboard" | "audiobooks" | "downloads
 type DesktopControlCenterNavigationDirection = "push" | "pop";
 
 const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
+const DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY = "talome-desktop-wallpaper-attribution-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
 const DESKTOP_WINDOW_MOTION_SECONDS = 0.19;
 const DESKTOP_WINDOW_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
@@ -645,6 +647,9 @@ export function DesktopExperience() {
   const [desktopWidgetsEditing, setDesktopWidgetsEditing] = useState(false);
   const [wallpaperDialogOpen, setWallpaperDialogOpen] = useState(false);
   const [wallpaperUrl, setWallpaperUrl] = useState<string>();
+  const [wallpaperAttribution, setWallpaperAttribution] = useState<
+    DesktopWallpaperAttribution
+  >();
   const [showDesktopDrives, setShowDesktopDrives] = useState(true);
   const [selectedDesktopDrivePath, setSelectedDesktopDrivePath] = useState<string>();
   const [restored, setRestored] = useState(false);
@@ -838,9 +843,25 @@ export function DesktopExperience() {
   useEffect(() => {
     try {
       setWallpaperUrl(localStorage.getItem(DESKTOP_WALLPAPER_STORAGE_KEY) ?? undefined);
+      const storedAttribution = localStorage.getItem(
+        DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY,
+      );
+      if (storedAttribution) {
+        const parsedAttribution = JSON.parse(storedAttribution) as Partial<
+          DesktopWallpaperAttribution
+        >;
+        if (
+          typeof parsedAttribution.photoUrl === "string"
+          && typeof parsedAttribution.photographerName === "string"
+          && typeof parsedAttribution.photographerUrl === "string"
+        ) {
+          setWallpaperAttribution(parsedAttribution as DesktopWallpaperAttribution);
+        }
+      }
       setShowDesktopDrives(localStorage.getItem(DESKTOP_DRIVES_STORAGE_KEY) !== "false");
     } catch {
       setWallpaperUrl(undefined);
+      setWallpaperAttribution(undefined);
       setShowDesktopDrives(true);
     }
   }, []);
@@ -1287,14 +1308,26 @@ export function DesktopExperience() {
     setControlCenterView("main");
   }, []);
 
-  const updateWallpaper = useCallback((nextWallpaperUrl?: string) => {
+  const updateWallpaper = useCallback((
+    nextWallpaperUrl?: string,
+    nextAttribution?: DesktopWallpaperAttribution,
+  ) => {
     try {
       if (nextWallpaperUrl) {
         localStorage.setItem(DESKTOP_WALLPAPER_STORAGE_KEY, nextWallpaperUrl);
       } else {
         localStorage.removeItem(DESKTOP_WALLPAPER_STORAGE_KEY);
       }
+      if (nextAttribution) {
+        localStorage.setItem(
+          DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY,
+          JSON.stringify(nextAttribution),
+        );
+      } else {
+        localStorage.removeItem(DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY);
+      }
       setWallpaperUrl(nextWallpaperUrl);
+      setWallpaperAttribution(nextAttribution);
       return true;
     } catch {
       return false;
@@ -1379,6 +1412,28 @@ export function DesktopExperience() {
             className="object-cover"
           />
         </div>
+      ) : null}
+      {wallpaperAttribution ? (
+        <p className="absolute bottom-2 left-3 z-10 rounded-md bg-black/35 px-2 py-1 text-[10px] text-white/80 shadow-sm backdrop-blur-md">
+          Photo by{" "}
+          <a
+            href={wallpaperAttribution.photographerUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-white hover:underline"
+          >
+            {wallpaperAttribution.photographerName}
+          </a>{" "}
+          on{" "}
+          <a
+            href={wallpaperAttribution.photoUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-white hover:underline"
+          >
+            Unsplash
+          </a>
+        </p>
       ) : null}
       <header
         aria-hidden={desktopWidgetsEditing || undefined}
@@ -1969,6 +2024,7 @@ export function DesktopExperience() {
       <DesktopWallpaperDialog
         open={wallpaperDialogOpen}
         wallpaperUrl={wallpaperUrl}
+        wallpaperAttribution={wallpaperAttribution}
         onOpenChange={setWallpaperDialogOpen}
         onWallpaperChange={updateWallpaper}
       />
