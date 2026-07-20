@@ -62,9 +62,10 @@ export interface DesktopWallpaperAttribution {
   photoUrl: string;
   photographerName: string;
   photographerUrl: string;
+  providerName?: string;
 }
 
-interface UnsplashWallpaper {
+interface OnlineWallpaper {
   id: string;
   description: string;
   color: string;
@@ -73,21 +74,26 @@ interface UnsplashWallpaper {
   thumbnailUrl: string;
   wallpaperUrl: string;
   photoUrl: string;
-  downloadLocation: string;
+  downloadLocation?: string;
   photographer: {
     name: string;
     username: string;
     profileUrl: string;
   };
+  provider: {
+    name: string;
+    url: string;
+  };
 }
 
-interface UnsplashWallpaperResponse {
+interface OnlineWallpaperResponse {
   configured: boolean;
+  provider?: string;
   query?: string;
   page?: number;
   total?: number;
   totalPages?: number;
-  photos?: UnsplashWallpaper[];
+  photos?: OnlineWallpaper[];
   error?: string;
 }
 
@@ -99,7 +105,7 @@ const WALLPAPER_PRESETS: readonly WallpaperPreset[] = [
   { id: "dune", name: "Dune", url: "/wallpapers/dune.jpg" },
 ];
 
-type WallpaperSource = "talome" | "unsplash" | "custom";
+type WallpaperSource = "talome" | "discover" | "custom";
 
 function isPresetWallpaper(wallpaperUrl?: string): boolean {
   return WALLPAPER_PRESETS.some((preset) => preset.url === wallpaperUrl);
@@ -187,13 +193,13 @@ function WallpaperPresetButton({
   );
 }
 
-function UnsplashWallpaperCard({
+function OnlineWallpaperCard({
   photo,
   selected,
   applying,
   onSelect,
 }: {
-  photo: UnsplashWallpaper;
+  photo: OnlineWallpaper;
   selected: boolean;
   applying: boolean;
   onSelect: () => void;
@@ -204,7 +210,7 @@ function UnsplashWallpaperCard({
         type="button"
         role="radio"
         aria-checked={selected}
-        aria-label={`Use photo by ${photo.photographer.name} from Unsplash`}
+        aria-label={`Use photo by ${photo.photographer.name} from ${photo.provider.name}`}
         disabled={applying}
         className={cn(
           "group relative aspect-video overflow-hidden rounded-lg border bg-card text-left outline-none transition-[border-color,box-shadow,opacity] duration-150",
@@ -248,12 +254,12 @@ function UnsplashWallpaperCard({
         </a>{" "}
         on{" "}
         <a
-          href={photo.photoUrl}
+          href={photo.provider.url}
           target="_blank"
           rel="noreferrer"
           className="text-foreground/80 hover:underline"
         >
-          Unsplash
+          {photo.provider.name}
         </a>
       </p>
     </article>
@@ -346,12 +352,12 @@ function DesktopWallpaperPicker({
   const unsplashLoadedRef = useRef(false);
   const [source, setSource] = useState<WallpaperSource>(() => (
     wallpaperAttribution || isUnsplashWallpaper(wallpaperUrl)
-      ? "unsplash"
+      ? "discover"
       : isPresetWallpaper(wallpaperUrl) ? "talome" : "custom"
   ));
   const [error, setError] = useState("");
   const [unsplashQuery, setUnsplashQuery] = useState("nature wallpaper");
-  const [unsplashPhotos, setUnsplashPhotos] = useState<UnsplashWallpaper[]>([]);
+  const [unsplashPhotos, setUnsplashPhotos] = useState<OnlineWallpaper[]>([]);
   const [unsplashLoading, setUnsplashLoading] = useState(false);
   const [unsplashError, setUnsplashError] = useState("");
   const [applyingUnsplashId, setApplyingUnsplashId] = useState<string>();
@@ -364,9 +370,9 @@ function DesktopWallpaperPicker({
       const response = await fetch(
         `/dashboard/desktop/api/unsplash/wallpapers?query=${encodeURIComponent(normalizedQuery)}`,
       );
-      const payload = await response.json() as UnsplashWallpaperResponse;
+      const payload = await response.json() as OnlineWallpaperResponse;
       if (!response.ok) {
-        throw new Error(payload.error ?? "Unsplash could not load wallpapers.");
+        throw new Error(payload.error ?? "Online wallpapers could not be loaded.");
       }
       setUnsplashPhotos(payload.photos ?? []);
       setUnsplashQuery(payload.query ?? normalizedQuery);
@@ -375,7 +381,7 @@ function DesktopWallpaperPicker({
       setUnsplashError(
         unsplashRequestError instanceof Error
           ? unsplashRequestError.message
-          : "Unsplash could not load wallpapers.",
+          : "Online wallpapers could not be loaded.",
       );
     } finally {
       setUnsplashLoading(false);
@@ -383,7 +389,7 @@ function DesktopWallpaperPicker({
   }, []);
 
   useEffect(() => {
-    if (source !== "unsplash" || unsplashLoadedRef.current) return;
+    if (source !== "discover" || unsplashLoadedRef.current) return;
     unsplashLoadedRef.current = true;
     void searchUnsplash(unsplashQuery);
   }, [searchUnsplash, source, unsplashQuery]);
@@ -402,23 +408,26 @@ function DesktopWallpaperPicker({
     setError("");
   };
 
-  const selectUnsplashWallpaper = async (photo: UnsplashWallpaper) => {
+  const selectUnsplashWallpaper = async (photo: OnlineWallpaper) => {
     setApplyingUnsplashId(photo.id);
     setUnsplashError("");
     try {
-      const response = await fetch("/dashboard/desktop/api/unsplash/wallpapers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ downloadLocation: photo.downloadLocation }),
-      });
-      const payload = await response.json() as { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Unsplash could not apply this wallpaper.");
+      if (photo.downloadLocation) {
+        const response = await fetch("/dashboard/desktop/api/unsplash/wallpapers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ downloadLocation: photo.downloadLocation }),
+        });
+        const payload = await response.json() as { error?: string };
+        if (!response.ok) {
+          throw new Error(payload.error ?? "The wallpaper could not be applied.");
+        }
       }
       const saved = onWallpaperChange(photo.wallpaperUrl, {
         photoUrl: photo.photoUrl,
         photographerName: photo.photographer.name,
         photographerUrl: photo.photographer.profileUrl,
+        providerName: photo.provider.name,
       });
       if (!saved) throw new Error("The wallpaper could not be saved. Try again.");
       setError("");
@@ -426,7 +435,7 @@ function DesktopWallpaperPicker({
       setUnsplashError(
         unsplashRequestError instanceof Error
           ? unsplashRequestError.message
-          : "Unsplash could not apply this wallpaper.",
+          : "The wallpaper could not be applied.",
       );
     } finally {
       setApplyingUnsplashId(undefined);
@@ -511,7 +520,7 @@ function DesktopWallpaperPicker({
           Desktop Wallpaper
         </DialogTitle>
         <DialogDescription className="sr-only">
-          Choose a Talome or Unsplash wallpaper, or upload a custom image.
+          Choose a Talome or online wallpaper, or upload a custom image.
         </DialogDescription>
         <span />
       </header>
@@ -524,7 +533,7 @@ function DesktopWallpaperPicker({
         >
           <TabsList className="self-center">
             <TabsTab value="talome" className="min-w-20">Talome</TabsTab>
-            <TabsTab value="unsplash" className="min-w-20">Unsplash</TabsTab>
+            <TabsTab value="discover" className="min-w-20">Discover</TabsTab>
             <TabsTab value="custom" className="min-w-20">Custom</TabsTab>
           </TabsList>
 
@@ -545,7 +554,7 @@ function DesktopWallpaperPicker({
             </div>
           </TabsPanel>
 
-          <TabsPanel value="unsplash" className="grid gap-3">
+          <TabsPanel value="discover" className="grid gap-3">
             <form className="flex gap-2" role="search" onSubmit={handleUnsplashSearch}>
               <div className="relative min-w-0 flex-1">
                 <HugeiconsIcon
@@ -555,7 +564,7 @@ function DesktopWallpaperPicker({
                 />
                 <Input
                   value={unsplashQuery}
-                  aria-label="Search Unsplash wallpapers"
+                  aria-label="Search online wallpapers"
                   placeholder="Search landscapes, cities, textures…"
                   className="h-9 pl-9 text-sm"
                   onChange={(event) => setUnsplashQuery(event.currentTarget.value)}
@@ -591,10 +600,10 @@ function DesktopWallpaperPicker({
                 <div
                   className="grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3"
                   role="radiogroup"
-                  aria-label="Unsplash wallpapers"
+                  aria-label="Online wallpapers"
                 >
                   {unsplashPhotos.map((photo) => (
-                    <UnsplashWallpaperCard
+                    <OnlineWallpaperCard
                       key={photo.id}
                       photo={photo}
                       selected={photo.wallpaperUrl === wallpaperUrl}
@@ -605,7 +614,7 @@ function DesktopWallpaperPicker({
                 </div>
               ) : (
                 <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">
-                  Search Unsplash for a desktop wallpaper.
+                  Search for a desktop wallpaper.
                 </div>
               )}
             </div>
@@ -614,6 +623,7 @@ function DesktopWallpaperPicker({
           <TabsPanel value="custom" className="grid gap-3">
             {wallpaperUrl
             && !isPresetWallpaper(wallpaperUrl)
+            && !wallpaperAttribution
             && !isUnsplashWallpaper(wallpaperUrl) ? (
               <div className="relative h-36 overflow-hidden rounded-lg border border-border bg-card">
                 <WallpaperImage

@@ -1431,7 +1431,7 @@ export function DesktopExperience() {
             rel="noreferrer"
             className="text-white hover:underline"
           >
-            Unsplash
+            {wallpaperAttribution.providerName ?? "Unsplash"}
           </a>
         </p>
       ) : null}

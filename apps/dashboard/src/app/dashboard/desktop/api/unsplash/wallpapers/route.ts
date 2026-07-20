@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const UNSPLASH_API_URL = "https://api.unsplash.com";
+const WALLHAVEN_API_URL = "https://wallhaven.cc/api/v1";
 const DEFAULT_QUERY = "nature wallpaper";
 const RESULTS_PER_PAGE = 12;
 
@@ -38,6 +39,30 @@ interface UnsplashSearchResponse {
   errors?: string[];
 }
 
+interface WallhavenWallpaperResponse {
+  id: string;
+  url: string;
+  path: string;
+  dimension_x: number;
+  dimension_y: number;
+  colors?: string[];
+  thumbs: {
+    large: string;
+  };
+  uploader?: {
+    username: string;
+  } | null;
+}
+
+interface WallhavenSearchResponse {
+  data: WallhavenWallpaperResponse[];
+  meta?: {
+    current_page: number;
+    last_page: number;
+    total: number;
+  };
+}
+
 function unsplashHeaders(accessKey: string): HeadersInit {
   return {
     Accept: "application/json",
@@ -62,20 +87,71 @@ function wallpaperUrl(rawUrl: string): string {
   return url.toString();
 }
 
-function configurationError() {
-  return NextResponse.json(
-    {
-      configured: false,
-      error: "Unsplash is not configured. Add UNSPLASH_ACCESS_KEY to Talome's environment.",
-    },
-    { status: 503 },
-  );
+function wallhavenQuery(query: string): string {
+  const withoutWallpaper = query.replace(/\bwallpapers?\b/gi, "").trim();
+  return withoutWallpaper || "nature";
+}
+
+async function searchWallhaven(query: string, page: number) {
+  const endpoint = new URL(`${WALLHAVEN_API_URL}/search`);
+  endpoint.searchParams.set("q", wallhavenQuery(query));
+  endpoint.searchParams.set("page", String(page));
+  endpoint.searchParams.set("categories", "100");
+  endpoint.searchParams.set("purity", "100");
+  endpoint.searchParams.set("sorting", "relevance");
+  endpoint.searchParams.set("atleast", "1920x1080");
+  endpoint.searchParams.set("ratios", "16x9,16x10,21x9");
+
+  const response = await fetch(endpoint, {
+    headers: { Accept: "application/json" },
+    next: { revalidate: 300 },
+  });
+  const payload = await response.json() as WallhavenSearchResponse;
+  if (!response.ok) {
+    return NextResponse.json(
+      { error: "Online wallpapers could not be loaded." },
+      { status: response.status },
+    );
+  }
+
+  const photos = payload.data.slice(0, RESULTS_PER_PAGE).map((photo) => {
+    const contributor = photo.uploader?.username ?? "Wallhaven contributor";
+    return {
+      id: `wallhaven-${photo.id}`,
+      description: `${wallhavenQuery(query)} wallpaper`,
+      color: photo.colors?.[0] ?? "#18181b",
+      width: photo.dimension_x,
+      height: photo.dimension_y,
+      thumbnailUrl: photo.thumbs.large,
+      wallpaperUrl: photo.path,
+      photoUrl: photo.url,
+      photographer: {
+        name: contributor,
+        username: photo.uploader?.username ?? photo.id,
+        profileUrl: photo.uploader
+          ? `https://wallhaven.cc/user/${encodeURIComponent(photo.uploader.username)}`
+          : photo.url,
+      },
+      provider: {
+        name: "Wallhaven",
+        url: photo.url,
+      },
+    };
+  });
+
+  return NextResponse.json({
+    configured: false,
+    provider: "wallhaven",
+    query,
+    page,
+    total: payload.meta?.total ?? photos.length,
+    totalPages: payload.meta?.last_page ?? 1,
+    photos,
+  });
 }
 
 export async function GET(request: NextRequest) {
   const accessKey = process.env.UNSPLASH_ACCESS_KEY;
-  if (!accessKey) return configurationError();
-
   const query = (request.nextUrl.searchParams.get("query") ?? DEFAULT_QUERY)
     .trim()
     .slice(0, 80) || DEFAULT_QUERY;
@@ -83,6 +159,18 @@ export async function GET(request: NextRequest) {
   const page = Number.isFinite(requestedPage)
     ? Math.min(20, Math.max(1, requestedPage))
     : 1;
+
+  if (!accessKey) {
+    try {
+      return await searchWallhaven(query, page);
+    } catch {
+      return NextResponse.json(
+        { error: "Online wallpapers are temporarily unavailable." },
+        { status: 502 },
+      );
+    }
+  }
+
   const endpoint = new URL(`${UNSPLASH_API_URL}/search/photos`);
   endpoint.searchParams.set("query", query);
   endpoint.searchParams.set("page", String(page));
@@ -108,6 +196,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       configured: true,
+      provider: "unsplash",
       query,
       page,
       total: payload.total,
@@ -127,6 +216,10 @@ export async function GET(request: NextRequest) {
           username: photo.user.username,
           profileUrl: withReferral(photo.user.links.html),
         },
+        provider: {
+          name: "Unsplash",
+          url: withReferral(photo.links.html),
+        },
       })),
     });
   } catch {
@@ -139,7 +232,12 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const accessKey = process.env.UNSPLASH_ACCESS_KEY;
-  if (!accessKey) return configurationError();
+  if (!accessKey) {
+    return NextResponse.json(
+      { error: "Unsplash download tracking is unavailable." },
+      { status: 503 },
+    );
+  }
 
   let downloadLocation: string;
   try {

@@ -91,6 +91,10 @@ describe("DesktopWallpaperDialog", () => {
             username: "adaphoto",
             profileUrl: "https://unsplash.com/@adaphoto?utm_source=talome&utm_medium=referral",
           },
+          provider: {
+            name: "Unsplash",
+            url: "https://unsplash.com/photos/example?utm_source=talome&utm_medium=referral",
+          },
         }],
       }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ tracked: true }), { status: 200 }));
@@ -106,7 +110,7 @@ describe("DesktopWallpaperDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "Unsplash" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Discover" }));
     const wallpaper = await screen.findByRole("radio", {
       name: "Use photo by Ada Photo from Unsplash",
     });
@@ -121,6 +125,7 @@ describe("DesktopWallpaperDialog", () => {
         photoUrl: expect.stringContaining("unsplash.com/photos/example"),
         photographerName: "Ada Photo",
         photographerUrl: expect.stringContaining("unsplash.com/@adaphoto"),
+        providerName: "Unsplash",
       });
     });
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -132,5 +137,62 @@ describe("DesktopWallpaperDialog", () => {
         body: JSON.stringify({ downloadLocation }),
       },
     );
+  });
+
+  it("uses the setup-free online provider without download tracking", async () => {
+    const wallpaperUrl = "https://w.wallhaven.cc/full/example.jpg";
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      configured: false,
+      provider: "wallhaven",
+      query: "nature wallpaper",
+      page: 1,
+      total: 1,
+      totalPages: 1,
+      photos: [{
+        id: "wallhaven-example",
+        description: "Mountain lake wallpaper",
+        color: "#334155",
+        width: 3000,
+        height: 2000,
+        thumbnailUrl: "https://th.wallhaven.cc/lg/example.jpg",
+        wallpaperUrl,
+        photoUrl: "https://wallhaven.cc/w/example",
+        photographer: {
+          name: "Wallhaven contributor",
+          username: "example",
+          profileUrl: "https://wallhaven.cc/w/example",
+        },
+        provider: {
+          name: "Wallhaven",
+          url: "https://wallhaven.cc/w/example",
+        },
+      }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const onWallpaperChange = vi.fn(() => true);
+
+    render(
+      <DesktopWallpaperDialog
+        open
+        wallpaperUrl="/wallpapers/dune.jpg"
+        onOpenChange={vi.fn()}
+        onWallpaperChange={onWallpaperChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Discover" }));
+    fireEvent.click(await screen.findByRole("radio", {
+      name: "Use photo by Wallhaven contributor from Wallhaven",
+    }));
+
+    await waitFor(() => {
+      expect(onWallpaperChange).toHaveBeenCalledWith(wallpaperUrl, {
+        photoUrl: "https://wallhaven.cc/w/example",
+        photographerName: "Wallhaven contributor",
+        photographerUrl: "https://wallhaven.cc/w/example",
+        providerName: "Wallhaven",
+      });
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
