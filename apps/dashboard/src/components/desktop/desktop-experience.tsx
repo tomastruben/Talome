@@ -184,6 +184,8 @@ const DESKTOP_WINDOW_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const DESKTOP_DOCK_MOTION_SECONDS = 0.16;
 const DESKTOP_DOCK_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const DESKTOP_DOCK_POINTER_CONSTRAINT = { distance: 6 } as const;
+const DESKTOP_FROSTED_MATERIAL_CLASS =
+  "border-border bg-card/90 shadow-lg shadow-black/15 backdrop-blur-md";
 const CONTROL_CENTER_PAGE_TRANSITION = {
   duration: 0.3,
   ease: [0.32, 0.72, 0, 1],
@@ -1362,7 +1364,8 @@ export function DesktopExperience() {
         aria-disabled={desktopWidgetsEditing || undefined}
         inert={desktopWidgetsEditing}
         className={cn(
-          "relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b border-white/45 bg-white/70 px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),inset_0_-1px_0_rgba(0,0,0,0.08),0_1px_16px_rgba(0,0,0,0.08)] backdrop-blur-[28px] backdrop-saturate-[1.8] transition-[background-color,border-color,box-shadow,opacity] duration-150 supports-[backdrop-filter]:bg-white/45 dark:border-white/10 dark:bg-background/85 dark:shadow-[inset_0_-1px_0_rgba(255,255,255,0.2),0_1px_12px_rgba(0,0,0,0.08)] dark:supports-[backdrop-filter]:bg-background/55",
+          "relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b px-3 transition-[background-color,border-color,box-shadow,opacity] duration-150",
+          DESKTOP_FROSTED_MATERIAL_CLASS,
           desktopWidgetsEditing && "pointer-events-none select-none opacity-35 saturate-0",
         )}
       >
@@ -1784,7 +1787,8 @@ export function DesktopExperience() {
           <nav
             aria-label="Desktop applications"
             className={cn(
-              "absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border border-border bg-card/90 p-2 shadow-lg shadow-black/15 backdrop-blur-md transition-[background-color,border-color,box-shadow,opacity] duration-150",
+              "absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
+              DESKTOP_FROSTED_MATERIAL_CLASS,
               draggingDockAppId && "border-foreground/20 bg-card/95 shadow-xl shadow-black/25",
             )}
             data-dock-dragging={draggingDockAppId || undefined}
