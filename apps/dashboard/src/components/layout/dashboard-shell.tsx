@@ -68,7 +68,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <AutomationProvider>
           <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
             {mounted && <CommandPalette />}
-            <NotificationToastBridge />
+            {!embeddedFrame ? <NotificationToastBridge /> : null}
             <QuickLookModal />
             <BugHuntOverlay />
             <CinemaBrowserOverlay />
