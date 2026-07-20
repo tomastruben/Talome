@@ -51,6 +51,9 @@ import {
   Package01Icon,
   PinIcon,
   PinOffIcon,
+  HeadphonesIcon,
+  PauseIcon,
+  PlayIcon,
   DashboardSquareEditIcon,
   Image01Icon,
   SlidersHorizontalIcon,
@@ -1057,6 +1060,14 @@ export function DesktopExperience() {
     ),
     stop: () => sendDesktopAudiobookCommand("stop"),
   }), [desktopAudiobookPlayback, sendDesktopAudiobookCommand]);
+  const desktopAudiobookProgress = desktopAudiobookPlayer.book
+    && desktopAudiobookPlayer.book.totalDuration > 0
+    ? Math.min(
+      100,
+      (desktopAudiobookPlayer.state.currentTime
+        / desktopAudiobookPlayer.book.totalDuration) * 100,
+    )
+    : 0;
 
   const openApp = useCallback((app: DesktopAppDefinition) => {
     if (!canUseApp(app)) return;
@@ -1255,6 +1266,16 @@ export function DesktopExperience() {
     openApp({ ...app, url });
   }, [openApp]);
 
+  const openNowPlayingAudiobook = useCallback(() => {
+    const book = desktopAudiobookPlayer.book;
+    const app = appById.get("audiobooks");
+    if (!book || !app) return;
+    openApp({
+      ...app,
+      url: `/dashboard/audiobooks/${book.bookId}`,
+    });
+  }, [desktopAudiobookPlayer.book, openApp]);
+
   const pushControlCenterView = useCallback((view: Exclude<DesktopControlCenterView, "main">) => {
     if (view === "dashboard") setDashboardEditing(false);
     setControlCenterNavigationDirection("push");
@@ -1442,6 +1463,54 @@ export function DesktopExperience() {
         <span className="truncate text-sm font-medium">{activeTitle}</span>
 
         <div className="ml-auto flex items-center gap-1">
+          <AnimatePresence initial={false}>
+            {desktopAudiobookPlayer.book ? (
+              <motion.div
+                key={desktopAudiobookPlayer.book.bookId}
+                role="group"
+                aria-label={`Now playing ${desktopAudiobookPlayer.book.title}`}
+                className="relative mr-1 flex h-7 max-w-56 items-center overflow-hidden rounded-md bg-muted/45 text-xs"
+                initial={reduceMotion ? false : { opacity: 0, scale: 0.94, x: 6 }}
+                animate={{ opacity: 1, scale: 1, x: 0 }}
+                exit={reduceMotion ? undefined : { opacity: 0, scale: 0.94, x: 6 }}
+                transition={reduceMotion ? { duration: 0 } : { duration: 0.16, ease: "easeOut" }}
+              >
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch px-2 text-left transition-colors hover:bg-muted/55"
+                  aria-label={`Open now playing audiobook: ${desktopAudiobookPlayer.book.title}`}
+                  onClick={openNowPlayingAudiobook}
+                >
+                  <HugeiconsIcon icon={HeadphonesIcon} size={14} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate font-medium">
+                    {desktopAudiobookPlayer.book.title}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-[background-color,color,transform] hover:bg-muted/70 hover:text-foreground active:scale-90"
+                  aria-label={desktopAudiobookPlayer.state.isPlaying
+                    ? "Pause audiobook from status bar"
+                    : "Play audiobook from status bar"}
+                  onClick={desktopAudiobookPlayer.togglePlay}
+                >
+                  <HugeiconsIcon
+                    icon={desktopAudiobookPlayer.state.isPlaying ? PauseIcon : PlayIcon}
+                    size={13}
+                  />
+                </button>
+                <span
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-foreground/10"
+                  aria-hidden="true"
+                >
+                  <span
+                    className="block h-full bg-foreground/55 transition-[width] duration-1000 ease-linear"
+                    style={{ width: `${desktopAudiobookProgress}%` }}
+                  />
+                </span>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
