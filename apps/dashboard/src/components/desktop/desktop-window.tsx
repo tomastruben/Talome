@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   memo,
   useEffect,
   useRef,
@@ -20,6 +21,8 @@ import {
   Projector01Icon,
   ArrowDown01Icon,
   Tick01Icon,
+  Wifi01Icon,
+  SourceCodeCircleIcon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import type {
@@ -31,6 +34,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -72,6 +76,8 @@ interface PointerOrigin {
 const desktopActionIcons: Record<DesktopAppActionIcon, IconSvgElement> = {
   add: Add01Icon,
   back: ArrowLeft01Icon,
+  remote: Wifi01Icon,
+  "source-code": SourceCodeCircleIcon,
   projector: Projector01Icon,
   upload: CloudUploadIcon,
   "new-folder": FolderAddIcon,
@@ -181,6 +187,9 @@ export const DesktopWindow = memo(function DesktopWindow({
 
   const leadingActions = actions.filter((action) => action.placement === "leading");
   const trailingActions = actions.filter((action) => action.placement !== "leading");
+  const terminalActionIds = new Set(["terminal-auto", "terminal-remote", "terminal-agent"]);
+  const terminalActions = trailingActions.filter((action) => terminalActionIds.has(action.id));
+  const otherTrailingActions = trailingActions.filter((action) => !terminalActionIds.has(action.id));
 
   const renderAction = (action: DesktopAppActionDescriptor) => {
     const icon = action.icon ? desktopActionIcons[action.icon] : undefined;
@@ -216,16 +225,18 @@ export const DesktopWindow = memo(function DesktopWindow({
             onPointerDown={(event) => event.stopPropagation()}
           >
             {action.items?.map((item) => (
-              <DropdownMenuItem
-                key={item.id}
-                disabled={item.disabled}
-                onSelect={() => onAction?.(item.id)}
-              >
-                <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                {item.active && (
-                  <HugeiconsIcon icon={Tick01Icon} size={13} className="ml-auto" />
-                )}
-              </DropdownMenuItem>
+              <Fragment key={item.id}>
+                {item.separatorBefore && <DropdownMenuSeparator />}
+                <DropdownMenuItem
+                  disabled={item.disabled}
+                  onSelect={() => onAction?.(item.id)}
+                >
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  {item.active && (
+                    <HugeiconsIcon icon={Tick01Icon} size={13} className="ml-auto" />
+                  )}
+                </DropdownMenuItem>
+              </Fragment>
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -273,6 +284,117 @@ export const DesktopWindow = memo(function DesktopWindow({
         {icon && <HugeiconsIcon icon={icon} size={14} />}
         {!isLeading && action.label}
       </button>
+    );
+  };
+
+  const renderTerminalControls = () => {
+    if (terminalActions.length === 0) return null;
+
+    const autoAction = terminalActions.find((action) => action.id === "terminal-auto");
+    const remoteAction = terminalActions.find((action) => action.id === "terminal-remote");
+    const agentAction = terminalActions.find((action) => action.id === "terminal-agent");
+    const stopTitlebarGesture = (event: ReactPointerEvent<HTMLElement>) => {
+      onFocus();
+      event.stopPropagation();
+    };
+
+    return (
+      <div
+        className={cn(
+          "flex h-7 shrink-0 items-center overflow-hidden rounded-md transition-colors",
+          autoAction?.active
+            ? "bg-status-warning/10 ring-1 ring-status-warning/20"
+            : "bg-muted/30 ring-1 ring-border/50",
+        )}
+        aria-label="Terminal controls"
+      >
+        {autoAction && (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoAction.active === true}
+            aria-label={autoAction.label}
+            disabled={autoAction.disabled}
+            className="flex h-7 items-center gap-1.5 rounded-l-md px-2 text-xs transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40"
+            onPointerDown={stopTitlebarGesture}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onClick={() => onAction?.(autoAction.id)}
+          >
+            <span
+              className={cn(
+                "relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors",
+                autoAction.active ? "bg-status-warning" : "bg-input",
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-block size-2.5 rounded-full bg-white transition-transform",
+                  autoAction.active ? "translate-x-3" : "translate-x-0.5",
+                )}
+              />
+            </span>
+            <span className={cn("font-medium", autoAction.active ? "text-status-warning" : "text-muted-foreground")}>Auto</span>
+          </button>
+        )}
+        {remoteAction && (
+          <button
+            type="button"
+            aria-label={remoteAction.label}
+            aria-pressed={remoteAction.active === true}
+            disabled={remoteAction.disabled}
+            className={cn(
+              "relative flex size-7 items-center justify-center transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40",
+              remoteAction.active ? "text-foreground" : "text-muted-foreground/50",
+            )}
+            onPointerDown={stopTitlebarGesture}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onClick={() => onAction?.(remoteAction.id)}
+          >
+            <HugeiconsIcon icon={Wifi01Icon} size={13} />
+            {remoteAction.label === "Remote session active" && (
+              <span className="absolute right-1 top-1 size-1.5 rounded-full bg-status-healthy" />
+            )}
+          </button>
+        )}
+        {agentAction && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  "flex h-7 min-w-0 max-w-40 items-center gap-1.5 rounded-r-md px-2.5 text-xs transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40",
+                  autoAction?.active ? "text-status-warning/80 hover:text-status-warning" : "text-muted-foreground hover:text-foreground",
+                )}
+                disabled={agentAction.disabled}
+                aria-label={agentAction.label}
+                onPointerDown={stopTitlebarGesture}
+                onDoubleClick={(event) => event.stopPropagation()}
+              >
+                <HugeiconsIcon icon={SourceCodeCircleIcon} size={14} />
+                <span className="truncate">{agentAction.label}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="z-[1400] min-w-40"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {agentAction.items?.map((item) => (
+                <Fragment key={item.id}>
+                  {item.separatorBefore && <DropdownMenuSeparator />}
+                  <DropdownMenuItem
+                    disabled={item.disabled}
+                    onSelect={() => onAction?.(item.id)}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {item.active && <HugeiconsIcon icon={Tick01Icon} size={13} className="ml-auto" />}
+                  </DropdownMenuItem>
+                </Fragment>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
     );
   };
 
@@ -386,7 +508,8 @@ export const DesktopWindow = memo(function DesktopWindow({
           className="flex min-w-0 items-center justify-self-end gap-0.5"
           aria-label={`${title} actions`}
         >
-          {trailingActions.map(renderAction)}
+          {otherTrailingActions.map(renderAction)}
+          {renderTerminalControls()}
         </div>
       </div>
 

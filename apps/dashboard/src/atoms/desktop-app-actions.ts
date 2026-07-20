@@ -3,6 +3,8 @@ import { atom } from "jotai";
 const desktopAppActionIcons = [
   "add",
   "back",
+  "remote",
+  "source-code",
   "projector",
   "upload",
   "new-folder",
@@ -20,6 +22,7 @@ export interface DesktopAppActionMenuItemDescriptor {
   label: string;
   active?: boolean;
   disabled?: boolean;
+  separatorBefore?: boolean;
 }
 
 export interface DesktopAppActionDescriptor {
@@ -101,11 +104,13 @@ function parseDesktopAppActionDescriptor(
       }
       if (item.active !== undefined && typeof item.active !== "boolean") return null;
       if (item.disabled !== undefined && typeof item.disabled !== "boolean") return null;
+      if (item.separatorBefore !== undefined && typeof item.separatorBefore !== "boolean") return null;
       items.push({
         id: item.id,
         label: item.label,
         active: item.active,
         disabled: item.disabled,
+        separatorBefore: item.separatorBefore,
       });
     }
   }

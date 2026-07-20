@@ -76,11 +76,19 @@ export function TerminalPage() {
   const keyboard = useKeyboardMode();
   const [connectionStatus, setConnectionStatus] = useState<TerminalConnectionStatus | null>(null);
   const terminalHeaderAction = useTerminalHeaderAction();
-  const [autoMode] = useAtom(terminalAutoAtom);
-  const remote = useAtomValue(terminalRemoteAtom);
+  const [autoMode, setAutoMode] = useAtom(terminalAutoAtom);
+  const [remote, setRemote] = useAtom(terminalRemoteAtom);
+  const remoteActive = useAtomValue(terminalRemoteActiveAtom);
   const setRemoteActive = useSetAtom(terminalRemoteActiveAtom);
 
   useEffect(() => setMounted(true), []);
+
+  // The embedded desktop app has no SiteHeader, so hydrate the same terminal
+  // preferences that the classic terminal header uses.
+  useEffect(() => {
+    setAutoMode(localStorage.getItem("talome-auto-mode") === "true");
+    setRemote(localStorage.getItem("talome-remote-mode") === "true");
+  }, [setAutoMode, setRemote]);
 
   // Clear remote-active when session changes or terminal unmounts
   useEffect(() => {
@@ -187,18 +195,48 @@ export function TerminalPage() {
     termRef.current?.uploadImage(file);
   }, []);
 
+  const handleToggleAutoMode = useCallback(() => {
+    const next = !autoMode;
+    setAutoMode(next);
+    localStorage.setItem("talome-auto-mode", String(next));
+  }, [autoMode, setAutoMode]);
+
+  const handleToggleRemote = useCallback(() => {
+    const next = !remote;
+    setRemote(next);
+    localStorage.setItem("talome-remote-mode", String(next));
+  }, [remote, setRemote]);
+
   useEffect(() => {
     if (!embeddedFrame) return;
 
     const actions: DesktopAppAction[] = [
       {
+        id: "terminal-auto",
+        label: "Auto",
+        kind: "toggle",
+        active: autoMode,
+        onSelect: handleToggleAutoMode,
+      },
+      {
+        id: "terminal-remote",
+        label: remoteActive ? "Remote session active" : "Remote",
+        icon: "remote",
+        active: remote,
+        onSelect: handleToggleRemote,
+      },
+      {
         id: "terminal-agent",
         label: terminalHeaderAction.label,
+        icon: "source-code",
         kind: "menu",
         disabled: terminalHeaderAction.disabled,
         items: [
           ...terminalHeaderAction.agentItems,
-          ...terminalHeaderAction.commandItems,
+          ...terminalHeaderAction.commandItems.map((item, index) => ({
+            ...item,
+            separatorBefore: index === 0,
+          })),
         ],
       },
     ];
@@ -207,6 +245,11 @@ export function TerminalPage() {
     return () => setDesktopAppActions([]);
   }, [
     embeddedFrame,
+    autoMode,
+    handleToggleAutoMode,
+    handleToggleRemote,
+    remote,
+    remoteActive,
     setDesktopAppActions,
     terminalHeaderAction.agentItems,
     terminalHeaderAction.commandItems,

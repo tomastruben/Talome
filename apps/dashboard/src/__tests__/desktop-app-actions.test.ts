@@ -18,11 +18,12 @@ describe("desktop app action messages", () => {
         {
           id: "sessions",
           label: "default",
+          icon: "source-code",
           kind: "menu",
           placement: "leading",
           items: [
             { id: "session-default", label: "default", active: true },
-            { id: "session-refresh", label: "Refresh sessions" },
+            { id: "session-refresh", label: "Refresh sessions", separatorBefore: true },
           ],
         },
       ],
@@ -37,11 +38,12 @@ describe("desktop app action messages", () => {
         {
           id: "sessions",
           label: "default",
+          icon: "source-code",
           kind: "menu",
           placement: "leading",
           items: [
             { id: "session-default", label: "default", active: true },
-            { id: "session-refresh", label: "Refresh sessions" },
+            { id: "session-refresh", label: "Refresh sessions", separatorBefore: true },
           ],
         },
       ],

@@ -143,4 +143,45 @@ describe("DesktopWindow", () => {
 
     expect(onAction).toHaveBeenCalledWith("session-refresh");
   });
+
+  it("renders the classic terminal controls as one titlebar group", async () => {
+    const onAction = vi.fn();
+
+    render(
+      <DesktopWindow
+        {...defaultProps}
+        title="Terminal"
+        actions={[
+          { id: "terminal-auto", label: "Auto", kind: "toggle", active: true },
+          { id: "terminal-remote", label: "Remote", icon: "remote", active: false },
+          {
+            id: "terminal-agent",
+            label: "Codex",
+            icon: "source-code",
+            kind: "menu",
+            items: [
+              { id: "terminal-agent-claude", label: "Claude Code" },
+              { id: "terminal-agent-codex", label: "Codex", active: true },
+              { id: "terminal-continue-agent", label: "Continue session", separatorBefore: true },
+            ],
+          },
+        ]}
+        onAction={onAction}
+      >
+        <div>Terminal content</div>
+      </DesktopWindow>,
+    );
+
+    expect(screen.getByLabelText("Terminal controls")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Auto" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remote" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Codex" }), { button: 0 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Continue session" }));
+
+    expect(onAction.mock.calls).toEqual([
+      ["terminal-auto"],
+      ["terminal-remote"],
+      ["terminal-continue-agent"],
+    ]);
+  });
 });
