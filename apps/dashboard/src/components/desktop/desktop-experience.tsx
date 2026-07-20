@@ -6,7 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
+  type CSSProperties,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -16,6 +16,24 @@ import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
 import { animate } from "motion";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  horizontalListSortingStrategy,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   HugeiconsIcon,
   LayoutGridIcon,
@@ -142,6 +160,7 @@ const DESKTOP_WINDOW_MOTION_SECONDS = 0.19;
 const DESKTOP_WINDOW_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const DESKTOP_DOCK_MOTION_SECONDS = 0.16;
 const DESKTOP_DOCK_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
+const DESKTOP_DOCK_POINTER_CONSTRAINT = { distance: 6 } as const;
 
 async function playDesktopWindowMotion(
   windowElement: HTMLElement,
@@ -465,6 +484,53 @@ function DesktopClock() {
   );
 }
 
+interface DesktopSurfaceContextMenuContentProps {
+  editingWidgets: boolean;
+  showDesktopDrives: boolean;
+  onShowDesktopDrivesChange: (show: boolean) => void;
+  onEditWidgets: () => void;
+  onFinishEditingWidgets: () => void;
+  onOpenWallpaper: () => void;
+}
+
+function DesktopSurfaceContextMenuContent({
+  editingWidgets,
+  showDesktopDrives,
+  onShowDesktopDrivesChange,
+  onEditWidgets,
+  onFinishEditingWidgets,
+  onOpenWallpaper,
+}: DesktopSurfaceContextMenuContentProps) {
+  return (
+    <ContextMenuContent className="z-[1300] w-56">
+      <ContextMenuGroup>
+        <ContextMenuCheckboxItem
+          checked={showDesktopDrives}
+          onCheckedChange={(checked) => onShowDesktopDrivesChange(checked === true)}
+        >
+          Show Drives on Desktop
+        </ContextMenuCheckboxItem>
+      </ContextMenuGroup>
+      <ContextMenuSeparator />
+      <ContextMenuGroup>
+        <ContextMenuItem
+          onSelect={editingWidgets ? onFinishEditingWidgets : onEditWidgets}
+        >
+          <HugeiconsIcon
+            icon={editingWidgets ? Tick01Icon : DashboardSquareEditIcon}
+            size={16}
+          />
+          {editingWidgets ? "Finish Editing Widgets" : "Edit Desktop Widgets…"}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onOpenWallpaper}>
+          <HugeiconsIcon icon={Image01Icon} size={16} />
+          Change Wallpaper…
+        </ContextMenuItem>
+      </ContextMenuGroup>
+    </ContextMenuContent>
+  );
+}
+
 export function DesktopExperience() {
   const router = useRouter();
   const desktopModeAvailable = useDesktopModeAvailable();
@@ -477,7 +543,6 @@ export function DesktopExperience() {
   const desktopWindowRefs = useRef(new Map<string, HTMLElement>());
   const dockButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const desktopWidgetDoneButtonRef = useRef<HTMLButtonElement>(null);
-  const draggingDockAppIdRef = useRef<string | undefined>(undefined);
   const minimizingWindowIdsRef = useRef(new Set<string>());
   const restoringWindowIdsRef = useRef(new Set<string>());
   const zIndexRef = useRef(4);
@@ -506,6 +571,14 @@ export function DesktopExperience() {
   const [appChromeByWindow, setAppChromeByWindow] = useState<
     Record<string, DesktopAppChromeDescriptor>
   >({});
+  const dockSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: DESKTOP_DOCK_POINTER_CONSTRAINT,
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
 
   const canUseApp = useCallback((app: DesktopAppDefinition) => {
     if (app.adminOnly && user?.role !== "admin") return false;
@@ -915,35 +988,24 @@ export function DesktopExperience() {
     );
   }, [reorderableDockAppIds, reorderDockApp]);
 
-  const handleDockDragStart = useCallback((
-    event: ReactDragEvent<HTMLDivElement>,
-    appId: string,
-  ) => {
-    draggingDockAppIdRef.current = appId;
-    setDraggingDockAppId(appId);
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", appId);
+  const handleDockDragStart = useCallback((event: DragStartEvent) => {
+    setDraggingDockAppId(String(event.active.id));
   }, []);
-
-  const handleDockDragOver = useCallback((
-    event: ReactDragEvent<HTMLDivElement>,
-    targetId: string,
-  ) => {
-    const sourceId = draggingDockAppIdRef.current;
-    if (!sourceId || sourceId === targetId) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const placement = event.clientX < bounds.left + bounds.width / 2
-      ? "before"
-      : "after";
-    reorderDockApp(sourceId, targetId, placement);
-  }, [reorderDockApp]);
 
   const finishDockDrag = useCallback(() => {
-    draggingDockAppIdRef.current = undefined;
     setDraggingDockAppId(undefined);
   }, []);
+
+  const handleDockDragEnd = useCallback((event: DragEndEvent) => {
+    finishDockDrag();
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const sourceIndex = reorderableDockAppIds.indexOf(String(active.id));
+    const targetIndex = reorderableDockAppIds.indexOf(String(over.id));
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    setDockOrder(arrayMove(reorderableDockAppIds, sourceIndex, targetIndex));
+  }, [finishDockDrag, reorderableDockAppIds]);
 
   const closeWindow = useCallback((id: string) => {
     appFrameRefs.current.delete(id);
@@ -1030,6 +1092,7 @@ export function DesktopExperience() {
 
   const openWallpaperEditor = () => {
     setControlCenterOpen(false);
+    setDesktopWidgetsEditing(false);
     setWallpaperDialogOpen(true);
   };
 
@@ -1117,10 +1180,11 @@ export function DesktopExperience() {
     >
       <header
         aria-hidden={desktopWidgetsEditing || undefined}
+        aria-disabled={desktopWidgetsEditing || undefined}
         inert={desktopWidgetsEditing}
         className={cn(
           "relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b border-border/70 bg-background/90 px-3 backdrop-blur-md transition-opacity duration-150",
-          desktopWidgetsEditing && "pointer-events-none opacity-45",
+          desktopWidgetsEditing && "pointer-events-none select-none opacity-35 saturate-0",
         )}
       >
         <DropdownMenu>
@@ -1331,25 +1395,14 @@ export function DesktopExperience() {
               ) : null}
             </div>
           </ContextMenuTrigger>
-          <ContextMenuContent className="z-[1300] w-56">
-            <ContextMenuGroup>
-              <ContextMenuCheckboxItem
-                checked={showDesktopDrives}
-                onCheckedChange={(checked) => updateShowDesktopDrives(checked === true)}
-              >
-                Show Drives on Desktop
-              </ContextMenuCheckboxItem>
-              <ContextMenuSeparator />
-              <ContextMenuItem onSelect={openDesktopWidgetEditor}>
-                <HugeiconsIcon icon={DashboardSquareEditIcon} size={16} />
-                Edit Desktop Widgets…
-              </ContextMenuItem>
-              <ContextMenuItem onSelect={openWallpaperEditor}>
-                <HugeiconsIcon icon={Image01Icon} size={16} />
-                Change Wallpaper…
-              </ContextMenuItem>
-            </ContextMenuGroup>
-          </ContextMenuContent>
+          <DesktopSurfaceContextMenuContent
+            editingWidgets={desktopWidgetsEditing}
+            showDesktopDrives={showDesktopDrives}
+            onShowDesktopDrivesChange={updateShowDesktopDrives}
+            onEditWidgets={openDesktopWidgetEditor}
+            onFinishEditingWidgets={() => setDesktopWidgetsEditing(false)}
+            onOpenWallpaper={openWallpaperEditor}
+          />
         </ContextMenu>
 
         <AnimatePresence>
@@ -1367,30 +1420,42 @@ export function DesktopExperience() {
           ) : null}
         </AnimatePresence>
 
-        <div
-          data-desktop-widget-canvas
-          data-drive-lane-reserved={showDesktopDrives ? "true" : "false"}
-          aria-label="Desktop widgets"
-          className={cn(
-            "absolute top-6 left-6 opacity-90 transition-opacity duration-150",
-            desktopWidgetsEditing
-              ? "z-[1100] max-h-[calc(100%-7rem)] overflow-y-auto p-1 pr-3 opacity-100"
-              : "z-[1]",
-          )}
-          style={{
-            width: showDesktopDrives
-              ? "min(44rem, calc(100% - 10.5rem))"
-              : "min(44rem, calc(100% - 3rem))",
-          }}
-        >
-          <ControlledWidgetGrid
-            controller={desktopWidgetLayoutController}
-            editMode={desktopWidgetsEditing}
-            showAddDock={desktopWidgetsEditing}
-            maxColumns={3}
-            onEditDoneRequested={() => setDesktopWidgetsEditing(false)}
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              data-desktop-widget-canvas
+              data-drive-lane-reserved={showDesktopDrives && !desktopWidgetsEditing ? "true" : "false"}
+              aria-label="Desktop widgets"
+              className={cn(
+                "absolute top-6 left-6 opacity-90 transition-opacity duration-150",
+                desktopWidgetsEditing
+                  ? "z-[1100] max-h-[calc(100%-6rem)] overflow-y-auto overscroll-contain p-3 pb-4 pr-4 opacity-100"
+                  : "z-[1]",
+              )}
+              style={{
+                width: showDesktopDrives && !desktopWidgetsEditing
+                  ? "min(44rem, calc(100% - 10.5rem))"
+                  : "min(44rem, calc(100% - 3rem))",
+              }}
+            >
+              <ControlledWidgetGrid
+                controller={desktopWidgetLayoutController}
+                editMode={desktopWidgetsEditing}
+                showAddDock={desktopWidgetsEditing}
+                maxColumns={3}
+                onEditDoneRequested={() => setDesktopWidgetsEditing(false)}
+              />
+            </div>
+          </ContextMenuTrigger>
+          <DesktopSurfaceContextMenuContent
+            editingWidgets={desktopWidgetsEditing}
+            showDesktopDrives={showDesktopDrives}
+            onShowDesktopDrivesChange={updateShowDesktopDrives}
+            onEditWidgets={openDesktopWidgetEditor}
+            onFinishEditingWidgets={() => setDesktopWidgetsEditing(false)}
+            onOpenWallpaper={openWallpaperEditor}
           />
-        </div>
+        </ContextMenu>
 
         <AnimatePresence>
           {desktopWidgetsEditing ? (
@@ -1398,7 +1463,7 @@ export function DesktopExperience() {
               key="desktop-widget-edit-toolbar"
               role="toolbar"
               aria-label="Desktop widget editing"
-              className="absolute bottom-20 left-1/2 z-[1200] flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-border bg-card/95 p-2 pl-3 shadow-xl backdrop-blur-md"
+              className="absolute bottom-6 left-1/2 z-[1200] flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-border bg-card/95 p-2 pl-3 shadow-xl backdrop-blur-md"
               initial={{ opacity: 0, y: 10, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 10, scale: 0.97 }}
@@ -1425,7 +1490,7 @@ export function DesktopExperience() {
           ) : null}
         </AnimatePresence>
 
-        {showDesktopDrives ? (
+        {showDesktopDrives && !desktopWidgetsEditing ? (
           <DesktopDriveIcons
             onOpen={openDesktopDrive}
             onHide={() => updateShowDesktopDrives(false)}
@@ -1503,115 +1568,115 @@ export function DesktopExperience() {
           onLaunchService={launchService}
         />
 
-        {!activeWindowMaximized ? (
+        {!activeWindowMaximized && !desktopWidgetsEditing ? (
           <nav
             aria-label="Desktop applications"
-            aria-hidden={desktopWidgetsEditing || undefined}
-            inert={desktopWidgetsEditing}
             className={cn(
-              "absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border border-border bg-card/90 p-2 backdrop-blur-md transition-opacity duration-150",
-              desktopWidgetsEditing && "pointer-events-none opacity-45",
+              "absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border border-border bg-card/90 p-2 shadow-lg shadow-black/15 backdrop-blur-md transition-[background-color,border-color,box-shadow,opacity] duration-150",
+              draggingDockAppId && "border-foreground/20 bg-card/95 shadow-xl shadow-black/25",
             )}
+            data-dock-dragging={draggingDockAppId || undefined}
           >
-          <ContextMenu>
-            <ContextMenuTrigger asChild>
-              <span className="flex">
-                <DockButton
-                  label="Launchpad"
-                  icon={LayoutGridIcon}
-                  active={launchpadOpen}
-                  running={false}
-                  onClick={() => setLaunchpadOpen((current) => !current)}
-                />
-              </span>
-            </ContextMenuTrigger>
-            <ContextMenuContent className="z-[1200] w-48">
-              <ContextMenuItem onSelect={() => setLaunchpadOpen((current) => !current)}>
-                {launchpadOpen ? "Close Launchpad" : "Open Launchpad"}
-              </ContextMenuItem>
-            </ContextMenuContent>
-          </ContextMenu>
-          {visibleDockApps.map((app) => {
-            const windowModel = windowByAppId.get(app.id);
-            const dockIndex = reorderableDockAppIds.indexOf(app.id);
-            const canReorder = dockIndex >= 0;
-            const dockButton = (
-              <DockButton
-                label={app.title}
-                icon={app.icon}
-                iconText={app.iconText}
-                iconUrl={app.iconUrl}
-                active={
-                  !launchpadOpen
-                  && windowModel?.id === activeWindowId
-                  && !windowModel.minimized
-                }
-                running={!!windowModel}
-                minimized={windowModel?.minimized}
-                buttonRef={(button) => {
-                  if (button) dockButtonRefs.current.set(app.id, button);
-                  else dockButtonRefs.current.delete(app.id);
-                }}
-                onClick={() => openApp(app)}
-              />
-            );
-            return (
-              <div
-                key={app.id}
-                data-dock-app-id={app.id}
-                draggable={canReorder}
-                aria-grabbed={canReorder ? draggingDockAppId === app.id : undefined}
-                className={cn(
-                  "flex items-center gap-1",
-                  canReorder && "cursor-grab active:cursor-grabbing",
-                  draggingDockAppId === app.id && "opacity-60",
-                )}
-                onDragStart={canReorder
-                  ? (event) => handleDockDragStart(event, app.id)
-                  : undefined}
-                onDragOver={canReorder
-                  ? (event) => handleDockDragOver(event, app.id)
-                  : undefined}
-                onDrop={canReorder
-                  ? (event) => {
-                    event.preventDefault();
-                    finishDockDrag();
-                  }
-                  : undefined}
-                onDragEnd={canReorder ? finishDockDrag : undefined}
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <span className="flex">
+                  <DockButton
+                    label="Launchpad"
+                    icon={LayoutGridIcon}
+                    active={launchpadOpen}
+                    running={false}
+                    onClick={() => setLaunchpadOpen((current) => !current)}
+                  />
+                </span>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="z-[1200] w-48">
+                <ContextMenuItem onSelect={() => setLaunchpadOpen((current) => !current)}>
+                  {launchpadOpen ? "Close Launchpad" : "Open Launchpad"}
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+            <DndContext
+              sensors={dockSensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDockDragStart}
+              onDragCancel={finishDockDrag}
+              onDragEnd={handleDockDragEnd}
+            >
+              <SortableContext
+                items={reorderableDockAppIds}
+                strategy={horizontalListSortingStrategy}
               >
-                {app.id === "settings" && (
-                  <span className="mx-1 h-9 w-px bg-border" />
-                )}
-                <DockAppContextMenu
-                  title={app.title}
-                  windowModel={windowModel}
-                  pinned={app.serviceApp
-                    ? pinnedServiceIds.has(app.serviceApp.id)
-                    : pinnedAppIdSet.has(app.id)}
-                  onOpen={() => openApp(app)}
-                  onMinimize={windowModel
-                    ? () => void minimizeWindow(windowModel.id, windowModel.appId)
-                    : undefined}
-                  onClose={windowModel
-                    ? () => closeWindow(windowModel.id)
-                    : undefined}
-                  onTogglePin={app.serviceApp || !appById.has(app.id)
-                    ? () => toggleDockPin(app)
-                    : undefined}
-                  showReorder={canReorder}
-                  onMoveLeft={dockIndex > 0
-                    ? () => moveDockApp(app.id, "left")
-                    : undefined}
-                  onMoveRight={dockIndex < reorderableDockAppIds.length - 1
-                    ? () => moveDockApp(app.id, "right")
-                    : undefined}
-                >
-                  {dockButton}
-                </DockAppContextMenu>
-              </div>
-            );
-          })}
+                {visibleDockApps.map((app) => {
+                  const windowModel = windowByAppId.get(app.id);
+                  const dockIndex = reorderableDockAppIds.indexOf(app.id);
+                  const canReorder = dockIndex >= 0;
+                  const dockButton = (dragHandle?: DockDragHandle) => (
+                    <DockButton
+                      label={app.title}
+                      icon={app.icon}
+                      iconText={app.iconText}
+                      iconUrl={app.iconUrl}
+                      active={
+                        !launchpadOpen
+                        && windowModel?.id === activeWindowId
+                        && !windowModel.minimized
+                      }
+                      running={!!windowModel}
+                      minimized={windowModel?.minimized}
+                      dragHandle={dragHandle}
+                      buttonRef={(button) => {
+                        if (button) dockButtonRefs.current.set(app.id, button);
+                        else dockButtonRefs.current.delete(app.id);
+                      }}
+                      onClick={() => openApp(app)}
+                    />
+                  );
+                  const contextMenu = (dragHandle?: DockDragHandle) => (
+                    <DockAppContextMenu
+                      title={app.title}
+                      windowModel={windowModel}
+                      pinned={app.serviceApp
+                        ? pinnedServiceIds.has(app.serviceApp.id)
+                        : pinnedAppIdSet.has(app.id)}
+                      onOpen={() => openApp(app)}
+                      onMinimize={windowModel
+                        ? () => void minimizeWindow(windowModel.id, windowModel.appId)
+                        : undefined}
+                      onClose={windowModel
+                        ? () => closeWindow(windowModel.id)
+                        : undefined}
+                      onTogglePin={app.serviceApp || !appById.has(app.id)
+                        ? () => toggleDockPin(app)
+                        : undefined}
+                      showReorder={canReorder}
+                      onMoveLeft={dockIndex > 0
+                        ? () => moveDockApp(app.id, "left")
+                        : undefined}
+                      onMoveRight={dockIndex < reorderableDockAppIds.length - 1
+                        ? () => moveDockApp(app.id, "right")
+                        : undefined}
+                    >
+                      {dockButton(dragHandle)}
+                    </DockAppContextMenu>
+                  );
+
+                  if (canReorder) {
+                    return (
+                      <SortableDockItem key={app.id} id={app.id}>
+                        {contextMenu}
+                      </SortableDockItem>
+                    );
+                  }
+
+                  return (
+                    <div key={app.id} className="flex items-center gap-1">
+                      <span className="mx-1 h-9 w-px bg-border" />
+                      {contextMenu()}
+                    </div>
+                  );
+                })}
+              </SortableContext>
+            </DndContext>
           </nav>
         ) : null}
       </div>
@@ -1622,6 +1687,71 @@ export function DesktopExperience() {
         onOpenChange={setWallpaperDialogOpen}
         onWallpaperChange={updateWallpaper}
       />
+    </div>
+  );
+}
+
+type DockDragHandle = Pick<
+  ReturnType<typeof useSortable>,
+  "attributes" | "listeners" | "setActivatorNodeRef"
+> & {
+  dragging: boolean;
+};
+
+interface SortableDockItemProps {
+  id: string;
+  children: (dragHandle: DockDragHandle) => ReactNode;
+}
+
+function SortableDockItem({ id, children }: SortableDockItemProps) {
+  const reduceMotion = useReducedMotion();
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition: reduceMotion ? undefined : transition,
+    zIndex: isDragging ? 20 : undefined,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      data-dock-app-id={id}
+      data-dock-sortable
+      data-dock-dragging={isDragging || undefined}
+      className="relative flex touch-none items-center"
+    >
+      <motion.div
+        initial={false}
+        animate={reduceMotion
+          ? undefined
+          : { y: isDragging ? -10 : 0, scale: isDragging ? 1.08 : 1 }}
+        transition={{
+          type: "spring",
+          stiffness: 520,
+          damping: 34,
+          mass: 0.65,
+        }}
+        className={cn(
+          "relative flex transform-gpu items-center will-change-transform",
+          isDragging && "drop-shadow-xl",
+        )}
+      >
+        {children({
+          attributes,
+          listeners,
+          setActivatorNodeRef,
+          dragging: isDragging,
+        })}
+      </motion.div>
     </div>
   );
 }
@@ -1713,6 +1843,7 @@ interface DockButtonProps {
   active: boolean;
   running: boolean;
   minimized?: boolean;
+  dragHandle?: DockDragHandle;
   buttonRef?: (button: HTMLButtonElement | null) => void;
   onClick: () => void;
 }
@@ -1725,6 +1856,7 @@ function DockButton({
   active,
   running,
   minimized,
+  dragHandle,
   buttonRef,
   onClick,
 }: DockButtonProps) {
@@ -1735,10 +1867,17 @@ function DockButton({
   };
   const button = (
     <motion.button
-      ref={buttonRef}
+      ref={(button) => {
+        dragHandle?.setActivatorNodeRef(button);
+        buttonRef?.(button);
+      }}
+      {...dragHandle?.attributes}
+      {...dragHandle?.listeners}
       type="button"
       aria-label={label}
       aria-pressed={active}
+      aria-grabbed={dragHandle?.dragging}
+      data-dock-drag-handle={dragHandle ? "" : undefined}
       initial={false}
       animate={reduceMotion ? undefined : { y: active ? -2 : 0 }}
       whileHover={reduceMotion ? undefined : { y: -7, scale: 1.12 }}
@@ -1746,6 +1885,7 @@ function DockButton({
       transition={motionTransition}
       className={cn(
         "relative isolate flex size-12 origin-bottom transform-gpu items-center justify-center rounded-xl border border-transparent bg-transparent transition-[background-color,border-color,opacity] duration-150 ease-out will-change-transform hover:border-border hover:bg-muted/40",
+        dragHandle && "cursor-grab touch-none active:cursor-grabbing",
         minimized && "opacity-70",
       )}
       onClick={onClick}
