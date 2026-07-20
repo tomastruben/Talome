@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
+import { AppWindowMacIcon } from "lucide-react";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -22,7 +23,6 @@ import {
   MoreHorizontalIcon,
   Sun01Icon,
   Moon02Icon,
-  DashboardSquare02Icon,
 } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { useDesktopModeAvailable } from "@/hooks/use-desktop-mode";
@@ -64,7 +64,7 @@ export function NavUser() {
           <DropdownMenuContent className="w-56" side="top" align="start" sideOffset={4}>
             {desktopModeAvailable && (
               <DropdownMenuItem onSelect={() => router.push("/dashboard/desktop")}>
-                <HugeiconsIcon icon={DashboardSquare02Icon} size={16} />
+                <AppWindowMacIcon className="size-4" />
                 <span>Desktop mode</span>
               </DropdownMenuItem>
             )}
