@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import Image from "next/image";
+import { useTheme } from "next-themes";
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
@@ -12,10 +13,13 @@ import {
   HeadphonesIcon,
   HugeiconsIcon,
   Image01Icon,
+  Moon02Icon,
   PauseIcon,
   PlayIcon,
+  Sun01Icon,
 } from "@/components/icons";
 import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
 import { useAudiobookPlayer } from "@/hooks/use-audiobook-player";
 import { useDownloads } from "@/hooks/use-downloads";
 import { formatBytes } from "@/lib/format";
@@ -26,6 +30,8 @@ interface DesktopControlCenterProps {
   onOpenDashboard: () => void;
   onOpenWallpaper: () => void;
 }
+
+const subscribeToHydration = () => () => {};
 
 function formatPlaybackTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return "0:00";
@@ -139,6 +145,13 @@ export function DesktopControlCenter({
   onOpenDashboard,
   onOpenWallpaper,
 }: DesktopControlCenterProps) {
+  const { resolvedTheme, setTheme } = useTheme();
+  const mounted = useSyncExternalStore(
+    subscribeToHydration,
+    () => true,
+    () => false,
+  );
+  const isDark = mounted && resolvedTheme === "dark";
   const { book, state, togglePlay, stop } = useAudiobookPlayer();
   const {
     queue,
@@ -185,6 +198,26 @@ export function DesktopControlCenter({
           onClick={onOpenWallpaper}
         />
       </div>
+
+      <ControlCenterSection>
+        <div className="flex min-h-14 items-center gap-3 p-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <HugeiconsIcon icon={isDark ? Moon02Icon : Sun01Icon} size={18} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium">Dark Mode</span>
+            <span className="block text-xs text-muted-foreground">
+              {isDark ? "Dark appearance" : "Light appearance"}
+            </span>
+          </span>
+          <Switch
+            checked={isDark}
+            disabled={!mounted}
+            aria-label="Dark mode"
+            onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
+          />
+        </div>
+      </ControlCenterSection>
 
       <ControlCenterSection>
         {book ? (
