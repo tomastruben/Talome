@@ -96,18 +96,29 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
   function TerminalInner({ token, initialCommand, onCommandSent, onOutput, taskPrompt, onPromptInjected, sessionId, sessionName, inputMode = "text", onConnectionStatus, onRemoteSession }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const wsRef = useRef<WebSocket | null>(null);
+    const authReadyRef = useRef(false);
+    const pendingInputRef = useRef<string[]>([]);
     const termRef = useRef<Terminal | null>(null);
     const uploadImageRef = useRef<(blob: Blob) => void>(() => {});
     // Shared inject function — set inside the WS effect, called from imperative handle
     const injectFnRef = useRef<() => void>(() => {});
     const retryConnectRef = useRef<() => void>(() => {});
 
+    function sendOrQueueInput(data: string) {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN && authReadyRef.current) {
+        ws.send(JSON.stringify({ type: "input", data }));
+        return;
+      }
+      pendingInputRef.current.push(data);
+    }
+
     useImperativeHandle(ref, () => ({
       sendCommand(cmd: string) {
-        const ws = wsRef.current;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "input", data: cmd + "\n" }));
-        }
+        // Header actions launch full shell commands. Clear any partially typed
+        // input or late terminal capability reply before submitting so the
+        // command cannot be concatenated into an invalid zsh expression.
+        sendOrQueueInput("\x15" + cmd + "\n");
       },
       injectPrompt() {
         injectFnRef.current();
@@ -196,7 +207,6 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
       // Session ID is always provided by the parent — no localStorage fallback.
       const resolvedSessionId = sessionId || undefined;
 
-      let ws: WebSocket;
       let reconnectAttempts = 0;
       let destroyed = false;
       let daemonBootId: string | null = null;
@@ -271,7 +281,7 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
 
         // Write directly via WS (same connection, no HTTP hop)
         const currentWs = wsRef.current;
-        if (currentWs && currentWs.readyState === WebSocket.OPEN) {
+        if (currentWs && currentWs.readyState === WebSocket.OPEN && authReadyRef.current) {
           currentWs.send(JSON.stringify({ type: "input", data: prompt + "\n" }));
         } else {
           // WS not open — try HTTP as last resort
@@ -338,8 +348,9 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
         const freshTokenPromise = getFreshAuthToken();
 
         const wsUrl = `${getTerminalDaemonWsUrl()}/ws`;
-        ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
+        const connection = new WebSocket(wsUrl);
+        wsRef.current = connection;
+        authReadyRef.current = false;
         resizeSent = false;
         authFailed = false;
         // NOTE: Do NOT reset promptAutoInjected here — on a reconnect with a
@@ -350,21 +361,32 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
         clearTimeout(idleTimer);
         clearTimeout(fallbackTimer);
 
-        ws.onopen = () => {
+        connection.onopen = () => {
           const isReconnect = daemonBootId !== null;
           reconnectAttempts = 0;
           void (async () => {
             const { token: authToken, bootId } = await freshTokenPromise;
             const daemonRestarted = isReconnect && bootId != null && bootId !== daemonBootId;
             if (bootId) daemonBootId = bootId;
-            if (destroyed || ws.readyState !== WebSocket.OPEN) return;
+            if (
+              destroyed ||
+              wsRef.current !== connection ||
+              connection.readyState !== WebSocket.OPEN
+            ) return;
 
             const authMsg: Record<string, unknown> = { type: "auth", token: authToken };
             if (resolvedSessionId) {
               authMsg.sessionId = resolvedSessionId;
               authMsg.sessionName = sessionNameRef.current ?? resolvedSessionId;
             }
-            ws.send(JSON.stringify(authMsg));
+            connection.send(JSON.stringify(authMsg));
+            // WebSocket messages are delivered in order. Mark this connection
+            // ready only after the auth frame has been queued so iframe resize
+            // observers and early user input can never reach the daemon first.
+            authReadyRef.current = true;
+            for (const data of pendingInputRef.current.splice(0)) {
+              connection.send(JSON.stringify({ type: "input", data }));
+            }
 
             onConnectionStatusRef.current?.("connected");
             if (isReconnect) {
@@ -384,15 +406,16 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
               fitAddon.fit();
               fitTimer = setTimeout(() => {
                 fitAddon.fit();
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+                if (connection.readyState === WebSocket.OPEN && authReadyRef.current) {
+                  connection.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
                 }
               }, 100);
             });
           })();
         };
 
-        ws.onmessage = (e) => {
+        connection.onmessage = (e) => {
+          if (wsRef.current !== connection) return;
           const rawData = typeof e.data === "string" ? e.data : "";
 
           // Detect auth failure messages from daemon before we've authenticated
@@ -405,13 +428,13 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
           if (!resizeSent) {
             resizeSent = true;
             fitAddon.fit();
-            ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+            connection.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
             if (initialCommandRef.current && !commandSentRef.current) {
               setTimeout(() => {
                 // Clear any pending input/escape sequences before sending the command
-                ws.send(JSON.stringify({ type: "input", data: "\x15" })); // Ctrl+U: kill line
+                connection.send(JSON.stringify({ type: "input", data: "\x15" })); // Ctrl+U: kill line
                 setTimeout(() => {
-                  ws.send(JSON.stringify({ type: "input", data: initialCommandRef.current + "\n" }));
+                  connection.send(JSON.stringify({ type: "input", data: initialCommandRef.current + "\n" }));
                   commandSentRef.current = true;
                   onCommandSentRef.current?.();
 
@@ -452,12 +475,14 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
           }
         };
 
-        ws.onerror = () => {
+        connection.onerror = () => {
+          if (wsRef.current !== connection) return;
           term.write("\r\n\x1b[31mConnection error.\x1b[0m\r\n");
         };
 
-        ws.onclose = (evt) => {
-          if (destroyed) return;
+        connection.onclose = (evt) => {
+          if (destroyed || wsRef.current !== connection) return;
+          authReadyRef.current = false;
 
           // Don't auto-reconnect on intentional close (code 1000), auth failure
           // (code 1008), or when auth failure was detected from message content
@@ -493,15 +518,13 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
       };
 
       term.onData((data) => {
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: "input", data }));
-        }
+        sendOrQueueInput(data);
       });
 
       // ── Image paste / drop → upload to server, inject file path ───────────
       async function handleImageBlob(blob: Blob) {
         const w = wsRef.current;
-        if (!w || w.readyState !== WebSocket.OPEN) return;
+        if (!w || w.readyState !== WebSocket.OPEN || !authReadyRef.current) return;
 
         try {
           const formData = new FormData();
@@ -520,7 +543,7 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
 
           const { path } = (await res.json()) as { path: string };
           // Inject the file path into the terminal so Claude Code picks it up
-          w.send(JSON.stringify({ type: "input", data: path }));
+          sendOrQueueInput(path);
         } catch {
           term.write(`\r\n\x1b[31m[image upload error]\x1b[0m`);
         }
@@ -625,7 +648,7 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
           }
 
           const w = wsRef.current;
-          if (w && w.readyState === WebSocket.OPEN) {
+          if (w && w.readyState === WebSocket.OPEN && authReadyRef.current) {
             w.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
           }
         });
@@ -634,14 +657,17 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
 
       return () => {
         destroyed = true;
+        authReadyRef.current = false;
+        pendingInputRef.current = [];
         clearTimeout(fitTimer);
         clearTimeout(idleTimer);
         clearTimeout(fallbackTimer);
         clearTimeout(flushTimeout);
         cancelAnimationFrame(flushRaf);
         cancelAnimationFrame(resizeRaf);
+        const activeConnection = wsRef.current;
         wsRef.current = null;
-        ws.close(1000);
+        activeConnection?.close(1000);
         term.dispose();
         xtermScreen?.removeEventListener("touchend", onCanvasTouchEnd);
         if (xtermTextarea) {

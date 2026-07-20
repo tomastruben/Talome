@@ -37,15 +37,21 @@ function buildClaudeCodeCommand(projectRoot: string, opts?: { auto?: boolean; re
   return `${unset} if command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
 }
 
-function buildCodexCommand(projectRoot: string, resume: boolean): string {
+export function buildCodexCommand(projectRoot: string, resume: boolean): string {
   const quoted = projectRoot.includes(" ") ? `"${projectRoot}"` : projectRoot;
-  const command = resume ? "codex resume --last" : "codex";
+  const args = resume ? " resume --last" : "";
   const sessionName = resume ? "talome-codex" : `talome-codex-${Date.now()}`;
+  // Resolve Codex in the interactive shell before entering tmux. A long-lived
+  // tmux server can have an older PATH than zsh (notably when Codex comes from
+  // the ChatGPT app bundle), so passing the bare `codex` command can exit with
+  // "command not found" even though the terminal header correctly detected it.
+  const tmuxCommand = `\\"$codex_bin\\"${args}`;
   const tmuxCmd = resume
-    ? `cd ${quoted} && tmux new-session -A -s ${sessionName} "${command}"`
-    : `cd ${quoted} && tmux new-session -s ${sessionName} "${command}"`;
-  const fallback = `cd ${quoted} && ${command}`;
-  return `if command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
+    ? `cd ${quoted} && tmux new-session -A -s ${sessionName} "${tmuxCommand}"`
+    : `cd ${quoted} && tmux new-session -s ${sessionName} "${tmuxCommand}"`;
+  const fallback = `cd ${quoted} && "$codex_bin"${args}`;
+  const resolveCodex = `codex_bin="$(command -v codex 2>/dev/null)"; if [ -z "$codex_bin" ] && [ -x "/Applications/ChatGPT.app/Contents/Resources/codex" ]; then codex_bin="/Applications/ChatGPT.app/Contents/Resources/codex"; fi`;
+  return `${resolveCodex}; if [ -z "$codex_bin" ]; then echo "Codex CLI not found"; elif command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
 }
 
 export function TerminalPage() {
