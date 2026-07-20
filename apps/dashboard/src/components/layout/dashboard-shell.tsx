@@ -39,6 +39,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const embeddedFrame = useIsEmbeddedFrame();
   const desktopRoute = pathname === "/dashboard/desktop";
+  const embeddedPlayerRoute = embeddedFrame && pathname === "/dashboard/player";
   const { user, isLoading: userLoading } = useUser();
   useEffect(() => { registerServiceWorker(); }, []);
 
@@ -74,7 +75,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               <main id="main-content" className="relative flex h-dvh min-h-0 flex-1 flex-col overflow-hidden bg-background [container-type:inline-size]">
                 <DesktopShellHeaderActions />
                 <DesktopAppActionBridge />
-                <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 overscroll-none">
+                <div className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${embeddedPlayerRoute ? "overflow-hidden bg-black" : "overflow-y-auto p-4"}`}>
                   {children}
                 </div>
               </main>

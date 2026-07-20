@@ -64,6 +64,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAssistant } from "@/components/assistant/assistant-context";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { cn } from "@/lib/utils";
 import useSWR from "swr";
 import type { DownloadQueueItem } from "@talome/types";
@@ -284,6 +285,7 @@ function DownloadProgressCard({
 export default function MediaDetailPage() {
   const params = useParams<{ type: string; id: string }>();
   const router = useRouter();
+  const embeddedFrame = useIsEmbeddedFrame();
   const type = params.type as "movie" | "tv";
   const id = Number(params.id);
 
@@ -461,9 +463,21 @@ export default function MediaDetailPage() {
 
   const playMovie = useCallback(() => {
     if (!item?.filePath) return;
+    const fileName = item.filePath.split("/").pop() ?? item.title;
+    if (embeddedFrame) {
+      window.parent.postMessage({
+        type: "talome:desktop-player-open",
+        title: item.title,
+        filePath: item.filePath,
+        fileName,
+        preferOriginal: selectedPreQuality === "original",
+        preferDirect: selectedPreQuality === "direct",
+      }, window.location.origin);
+      return;
+    }
     setPlayingFilePath(item.filePath);
-    setPlayingFileName(item.filePath.split("/").pop() ?? "");
-  }, [item]);
+    setPlayingFileName(fileName);
+  }, [embeddedFrame, item, selectedPreQuality]);
 
   const handleVideoEnded = useCallback(() => {
     if (!nextEpisode) return;
@@ -683,6 +697,7 @@ export default function MediaDetailPage() {
               <button
                 type="button"
                 onClick={playMovie}
+                aria-label={`Play ${item.title}`}
                 className="absolute z-10 right-4 bottom-4 lg:right-6 lg:bottom-6 shrink-0 flex items-center justify-center w-14 h-14 lg:w-16 lg:h-16 rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-colors"
               >
                 <HugeiconsIcon icon={PlayIcon} size={24} className="text-white ml-0.5" />
@@ -1102,4 +1117,3 @@ function RelatedRail({ type, id }: { type: string; id: number }) {
     </div>
   );
 }
-

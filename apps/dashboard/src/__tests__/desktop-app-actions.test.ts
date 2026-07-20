@@ -3,6 +3,7 @@ import {
   parseDesktopAppActionsMessage,
   parseDesktopAppActionTriggerMessage,
   parseDesktopAppFocusMessage,
+  parseDesktopPlayerOpenMessage,
 } from "@/atoms/desktop-app-actions";
 
 describe("desktop app action messages", () => {
@@ -97,5 +98,39 @@ describe("desktop app action messages", () => {
       type: "talome:desktop-app-focus",
     })).toEqual({ type: "talome:desktop-app-focus" });
     expect(parseDesktopAppFocusMessage({ type: "other" })).toBeNull();
+  });
+
+  it("accepts only complete desktop player requests", () => {
+    expect(parseDesktopPlayerOpenMessage({
+      type: "talome:desktop-player-open",
+      title: "Send Help",
+      filePath: "/Volumes/Media/Send Help.mkv",
+      fileName: "Send Help.mkv",
+      preferOriginal: true,
+      preferDirect: false,
+    })).toEqual({
+      type: "talome:desktop-player-open",
+      title: "Send Help",
+      filePath: "/Volumes/Media/Send Help.mkv",
+      fileName: "Send Help.mkv",
+      preferOriginal: true,
+      preferDirect: false,
+    });
+    expect(parseDesktopPlayerOpenMessage({
+      type: "talome:desktop-player-open",
+      title: "Send Help",
+      filePath: "",
+      fileName: "Send Help.mkv",
+      preferOriginal: true,
+      preferDirect: false,
+    })).toBeNull();
+    expect(parseDesktopPlayerOpenMessage({
+      type: "talome:desktop-player-open",
+      title: "Send Help",
+      filePath: "/Volumes/Media/Send Help.mkv",
+      fileName: "Send Help.mkv",
+      preferOriginal: "yes",
+      preferDirect: false,
+    })).toBeNull();
   });
 });

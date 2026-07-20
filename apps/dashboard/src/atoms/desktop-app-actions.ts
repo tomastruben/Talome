@@ -65,6 +65,14 @@ function isBoundedTitle(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 128;
 }
 
+function isBoundedFilePath(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 4096;
+}
+
+function isBoundedFileName(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 512;
+}
+
 function parseDesktopAppActionDescriptor(
   value: unknown,
 ): DesktopAppActionDescriptor | null {
@@ -168,4 +176,27 @@ export function parseDesktopAppFocusMessage(value: unknown) {
     return null;
   }
   return { type: "talome:desktop-app-focus" as const };
+}
+
+export function parseDesktopPlayerOpenMessage(value: unknown) {
+  if (
+    !isRecord(value) ||
+    value.type !== "talome:desktop-player-open" ||
+    !isBoundedTitle(value.title) ||
+    !isBoundedFilePath(value.filePath) ||
+    !isBoundedFileName(value.fileName) ||
+    typeof value.preferOriginal !== "boolean" ||
+    typeof value.preferDirect !== "boolean"
+  ) {
+    return null;
+  }
+
+  return {
+    type: "talome:desktop-player-open" as const,
+    title: value.title,
+    filePath: value.filePath,
+    fileName: value.fileName,
+    preferOriginal: value.preferOriginal,
+    preferDirect: value.preferDirect,
+  };
 }

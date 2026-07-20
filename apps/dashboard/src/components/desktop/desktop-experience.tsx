@@ -128,6 +128,7 @@ import { cn } from "@/lib/utils";
 import {
   parseDesktopAppFocusMessage,
   parseDesktopAppActionsMessage,
+  parseDesktopPlayerOpenMessage,
   type DesktopAppChromeDescriptor,
 } from "@/atoms/desktop-app-actions";
 
@@ -282,6 +283,7 @@ const DESKTOP_APPS: DesktopAppDefinition[] = [
 const appById = new Map(DESKTOP_APPS.map((app) => [app.id, app]));
 const DEFAULT_AREA: DesktopArea = { width: 1440, height: 820 };
 const SERVICE_APP_PREFIX = "service:";
+const PLAYER_APP_ID = "player";
 
 function appIdFromUrl(url: string) {
   if (url === "/dashboard") return "home";
@@ -328,9 +330,27 @@ function serviceAppDefinition({
   };
 }
 
+function playerAppDefinition(title: string, url: string): DesktopAppDefinition {
+  return {
+    id: PLAYER_APP_ID,
+    title,
+    url,
+    icon: Film01Icon,
+    permission: "media",
+    minimum: { width: 480, height: 320 },
+  };
+}
+
 function resolveAppDefinition(appId: string, url: string, title?: string) {
   const fixed = appById.get(appId);
   if (fixed) return fixed;
+  if (
+    appId === PLAYER_APP_ID &&
+    title &&
+    (url === "/dashboard/player" || url.startsWith("/dashboard/player?"))
+  ) {
+    return playerAppDefinition(title, url);
+  }
   const navItem = allNav.find((item) => item.url === url);
   if (navItem) return appDefinitionFromNav(navItem);
 
@@ -370,6 +390,21 @@ function defaultBounds(appId: string, area: DesktopArea): DesktopBounds {
       },
       area,
       { width: 420, height: 320 },
+    );
+  }
+
+  if (appId === PLAYER_APP_ID) {
+    const width = Math.min(880, Math.max(480, area.width - 160));
+    const height = Math.min(560, Math.max(320, area.height - 140));
+    return clampDesktopBounds(
+      {
+        x: Math.max(24, (area.width - width) / 2),
+        y: Math.max(24, (area.height - height) / 2),
+        width,
+        height,
+      },
+      area,
+      { width: 480, height: 320 },
     );
   }
 
@@ -902,7 +937,8 @@ export function DesktopExperience() {
       if (event.origin !== window.location.origin) return;
       const actionsMessage = parseDesktopAppActionsMessage(event.data);
       const focusMessage = parseDesktopAppFocusMessage(event.data);
-      if (!actionsMessage && !focusMessage) return;
+      const playerMessage = parseDesktopPlayerOpenMessage(event.data);
+      if (!actionsMessage && !focusMessage && !playerMessage) return;
 
       const frameEntry = Array.from(appFrameRefs.current.entries()).find(
         ([, frame]) => frame.contentWindow === event.source,
@@ -910,6 +946,37 @@ export function DesktopExperience() {
       if (!frameEntry) return;
 
       const [windowId] = frameEntry;
+      if (playerMessage) {
+        const params = new URLSearchParams({
+          path: playerMessage.filePath,
+          name: playerMessage.fileName,
+          original: String(playerMessage.preferOriginal),
+          direct: String(playerMessage.preferDirect),
+        });
+        const app = playerAppDefinition(
+          `${playerMessage.title} — Player`,
+          `/dashboard/player?${params.toString()}`,
+        );
+        const zIndex = zIndexRef.current++;
+        setAppChromeByWindow((current) => removeWindowChrome(current, PLAYER_APP_ID));
+        setWindows((current) => {
+          const existing = current.find((windowModel) => windowModel.appId === PLAYER_APP_ID);
+          if (existing) {
+            return current.map((windowModel) => windowModel.appId === PLAYER_APP_ID
+              ? {
+                ...windowModel,
+                title: app.title,
+                url: app.url,
+                minimized: false,
+                zIndex,
+              }
+              : windowModel);
+          }
+          return [...current, createWindow(app, area, zIndex)];
+        });
+        setActiveWindowId(PLAYER_APP_ID);
+        return;
+      }
       if (focusMessage) {
         if (activeWindowId !== windowId) focusWindow(windowId);
         return;
@@ -932,7 +999,7 @@ export function DesktopExperience() {
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [activeWindowId, focusWindow]);
+  }, [activeWindowId, area, focusWindow]);
 
   const openApp = useCallback((app: DesktopAppDefinition) => {
     if (!canUseApp(app)) return;
@@ -1720,7 +1787,7 @@ export function DesktopExperience() {
                       onClose={windowModel
                         ? () => closeWindow(windowModel.id)
                         : undefined}
-                      onTogglePin={app.serviceApp || !appById.has(app.id)
+                      onTogglePin={app.serviceApp || (!appById.has(app.id) && app.id !== PLAYER_APP_ID)
                         ? () => toggleDockPin(app)
                         : undefined}
                       showReorder={canReorder}
