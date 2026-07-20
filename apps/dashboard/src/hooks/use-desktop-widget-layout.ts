@@ -17,7 +17,7 @@ const DEFAULT_DESKTOP_WIDGET_LAYOUT: WidgetInstance[] = [
   { instanceId: "desktop-network", widgetType: "network", visible: false, size: { cols: 1, rows: 1 } },
   { instanceId: "desktop-downloads", widgetType: "active-downloads", visible: false, size: { cols: 2, rows: 2 } },
   { instanceId: "desktop-audiobooks", widgetType: "audiobooks", visible: false, size: { cols: 2, rows: 1 } },
-  { instanceId: "desktop-divider", widgetType: "divider", visible: false, size: { cols: 4, rows: 1 } },
+  { instanceId: "desktop-divider", widgetType: "divider", visible: false, size: { cols: 2, rows: 1 } },
 ];
 
 const DESKTOP_BUILTIN_WIDGET_TYPES = new Set(
@@ -28,26 +28,47 @@ function makeDesktopWidgetInstanceId(widgetType: WidgetType): string {
   return `desktop-${widgetType}:${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function clampDesktopWidgetSize(widgetType: WidgetType, size?: WidgetSize): WidgetSize {
+  const fallback = defaultSize(widgetType);
+  const cols = typeof size?.cols === "number" ? size.cols : fallback.cols;
+  const rows = typeof size?.rows === "number" ? size.rows : fallback.rows;
+  return {
+    cols: (cols <= 1 ? 1 : 2),
+    rows: (rows <= 1 ? 1 : 2),
+  };
+}
+
+function normalizeDesktopWidget(widget: WidgetInstance): WidgetInstance {
+  return {
+    ...widget,
+    size: clampDesktopWidgetSize(widget.widgetType, widget.size),
+  };
+}
+
 function normalizeDesktopLayout(saved: WidgetInstance[]): WidgetInstance[] {
-  const supported = saved.filter((widget) => (
-    widget.widgetType.startsWith("widget:") || DESKTOP_BUILTIN_WIDGET_TYPES.has(widget.widgetType)
-  ));
+  const supported = saved
+    .filter((widget) => (
+      widget.widgetType.startsWith("widget:") || DESKTOP_BUILTIN_WIDGET_TYPES.has(widget.widgetType)
+    ))
+    .map(normalizeDesktopWidget);
   const presentTypes = new Set(supported.map((widget) => widget.widgetType));
   const missingDefaults = DEFAULT_DESKTOP_WIDGET_LAYOUT.filter(
     (widget) => !presentTypes.has(widget.widgetType),
-  );
+  ).map(normalizeDesktopWidget);
   return [...supported, ...missingDefaults];
 }
 
 function loadDesktopLayout(): WidgetInstance[] {
-  if (typeof window === "undefined") return DEFAULT_DESKTOP_WIDGET_LAYOUT;
+  if (typeof window === "undefined") return normalizeDesktopLayout(DEFAULT_DESKTOP_WIDGET_LAYOUT);
   try {
     const raw = localStorage.getItem(DESKTOP_WIDGET_LAYOUT_STORAGE_KEY);
-    if (!raw) return DEFAULT_DESKTOP_WIDGET_LAYOUT;
+    if (!raw) return normalizeDesktopLayout(DEFAULT_DESKTOP_WIDGET_LAYOUT);
     const saved = JSON.parse(raw) as WidgetInstance[];
-    return Array.isArray(saved) ? normalizeDesktopLayout(saved) : DEFAULT_DESKTOP_WIDGET_LAYOUT;
+    return Array.isArray(saved)
+      ? normalizeDesktopLayout(saved)
+      : normalizeDesktopLayout(DEFAULT_DESKTOP_WIDGET_LAYOUT);
   } catch {
-    return DEFAULT_DESKTOP_WIDGET_LAYOUT;
+    return normalizeDesktopLayout(DEFAULT_DESKTOP_WIDGET_LAYOUT);
   }
 }
 
@@ -96,7 +117,7 @@ export function useDesktopWidgetLayout() {
           instanceId: makeDesktopWidgetInstanceId(widgetType),
           widgetType,
           visible: true,
-          size: defaultSize(widgetType),
+          size: clampDesktopWidgetSize(widgetType),
         },
       ];
     });
@@ -113,13 +134,15 @@ export function useDesktopWidgetLayout() {
 
   const resizeWidget = useCallback((instanceId: string, size: WidgetSize) => {
     updateLayout((current) => current.map((widget) => (
-      widget.instanceId === instanceId ? { ...widget, size } : widget
+      widget.instanceId === instanceId
+        ? { ...widget, size: clampDesktopWidgetSize(widget.widgetType, size) }
+        : widget
     )));
   }, [updateLayout]);
 
   const resetLayout = useCallback((): WidgetInstance[] => {
     const previous = layout;
-    const next = DEFAULT_DESKTOP_WIDGET_LAYOUT.map((widget) => ({ ...widget }));
+    const next = DEFAULT_DESKTOP_WIDGET_LAYOUT.map(normalizeDesktopWidget);
     setLayout(next);
     saveDesktopLayout(next);
     return previous;

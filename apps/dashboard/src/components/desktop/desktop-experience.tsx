@@ -80,7 +80,11 @@ import {
 import { DesktopWindow } from "@/components/desktop/desktop-window";
 import { DesktopLaunchpad } from "@/components/desktop/desktop-launchpad";
 import { DesktopDriveIcons } from "@/components/desktop/desktop-drive-icons";
-import { DesktopControlCenter } from "@/components/desktop/desktop-control-center";
+import {
+  DesktopAudiobooksControlCenter,
+  DesktopControlCenter,
+  DesktopDownloadsControlCenter,
+} from "@/components/desktop/desktop-control-center";
 import {
   DesktopWallpaperDialog,
   DesktopWidgetsPanel,
@@ -152,7 +156,8 @@ interface DesktopWindowModel {
   zIndex: number;
 }
 
-type DesktopControlCenterView = "main" | "dashboard";
+type DesktopControlCenterView = "main" | "dashboard" | "audiobooks" | "downloads";
+type DesktopControlCenterNavigationDirection = "push" | "pop";
 
 const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
@@ -161,6 +166,21 @@ const DESKTOP_WINDOW_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const DESKTOP_DOCK_MOTION_SECONDS = 0.16;
 const DESKTOP_DOCK_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const DESKTOP_DOCK_POINTER_CONSTRAINT = { distance: 6 } as const;
+const CONTROL_CENTER_PAGE_TRANSITION = {
+  duration: 0.3,
+  ease: [0.32, 0.72, 0, 1],
+} as const;
+const CONTROL_CENTER_PAGE_VARIANTS = {
+  enter: (direction: DesktopControlCenterNavigationDirection) => ({
+    x: direction === "push" ? "100%" : "-22%",
+    opacity: 0.72,
+  }),
+  center: { x: "0%", opacity: 1 },
+  exit: (direction: DesktopControlCenterNavigationDirection) => ({
+    x: direction === "push" ? "-22%" : "100%",
+    opacity: 0.72,
+  }),
+};
 
 async function playDesktopWindowMotion(
   windowElement: HTMLElement,
@@ -555,6 +575,9 @@ export function DesktopExperience() {
   const [launchpadOpen, setLaunchpadOpen] = useState(false);
   const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [controlCenterView, setControlCenterView] = useState<DesktopControlCenterView>("main");
+  const [controlCenterNavigationDirection, setControlCenterNavigationDirection] = useState<
+    DesktopControlCenterNavigationDirection
+  >("push");
   const [dashboardEditing, setDashboardEditing] = useState(false);
   const [desktopWidgetsEditing, setDesktopWidgetsEditing] = useState(false);
   const [wallpaperDialogOpen, setWallpaperDialogOpen] = useState(false);
@@ -571,6 +594,7 @@ export function DesktopExperience() {
   const [appChromeByWindow, setAppChromeByWindow] = useState<
     Record<string, DesktopAppChromeDescriptor>
   >({});
+  const reduceMotion = useReducedMotion();
   const dockSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: DESKTOP_DOCK_POINTER_CONSTRAINT,
@@ -1106,6 +1130,17 @@ export function DesktopExperience() {
     openApp({ ...app, url });
   }, [openApp]);
 
+  const pushControlCenterView = useCallback((view: Exclude<DesktopControlCenterView, "main">) => {
+    if (view === "dashboard") setDashboardEditing(false);
+    setControlCenterNavigationDirection("push");
+    setControlCenterView(view);
+  }, []);
+
+  const popControlCenterView = useCallback(() => {
+    setControlCenterNavigationDirection("pop");
+    setControlCenterView("main");
+  }, []);
+
   const updateWallpaper = useCallback((nextWallpaperUrl?: string) => {
     try {
       if (nextWallpaperUrl) {
@@ -1279,7 +1314,10 @@ export function DesktopExperience() {
           <Popover
             open={controlCenterOpen}
             onOpenChange={(open) => {
-              if (open) setControlCenterView("main");
+              if (open) {
+                setControlCenterNavigationDirection("push");
+                setControlCenterView("main");
+              }
               setControlCenterOpen(open);
             }}
           >
@@ -1301,33 +1339,66 @@ export function DesktopExperience() {
               side="bottom"
               sideOffset={8}
               className={cn(
-                "z-[1300] overflow-hidden rounded-2xl border-border/80 bg-background/95 p-0 shadow-xl backdrop-blur-md",
-                controlCenterView !== "main"
-                  ? "w-[min(26rem,calc(100vw-2rem))]"
-                  : "w-[min(23rem,calc(100vw-2rem))]",
+                "z-[1300] w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border-border/80 bg-background/95 p-0 shadow-xl backdrop-blur-md",
               )}
               aria-label="Control Center"
             >
-              {controlCenterView === "dashboard" ? (
-                <DesktopWidgetsPanel
-                  controller={dashboardWidgetLayoutController}
-                  title="Dashboard"
-                  subtitle={`${dashboardWidgetLayoutController.layout.filter((widget) => widget.visible).length} widgets · same layout as classic mode`}
-                  editing={dashboardEditing}
-                  onEditingChange={setDashboardEditing}
-                  onBack={() => setControlCenterView("main")}
-                />
-              ) : (
-                <DesktopControlCenter
-                  onOpenAudiobooks={() => openControlCenterApp("/dashboard/audiobooks")}
-                  onOpenDownloads={() => openControlCenterApp("/dashboard/media?tab=downloads")}
-                  onOpenDashboard={() => {
-                    setDashboardEditing(false);
-                    setControlCenterView("dashboard");
-                  }}
-                  onOpenWallpaper={openWallpaperEditor}
-                />
-              )}
+              <motion.div
+                layout={!reduceMotion}
+                className="relative overflow-hidden"
+                transition={{
+                  layout: reduceMotion
+                    ? { duration: 0 }
+                    : CONTROL_CENTER_PAGE_TRANSITION,
+                }}
+              >
+                <AnimatePresence
+                  initial={false}
+                  custom={controlCenterNavigationDirection}
+                  mode="popLayout"
+                >
+                  <motion.div
+                    key={controlCenterView}
+                    data-control-center-view={controlCenterView}
+                    custom={controlCenterNavigationDirection}
+                    variants={CONTROL_CENTER_PAGE_VARIANTS}
+                    initial={reduceMotion ? false : "enter"}
+                    animate="center"
+                    exit={reduceMotion ? undefined : "exit"}
+                    transition={reduceMotion
+                      ? { duration: 0 }
+                      : CONTROL_CENTER_PAGE_TRANSITION}
+                  >
+                    {controlCenterView === "dashboard" ? (
+                      <DesktopWidgetsPanel
+                        controller={dashboardWidgetLayoutController}
+                        title="Dashboard"
+                        subtitle={`${dashboardWidgetLayoutController.layout.filter((widget) => widget.visible).length} widgets · same layout as classic mode`}
+                        editing={dashboardEditing}
+                        onEditingChange={setDashboardEditing}
+                        onBack={popControlCenterView}
+                      />
+                    ) : controlCenterView === "audiobooks" ? (
+                      <DesktopAudiobooksControlCenter
+                        onBack={popControlCenterView}
+                        onOpenApp={() => openControlCenterApp("/dashboard/audiobooks")}
+                      />
+                    ) : controlCenterView === "downloads" ? (
+                      <DesktopDownloadsControlCenter
+                        onBack={popControlCenterView}
+                        onOpenApp={() => openControlCenterApp("/dashboard/media?tab=downloads")}
+                      />
+                    ) : (
+                      <DesktopControlCenter
+                        onOpenAudiobooks={() => pushControlCenterView("audiobooks")}
+                        onOpenDownloads={() => pushControlCenterView("downloads")}
+                        onOpenDashboard={() => pushControlCenterView("dashboard")}
+                        onOpenWallpaper={openWallpaperEditor}
+                      />
+                    )}
+                  </motion.div>
+                </AnimatePresence>
+              </motion.div>
             </PopoverContent>
           </Popover>
           <NotificationsBell triggerClassName="size-7" iconSize={15} />
@@ -1443,6 +1514,8 @@ export function DesktopExperience() {
                 editMode={desktopWidgetsEditing}
                 showAddDock={desktopWidgetsEditing}
                 maxColumns={3}
+                maxWidgetCols={2}
+                maxWidgetRows={2}
                 onEditDoneRequested={() => setDesktopWidgetsEditing(false)}
               />
             </div>

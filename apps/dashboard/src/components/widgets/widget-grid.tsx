@@ -160,7 +160,11 @@ function WidgetLoadingSkeleton({ compact }: { compact?: boolean }) {
   );
 }
 
-function resizeOptions(widgetType: WidgetType): {
+function resizeOptions(
+  widgetType: WidgetType,
+  maxCols: WidgetSize["cols"] = 4,
+  maxRows: WidgetSize["rows"] = 3,
+): {
   widthOptions: WidgetSize["cols"][];
   heightOptions: WidgetSize["rows"][];
 } {
@@ -168,8 +172,12 @@ function resizeOptions(widgetType: WidgetType): {
     ? [{ cols: 2, rows: 1 }, { cols: 2, rows: 2 }, { cols: 2, rows: 3 }, { cols: 4, rows: 2 }]
     : WIDGET_SIZE_PRESETS[widgetType as BuiltinWidgetType];
 
-  const widthOptions = Array.from(new Set(presets.map((p) => p.cols))).sort((a, b) => a - b) as WidgetSize["cols"][];
-  const heightOptions = Array.from(new Set(presets.map((p) => p.rows))).sort((a, b) => a - b) as WidgetSize["rows"][];
+  const widthOptions = Array.from(new Set(
+    presets.filter((preset) => preset.cols <= maxCols).map((preset) => preset.cols),
+  )).sort((a, b) => a - b) as WidgetSize["cols"][];
+  const heightOptions = Array.from(new Set(
+    presets.filter((preset) => preset.rows <= maxRows).map((preset) => preset.rows),
+  )).sort((a, b) => a - b) as WidgetSize["rows"][];
   return { widthOptions, heightOptions };
 }
 
@@ -202,6 +210,8 @@ const WidgetItem = React.memo(function WidgetItem({
   manifestById,
   manifestsLoading,
   editMode,
+  maxWidgetCols,
+  maxWidgetRows,
   isNew,
   onRemove,
   onResize,
@@ -213,16 +223,28 @@ const WidgetItem = React.memo(function WidgetItem({
   manifestById: Map<string, ReturnType<typeof useWidgetManifests>["widgets"][number]>;
   manifestsLoading: boolean;
   editMode: boolean;
+  maxWidgetCols?: WidgetSize["cols"];
+  maxWidgetRows?: WidgetSize["rows"];
   isNew?: boolean;
   onRemove: () => void;
   onResize: (size: WidgetSize) => void;
 }) {
   const resizable = isResizable(widgetType);
-  const { widthOptions, heightOptions } = resizeOptions(widgetType);
+  const effectiveMaxCols = Math.min(availableCols, maxWidgetCols ?? 4) as WidgetSize["cols"];
+  const effectiveMaxRows = (maxWidgetRows ?? 3) as WidgetSize["rows"];
+  const effectiveSize: WidgetSize = {
+    cols: Math.min(size.cols, effectiveMaxCols) as WidgetSize["cols"],
+    rows: Math.min(size.rows, effectiveMaxRows) as WidgetSize["rows"],
+  };
+  const { widthOptions, heightOptions } = resizeOptions(
+    widgetType,
+    effectiveMaxCols,
+    effectiveMaxRows,
+  );
   const hasWidthOptions = widthOptions.length > 1;
   const hasHeightOptions = heightOptions.length > 1;
   const hasResizeControls = resizable && (hasWidthOptions || hasHeightOptions);
-  const compact = size.cols === 1 && size.rows === 1;
+  const compact = effectiveSize.cols === 1 && effectiveSize.rows === 1;
   const widgetLabel = widgetType.startsWith("widget:")
     ? widgetType.slice("widget:".length)
     : WIDGET_LABELS[widgetType as BuiltinWidgetType];
@@ -232,11 +254,11 @@ const WidgetItem = React.memo(function WidgetItem({
       id={id}
       isLocked={!editMode}
       showHandle={editMode}
-      gridSize={{ cols: size.cols, rows: size.rows }}
+      gridSize={{ cols: effectiveSize.cols, rows: effectiveSize.rows }}
       availableCols={availableCols}
       className={cn("group relative", isNew && "animate-widget-enter")}
     >
-      {widgetComponent(widgetType, manifestById, manifestsLoading, size, compact)}
+      {widgetComponent(widgetType, manifestById, manifestsLoading, effectiveSize, compact)}
 
       {editMode && (
         <>
@@ -259,8 +281,8 @@ const WidgetItem = React.memo(function WidgetItem({
                   onClick={(e) => {
                     e.stopPropagation();
                     onResize({
-                      cols: nextFromOptions(widthOptions, size.cols),
-                      rows: size.rows,
+                      cols: nextFromOptions(widthOptions, effectiveSize.cols),
+                      rows: effectiveSize.rows,
                     });
                   }}
                   className={cn(
@@ -272,7 +294,7 @@ const WidgetItem = React.memo(function WidgetItem({
                   )}
                   title="Change widget width"
                 >
-                  W {size.cols}
+                  W {effectiveSize.cols}
                 </button>
               )}
               {hasHeightOptions && (
@@ -282,8 +304,8 @@ const WidgetItem = React.memo(function WidgetItem({
                   onClick={(e) => {
                     e.stopPropagation();
                     onResize({
-                      cols: size.cols,
-                      rows: nextFromOptions(heightOptions, size.rows),
+                      cols: effectiveSize.cols,
+                      rows: nextFromOptions(heightOptions, effectiveSize.rows),
                     });
                   }}
                   className={cn(
@@ -295,7 +317,7 @@ const WidgetItem = React.memo(function WidgetItem({
                   )}
                   title="Change widget height"
                 >
-                  H {size.rows}
+                  H {effectiveSize.rows}
                 </button>
               )}
             </div>
@@ -426,6 +448,8 @@ export function ControlledWidgetGrid({
   compact = false,
   showAddDock = true,
   maxColumns = 4,
+  maxWidgetCols,
+  maxWidgetRows,
   onEditDoneRequested,
 }: {
   controller: WidgetLayoutController;
@@ -433,6 +457,8 @@ export function ControlledWidgetGrid({
   compact?: boolean;
   showAddDock?: boolean;
   maxColumns?: 3 | 4;
+  maxWidgetCols?: WidgetSize["cols"];
+  maxWidgetRows?: WidgetSize["rows"];
   onEditDoneRequested?: () => void;
 }) {
   const { layout, toggleWidget, addWidget, reorderLayout, resizeWidget } = controller;
@@ -531,15 +557,15 @@ export function ControlledWidgetGrid({
       const draggedSize = dragged.size ?? defaultSize(dragged.widgetType);
       const targetSize = target.size ?? defaultSize(target.widgetType);
       const targetBounds: WidgetSize = {
-        cols: Math.min(targetSize.cols, availableCols) as WidgetSize["cols"],
-        rows: targetSize.rows,
+        cols: Math.min(targetSize.cols, availableCols, maxWidgetCols ?? 4) as WidgetSize["cols"],
+        rows: Math.min(targetSize.rows, maxWidgetRows ?? 3) as WidgetSize["rows"],
       };
       const fitted = bestFitSize(dragged.widgetType, draggedSize, targetBounds);
       if (fitted.cols !== draggedSize.cols || fitted.rows !== draggedSize.rows) {
         resizeWidget(dragged.instanceId, fitted);
       }
     }
-  }, [layout, reorderLayout, resizeWidget, availableCols]);
+  }, [layout, reorderLayout, resizeWidget, availableCols, maxWidgetCols, maxWidgetRows]);
 
   const gridContent = (
     <div className={gridClassName}>
@@ -555,6 +581,8 @@ export function ControlledWidgetGrid({
             manifestById={manifestById}
             manifestsLoading={manifestsLoading}
             editMode={editMode}
+            maxWidgetCols={maxWidgetCols}
+            maxWidgetRows={maxWidgetRows}
             isNew={w.instanceId === newWidgetId}
             onRemove={() => toggleWidget(w.instanceId)}
             onResize={(s) => resizeWidget(w.instanceId, s)}

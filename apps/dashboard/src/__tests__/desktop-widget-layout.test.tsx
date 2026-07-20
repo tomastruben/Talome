@@ -51,4 +51,34 @@ describe("desktop widget layout", () => {
     expect(visibleTypes).not.toContain("cpu");
     expect(visibleTypes).toContain("network");
   });
+
+  it("normalizes saved desktop widgets to a maximum W2 by H2", () => {
+    localStorage.setItem("talome-desktop-widget-layout-v1", JSON.stringify([
+      {
+        instanceId: "desktop-downloads",
+        widgetType: "active-downloads",
+        visible: true,
+        size: { cols: 4, rows: 3 },
+      },
+    ]));
+
+    const { result } = renderHook(() => useDesktopWidgetLayout());
+    const downloads = result.current.layout.find(
+      (widget) => widget.instanceId === "desktop-downloads",
+    );
+
+    expect(downloads?.size).toEqual({ cols: 2, rows: 2 });
+  });
+
+  it("clamps desktop resize requests to W2 by H2", () => {
+    const { result } = renderHook(() => useDesktopWidgetLayout());
+
+    act(() => {
+      result.current.resizeWidget("desktop-cpu", { cols: 4, rows: 3 });
+    });
+
+    expect(
+      result.current.layout.find((widget) => widget.instanceId === "desktop-cpu")?.size,
+    ).toEqual({ cols: 2, rows: 2 });
+  });
 });
