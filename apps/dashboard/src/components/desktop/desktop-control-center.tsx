@@ -197,8 +197,8 @@ export function DesktopControlCenter({
       <div className="grid grid-cols-2 gap-2">
         <ControlCenterTile
           icon={DashboardSquare02Icon}
-          label="Dashboard"
-          detail="Classic widget layout"
+          label="Widgets"
+          detail="Customize layout"
           onClick={onOpenDashboard}
         />
         <ControlCenterTile

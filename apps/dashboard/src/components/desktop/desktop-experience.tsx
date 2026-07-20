@@ -1589,8 +1589,8 @@ export function DesktopExperience() {
                     {controlCenterView === "dashboard" ? (
                       <DesktopWidgetsPanel
                         controller={dashboardWidgetLayoutController}
-                        title="Dashboard"
-                        subtitle={`${dashboardWidgetLayoutController.layout.filter((widget) => widget.visible).length} widgets · same layout as classic mode`}
+                        title="Widgets"
+                        subtitle={`${dashboardWidgetLayoutController.layout.filter((widget) => widget.visible).length} widgets`}
                         editing={dashboardEditing}
                         onEditingChange={setDashboardEditing}
                         onBack={popControlCenterView}
