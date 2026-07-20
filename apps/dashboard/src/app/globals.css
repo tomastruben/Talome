@@ -638,6 +638,64 @@
   object-fit: cover;
 }
 
+/* Audiobook details respond to their app window, not the browser viewport. */
+.audiobook-detail-page {
+  min-height: 0;
+  padding-bottom: 6rem;
+}
+
+.audiobook-detail-narrow {
+  display: flex;
+}
+
+.audiobook-detail-wide {
+  display: none;
+}
+
+@container (min-width: 700px) {
+  .audiobook-detail-page {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+    padding-bottom: 0;
+  }
+
+  .audiobook-detail-narrow {
+    display: none;
+  }
+
+  .audiobook-detail-wide {
+    display: grid;
+    width: 100%;
+    max-width: 980px;
+    margin-inline: auto;
+  }
+
+  .audiobook-detail-wide--chapters {
+    grid-template-columns: minmax(260px, 0.9fr) minmax(300px, 1.1fr);
+  }
+
+  .audiobook-detail-wide--solo {
+    grid-template-columns: minmax(0, 520px);
+    justify-content: center;
+  }
+
+  .audiobook-detail-wide-cover {
+    width: 200px;
+  }
+}
+
+@container (min-width: 960px) {
+  .audiobook-detail-wide--chapters {
+    grid-template-columns: minmax(0, 520px) minmax(0, 420px);
+  }
+
+  .audiobook-detail-wide-cover {
+    width: 240px;
+  }
+}
+
 @layer components {
   /* ── Category filter pills ────────────────────────── */
   .filter-rail {

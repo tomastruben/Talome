@@ -3,6 +3,7 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   audioPlayerBookAtom,
+  audioPlayerErrorAtom,
   audioPlayerStateAtom,
   audioPlayerCommandAtom,
   type AudioPlayerBook,
@@ -15,10 +16,11 @@ import {
 export function useAudiobookPlayer() {
   const book = useAtomValue(audioPlayerBookAtom);
   const state = useAtomValue(audioPlayerStateAtom);
+  const error = useAtomValue(audioPlayerErrorAtom);
   const setCommand = useSetAtom(audioPlayerCommandAtom);
 
-  const loadBook = (payload: AudioPlayerBook, initialTime: number) =>
-    setCommand({ type: "load", book: payload, initialTime });
+  const loadBook = (payload: AudioPlayerBook, initialTime: number, playbackPrimed = false) =>
+    setCommand({ type: "load", book: payload, initialTime, playbackPrimed });
 
   const seekTo = (time: number) =>
     setCommand({ type: "seek", time });
@@ -39,6 +41,7 @@ export function useAudiobookPlayer() {
   return {
     book,
     state,
+    error,
     isActive: book !== null,
     isActiveBook: (bookId: string) => book?.bookId === bookId,
     loadBook,

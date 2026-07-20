@@ -4,15 +4,17 @@ import { useRef, useEffect, useCallback } from "react";
 import { useAtom, useSetAtom } from "jotai";
 import {
   audioPlayerBookAtom,
+  audioPlayerErrorAtom,
   audioPlayerStateAtom,
   audioPlayerCommandAtom,
   type AudioPlayerBook,
   type AudioPlayerCommand,
+  type AudioPlayerTrackMeta,
   saveAudioState,
   loadAudioState,
   clearAudioState,
 } from "@/atoms/audio-player";
-import { CORE_URL, getDirectCoreUrl } from "@/lib/constants";
+import { CORE_URL } from "@/lib/constants";
 
 /* ── Types ─────────────────────────────────────────────── */
 
@@ -33,6 +35,7 @@ let _lastSaveTs = 0;
 let _currentTrackIndex = 0;
 let _globalTime = 0;
 let _isPlaying = false;
+let _primedPlayback: Promise<void> | null = null;
 
 function getSharedAudio(): HTMLAudioElement {
   if (!_audio) {
@@ -42,9 +45,51 @@ function getSharedAudio(): HTMLAudioElement {
   return _audio;
 }
 
+/**
+ * Starts the media element during the originating click, before React effects
+ * consume the player command. Browsers require this synchronous user gesture
+ * for audible playback, especially when Talome runs inside a desktop iframe.
+ */
+export function primeAudiobookPlayback(book: AudioPlayerBook, initialTime: number): boolean {
+  if (typeof window === "undefined" || book.trackMetas.length === 0) return false;
+
+  let trackIndex = 0;
+  let elapsed = 0;
+  for (let index = 0; index < book.trackMetas.length; index++) {
+    const track = book.trackMetas[index];
+    if (initialTime >= elapsed) trackIndex = index;
+    elapsed += track?.duration ?? 0;
+  }
+
+  const track = book.trackMetas[trackIndex];
+  if (!track?.ino) return false;
+
+  const source = `${CORE_URL}/api/audiobooks/file/${encodeURIComponent(book.bookId)}/${encodeURIComponent(track.ino)}`;
+  const audio = getSharedAudio();
+  const absoluteSource = new URL(source, window.location.href).href;
+  if (audio.src !== absoluteSource && audio.currentSrc !== absoluteSource) audio.src = source;
+  _primedPlayback = audio.play();
+  void _primedPlayback.catch(() => {
+    // The engine records and presents the actionable failure after it consumes
+    // the load command; avoid an unhandled rejection in this gesture bridge.
+  });
+  return true;
+}
+
 const SAVE_THROTTLE_MS = 3000;
 const STALL_NUDGE_DELAY_MS = 3_000;
 const STALL_REFRESH_DELAY_MS = 8_000;
+
+function getPlaybackErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (
+    (error instanceof DOMException && error.name === "NotAllowedError") ||
+    message.includes("didn't interact with the document")
+  ) {
+    return "Your browser blocked audio playback. Select Play again to allow sound.";
+  }
+  return message || "Playback could not start";
+}
 
 /* ── Hook ──────────────────────────────────────────────── */
 
@@ -57,6 +102,7 @@ export function useAudioEngine() {
   const trackOffsetsRef = useRef<number[]>([]);
   const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingSeekRef = useRef<(() => void) | null>(null);
+  const loadRequestRef = useRef(0);
   const bookIdRef = useRef<string | null>(null);
   const stateRef = useRef({ isPlaying: false, currentTime: 0, currentTrackIndex: 0 });
   // Track whether we've already restored from localStorage in this mount cycle
@@ -66,6 +112,7 @@ export function useAudioEngine() {
 
   const [command, setCommand] = useAtom(audioPlayerCommandAtom);
   const setBook = useSetAtom(audioPlayerBookAtom);
+  const setError = useSetAtom(audioPlayerErrorAtom);
   const setState = useSetAtom(audioPlayerStateAtom);
 
   /* ── Track offsets ─────────────────────────────────── */
@@ -143,17 +190,32 @@ export function useAudioEngine() {
 
   /* ── Fetch stream URLs ─────────────────────────────── */
 
-  const fetchStreams = useCallback(async (bookId: string): Promise<StreamTrack[]> => {
+  const fetchStreams = useCallback(async (
+    bookId: string,
+    knownTracks?: AudioPlayerTrackMeta[],
+  ): Promise<StreamTrack[]> => {
+    if (knownTracks?.length && knownTracks.every((track) => track.ino)) {
+      return knownTracks.map((track) => ({
+        index: track.index,
+        duration: track.duration,
+        streamUrl: `${CORE_URL}/api/audiobooks/file/${encodeURIComponent(bookId)}/${encodeURIComponent(track.ino!)}`,
+      }));
+    }
+
+    // Compatibility path for persisted player state created before file IDs
+    // were stored with each track.
     const res = await fetch(`${CORE_URL}/api/audiobooks/stream/${bookId}`);
-    if (!res.ok) throw new Error("Failed to fetch stream");
+    if (!res.ok) throw new Error(`Stream request failed (${res.status})`);
     const data = await res.json();
-    // Use direct core URL for audio src to bypass Next.js rewrite proxy,
-    // which buffers streaming responses and breaks range-request audio playback.
-    const directUrl = getDirectCoreUrl();
-    return (data.tracks as StreamTrack[]).map((t) => ({
+    // Keep audio on the authenticated dashboard origin. The explicit
+    // /api/[...path] handler streams the response body and forwards Range
+    // headers, so it is safe for media while avoiding a cross-port 401.
+    const tracks = (data.tracks as StreamTrack[]).map((t) => ({
       ...t,
-      streamUrl: `${directUrl}${t.streamUrl}`,
+      streamUrl: `${CORE_URL}${t.streamUrl}`,
     }));
+    if (tracks.length === 0) throw new Error("This audiobook has no playable audio files");
+    return tracks;
   }, []);
 
   /* ── Refresh current stream (recover from expired URLs / stalls) ── */
@@ -166,7 +228,7 @@ export function useAudioEngine() {
     const wasPlaying = _isPlaying;
 
     try {
-      const tracks = await fetchStreams(bookIdRef.current);
+      const tracks = await fetchStreams(bookIdRef.current, _currentBook.trackMetas);
       streamsRef.current = tracks;
       trackOffsetsRef.current = computeOffsets(tracks);
 
@@ -358,7 +420,13 @@ export function useAudioEngine() {
       // Audio element error — mark as not playing
       stateRef.current.isPlaying = false;
       _isPlaying = false;
-      setState((prev) => ({ ...prev, isPlaying: false }));
+      setState((prev) => ({ ...prev, isPlaying: false, isBuffering: false }));
+      setError(err?.message || "The audio stream could not be loaded");
+      console.warn("[audio-engine] media failed to load:", {
+        code: err?.code,
+        message: err?.message,
+        src: a.currentSrc || a.src,
+      });
     };
 
     const onStalled = () => {
@@ -409,7 +477,7 @@ export function useAudioEngine() {
       a.removeEventListener("waiting", onWaiting);
       a.removeEventListener("playing", onPlaying);
     };
-  }, [setState, flushProgress, stopSyncInterval, persistState]);
+  }, [setError, setState, flushProgress, stopSyncInterval, persistState]);
 
   /* ── Visibility change handler ─────────────────────── */
 
@@ -479,10 +547,12 @@ export function useAudioEngine() {
 
     switch (cmd.type) {
       case "load": {
+        const loadRequestId = ++loadRequestRef.current;
         const autoPlay = cmd.autoPlay !== false; // default true
+        setError(null);
 
         // 1. Stop current playback + flush progress
-        a.pause();
+        if (!cmd.playbackPrimed) a.pause();
         if (bookIdRef.current && bookIdRef.current !== cmd.book.bookId) {
           const offsets = trackOffsetsRef.current;
           const tracks = streamsRef.current;
@@ -507,8 +577,11 @@ export function useAudioEngine() {
         // 3. Fetch streams
         let tracks: StreamTrack[];
         try {
-          tracks = await fetchStreams(cmd.book.bookId);
-        } catch {
+          tracks = await fetchStreams(cmd.book.bookId, cmd.book.trackMetas);
+        } catch (error) {
+          if (loadRequestId !== loadRequestRef.current) return;
+          setError(error instanceof Error ? error.message : "The audiobook stream could not be loaded");
+          console.warn("[audio-engine] failed to fetch audiobook streams:", error);
           // Fetch failed — reset state
           bookIdRef.current = null;
           _currentBook = null;
@@ -519,6 +592,9 @@ export function useAudioEngine() {
           setState({ isPlaying: false, isBuffering: false, currentTime: 0, currentTrackIndex: 0, speed: 1, volume: a.volume, muted: a.muted });
           return;
         }
+        // A newer load (typically the user's Play after a paused restore) owns
+        // the engine now. Never let this older async request overwrite it.
+        if (loadRequestId !== loadRequestRef.current) return;
         streamsRef.current = tracks;
         trackOffsetsRef.current = computeOffsets(tracks);
 
@@ -535,16 +611,19 @@ export function useAudioEngine() {
 
         // 5. Load source + seek + optionally play
         const src = tracks[trackIdx]?.streamUrl;
-        if (src) a.src = src;
+        if (src) {
+          const absoluteSrc = new URL(src, window.location.href).href;
+          if (a.src !== absoluteSrc && a.currentSrc !== absoluteSrc) a.src = src;
+        }
 
-        stateRef.current = { isPlaying: autoPlay, currentTime: cmd.initialTime, currentTrackIndex: trackIdx };
-        _isPlaying = autoPlay;
+        stateRef.current = { isPlaying: false, currentTime: cmd.initialTime, currentTrackIndex: trackIdx };
+        _isPlaying = false;
         _globalTime = cmd.initialTime;
         _currentTrackIndex = trackIdx;
 
         setState({
-          isPlaying: autoPlay,
-          isBuffering: false,
+          isPlaying: false,
+          isBuffering: autoPlay,
           currentTime: cmd.initialTime,
           currentTrackIndex: trackIdx,
           speed: a.playbackRate,
@@ -554,11 +633,19 @@ export function useAudioEngine() {
 
         const onLoaded = () => {
           if (localTime > 0) a.currentTime = localTime;
-          if (autoPlay) {
-            void a.play().catch(() => {
+          if (autoPlay && !cmd.playbackPrimed) {
+            void a.play().then(() => {
+              if (loadRequestId !== loadRequestRef.current) return;
+              stateRef.current.isPlaying = true;
+              _isPlaying = true;
+              setState((prev) => ({ ...prev, isPlaying: true, isBuffering: false }));
+              startSyncInterval(cmd.book.bookId, cmd.book.totalDuration);
+            }).catch((error: unknown) => {
               stateRef.current.isPlaying = false;
               _isPlaying = false;
-              setState((prev) => ({ ...prev, isPlaying: false }));
+              setState((prev) => ({ ...prev, isPlaying: false, isBuffering: false }));
+              setError(getPlaybackErrorMessage(error));
+              console.warn("[audio-engine] playback could not start:", error);
             });
           }
           a.removeEventListener("loadedmetadata", onLoaded);
@@ -570,9 +657,27 @@ export function useAudioEngine() {
           a.addEventListener("loadedmetadata", onLoaded);
         }
 
-        // 6. Start progress sync (only if playing)
-        if (autoPlay) {
-          startSyncInterval(cmd.book.bookId, cmd.book.totalDuration);
+        // A user-gesture-primed play promise resolves only when media has
+        // genuinely started. Reflect that real state instead of showing a
+        // phantom Pause button while the browser is still waiting or blocked.
+        if (autoPlay && cmd.playbackPrimed) {
+          const primedPlayback = _primedPlayback;
+          _primedPlayback = null;
+          if (primedPlayback) {
+            void primedPlayback.then(() => {
+              if (loadRequestId !== loadRequestRef.current) return;
+              stateRef.current.isPlaying = true;
+              _isPlaying = true;
+              setState((prev) => ({ ...prev, isPlaying: true, isBuffering: false }));
+              startSyncInterval(cmd.book.bookId, cmd.book.totalDuration);
+            }).catch((error: unknown) => {
+              if (loadRequestId !== loadRequestRef.current) return;
+              stateRef.current.isPlaying = false;
+              _isPlaying = false;
+              setState((prev) => ({ ...prev, isPlaying: false, isBuffering: false }));
+              setError(getPlaybackErrorMessage(error));
+            });
+          }
         }
 
         // 7. Persist to localStorage
@@ -581,8 +686,12 @@ export function useAudioEngine() {
       }
 
       case "play": {
+        setError(null);
         // Guard: don't attempt play if no source is loaded
-        if (!a.src && !a.currentSrc) break;
+        if (!a.src && !a.currentSrc) {
+          setError("The audio source is not ready. Try Play again.");
+          break;
+        }
         void a.play().then(() => {
           stateRef.current.isPlaying = true;
           _isPlaying = true;
@@ -597,11 +706,12 @@ export function useAudioEngine() {
             startSyncInterval(book, totalDur);
           }
           persistStateImmediate();
-        }).catch(() => {
+        }).catch((error: unknown) => {
           // Play failed
           stateRef.current.isPlaying = false;
           _isPlaying = false;
           setState((prev) => ({ ...prev, isPlaying: false }));
+          setError(getPlaybackErrorMessage(error));
         });
         break;
       }
@@ -681,14 +791,18 @@ export function useAudioEngine() {
         break;
       }
     }
-  }, [setBook, setState, flushProgress, fetchStreams, computeOffsets, seekToGlobalTime, startSyncInterval, stopSyncInterval, persistStateImmediate]);
+  }, [setBook, setError, setState, flushProgress, fetchStreams, computeOffsets, seekToGlobalTime, startSyncInterval, stopSyncInterval, persistStateImmediate]);
 
   // Process commands as they arrive
   useEffect(() => {
     if (!command) return;
     setCommand(null); // Consume immediately
-    processCommand(command);
-  }, [command, setCommand, processCommand]);
+    void processCommand(command).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Playback command failed";
+      setError(message);
+      console.warn("[audio-engine] playback command failed:", error);
+    });
+  }, [command, setCommand, setError, processCommand]);
 
   /* ── Restore from localStorage on mount ────────────── */
 
@@ -717,7 +831,7 @@ export function useAudioEngine() {
         muted: a.muted,
       });
       // Re-fetch streams to repopulate this mount's refs
-      fetchStreams(_currentBook.bookId).then((tracks) => {
+      fetchStreams(_currentBook.bookId, _currentBook.trackMetas).then((tracks) => {
         streamsRef.current = tracks;
         trackOffsetsRef.current = computeOffsets(tracks);
         // Recompute global time from actual audio element now that we have offsets

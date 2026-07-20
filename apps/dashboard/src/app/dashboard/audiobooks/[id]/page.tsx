@@ -11,6 +11,7 @@ import useSWR from "swr";
 import { CORE_URL } from "@/lib/constants";
 import { AudiobookPlayerControls, type Chapter } from "@/components/audiobooks/audio-player";
 import { useAudiobookPlayer } from "@/hooks/use-audiobook-player";
+import { primeAudiobookPlayback } from "@/hooks/use-audio-engine";
 import type { AudioPlayerBook } from "@/atoms/audio-player";
 import {
   HugeiconsIcon,
@@ -26,6 +27,7 @@ let _purify: { sanitize: (dirty: string) => string } | null = null;
 function sanitizeHtml(dirty: string): string {
   if (!_purify) {
     // DOMPurify v3 CJS export is a factory; call it with window to get the instance
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require("dompurify");
     _purify = typeof mod === "function" ? mod(window) : (mod.default ?? mod);
   }
@@ -170,12 +172,13 @@ export default function AudiobookDetailPage() {
       author: meta?.authorName ?? "",
       coverUrl: coverUrl(id),
       chapters: chapters.map((c) => ({ id: c.id, start: c.start, end: c.end, title: c.title })),
-      trackMetas: audioFiles.map((f) => ({ index: f.index, duration: f.duration })),
+      trackMetas: audioFiles.map((f) => ({ index: f.index, ino: f.ino, duration: f.duration })),
       totalDuration: item.media?.duration ?? 0,
     };
 
     const time = initialTime ?? progress?.currentTime ?? 0;
-    player.loadBook(bookPayload, time);
+    const playbackPrimed = primeAudiobookPlayback(bookPayload, time);
+    player.loadBook(bookPayload, time, playbackPrimed);
   }, [item, id, progress, player]);
 
   // Effective state: uses engine state when active, local state otherwise
@@ -184,12 +187,17 @@ export default function AudiobookDetailPage() {
     : (localSeekTime ?? progress?.currentTime ?? 0);
 
   const handleTogglePlay = useCallback(() => {
-    if (isThisBookActive) {
-      player.togglePlay();
-    } else {
-      startPlayback(localSeekTime ?? progress?.currentTime ?? 0);
+    if (isThisBookActive && player.state.isPlaying) {
+      player.pause();
+      return;
     }
-  }, [isThisBookActive, player, startPlayback, localSeekTime, progress?.currentTime]);
+
+    // Reload the stream before every paused -> playing transition. A restored
+    // book can be present in Jotai/localStorage before its media source has
+    // finished loading (especially inside a newly opened desktop iframe), so a
+    // bare `play` command may have no source and silently do nothing.
+    startPlayback(effectiveCurrentTime);
+  }, [isThisBookActive, player, startPlayback, effectiveCurrentTime]);
 
   const handleSeek = useCallback((time: number) => {
     if (isThisBookActive) {
@@ -213,11 +221,8 @@ export default function AudiobookDetailPage() {
   }, [isThisBookActive, player, localSeekTime, progress?.currentTime, item?.media?.duration]);
 
   const handleChapterClick = useCallback((chapter: Chapter) => {
-    if (isThisBookActive) {
+    if (isThisBookActive && player.state.isPlaying) {
       player.seekTo(chapter.start);
-      if (!player.state.isPlaying) {
-        player.play();
-      }
     } else {
       startPlayback(chapter.start);
     }
@@ -225,9 +230,9 @@ export default function AudiobookDetailPage() {
 
   if (isLoading || !item) {
     return (
-      <div className="pb-24 lg:pb-0 lg:flex lg:flex-col lg:flex-1 lg:min-h-0">
+      <div className="audiobook-detail-page">
         {/* Mobile */}
-        <div className="lg:hidden flex flex-col items-center text-center gap-5">
+        <div className="audiobook-detail-narrow flex flex-col items-center text-center gap-5">
           <Skeleton className="w-[180px] h-[180px] sm:w-[220px] sm:h-[220px] rounded-xl" />
           <div className="space-y-2 w-full max-w-sm">
             <Skeleton className="h-7 w-3/4 mx-auto" />
@@ -249,7 +254,7 @@ export default function AudiobookDetailPage() {
           </div>
         </div>
         {/* Desktop */}
-        <div className="hidden lg:grid grid-cols-[minmax(0,520px)_minmax(0,420px)] justify-center gap-8 flex-1 min-h-0">
+        <div className="audiobook-detail-wide audiobook-detail-wide--chapters gap-6 flex-1 min-h-0">
           <div className="flex flex-col items-center text-center space-y-4">
             <Skeleton className="w-[240px] h-[240px] rounded-xl" />
             <div className="space-y-2 w-full max-w-sm">
@@ -358,6 +363,11 @@ export default function AudiobookDetailPage() {
         onSpeedChange={player.setSpeed}
         onVolumeToggleMute={() => player.setVolume(player.state.volume, !player.state.muted)}
       />
+      {player.error ? (
+        <p role="alert" className="mx-auto mt-2 max-w-sm text-center text-xs text-destructive">
+          {player.error}
+        </p>
+      ) : null}
     </div>
   );
 
@@ -433,10 +443,10 @@ export default function AudiobookDetailPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.15, ease: "easeOut" }}
-      className="pb-24 lg:pb-0 lg:flex lg:flex-col lg:flex-1 lg:min-h-0"
+      className="audiobook-detail-page"
     >
       {/* ─────────────────── MOBILE ─────────────────────── */}
-      <div className="lg:hidden flex flex-col items-center text-center gap-5">
+      <div className="audiobook-detail-narrow flex flex-col items-center text-center gap-5">
         <div className="w-[180px] sm:w-[220px]">{coverWithGlow}</div>
 
         <div className="space-y-1 max-w-sm">
@@ -486,15 +496,15 @@ export default function AudiobookDetailPage() {
 
       {/* ─────────────────── DESKTOP ────────────────────── */}
       <div className={cn(
-        "hidden lg:grid gap-8 flex-1 min-h-0",
+        "audiobook-detail-wide gap-6 flex-1 min-h-0",
         chapters.length > 0
-          ? "grid-cols-[minmax(0,520px)_minmax(0,420px)] justify-center"
-          : "max-w-lg mx-auto",
+          ? "audiobook-detail-wide--chapters"
+          : "audiobook-detail-wide--solo",
       )}>
         {/* ── Left column: cover, metadata, player ────── */}
-        <ScrollArea className="h-full">
+        <ScrollArea className="h-full min-w-0">
           <div className="flex flex-col items-center text-center space-y-4 pb-8">
-            <div className="w-[240px]">{coverWithGlow}</div>
+            <div className="audiobook-detail-wide-cover">{coverWithGlow}</div>
 
             <div className="space-y-1 max-w-sm">
               <h1 className="text-2xl font-medium leading-tight">{meta?.title}</h1>
@@ -529,7 +539,7 @@ export default function AudiobookDetailPage() {
 
         {/* ── Right column: chapters ── */}
         {chapters.length > 0 && (
-          <div className="flex flex-col min-h-0">
+          <div className="flex min-w-0 flex-col min-h-0">
             <ScrollArea className="flex-1 min-h-0">
               <div className="pb-6">{chapterRows}</div>
             </ScrollArea>

@@ -21,7 +21,10 @@ import { CinemaBrowserOverlay } from "@/components/media/cinema-browser";
 import { NotificationToastBridge } from "@/components/notifications/notification-toast-bridge";
 import { hideShellHeaderAtom } from "@/atoms/shell";
 import { registerServiceWorker } from "@/lib/register-sw";
-import { GlobalAudioPlayer } from "@/components/audiobooks/global-audio-player";
+import {
+  AudiobookAudioEngine,
+  GlobalAudioPlayer,
+} from "@/components/audiobooks/global-audio-player";
 import { useUser } from "@/hooks/use-user";
 import { DesktopAppActionBridge } from "@/components/desktop/desktop-app-action-bridge";
 import { DesktopShellHeaderActions } from "@/components/desktop/desktop-shell-header-actions";
@@ -40,6 +43,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const embeddedFrame = useIsEmbeddedFrame();
   const desktopRoute = pathname === "/dashboard/desktop";
   const embeddedPlayerRoute = embeddedFrame && pathname === "/dashboard/player";
+  const embeddedAudiobookRoute = embeddedFrame && pathname.startsWith("/dashboard/audiobooks");
   const { user, isLoading: userLoading } = useUser();
   useEffect(() => { registerServiceWorker(); }, []);
 
@@ -73,6 +77,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </main>
             ) : embeddedFrame ? (
               <main id="main-content" className="relative flex h-dvh min-h-0 flex-1 flex-col overflow-hidden bg-background [container-type:inline-size]">
+                {embeddedAudiobookRoute ? <AudiobookAudioEngine /> : null}
                 <DesktopShellHeaderActions />
                 <DesktopAppActionBridge />
                 <div className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${embeddedPlayerRoute ? "overflow-hidden bg-black" : "overflow-y-auto p-4"}`}>

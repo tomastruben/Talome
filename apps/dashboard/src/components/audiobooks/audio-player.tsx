@@ -219,6 +219,7 @@ export function AudiobookPlayerControls({
 
         <button
           onClick={() => onSkip(-15)}
+          aria-label="Skip back 15 seconds"
           className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <HugeiconsIcon icon={GoBackward15SecIcon} size={22} />
@@ -226,6 +227,7 @@ export function AudiobookPlayerControls({
 
         <button
           onClick={onTogglePlay}
+          aria-label={isPlaying ? "Pause" : "Play"}
           className="size-14 rounded-full bg-foreground/10 hover:bg-foreground/15 flex items-center justify-center transition-colors active:scale-[0.96]"
         >
           <AnimatePresence mode="wait">
@@ -248,6 +250,7 @@ export function AudiobookPlayerControls({
 
         <button
           onClick={() => onSkip(15)}
+          aria-label="Skip forward 15 seconds"
           className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <HugeiconsIcon icon={GoForward15SecIcon} size={22} />
@@ -288,6 +291,7 @@ export function AudiobookPlayerControls({
 
         <button
           onClick={onVolumeToggleMute}
+          aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
           className="text-dim-foreground hover:text-muted-foreground transition-colors"
         >
           <HugeiconsIcon icon={getVolumeIcon({ volume, muted })} size={16} />

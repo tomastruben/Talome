@@ -12,6 +12,8 @@ export interface AudioPlayerChapter {
 export interface AudioPlayerTrackMeta {
   index: number;
   duration: number;
+  /** Audiobookshelf file identifier; absent only in legacy saved sessions. */
+  ino?: string;
 }
 
 export interface AudioPlayerBook {
@@ -35,7 +37,7 @@ export interface AudioPlayerState {
 }
 
 export type AudioPlayerCommand =
-  | { type: "load"; book: AudioPlayerBook; initialTime: number; autoPlay?: boolean }
+  | { type: "load"; book: AudioPlayerBook; initialTime: number; autoPlay?: boolean; playbackPrimed?: boolean }
   | { type: "play" }
   | { type: "pause" }
   | { type: "stop" }
@@ -61,6 +63,9 @@ export const audioPlayerStateAtom = atom<AudioPlayerState>({
 
 /** One-shot command atom — written by pages, consumed by the audio engine. */
 export const audioPlayerCommandAtom = atom<AudioPlayerCommand | null>(null);
+
+/** Last actionable playback failure, cleared on the next load/play attempt. */
+export const audioPlayerErrorAtom = atom<string | null>(null);
 
 /** Whether the mini-player bar is visible (derived from book + route). */
 export const miniPlayerVisibleAtom = atom(false);
