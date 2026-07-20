@@ -1211,14 +1211,26 @@ export function DesktopExperience() {
   return (
     <div
       data-desktop-widget-editing={desktopWidgetsEditing ? "true" : undefined}
-      className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground"
+      className="relative flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground"
     >
+      {wallpaperUrl ? (
+        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden="true">
+          <Image
+            src={wallpaperUrl}
+            alt=""
+            fill
+            unoptimized
+            sizes="100vw"
+            className="object-cover"
+          />
+        </div>
+      ) : null}
       <header
         aria-hidden={desktopWidgetsEditing || undefined}
         aria-disabled={desktopWidgetsEditing || undefined}
         inert={desktopWidgetsEditing}
         className={cn(
-          "relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b border-border/70 bg-background/90 px-3 backdrop-blur-md transition-opacity duration-150",
+          "relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b border-black/10 bg-background/90 px-3 shadow-[inset_0_-1px_0_rgba(255,255,255,0.2),0_1px_12px_rgba(0,0,0,0.08)] backdrop-blur-2xl backdrop-saturate-150 transition-[background-color,border-color,box-shadow,opacity] duration-150 supports-[backdrop-filter]:bg-background/60 dark:border-white/10 dark:bg-background/85 dark:supports-[backdrop-filter]:bg-background/55",
           desktopWidgetsEditing && "pointer-events-none select-none opacity-35 saturate-0",
         )}
       >
@@ -1430,7 +1442,7 @@ export function DesktopExperience() {
         </div>
       </header>
 
-      <div ref={workspaceRef} className="relative flex-1 min-h-0 overflow-hidden bg-background">
+      <div ref={workspaceRef} className="relative z-[1] flex-1 min-h-0 overflow-hidden">
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
@@ -1454,16 +1466,6 @@ export function DesktopExperience() {
                 }));
               }}
             >
-              {wallpaperUrl ? (
-                <Image
-                  src={wallpaperUrl}
-                  alt=""
-                  fill
-                  unoptimized
-                  sizes="100vw"
-                  className="object-cover"
-                />
-              ) : null}
             </div>
           </ContextMenuTrigger>
           <DesktopSurfaceContextMenuContent
