@@ -141,6 +141,11 @@ import {
   type DesktopAudiobookCommand,
 } from "@/atoms/desktop-audiobook-player";
 import {
+  DESKTOP_OPEN_ROUTE_EVENT,
+  dashboardRouteFromHref,
+  desktopRouteFromEvent,
+} from "@/lib/desktop-navigation";
+import {
   INITIAL_AUDIO_PLAYER_STATE,
   type AudioPlayerBook,
   type AudioPlayerState,
@@ -334,6 +339,46 @@ function appDefinitionFromNav(item: NavItem): DesktopAppDefinition {
   );
 }
 
+function routeMatchesApp(pathname: string, appUrl: string) {
+  if (pathname === appUrl) return true;
+  return appUrl !== "/dashboard" && pathname.startsWith(`${appUrl}/`);
+}
+
+function routeTitle(pathname: string) {
+  const segment = pathname.split("/").filter(Boolean)[1] ?? "App";
+  return segment
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function appDefinitionFromDashboardRoute(url: string): DesktopAppDefinition | undefined {
+  const normalized = dashboardRouteFromHref(url);
+  if (!normalized) return undefined;
+
+  const parsed = new URL(normalized, "http://talome.local");
+  if (parsed.pathname === "/dashboard") return undefined;
+
+  const fixedApp = DESKTOP_APPS
+    .filter((app) => routeMatchesApp(parsed.pathname, app.url))
+    .sort((a, b) => b.url.length - a.url.length)[0];
+  if (fixedApp) return { ...fixedApp, url: normalized };
+
+  const navItem = allNav
+    .filter((item) => !item.action && routeMatchesApp(parsed.pathname, item.url))
+    .sort((a, b) => b.url.length - a.url.length)[0];
+  if (navItem) return { ...appDefinitionFromNav(navItem), url: normalized };
+
+  const rootUrl = `/${parsed.pathname.split("/").filter(Boolean).slice(0, 2).join("/")}`;
+  return {
+    id: appIdFromUrl(rootUrl),
+    title: routeTitle(parsed.pathname),
+    url: normalized,
+    icon: Home01Icon,
+    minimum: { width: 440, height: 340 },
+  };
+}
+
 const pinnableTalomeAppById = new Map(
   allNav
     .filter((item) => !item.action && item.url !== "/dashboard")
@@ -372,8 +417,6 @@ function playerAppDefinition(title: string, url: string): DesktopAppDefinition {
 }
 
 function resolveAppDefinition(appId: string, url: string, title?: string) {
-  const fixed = appById.get(appId);
-  if (fixed) return fixed;
   if (
     appId === PLAYER_APP_ID &&
     title &&
@@ -381,8 +424,9 @@ function resolveAppDefinition(appId: string, url: string, title?: string) {
   ) {
     return playerAppDefinition(title, url);
   }
-  const navItem = allNav.find((item) => item.url === url);
-  if (navItem) return appDefinitionFromNav(navItem);
+
+  const dashboardApp = appDefinitionFromDashboardRoute(url);
+  if (dashboardApp?.id === appId) return dashboardApp;
 
   if (appId.startsWith(SERVICE_APP_PREFIX) && title) {
     try {
@@ -1112,6 +1156,62 @@ export function DesktopExperience() {
     setActiveWindowId(next.id);
   }, [area, canUseApp, focusWindow, restoreWindow, windows]);
 
+  const openDashboardRoute = useCallback((url: string) => {
+    const normalized = dashboardRouteFromHref(url);
+    if (!normalized) return;
+    const pathname = normalized.split(/[?#]/, 1)[0];
+    if (pathname === "/dashboard") {
+      setLaunchpadOpen(false);
+      setControlCenterNavigationDirection("push");
+      setControlCenterView("dashboard");
+      setControlCenterOpen(true);
+      return;
+    }
+
+    const app = appDefinitionFromDashboardRoute(normalized);
+    if (app) openApp(app);
+  }, [openApp]);
+
+  useEffect(() => {
+    const handleDesktopRouteRequest = (event: Event) => {
+      const route = desktopRouteFromEvent(event);
+      if (route) openDashboardRoute(route);
+    };
+    window.addEventListener(DESKTOP_OPEN_ROUTE_EVENT, handleDesktopRouteRequest);
+    return () => window.removeEventListener(
+      DESKTOP_OPEN_ROUTE_EVENT,
+      handleDesktopRouteRequest,
+    );
+  }, [openDashboardRoute]);
+
+  useEffect(() => {
+    const handleDesktopLink = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented
+        || event.button !== 0
+        || event.metaKey
+        || event.ctrlKey
+        || event.shiftKey
+        || event.altKey
+      ) return;
+
+      const target = event.target;
+      const anchor = target instanceof Element
+        ? target.closest<HTMLAnchorElement>("a[href]")
+        : null;
+      if (!anchor || anchor.dataset.desktopNavigation === "bypass") return;
+      if (anchor.download || (anchor.target && anchor.target !== "_self")) return;
+
+      const route = dashboardRouteFromHref(anchor.href);
+      if (!route) return;
+      event.preventDefault();
+      openDashboardRoute(route);
+    };
+
+    document.addEventListener("click", handleDesktopLink, true);
+    return () => document.removeEventListener("click", handleDesktopLink, true);
+  }, [openDashboardRoute]);
+
   const launchNavItem = useCallback((item: NavItem) => {
     setLaunchpadOpen(false);
     if (item.url === "/dashboard") return;
@@ -1459,7 +1559,7 @@ export function DesktopExperience() {
           <DropdownMenuContent align="start" className="w-48">
             <DropdownMenuLabel>Talome</DropdownMenuLabel>
             <DropdownMenuItem asChild>
-              <Link href="/dashboard">
+              <Link href="/dashboard" data-desktop-navigation="bypass">
                 Classic mode
                 <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="ml-auto" />
               </Link>

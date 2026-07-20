@@ -9,6 +9,13 @@ import { Widget, WidgetHeader } from "./widget";
 import { useDownloads } from "@/hooks/use-downloads";
 import type { DownloadQueueItem, DownloadTorrent } from "@talome/types";
 import { WidgetList, WidgetListState } from "./list-widget";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+
+function openDownloads() {
+  if (!requestDesktopNavigation("/dashboard/media?tab=downloads")) {
+    window.location.assign("/dashboard/media?tab=downloads");
+  }
+}
 
 function formatSpeed(bps: number): string {
   if (!bps) return "";
@@ -104,7 +111,7 @@ export function ActiveDownloadsWidget() {
           toast.success("Download complete", {
             action: {
               label: "View",
-              onClick: () => window.location.assign("/dashboard/media?tab=downloads"),
+              onClick: openDownloads,
             },
           });
         }
@@ -125,7 +132,7 @@ export function ActiveDownloadsWidget() {
           toast.success(`Downloaded: ${item?.title ?? "item"}`, {
             action: {
               label: "View",
-              onClick: () => window.location.assign("/dashboard/media?tab=downloads"),
+              onClick: openDownloads,
             },
           });
         }

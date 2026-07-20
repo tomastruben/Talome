@@ -58,6 +58,7 @@ import type { Container, ServiceStack, SearchResult } from "@talome/types";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { QUALITY_TIERS, type QualityTier } from "@talome/types";
 import type { MediaSearchResult } from "@talome/types";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 // ── Nav commands ──────────────────────────────────────────────────────────────
 
@@ -393,7 +394,7 @@ export function CommandPalette() {
   const navigate = useCallback(
     (path: string) => {
       handleOpenChange(false);
-      router.push(path);
+      if (!requestDesktopNavigation(path)) router.push(path);
     },
     [router, handleOpenChange]
   );
@@ -417,6 +418,7 @@ export function CommandPalette() {
 
   const openTerminal = useCallback(() => {
     handleOpenChange(false);
+    if (requestDesktopNavigation("/dashboard/terminal")) return;
     setTerminalOpen(true);
   }, [handleOpenChange, setTerminalOpen]);
 
@@ -426,9 +428,8 @@ export function CommandPalette() {
   }, [startNew]);
 
   const openFullScreen = useCallback(() => {
-    handleOpenChange(false);
-    router.push(`/dashboard/assistant?from=${encodeURIComponent(pathname)}`);
-  }, [handleOpenChange, router, pathname]);
+    navigate(`/dashboard/assistant?from=${encodeURIComponent(pathname)}`);
+  }, [navigate, pathname]);
 
   // Fallback to assistant on Enter with no matching nav
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
@@ -648,8 +649,7 @@ export function CommandPalette() {
                   variant="outline"
                   className="w-full gap-2 mb-2"
                   onClick={() => {
-                    handleOpenChange(false);
-                    router.push(`/dashboard/media/${mediaDetail.type === "tv" ? "tv" : "movie"}/${addedServiceId}`);
+                    navigate(`/dashboard/media/${mediaDetail.type === "tv" ? "tv" : "movie"}/${addedServiceId}`);
                   }}
                 >
                   <HugeiconsIcon icon={Film01Icon} size={14} />

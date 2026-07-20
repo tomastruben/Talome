@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { DesktopLink } from "@/components/desktop/desktop-link";
 import {
   HugeiconsIcon,
   Message01Icon,
@@ -45,9 +45,9 @@ function ActionTile({ action, className }: { action: Action; className?: string 
 
   if (action.href) {
     return (
-      <Link href={action.href} className="block h-full">
+      <DesktopLink href={action.href} className="block h-full">
         {content}
-      </Link>
+      </DesktopLink>
     );
   }
 

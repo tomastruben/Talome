@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Widget, WidgetHeader } from "./widget";
 import { WidgetList, WidgetListSkeleton, WidgetListState } from "./list-widget";
 import { cn } from "@/lib/utils";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import type { Container, ServiceStack } from "@talome/types";
 
 // ── Icon with status badge ───────────────────────────────────────────────────
@@ -255,14 +256,17 @@ export function ServicesWidget() {
   const { handleSubmit } = useAssistant();
   const quickLook = useQuickLook();
   const router = useRouter();
+  const openRoute = useCallback((url: string) => {
+    if (!requestDesktopNavigation(url)) router.push(url);
+  }, [router]);
 
   const askTalome = useCallback(() => {
     void handleSubmit(
       "The Services widget can't load container data from the Talome server. " +
       "Can you check if Docker is accessible and why the containers API might be failing?"
     );
-    router.push("/dashboard/assistant");
-  }, [handleSubmit, router]);
+    openRoute("/dashboard/assistant");
+  }, [handleSubmit, openRoute]);
 
   const totalContainers = stacks.reduce((sum, s) => sum + s.totalCount, 0);
 
@@ -310,7 +314,7 @@ export function ServicesWidget() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => router.push("/dashboard/apps")}
+              onClick={() => openRoute("/dashboard/apps")}
               className="h-7 text-xs text-muted-foreground hover:text-foreground"
             >
               Browse apps

@@ -1,4 +1,6 @@
-import Link from "next/link";
+"use client";
+
+import { DesktopLink } from "@/components/desktop/desktop-link";
 import { HugeiconsIcon, ArrowRight01Icon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
@@ -32,13 +34,13 @@ export function WidgetHeader({ title, href, hrefLabel, actions }: WidgetHeaderPr
       <div className="flex items-center gap-2">
         {actions}
         {href && (
-          <Link
+          <DesktopLink
             href={href}
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             {hrefLabel ?? "View all"}
             <HugeiconsIcon icon={ArrowRight01Icon} size={11} />
-          </Link>
+          </DesktopLink>
         )}
       </div>
     </div>

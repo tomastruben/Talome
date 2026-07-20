@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import Link from "next/link";
+import { DesktopLink } from "@/components/desktop/desktop-link";
 import { Widget, WidgetHeader } from "./widget";
 import { CORE_URL } from "@/lib/constants";
 
@@ -48,7 +48,7 @@ export function OllamaStatusWidget() {
   return (
     <Widget>
       <WidgetHeader title="Local AI" />
-      <Link href="/dashboard/settings/ai-provider" className="block min-h-0 flex-1 px-4 py-3 hover:bg-muted/20 transition-colors">
+      <DesktopLink href="/dashboard/settings/ai-provider" className="block min-h-0 flex-1 px-4 py-3 hover:bg-muted/20 transition-colors">
         {!isConfigured ? (
           <p className="text-xs text-muted-foreground">Not configured</p>
         ) : (
@@ -80,7 +80,7 @@ export function OllamaStatusWidget() {
             )}
           </div>
         )}
-      </Link>
+      </DesktopLink>
     </Widget>
   );
 }

@@ -7,6 +7,7 @@ import { CORE_URL } from "@/lib/constants";
 import { HugeiconsIcon, BookOpen01Icon } from "@/components/icons";
 import { Widget, WidgetHeader } from "./widget";
 import { WidgetList, WidgetListState, WidgetListSkeleton } from "./list-widget";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 interface AudiobookEntity {
   id: string;
@@ -52,6 +53,10 @@ const fetcher = async (url: string) => {
 
 export function AudiobooksWidget({ libraryId }: { libraryId?: string }) {
   const router = useRouter();
+  const openAudiobook = (id: string) => {
+    const url = `/dashboard/audiobooks/${id}`;
+    if (!requestDesktopNavigation(url)) router.push(url);
+  };
 
   // If no library ID, fetch libraries first
   const { data: libraries } = useSWR<{ id: string; name: string }[]>(
@@ -97,7 +102,7 @@ export function AudiobooksWidget({ libraryId }: { libraryId?: string }) {
                 <div
                   key={item.id}
                   className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-muted/20 transition-colors"
-                  onClick={() => router.push(`/dashboard/audiobooks/${item.id}`)}
+                  onClick={() => openAudiobook(item.id)}
                 >
                   {/* Mini cover */}
                   <div className="relative w-9 h-9 rounded bg-muted/40 overflow-hidden shrink-0">

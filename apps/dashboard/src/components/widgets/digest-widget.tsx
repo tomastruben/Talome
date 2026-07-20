@@ -2,7 +2,7 @@
 
 import useSWR from "swr";
 import { CORE_URL } from "@/lib/constants";
-import Link from "next/link";
+import { DesktopLink } from "@/components/desktop/desktop-link";
 import { HugeiconsIcon, ArrowRight01Icon, SparklesIcon } from "@/components/icons";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Widget, WidgetHeader } from "./widget";
@@ -75,13 +75,13 @@ export function DigestWidget() {
             </span>
           )}
         </div>
-        <Link
+        <DesktopLink
           href="/dashboard/assistant"
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           Open in Assistant
           <HugeiconsIcon icon={ArrowRight01Icon} size={11} />
-        </Link>
+        </DesktopLink>
       </div>
       <WidgetList className="px-4 py-4 text-sm prose-sm">
         <MessageResponse>{digest.content}</MessageResponse>

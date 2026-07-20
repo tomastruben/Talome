@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import Link from "next/link";
+import { DesktopLink } from "@/components/desktop/desktop-link";
 import { Widget, WidgetHeader } from "./widget";
 import { CORE_URL } from "@/lib/constants";
 
@@ -46,7 +46,7 @@ export function BackupStatusWidget() {
   return (
     <Widget>
       <WidgetHeader title="Backups" />
-      <Link href="/dashboard/settings/backups" className="block min-h-0 flex-1 px-4 py-3 hover:bg-muted/20 transition-colors">
+      <DesktopLink href="/dashboard/settings/backups" className="block min-h-0 flex-1 px-4 py-3 hover:bg-muted/20 transition-colors">
         <div className="grid gap-2">
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">Last backup</span>
@@ -73,7 +73,7 @@ export function BackupStatusWidget() {
             </div>
           )}
         </div>
-      </Link>
+      </DesktopLink>
     </Widget>
   );
 }
