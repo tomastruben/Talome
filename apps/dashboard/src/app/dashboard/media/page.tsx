@@ -1409,7 +1409,7 @@ function MediaPageInner({
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5">
       {/* Controls: tabs + search + sort */}
-      <DesktopAppToolbar className="page-controls-row min-w-0 max-w-full flex-wrap justify-between gap-2">
+      <DesktopAppToolbar className="page-controls-row min-w-0 flex-wrap justify-between gap-2">
         <Tabs
           value={tab}
           onValueChange={(v) => {
