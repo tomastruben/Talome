@@ -155,10 +155,10 @@ export function clampDesktopBounds(
 
 export function maximizedDesktopBounds(area: DesktopArea): DesktopBounds {
   return {
-    x: EDGE_INSET,
-    y: EDGE_INSET,
-    width: Math.max(0, area.width - EDGE_INSET * 2),
-    height: Math.max(0, area.height - EDGE_INSET * 2),
+    x: 0,
+    y: 0,
+    width: Math.max(0, area.width),
+    height: Math.max(0, area.height),
   };
 }
 

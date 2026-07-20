@@ -280,9 +280,12 @@ export const DesktopWindow = memo(function DesktopWindow({
       data-desktop-window={id}
       aria-label={`${title} window`}
       className={cn(
-        "absolute flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card",
+        "absolute flex min-h-0 flex-col overflow-hidden bg-card",
         "transition-[border-color,opacity] duration-150 ease-out",
-        active ? "border-foreground/30" : "border-border opacity-95",
+        maximized
+          ? "rounded-none border-0"
+          : "rounded-xl border",
+        !maximized && (active ? "border-foreground/30" : "border-border opacity-95"),
       )}
       style={{
         left: bounds.x,

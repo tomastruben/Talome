@@ -82,6 +82,23 @@ describe("DesktopWindow", () => {
     expect(screen.getByText("Files")).toHaveAttribute("data-title-placement", "leading");
   });
 
+  it("removes inset window chrome when maximized", () => {
+    render(
+      <DesktopWindow
+        {...defaultProps}
+        maximized
+        bounds={{ x: 0, y: 0, width: 1400, height: 820 }}
+      >
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    const windowRegion = screen.getByRole("region", { name: "Files window" });
+    expect(windowRegion).toHaveClass("rounded-none", "border-0");
+    expect(windowRegion).not.toHaveClass("rounded-xl");
+    expect(screen.queryByRole("button", { name: "Resize Files" })).not.toBeInTheDocument();
+  });
+
   it("renders a titlebar menu and dispatches its selected item", async () => {
     const onAction = vi.fn();
 

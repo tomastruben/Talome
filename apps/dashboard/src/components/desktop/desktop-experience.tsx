@@ -603,6 +603,11 @@ export function DesktopExperience() {
     () => new Map(windows.map((windowModel) => [windowModel.appId, windowModel])),
     [windows],
   );
+  const activeWindowMaximized = windows.some((windowModel) => (
+    windowModel.id === activeWindowId
+    && windowModel.maximized
+    && !windowModel.minimized
+  ));
 
   useEffect(() => {
     if (
@@ -1443,13 +1448,14 @@ export function DesktopExperience() {
           onLaunchService={launchService}
         />
 
-        <nav
-          aria-label="Desktop applications"
-          className={cn(
-            "absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border border-border bg-card/90 p-2 backdrop-blur-md transition-opacity duration-150",
-            desktopWidgetsEditing && "pointer-events-none opacity-45",
-          )}
-        >
+        {!activeWindowMaximized ? (
+          <nav
+            aria-label="Desktop applications"
+            className={cn(
+              "absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border border-border bg-card/90 p-2 backdrop-blur-md transition-opacity duration-150",
+              desktopWidgetsEditing && "pointer-events-none opacity-45",
+            )}
+          >
           <ContextMenu>
             <ContextMenuTrigger asChild>
               <span className="flex">
@@ -1549,7 +1555,8 @@ export function DesktopExperience() {
               </div>
             );
           })}
-        </nav>
+          </nav>
+        ) : null}
       </div>
 
       <DesktopWallpaperDialog

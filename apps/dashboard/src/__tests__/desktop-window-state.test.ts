@@ -31,12 +31,12 @@ describe("desktop window geometry", () => {
     ).toEqual({ x: 40, y: 40, width: 1248, height: 728 });
   });
 
-  it("uses an inset maximized frame", () => {
+  it("fills the desktop area with a maximized frame", () => {
     expect(maximizedDesktopBounds({ width: 1440, height: 860 })).toEqual({
-      x: 16,
-      y: 16,
-      width: 1408,
-      height: 828,
+      x: 0,
+      y: 0,
+      width: 1440,
+      height: 860,
     });
   });
 
