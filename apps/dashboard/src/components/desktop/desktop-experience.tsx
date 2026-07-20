@@ -174,12 +174,18 @@ const CONTROL_CENTER_PAGE_TRANSITION = {
 const CONTROL_CENTER_PAGE_VARIANTS = {
   enter: (direction: DesktopControlCenterNavigationDirection) => ({
     x: direction === "push" ? "100%" : "-22%",
-    opacity: 0.72,
+    opacity: direction === "push" ? 1 : 0.86,
+    zIndex: direction === "push" ? 1 : 0,
   }),
-  center: { x: "0%", opacity: 1 },
+  center: (direction: DesktopControlCenterNavigationDirection) => ({
+    x: "0%",
+    opacity: 1,
+    zIndex: direction === "push" ? 1 : 0,
+  }),
   exit: (direction: DesktopControlCenterNavigationDirection) => ({
     x: direction === "push" ? "-22%" : "100%",
-    opacity: 0.72,
+    opacity: direction === "push" ? 0.86 : 1,
+    zIndex: direction === "push" ? 0 : 1,
   }),
 };
 
@@ -1439,6 +1445,7 @@ export function DesktopExperience() {
                   <motion.div
                     key={controlCenterView}
                     data-control-center-view={controlCenterView}
+                    className="relative w-full bg-background"
                     custom={controlCenterNavigationDirection}
                     variants={CONTROL_CENTER_PAGE_VARIANTS}
                     initial={reduceMotion ? false : "enter"}
