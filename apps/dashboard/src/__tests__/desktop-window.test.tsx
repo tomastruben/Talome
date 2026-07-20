@@ -99,6 +99,19 @@ describe("DesktopWindow", () => {
     expect(screen.queryByRole("button", { name: "Resize Files" })).not.toBeInTheDocument();
   });
 
+  it("removes a disabled window and its controls from interaction", () => {
+    render(
+      <DesktopWindow {...defaultProps} disabled>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    const windowRegion = document.querySelector('[data-desktop-window="files"]');
+    expect(windowRegion).toHaveAttribute("inert");
+    expect(windowRegion).toHaveAttribute("aria-hidden", "true");
+    expect(windowRegion).toHaveClass("pointer-events-none");
+  });
+
   it("renders a titlebar menu and dispatches its selected item", async () => {
     const onAction = vi.fn();
 

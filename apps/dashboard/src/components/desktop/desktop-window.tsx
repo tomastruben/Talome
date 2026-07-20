@@ -50,6 +50,7 @@ interface DesktopWindowProps {
   minimum: Pick<DesktopBounds, "width" | "height">;
   active: boolean;
   maximized: boolean;
+  disabled?: boolean;
   zIndex: number;
   actions?: DesktopAppActionDescriptor[];
   children: ReactNode;
@@ -85,6 +86,7 @@ export const DesktopWindow = memo(function DesktopWindow({
   minimum,
   active,
   maximized,
+  disabled = false,
   zIndex,
   actions = [],
   children,
@@ -279,6 +281,8 @@ export const DesktopWindow = memo(function DesktopWindow({
       ref={windowRef}
       data-desktop-window={id}
       aria-label={`${title} window`}
+      aria-hidden={disabled || undefined}
+      inert={disabled}
       className={cn(
         "absolute flex min-h-0 flex-col overflow-hidden bg-card",
         "transition-[border-color,opacity] duration-150 ease-out",
@@ -286,6 +290,7 @@ export const DesktopWindow = memo(function DesktopWindow({
           ? "rounded-none border-0"
           : "rounded-xl border",
         !maximized && (active ? "border-foreground/30" : "border-border opacity-95"),
+        disabled && "pointer-events-none",
       )}
       style={{
         left: bounds.x,

@@ -476,6 +476,7 @@ export function DesktopExperience() {
   const appFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
   const desktopWindowRefs = useRef(new Map<string, HTMLElement>());
   const dockButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const desktopWidgetDoneButtonRef = useRef<HTMLButtonElement>(null);
   const draggingDockAppIdRef = useRef<string | undefined>(undefined);
   const minimizingWindowIdsRef = useRef(new Set<string>());
   const restoringWindowIdsRef = useRef(new Set<string>());
@@ -684,10 +685,31 @@ export function DesktopExperience() {
     if (!desktopWidgetsEditing) return;
 
     const finishEditing = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDesktopWidgetsEditing(false);
+      const opensGlobalPalette = (
+        ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k")
+        || (event.key === "/" && !event.metaKey && !event.ctrlKey)
+      );
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setDesktopWidgetsEditing(false);
+        return;
+      }
+      if (opensGlobalPalette) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     };
     window.addEventListener("keydown", finishEditing, true);
     return () => window.removeEventListener("keydown", finishEditing, true);
+  }, [desktopWidgetsEditing]);
+
+  useEffect(() => {
+    if (!desktopWidgetsEditing) return;
+    const frame = window.requestAnimationFrame(() => {
+      desktopWidgetDoneButtonRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [desktopWidgetsEditing]);
 
   useEffect(() => {
@@ -1001,6 +1023,8 @@ export function DesktopExperience() {
   const openDesktopWidgetEditor = () => {
     setControlCenterOpen(false);
     setLaunchpadOpen(false);
+    setWallpaperDialogOpen(false);
+    setDashboardEditing(false);
     setDesktopWidgetsEditing(true);
   };
 
@@ -1087,8 +1111,18 @@ export function DesktopExperience() {
   if (!desktopModeAvailable) return null;
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
-      <header className="relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b border-border/70 bg-background/90 px-3 backdrop-blur-md">
+    <div
+      data-desktop-widget-editing={desktopWidgetsEditing ? "true" : undefined}
+      className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground"
+    >
+      <header
+        aria-hidden={desktopWidgetsEditing || undefined}
+        inert={desktopWidgetsEditing}
+        className={cn(
+          "relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b border-border/70 bg-background/90 px-3 backdrop-blur-md transition-opacity duration-150",
+          desktopWidgetsEditing && "pointer-events-none opacity-45",
+        )}
+      >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -1265,8 +1299,25 @@ export function DesktopExperience() {
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
+              aria-hidden={desktopWidgetsEditing || undefined}
+              inert={desktopWidgetsEditing}
+              tabIndex={desktopWidgetsEditing ? -1 : 0}
               className="absolute inset-0 z-0 overflow-hidden"
               aria-label="Desktop background"
+              onKeyDown={(event) => {
+                if (!(
+                  (event.shiftKey && event.key === "F10")
+                  || event.key === "ContextMenu"
+                )) return;
+                event.preventDefault();
+                const bounds = event.currentTarget.getBoundingClientRect();
+                event.currentTarget.dispatchEvent(new MouseEvent("contextmenu", {
+                  bubbles: true,
+                  cancelable: true,
+                  clientX: bounds.left + bounds.width / 2,
+                  clientY: bounds.top + bounds.height / 2,
+                }));
+              }}
             >
               {wallpaperUrl ? (
                 <Image
@@ -1305,6 +1356,7 @@ export function DesktopExperience() {
           {desktopWidgetsEditing ? (
             <motion.div
               key="desktop-widget-edit-backdrop"
+              data-desktop-widget-edit-blocker
               className="absolute inset-0 z-[1000] bg-background/45 backdrop-blur-[2px]"
               aria-hidden="true"
               initial={{ opacity: 0 }}
@@ -1359,6 +1411,7 @@ export function DesktopExperience() {
                 Drag to reorder · Esc to finish
               </span>
               <button
+                ref={desktopWidgetDoneButtonRef}
                 type="button"
                 data-desktop-widget-edit-done
                 className="flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-85"
@@ -1376,6 +1429,7 @@ export function DesktopExperience() {
           <DesktopDriveIcons
             onOpen={openDesktopDrive}
             onHide={() => updateShowDesktopDrives(false)}
+            disabled={desktopWidgetsEditing}
           />
         ) : null}
 
@@ -1402,6 +1456,7 @@ export function DesktopExperience() {
               minimum={app.minimum}
               active={windowModel.id === activeWindowId}
               maximized={windowModel.maximized}
+              disabled={desktopWidgetsEditing}
               zIndex={windowModel.zIndex}
               actions={appChrome?.actions}
               windowRef={(element) => {
@@ -1451,6 +1506,8 @@ export function DesktopExperience() {
         {!activeWindowMaximized ? (
           <nav
             aria-label="Desktop applications"
+            aria-hidden={desktopWidgetsEditing || undefined}
+            inert={desktopWidgetsEditing}
             className={cn(
               "absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border border-border bg-card/90 p-2 backdrop-blur-md transition-opacity duration-150",
               desktopWidgetsEditing && "pointer-events-none opacity-45",

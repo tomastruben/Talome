@@ -66,9 +66,14 @@ function driveIcon(path: string, mount?: DiskMount): IconSvgElement {
 interface DesktopDriveIconsProps {
   onOpen: (path: string) => void;
   onHide: () => void;
+  disabled?: boolean;
 }
 
-export function DesktopDriveIcons({ onOpen, onHide }: DesktopDriveIconsProps) {
+export function DesktopDriveIcons({
+  onOpen,
+  onHide,
+  disabled = false,
+}: DesktopDriveIconsProps) {
   const { stats } = useSystemStats();
   const { data } = useSWR<FileRootsResponse>(
     `${CORE_URL}/api/files/list`,
@@ -98,8 +103,13 @@ export function DesktopDriveIcons({ onOpen, onHide }: DesktopDriveIconsProps) {
 
   return (
     <div
-      className="absolute top-6 right-6 z-[1] flex w-24 flex-col items-center gap-4"
+      className={cn(
+        "absolute top-6 right-6 z-[1] flex w-24 flex-col items-center gap-4",
+        disabled && "pointer-events-none",
+      )}
       aria-label="Desktop drives"
+      aria-hidden={disabled || undefined}
+      inert={disabled}
     >
       {drives.map((drive) => (
         <ContextMenu key={drive.path}>
