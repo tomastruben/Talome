@@ -624,6 +624,7 @@ export function DesktopExperience() {
   const [wallpaperDialogOpen, setWallpaperDialogOpen] = useState(false);
   const [wallpaperUrl, setWallpaperUrl] = useState<string>();
   const [showDesktopDrives, setShowDesktopDrives] = useState(true);
+  const [selectedDesktopDrivePath, setSelectedDesktopDrivePath] = useState<string>();
   const [restored, setRestored] = useState(false);
   const [dockRestored, setDockRestored] = useState(false);
   const [pinnedServiceApps, setPinnedServiceApps] = useState<
@@ -1234,7 +1235,14 @@ export function DesktopExperience() {
     } catch {
       // Keep the current-session preference even when storage is unavailable.
     }
+    if (!show) setSelectedDesktopDrivePath(undefined);
     setShowDesktopDrives(show);
+  }, []);
+
+  const clearDesktopDriveSelection = useCallback((event: SyntheticEvent<HTMLElement>) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest("[data-desktop-drive-group]")) return;
+    setSelectedDesktopDrivePath(undefined);
   }, []);
 
   const openDesktopDrive = useCallback((path: string) => {
@@ -1285,6 +1293,8 @@ export function DesktopExperience() {
     <div
       data-desktop-widget-editing={desktopWidgetsEditing ? "true" : undefined}
       className="relative flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground"
+      onPointerDownCapture={clearDesktopDriveSelection}
+      onClickCapture={clearDesktopDriveSelection}
     >
       {wallpaperUrl ? (
         <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden="true">
@@ -1643,6 +1653,8 @@ export function DesktopExperience() {
           <DesktopDriveIcons
             onOpen={openDesktopDrive}
             onHide={() => updateShowDesktopDrives(false)}
+            selectedPath={selectedDesktopDrivePath}
+            onSelectionChange={setSelectedDesktopDrivePath}
             disabled={desktopWidgetsEditing}
           />
         ) : null}

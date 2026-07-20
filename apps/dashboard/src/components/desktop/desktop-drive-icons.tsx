@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import useSWR from "swr";
 import type { DiskMount } from "@talome/types";
 import {
@@ -66,12 +66,16 @@ function driveIcon(path: string, mount?: DiskMount): IconSvgElement {
 interface DesktopDriveIconsProps {
   onOpen: (path: string) => void;
   onHide: () => void;
+  selectedPath?: string;
+  onSelectionChange: (path?: string) => void;
   disabled?: boolean;
 }
 
 export function DesktopDriveIcons({
   onOpen,
   onHide,
+  selectedPath,
+  onSelectionChange,
   disabled = false,
 }: DesktopDriveIconsProps) {
   const { stats } = useSystemStats();
@@ -80,8 +84,6 @@ export function DesktopDriveIcons({
     fetchFileRoots,
     { refreshInterval: 30_000, revalidateOnFocus: false },
   );
-  const [selectedPath, setSelectedPath] = useState<string>();
-
   const drives = useMemo(() => {
     const mounts = stats?.disk.mounts ?? [];
     const roots = Array.from(new Set(data?.allowedRoots ?? []));
@@ -103,6 +105,7 @@ export function DesktopDriveIcons({
 
   return (
     <div
+      data-desktop-drive-group
       className={cn(
         "absolute top-6 right-6 z-[1] flex w-24 flex-col items-center gap-4",
         disabled && "pointer-events-none",
@@ -123,7 +126,7 @@ export function DesktopDriveIcons({
               aria-label={`Open ${drive.label} drive`}
               aria-pressed={selectedPath === drive.path}
               title={`${drive.label} — ${drive.detail}`}
-              onClick={() => setSelectedPath(drive.path)}
+              onClick={() => onSelectionChange(drive.path)}
               onDoubleClick={() => onOpen(drive.path)}
               onKeyDown={(event) => {
                 if (event.key !== "Enter") return;
