@@ -7,7 +7,7 @@ const log = createLogger("media");
 import sharp from "sharp";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
@@ -21,7 +21,7 @@ import {
   resolveMediaFilePath,
 } from "../utils/media-paths.js";
 import {
-  probeFile, startHls, hlsOutDirByHash, stopHls, touchJob, hasFfmpeg,
+  probeFileAsync, startHls, hlsOutDirByHash, stopHls, touchJob, hasFfmpeg,
   buildStreamResponse, startTransmux, stopTransmux, transmuxJobs, TRANSMUX_ROOT,
 } from "./files.js";
 import { parseContainerFormat } from "../utils/media-format.js";
@@ -442,6 +442,7 @@ async function serviceGet(service: string, path: string): Promise<unknown> {
   const url = `${baseUrl}/api/v3${path}`;
   const res = await fetch(url, {
     headers: apiKey ? { "X-Api-Key": apiKey } : {},
+    signal: AbortSignal.timeout(4_000),
   });
   if (!res.ok) throw new Error(`${service} API ${res.status}: ${res.statusText}`);
   return res.json();
@@ -460,6 +461,7 @@ async function servicePost(service: string, path: string, body: unknown): Promis
       ...(apiKey ? { "X-Api-Key": apiKey } : {}),
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(8_000),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -2270,14 +2272,16 @@ async function getMediaRoots(): Promise<string[]> {
   const now = Date.now();
   if (cachedMediaRoots && now - mediaRootsCacheTime < MEDIA_ROOTS_TTL) return cachedMediaRoots;
   const containerRoots: string[] = [];
-  try {
-    const sr = await serviceGet("sonarr", "/rootfolder") as ArrRootFolder[];
-    for (const r of sr) if (r.path) containerRoots.push(r.path.replace(/\/$/, ""));
-  } catch { /* sonarr not configured */ }
-  try {
-    const rr = await serviceGet("radarr", "/rootfolder") as ArrRootFolder[];
-    for (const r of rr) if (r.path) containerRoots.push(r.path.replace(/\/$/, ""));
-  } catch { /* radarr not configured */ }
+  const [sonarrRoots, radarrRoots] = await Promise.allSettled([
+    serviceGet("sonarr", "/rootfolder"),
+    serviceGet("radarr", "/rootfolder"),
+  ]);
+  for (const result of [sonarrRoots, radarrRoots]) {
+    if (result.status !== "fulfilled" || !Array.isArray(result.value)) continue;
+    for (const root of result.value as ArrRootFolder[]) {
+      if (root.path) containerRoots.push(root.path.replace(/\/$/, ""));
+    }
+  }
 
   // Map container root paths → host paths
   const mounts = await getArrMounts();
@@ -2337,7 +2341,7 @@ media.get("/probe", async (c) => {
   // If an optimized MP4 exists (stream endpoint will serve it), probe that instead
   const optimizedPath = findOptimizedPath(hostPath);
   const probePath = optimizedPath ?? hostPath;
-  const result = probeFile(probePath);
+  const result = await probeFileAsync(probePath);
 
   return c.json({ ...result, optimized: !!optimizedPath });
 });
@@ -2354,7 +2358,7 @@ media.get("/hls-start", async (c) => {
   const audioTrack = parseInt(c.req.query("audioTrack") ?? "0", 10);
   const seekTo = parseFloat(c.req.query("seekTo") ?? "0");
   const transcodeVideo = c.req.query("transcodeVideo") === "1";
-  const probe = probeFile(hostPath);
+  const probe = await probeFileAsync(hostPath);
   const hash = startHls(hostPath, audioTrack, seekTo, probe.videoCodec, transcodeVideo, probe.videoColorTransfer ?? "", probe.videoColorPrimaries ?? "", probe.videoColorSpace ?? "");
   return c.json({ hash, ...probe });
 });
@@ -2437,8 +2441,9 @@ media.get("/transmux-start", async (c) => {
   if (!(await authorizeMediaPath(hostPath))) return c.json({ error: "Access denied" }, 403);
   if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
-  const probe = probeFile(hostPath);
-  const hash = startTransmux(hostPath, probe.videoCodec);
+  const probe = await probeFileAsync(hostPath);
+  const primaryAudioCodec = probe.audio[0]?.codec ?? "";
+  const hash = startTransmux(hostPath, probe.videoCodec, probe.duration, primaryAudioCodec);
   return c.json({ hash, ...probe });
 });
 
@@ -2448,7 +2453,11 @@ media.get("/transmux-status/:hash", (c) => {
   if (!/^[a-f0-9]+$/.test(hash)) return c.json({ error: "Invalid hash" }, 400);
 
   const job = transmuxJobs.get(hash);
-  if (job) return c.json({ ready: job.done && !job.error, error: job.error });
+  if (job) {
+    const progress = job.durationSecs > 0 ? Math.min(job.progressSecs / job.durationSecs, 1) : 0;
+    const streamable = !job.error && (job.done || (existsSync(job.outPath) && statSync(job.outPath).size > 1024));
+    return c.json({ ready: streamable, error: job.error, progress, done: job.done });
+  }
 
   const outPath = join(TRANSMUX_ROOT, `${hash}.mp4`);
   if (existsSync(outPath)) return c.json({ ready: true, error: false });
@@ -2610,6 +2619,12 @@ media.post("/jellyfin-playback", async (c) => {
   };
 
   const jfHeaders = { "X-Emby-Token": jellyfinKey };
+  const jellyfinDeadline = Date.now() + 1_200;
+  const jellyfinFetch = (input: string, init: RequestInit = {}) => {
+    const remaining = jellyfinDeadline - Date.now();
+    if (remaining <= 0) return Promise.reject(new Error("Jellyfin playback lookup timed out"));
+    return fetch(input, { ...init, signal: AbortSignal.timeout(remaining) });
+  };
 
   const matchByFilename = (item: JellyfinItem) => {
     if (item.Path && basename(item.Path) === fileName) return true;
@@ -2625,7 +2640,7 @@ media.post("/jellyfin-playback", async (c) => {
     searchUrl.searchParams.set("SearchTerm", searchTerm);
     searchUrl.searchParams.set("Limit", "20");
 
-    const searchRes = await fetch(searchUrl.toString(), { headers: jfHeaders });
+    const searchRes = await jellyfinFetch(searchUrl.toString(), { headers: jfHeaders });
     if (!searchRes.ok) return c.json({ available: false, reason: "jellyfin search failed" });
 
     const searchData = await searchRes.json() as { Items?: JellyfinItem[] };
@@ -2660,7 +2675,7 @@ media.post("/jellyfin-playback", async (c) => {
         retryUrl.searchParams.set("SearchTerm", term);
         retryUrl.searchParams.set("Limit", "30");
 
-        const retryRes = await fetch(retryUrl.toString(), { headers: jfHeaders });
+        const retryRes = await jellyfinFetch(retryUrl.toString(), { headers: jfHeaders });
         if (retryRes.ok) {
           const retryData = await retryRes.json() as { Items?: JellyfinItem[] };
           match = retryData.Items?.find(matchByFilename);
@@ -2677,7 +2692,7 @@ media.post("/jellyfin-playback", async (c) => {
       seriesUrl.searchParams.set("SearchTerm", searchTerm);
       seriesUrl.searchParams.set("Limit", "5");
 
-      const seriesRes = await fetch(seriesUrl.toString(), { headers: jfHeaders });
+      const seriesRes = await jellyfinFetch(seriesUrl.toString(), { headers: jfHeaders });
       if (seriesRes.ok) {
         const seriesData = await seriesRes.json() as { Items?: JellyfinItem[] };
         const series = seriesData.Items?.[0];
@@ -2686,7 +2701,7 @@ media.post("/jellyfin-playback", async (c) => {
           epsUrl.searchParams.set("Fields", "Path,MediaSources,UserData,Chapters");
           epsUrl.searchParams.set("Limit", "1000");
 
-          const epsRes = await fetch(epsUrl.toString(), { headers: jfHeaders });
+          const epsRes = await jellyfinFetch(epsUrl.toString(), { headers: jfHeaders });
           if (epsRes.ok) {
             const epsData = await epsRes.json() as { Items?: JellyfinItem[] };
             match = epsData.Items?.find(matchByFilename);
@@ -2698,7 +2713,7 @@ media.post("/jellyfin-playback", async (c) => {
     if (!match) return c.json({ available: false, reason: "not found in jellyfin" });
 
     // 2. Get first Jellyfin user ID (for PlaybackInfo)
-    const usersRes = await fetch(`${jellyfinUrl}/Users`, {
+    const usersRes = await jellyfinFetch(`${jellyfinUrl}/Users`, {
       headers: { "X-Emby-Token": jellyfinKey },
     });
     const users = usersRes.ok ? (await usersRes.json() as Array<{ Id: string }>) : [];
@@ -2706,7 +2721,7 @@ media.post("/jellyfin-playback", async (c) => {
 
     // 3. Call PlaybackInfo with browser DeviceProfile
     const pbUrl = `${jellyfinUrl}/Items/${match.Id}/PlaybackInfo?UserId=${userId}&api_key=${jellyfinKey}`;
-    const pbRes = await fetch(pbUrl, {
+    const pbRes = await jellyfinFetch(pbUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ DeviceProfile: BROWSER_DEVICE_PROFILE }),
@@ -2898,9 +2913,9 @@ media.post("/jellyfin-playback", async (c) => {
       baseUrl: string;
     } | null = null;
     try {
-      const trickRes = await fetch(
+      const trickRes = await jellyfinFetch(
         `${jellyfinUrl}/Users/${userId}/Items/${match.Id}?Fields=Trickplay&api_key=${jellyfinKey}`,
-        { headers: jfHeaders, signal: AbortSignal.timeout(5000) },
+        { headers: jfHeaders },
       );
       if (trickRes.ok) {
         const trickData = await trickRes.json() as {

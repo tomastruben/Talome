@@ -140,9 +140,9 @@ export function clampDesktopBounds(
   const maxHeight = Math.max(minimum.height, area.height - EDGE_INSET * 2);
   const width = Math.min(Math.max(bounds.width, minimum.width), maxWidth);
   const height = Math.min(Math.max(bounds.height, minimum.height), maxHeight);
-  const minX = Math.min(EDGE_INSET, area.width - MIN_VISIBLE_TITLEBAR);
+  const minX = 0;
   const maxX = Math.max(minX, area.width - Math.min(MIN_VISIBLE_TITLEBAR, width));
-  const minY = EDGE_INSET;
+  const minY = 0;
   const maxY = Math.max(minY, area.height - 44);
 
   return {

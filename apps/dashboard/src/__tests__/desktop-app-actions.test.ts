@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  DESKTOP_APP_ACTIONS_REQUEST_MESSAGE,
   parseDesktopAppActionsMessage,
+  parseDesktopAppActionsRequestMessage,
   parseDesktopAppActionTriggerMessage,
   parseDesktopAppFocusMessage,
   parseDesktopPlayerOpenMessage,
@@ -91,6 +93,13 @@ describe("desktop app action messages", () => {
       type: "talome:desktop-app-action-trigger",
       actionId: "",
     })).toBeNull();
+  });
+
+  it("accepts only desktop action refresh requests", () => {
+    expect(parseDesktopAppActionsRequestMessage({
+      type: DESKTOP_APP_ACTIONS_REQUEST_MESSAGE,
+    })).toEqual({ type: DESKTOP_APP_ACTIONS_REQUEST_MESSAGE });
+    expect(parseDesktopAppActionsRequestMessage({ type: "other" })).toBeNull();
   });
 
   it("accepts only desktop app focus messages", () => {

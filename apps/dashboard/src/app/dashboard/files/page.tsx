@@ -317,50 +317,52 @@ function RootsList({ roots, onSelect }: { roots: string[]; onSelect: (root: stri
   const mounts = stats?.disk.mounts ?? [];
 
   return (
-    <div className="flex flex-col gap-3 max-w-lg mx-auto px-4 pt-2">
-      {roots.map((root) => {
-        const { label, icon } = rootLabel(root);
-        const mount = findMountForRoot(root, mounts);
-        const freeBytes = mount ? mount.totalBytes - mount.usedBytes : null;
+    <div className="flex min-h-full flex-col justify-center px-4 py-6">
+      <div className="mx-auto flex w-full max-w-lg flex-col gap-3">
+        {roots.map((root) => {
+          const { label, icon } = rootLabel(root);
+          const mount = findMountForRoot(root, mounts);
+          const freeBytes = mount ? mount.totalBytes - mount.usedBytes : null;
 
-        return (
-          <button
-            key={root}
-            onClick={() => onSelect(root)}
-            className="flex items-center gap-3 rounded-xl border px-4 py-3.5 transition-colors hover:bg-muted/30 text-left group"
-          >
-            <div className="flex items-center justify-center size-8 rounded-lg bg-muted shrink-0">
-              <HugeiconsIcon icon={icon} size={14} className="text-muted-foreground" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium leading-snug">{label}</p>
-              {mount ? (
-                <>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <Progress
-                      value={mount.percent}
-                      className={cn("h-1 flex-1", getProgressColor(mount.percent))}
-                    />
-                    <span className={cn("text-xs tabular-nums shrink-0", getDiskColor(mount.percent))}>
-                      {Math.round(mount.percent)}%
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-                    {formatBytes(freeBytes!)} free of {formatBytes(mount.totalBytes)}
-                  </p>
-                </>
-              ) : (
-                <p className="text-xs text-muted-foreground mt-0.5">{root}</p>
-              )}
-            </div>
-            <HugeiconsIcon
-              icon={ArrowRight01Icon}
-              size={16}
-              className="shrink-0 text-dim-foreground group-hover:text-muted-foreground transition-colors"
-            />
-          </button>
-        );
-      })}
+          return (
+            <button
+              key={root}
+              onClick={() => onSelect(root)}
+              className="flex items-center gap-3 rounded-xl border px-4 py-3.5 transition-colors hover:bg-muted/30 text-left group"
+            >
+              <div className="flex items-center justify-center size-8 rounded-lg bg-muted shrink-0">
+                <HugeiconsIcon icon={icon} size={14} className="text-muted-foreground" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium leading-snug">{label}</p>
+                {mount ? (
+                  <>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <Progress
+                        value={mount.percent}
+                        className={cn("h-1 flex-1", getProgressColor(mount.percent))}
+                      />
+                      <span className={cn("text-xs tabular-nums shrink-0", getDiskColor(mount.percent))}>
+                        {Math.round(mount.percent)}%
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+                      {formatBytes(freeBytes!)} free of {formatBytes(mount.totalBytes)}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground mt-0.5">{root}</p>
+                )}
+              </div>
+              <HugeiconsIcon
+                icon={ArrowRight01Icon}
+                size={16}
+                className="shrink-0 text-dim-foreground group-hover:text-muted-foreground transition-colors"
+              />
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

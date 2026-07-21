@@ -29,7 +29,6 @@ import {
   HardDriveIcon,
   HeadphonesIcon,
   Layers01Icon,
-  Package01Icon,
   Package02Icon,
   PackageAdd01Icon,
   PackageOpenIcon,
@@ -49,6 +48,7 @@ import {
 } from "@/components/icons";
 import { useState, isValidElement } from "react";
 import { useRouter } from "next/navigation";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { useSetAtom } from "jotai";
 import { terminalCommandAtom } from "@/atoms/terminal";
 import { Shimmer } from "@/components/ai-elements/shimmer";
@@ -344,6 +344,7 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => (
 // ── Structured result cards ───────────────────────────────────────────────────
 
 function ContainerListCard({ output }: { output: unknown }) {
+  const router = useRouter();
   const containers = Array.isArray(output) ? output : [];
   if (containers.length === 0) {
     return <p className="text-xs text-muted-foreground py-1">No containers found</p>;
@@ -356,7 +357,17 @@ function ContainerListCard({ output }: { output: unknown }) {
         return (
           <div key={String(c.id ?? i)} className={cn("flex items-center gap-2.5 px-3 py-2", i > 0 && "border-t border-border/30")}>
             <span className={cn("size-1.5 rounded-full shrink-0", isRunning ? "bg-status-healthy" : "bg-status-critical")} />
-            <span className="text-xs font-medium text-foreground flex-1 truncate">{String(c.name ?? c.id)}</span>
+            <button
+              type="button"
+              className="min-w-0 flex-1 truncate text-left text-xs font-medium text-foreground hover:text-primary"
+              aria-label={`Open ${String(c.name ?? c.id)} in Services`}
+              onClick={() => {
+                const href = `/dashboard/containers?q=${encodeURIComponent(String(c.name ?? c.id))}`;
+                if (!requestDesktopNavigation(href)) router.push(href);
+              }}
+            >
+              {String(c.name ?? c.id)}
+            </button>
             <span className="text-xs text-muted-foreground shrink-0 capitalize">{String(c.status ?? "")}</span>
             <div className="flex items-center gap-1 shrink-0">
               {isRunning ? (
@@ -399,6 +410,65 @@ function ContainerListCard({ output }: { output: unknown }) {
   );
 }
 
+type AssistantMediaItem = {
+  id: string;
+  mediaType: "movie" | "tv";
+  title: string;
+  year?: string;
+};
+
+function mediaItemsFromToolOutput(output: unknown): AssistantMediaItem[] {
+  if (!output || typeof output !== "object") return [];
+  const raw = output as Record<string, unknown>;
+
+  if (Array.isArray(raw.results)) {
+    return raw.results.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const result = item as Record<string, unknown>;
+      const title = String(result.title ?? result.name ?? "").trim();
+      const id = String(result.id ?? result.tmdbId ?? result.tvdbId ?? "").trim();
+      if (!title || !id) return [];
+      return [{
+        id,
+        mediaType: result.mediaType === "tv" || result.type === "tv" ? "tv" : "movie",
+        title,
+        year: result.year == null ? undefined : String(result.year),
+      } satisfies AssistantMediaItem];
+    });
+  }
+
+  const tv = Array.isArray(raw.tv) ? raw.tv : [];
+  const movies = Array.isArray(raw.movies) ? raw.movies : [];
+  return [
+    ...tv.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const result = item as Record<string, unknown>;
+      const title = String(result.title ?? "").trim();
+      const id = String(result.id ?? result.tvdbId ?? "").trim();
+      return title && id
+        ? [{ id, mediaType: "tv" as const, title, year: result.year == null ? undefined : String(result.year) }]
+        : [];
+    }),
+    ...movies.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const result = item as Record<string, unknown>;
+      const title = String(result.title ?? "").trim();
+      const id = String(result.id ?? result.tmdbId ?? "").trim();
+      return title && id
+        ? [{ id, mediaType: "movie" as const, title, year: result.year == null ? undefined : String(result.year) }]
+        : [];
+    }),
+  ];
+}
+
+function mediaLibraryRoute(item: AssistantMediaItem) {
+  const params = new URLSearchParams({
+    tab: item.mediaType === "tv" ? "tv" : "movies",
+    q: item.title,
+  });
+  return `/dashboard/media?${params.toString()}`;
+}
+
 function SystemStatsCard({ output }: { output: unknown }) {
   const s = output as Record<string, Record<string, number>> | null;
   if (!s) return null;
@@ -421,32 +491,43 @@ function SystemStatsCard({ output }: { output: unknown }) {
   );
 }
 
-function MediaSearchCard({ output }: { output: unknown }) {
-  const results = Array.isArray((output as Record<string, unknown>)?.results)
-    ? ((output as Record<string, unknown>).results as Record<string, unknown>[])
-    : Array.isArray(output) ? (output as Record<string, unknown>[]) : [];
+function MediaSearchCard({ output, requestable = true }: { output: unknown; requestable?: boolean }) {
+  const router = useRouter();
+  const results = mediaItemsFromToolOutput(output);
   if (results.length === 0) {
     return <p className="text-xs text-muted-foreground py-1">No results found</p>;
   }
   return (
     <div className="rounded-lg overflow-hidden border border-border/40">
       {results.slice(0, 6).map((item, i) => (
-        <div key={String(item.id ?? i)} className={cn("flex items-center gap-2.5 px-3 py-2", i > 0 && "border-t border-border/30")}>
+        <div key={`${item.mediaType}-${item.id}-${i}`} className={cn("flex items-center gap-2.5 px-3 py-2", i > 0 && "border-t border-border/30")}>
           <HugeiconsIcon icon={item.mediaType === "tv" ? Tv01Icon : Film01Icon} size={12} className="text-dim-foreground shrink-0" />
-          <span className="text-xs font-medium text-foreground flex-1 truncate">{String(item.title ?? item.name ?? "")}</span>
-          {item.year !== undefined && item.year !== null && <span className="text-xs text-muted-foreground shrink-0">{String(item.year)}</span>}
-          <Pill
-            asChild
-            className="cursor-pointer px-2 py-0.5 text-xs h-auto hover:bg-primary/10 hover:text-primary transition-colors"
-            variant="outline"
+          <button
+            type="button"
+            className="min-w-0 flex-1 truncate text-left text-xs font-medium text-foreground hover:text-primary"
+            aria-label={`Open ${item.title} in Media`}
+            onClick={() => {
+              const href = mediaLibraryRoute(item);
+              if (!requestDesktopNavigation(href)) router.push(href);
+            }}
           >
-            <button
-              type="button"
-              onClick={() => requestMedia(String(item.id ?? ""), String(item.mediaType ?? "movie"))}
+            {item.title}
+          </button>
+          {item.year ? <span className="text-xs text-muted-foreground shrink-0">{item.year}</span> : null}
+          {requestable ? (
+            <Pill
+              asChild
+              className="cursor-pointer px-2 py-0.5 text-xs h-auto hover:bg-primary/10 hover:text-primary transition-colors"
+              variant="outline"
             >
-              Request
-            </button>
-          </Pill>
+              <button
+                type="button"
+                onClick={() => requestMedia(item.id, item.mediaType)}
+              >
+                Request
+              </button>
+            </Pill>
+          ) : null}
         </div>
       ))}
     </div>
@@ -471,7 +552,9 @@ export function LaunchTerminalCard({ output }: { output: Record<string, unknown>
     setTerminalCommand(command);
     setLaunched(true);
     setShowWarning(false);
-    router.push("/dashboard/terminal");
+    if (!requestDesktopNavigation("/dashboard/terminal")) {
+      router.push("/dashboard/terminal");
+    }
   };
 
   const handleLaunch = () => {
@@ -620,10 +703,10 @@ function SettingChangeCard({ output }: { output: Record<string, unknown> }) {
 // ── Audiobook structured cards ────────────────────────────────────────────────
 
 function AudiobookLibraryCard({ output }: { output: unknown }) {
+  const router = useRouter();
   const raw = output as Record<string, unknown> | null;
   const items = Array.isArray(raw?.items) ? (raw!.items as Record<string, unknown>[]) : [];
   if (items.length === 0) return <p className="text-xs text-muted-foreground py-1">No audiobooks found</p>;
-  const router = useRouter();
   return (
     <div className="rounded-lg overflow-hidden border border-border/40">
       {items.slice(0, 8).map((item, i) => {
@@ -636,7 +719,10 @@ function AudiobookLibraryCard({ output }: { output: unknown }) {
               "flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-muted/30 transition-colors",
               i > 0 && "border-t border-border/30",
             )}
-            onClick={() => router.push(`/dashboard/audiobooks/${item.id}`)}
+            onClick={() => {
+              const href = `/dashboard/audiobooks/${item.id}`;
+              if (!requestDesktopNavigation(href)) router.push(href);
+            }}
           >
             <HugeiconsIcon icon={AudioBook01Icon} size={12} className="text-dim-foreground shrink-0" />
             <span className="text-xs font-medium text-foreground flex-1 truncate">{String(item.title ?? "")}</span>
@@ -760,6 +846,7 @@ function getStructuredCard(toolName: string, output: unknown): ReactNode | null 
   if (toolName === "list_containers") return <ContainerListCard output={output} />;
   if (toolName === "get_system_stats") return <SystemStatsCard output={output} />;
   if (toolName === "search_media") return <MediaSearchCard output={output} />;
+  if (toolName === "get_library") return <MediaSearchCard output={output} requestable={false} />;
   if (toolName === "audiobookshelf_get_library_items" || toolName === "audiobookshelf_search") return <AudiobookLibraryCard output={output} />;
   if (toolName === "audiobook_search_releases") return <AudiobookReleaseCard output={output} />;
   if (toolName === "audiobook_list_downloads") return <AudiobookDownloadsCard output={output} />;

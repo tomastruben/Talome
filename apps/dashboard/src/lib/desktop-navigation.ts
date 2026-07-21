@@ -1,4 +1,5 @@
 export const DESKTOP_OPEN_ROUTE_EVENT = "talome:desktop-open-route";
+export const DESKTOP_OPEN_ROUTE_MESSAGE = "talome:desktop-open-route-message";
 
 export interface DesktopOpenRouteDetail {
   url: string;
@@ -29,17 +30,36 @@ export function dashboardRouteFromHref(
 
 export function requestDesktopNavigation(href: string): boolean {
   if (typeof window === "undefined") return false;
-  if (window.self !== window.top) return false;
-  if (window.location.pathname !== "/dashboard/desktop") return false;
-
   const url = dashboardRouteFromHref(href);
   if (!url) return false;
+
+  if (window.self !== window.top) {
+    window.parent.postMessage(
+      { type: DESKTOP_OPEN_ROUTE_MESSAGE, url },
+      window.location.origin,
+    );
+    return true;
+  }
+
+  if (window.location.pathname !== "/dashboard/desktop") return false;
 
   window.dispatchEvent(new CustomEvent<DesktopOpenRouteDetail>(
     DESKTOP_OPEN_ROUTE_EVENT,
     { detail: { url } },
   ));
   return true;
+}
+
+export function desktopRouteFromMessage(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  const message = value as { type?: unknown; url?: unknown };
+  if (
+    message.type !== DESKTOP_OPEN_ROUTE_MESSAGE
+    || typeof message.url !== "string"
+  ) {
+    return null;
+  }
+  return dashboardRouteFromHref(message.url);
 }
 
 export function desktopRouteFromEvent(event: Event): string | null {

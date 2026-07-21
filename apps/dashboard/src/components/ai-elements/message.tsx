@@ -32,6 +32,7 @@ import {
 } from "react";
 import { Streamdown } from "streamdown";
 import { useRouter } from "next/navigation";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { useContainers } from "@/hooks/use-containers";
 import type { Container } from "@talome/types";
@@ -414,7 +415,7 @@ function MessageLink({
         // Internal dashboard navigation (e.g., file manager links)
         if (href.startsWith("/dashboard/")) {
           event.preventDefault();
-          router.push(href);
+          if (!requestDesktopNavigation(href)) router.push(href);
           return;
         }
 

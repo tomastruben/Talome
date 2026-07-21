@@ -213,6 +213,7 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
       let resizeSent = false;
       let fitTimer: ReturnType<typeof setTimeout>;
       let authFailed = false;
+      let suppressReplayResponses = false;
 
       // ── Write buffer — coalesce rapid WebSocket messages ──────────────
       // Safari's WebKit engine struggles with hundreds of individual
@@ -335,6 +336,14 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
       function connect() {
         if (destroyed) return;
 
+        // The daemon's first frame is the persisted PTY scrollback. It can
+        // contain terminal capability queries originally emitted by a TUI
+        // (DA, OSC colour queries, window-size queries, and similar). Replaying
+        // those queries through xterm must not send fresh replies back into the
+        // now-idle shell, otherwise zsh echoes the replies as visible text and
+        // the corrupted output compounds on every reconnect.
+        let awaitingReplayFrame = true;
+
         // Close previous WebSocket if still open (e.g. manual retry)
         const prev = wsRef.current;
         if (prev && prev.readyState !== WebSocket.CLOSED) {
@@ -424,7 +433,18 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
             authFailed = true;
           }
 
-          bufferWrite(typeof e.data === "string" ? sanitizeEmoji(e.data) : new Uint8Array(e.data));
+          const displayData = typeof e.data === "string"
+            ? sanitizeEmoji(e.data)
+            : new Uint8Array(e.data);
+          if (awaitingReplayFrame) {
+            awaitingReplayFrame = false;
+            suppressReplayResponses = true;
+            term.write(displayData, () => {
+              if (wsRef.current === connection) suppressReplayResponses = false;
+            });
+          } else {
+            bufferWrite(displayData);
+          }
           if (!resizeSent) {
             resizeSent = true;
             fitAddon.fit();
@@ -518,6 +538,7 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
       };
 
       term.onData((data) => {
+        if (suppressReplayResponses) return;
         sendOrQueueInput(data);
       });
 

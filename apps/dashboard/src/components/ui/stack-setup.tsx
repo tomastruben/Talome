@@ -6,6 +6,7 @@ import { HugeiconsIcon, Tick01Icon, Settings01Icon, Download01Icon, AiChat02Icon
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter } from "next/navigation";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 interface StackSetupProps {
   stackId: string;
@@ -63,7 +64,13 @@ export function StackSetup({ stackId, onSetupWithAI }: StackSetupProps) {
       {/* Dependency list */}
       <div className="w-full space-y-1.5 mb-8">
         {[...required, ...optional].map((dep) => (
-          <DepRow key={dep.appId} dep={dep} onNavigate={(path) => router.push(path)} />
+          <DepRow
+            key={dep.appId}
+            dep={dep}
+            onNavigate={(path) => {
+              if (!requestDesktopNavigation(path)) router.push(path);
+            }}
+          />
         ))}
       </div>
 

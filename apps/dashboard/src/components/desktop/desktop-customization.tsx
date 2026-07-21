@@ -1,12 +1,10 @@
 "use client";
 
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
   type ChangeEvent,
-  type FormEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import Image from "next/image";
@@ -18,7 +16,6 @@ import {
   HugeiconsIcon,
   Image01Icon,
   ImageAdd01Icon,
-  Search01Icon,
   Tick01Icon,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
@@ -28,8 +25,6 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import {
   ControlledWidgetGrid,
@@ -39,6 +34,20 @@ import { cn } from "@/lib/utils";
 
 const MAX_WALLPAPER_BYTES = 2 * 1024 * 1024;
 const WALLPAPER_DIALOG_VIEWPORT_MARGIN = 16;
+
+const RETIRED_WALLPAPER_URLS = new Set([
+  "/wallpapers/generated/talome-16.jpg",
+  "/wallpapers/generated/talome-20.jpg",
+  "/wallpapers/generated/talome-29.jpg",
+  "/wallpapers/generated/talome-32.jpg",
+]);
+
+export function normalizeDesktopWallpaperUrl(
+  wallpaperUrl?: string | null,
+): string | undefined {
+  if (!wallpaperUrl || RETIRED_WALLPAPER_URLS.has(wallpaperUrl)) return undefined;
+  return wallpaperUrl;
+}
 
 interface WallpaperDialogPosition {
   x: number;
@@ -65,59 +74,228 @@ export interface DesktopWallpaperAttribution {
   providerName?: string;
 }
 
-interface OnlineWallpaper {
-  id: string;
-  description: string;
-  color: string;
-  width: number;
-  height: number;
-  thumbnailUrl: string;
-  wallpaperUrl: string;
-  photoUrl: string;
-  downloadLocation?: string;
-  photographer: {
-    name: string;
-    username: string;
-    profileUrl: string;
-  };
-  provider: {
-    name: string;
-    url: string;
-  };
-}
-
-interface OnlineWallpaperResponse {
-  configured: boolean;
-  provider?: string;
-  query?: string;
-  page?: number;
-  total?: number;
-  totalPages?: number;
-  photos?: OnlineWallpaper[];
-  error?: string;
-}
-
 const WALLPAPER_PRESETS: readonly WallpaperPreset[] = [
   { id: "default", name: "Talome" },
   { id: "alpenglow", name: "Alpenglow", url: "/wallpapers/alpenglow.jpg" },
   { id: "aurora", name: "Aurora", url: "/wallpapers/aurora.jpg" },
   { id: "forest", name: "Misty Forest", url: "/wallpapers/misty-forest.jpg" },
   { id: "dune", name: "Dune", url: "/wallpapers/dune.jpg" },
+  {
+    id: "alpine-stillness",
+    name: "Alpine Stillness",
+    url: "/wallpapers/generated/talome-01.jpg",
+  },
+  {
+    id: "black-dunes",
+    name: "Black Dunes",
+    url: "/wallpapers/generated/talome-02.jpg",
+  },
+  {
+    id: "redwood-mist",
+    name: "Redwood Mist",
+    url: "/wallpapers/generated/talome-03.jpg",
+  },
+  {
+    id: "polar-aurora",
+    name: "Polar Aurora",
+    url: "/wallpapers/generated/talome-04.jpg",
+  },
+  {
+    id: "silver-cliffs",
+    name: "Silver Cliffs",
+    url: "/wallpapers/generated/talome-05.jpg",
+  },
+  {
+    id: "crimson-snow",
+    name: "Crimson Snow",
+    url: "/wallpapers/generated/talome-06.jpg",
+  },
+  {
+    id: "mediterranean-light",
+    name: "Mediterranean Light",
+    url: "/wallpapers/generated/talome-07.jpg",
+  },
+  {
+    id: "moonlit-coast",
+    name: "Moonlit Coast",
+    url: "/wallpapers/generated/talome-08.jpg",
+  },
+  {
+    id: "ink-mountains",
+    name: "Ink Mountains",
+    url: "/wallpapers/generated/talome-09.jpg",
+  },
+  {
+    id: "paper-canyon",
+    name: "Paper Canyon",
+    url: "/wallpapers/generated/talome-10.jpg",
+  },
+  {
+    id: "alpine-gouache",
+    name: "Alpine Gouache",
+    url: "/wallpapers/generated/talome-11.jpg",
+  },
+  {
+    id: "midnight-botanica",
+    name: "Midnight Botanica",
+    url: "/wallpapers/generated/talome-12.jpg",
+  },
+  {
+    id: "liquid-glass",
+    name: "Liquid Glass",
+    url: "/wallpapers/generated/talome-13.jpg",
+  },
+  {
+    id: "pearl-gradient",
+    name: "Pearl Gradient",
+    url: "/wallpapers/generated/talome-14.jpg",
+  },
+  {
+    id: "bauhaus-horizon",
+    name: "Bauhaus Horizon",
+    url: "/wallpapers/generated/talome-15.jpg",
+  },
+  {
+    id: "deep-nebula",
+    name: "Deep Nebula",
+    url: "/wallpapers/generated/talome-17.jpg",
+  },
+  {
+    id: "desert-observatory",
+    name: "Desert Observatory",
+    url: "/wallpapers/generated/talome-18.jpg",
+  },
+  {
+    id: "submerged-light",
+    name: "Submerged Light",
+    url: "/wallpapers/generated/talome-19.jpg",
+  },
+  {
+    id: "luminous-fold",
+    name: "Luminous Fold",
+    url: "/wallpapers/generated/talome-21.jpg",
+  },
+  {
+    id: "talome-flux",
+    name: "Talome Flux",
+    url: "/wallpapers/generated/talome-22.jpg",
+  },
+  {
+    id: "orbital-bloom",
+    name: "Orbital Bloom",
+    url: "/wallpapers/generated/talome-23.jpg",
+  },
+  {
+    id: "mineral-gradient",
+    name: "Mineral Gradient",
+    url: "/wallpapers/generated/talome-24.jpg",
+  },
+  {
+    id: "glacier-dawn",
+    name: "Glacier Dawn",
+    url: "/wallpapers/generated/talome-25.jpg",
+  },
+  {
+    id: "cloud-forest",
+    name: "Cloud Forest",
+    url: "/wallpapers/generated/talome-26.jpg",
+  },
+  {
+    id: "volcanic-coast",
+    name: "Volcanic Coast",
+    url: "/wallpapers/generated/talome-27.jpg",
+  },
+  {
+    id: "desert-rain",
+    name: "Desert Rain",
+    url: "/wallpapers/generated/talome-28.jpg",
+  },
+  {
+    id: "crimson-ring",
+    name: "Crimson Ring",
+    url: "/wallpapers/generated/talome-30.jpg",
+  },
+  {
+    id: "glass-forest",
+    name: "Glass Forest",
+    url: "/wallpapers/generated/talome-31.jpg",
+  },
+  {
+    id: "ivory-basin",
+    name: "Ivory Basin",
+    url: "/wallpapers/generated/talome-33.jpg",
+  },
+  {
+    id: "salt-horizon",
+    name: "Salt Horizon",
+    url: "/wallpapers/generated/talome-34.jpg",
+  },
+  {
+    id: "quiet-ochre",
+    name: "Quiet Ochre",
+    url: "/wallpapers/generated/talome-35.jpg",
+  },
+  {
+    id: "slate-lake",
+    name: "Slate Lake",
+    url: "/wallpapers/generated/talome-36.jpg",
+  },
+  {
+    id: "clay-silence",
+    name: "Clay Silence",
+    url: "/wallpapers/generated/talome-37.jpg",
+  },
+  {
+    id: "frosted-valley",
+    name: "Frosted Valley",
+    url: "/wallpapers/generated/talome-38.jpg",
+  },
+  {
+    id: "moss-line",
+    name: "Moss Line",
+    url: "/wallpapers/generated/talome-39.jpg",
+  },
+  {
+    id: "pearl-coast",
+    name: "Pearl Coast",
+    url: "/wallpapers/generated/talome-40.jpg",
+  },
+  {
+    id: "paper-tides",
+    name: "Paper Tides",
+    url: "/wallpapers/generated/talome-41.jpg",
+  },
+  {
+    id: "cobalt-ribbon",
+    name: "Cobalt Ribbon",
+    url: "/wallpapers/generated/talome-42.jpg",
+  },
+  {
+    id: "terracotta-drift",
+    name: "Terracotta Drift",
+    url: "/wallpapers/generated/talome-43.jpg",
+  },
+  {
+    id: "pearl-curves",
+    name: "Pearl Curves",
+    url: "/wallpapers/generated/talome-44.jpg",
+  },
+  {
+    id: "midnight-fold",
+    name: "Midnight Fold",
+    url: "/wallpapers/generated/talome-45.jpg",
+  },
+  {
+    id: "sage-contours",
+    name: "Sage Contours",
+    url: "/wallpapers/generated/talome-46.jpg",
+  },
 ];
 
-type WallpaperSource = "talome" | "discover" | "custom";
+type WallpaperSource = "talome" | "custom";
 
 function isPresetWallpaper(wallpaperUrl?: string): boolean {
   return WALLPAPER_PRESETS.some((preset) => preset.url === wallpaperUrl);
-}
-
-function isUnsplashWallpaper(wallpaperUrl?: string): boolean {
-  if (!wallpaperUrl) return false;
-  try {
-    return new URL(wallpaperUrl).hostname === "images.unsplash.com";
-  } catch {
-    return false;
-  }
 }
 
 function WallpaperImage({
@@ -190,79 +368,6 @@ function WallpaperPresetButton({
         {preset.name}
       </span>
     </button>
-  );
-}
-
-function OnlineWallpaperCard({
-  photo,
-  selected,
-  applying,
-  onSelect,
-}: {
-  photo: OnlineWallpaper;
-  selected: boolean;
-  applying: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <article className="grid min-w-0 gap-1.5">
-      <button
-        type="button"
-        role="radio"
-        aria-checked={selected}
-        aria-label={`Use photo by ${photo.photographer.name} from ${photo.provider.name}`}
-        disabled={applying}
-        className={cn(
-          "group relative aspect-video overflow-hidden rounded-lg border bg-card text-left outline-none transition-[border-color,box-shadow,opacity] duration-150",
-          selected
-            ? "border-foreground/70 ring-2 ring-foreground/25"
-            : "border-border/80 hover:border-foreground/30 focus-visible:ring-2 focus-visible:ring-ring/50",
-          applying && "opacity-70",
-        )}
-        style={{ backgroundColor: photo.color }}
-        onClick={onSelect}
-      >
-        <Image
-          src={photo.thumbnailUrl}
-          alt={photo.description}
-          fill
-          unoptimized
-          sizes="(max-width: 640px) 45vw, 200px"
-          className="object-cover transition-transform duration-200 group-hover:scale-[1.025]"
-        />
-        <span className="absolute inset-x-0 bottom-0 h-1/2 bg-linear-to-t from-black/55 to-transparent" />
-        {selected ? (
-          <span className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm backdrop-blur-sm">
-            <HugeiconsIcon icon={CheckmarkCircle02Icon} size={15} />
-          </span>
-        ) : null}
-        {applying ? (
-          <span className="absolute inset-0 flex items-center justify-center bg-black/25">
-            <Spinner className="size-5 text-white" />
-          </span>
-        ) : null}
-      </button>
-      <p className="truncate text-[11px] text-muted-foreground">
-        Photo by{" "}
-        <a
-          href={photo.photographer.profileUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="text-foreground/80 hover:underline"
-        >
-          {photo.photographer.name}
-        </a>{" "}
-        on{" "}
-        <a
-          href={photo.provider.url}
-          target="_blank"
-          rel="noreferrer"
-          className="text-foreground/80 hover:underline"
-        >
-          {photo.provider.name}
-        </a>
-      </p>
-    </article>
   );
 }
 
@@ -341,7 +446,6 @@ interface DesktopWallpaperDialogProps {
 
 function DesktopWallpaperPicker({
   wallpaperUrl,
-  wallpaperAttribution,
   onOpenChange,
   onWallpaperChange,
   onTitlebarPointerDown,
@@ -349,50 +453,10 @@ function DesktopWallpaperPicker({
   onTitlebarPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const unsplashLoadedRef = useRef(false);
   const [source, setSource] = useState<WallpaperSource>(() => (
-    wallpaperAttribution || isUnsplashWallpaper(wallpaperUrl)
-      ? "discover"
-      : isPresetWallpaper(wallpaperUrl) ? "talome" : "custom"
+    isPresetWallpaper(wallpaperUrl) ? "talome" : "custom"
   ));
   const [error, setError] = useState("");
-  const [unsplashQuery, setUnsplashQuery] = useState("nature wallpaper");
-  const [unsplashPhotos, setUnsplashPhotos] = useState<OnlineWallpaper[]>([]);
-  const [unsplashLoading, setUnsplashLoading] = useState(false);
-  const [unsplashError, setUnsplashError] = useState("");
-  const [applyingUnsplashId, setApplyingUnsplashId] = useState<string>();
-
-  const searchUnsplash = useCallback(async (query: string) => {
-    const normalizedQuery = query.trim() || "nature wallpaper";
-    setUnsplashLoading(true);
-    setUnsplashError("");
-    try {
-      const response = await fetch(
-        `/dashboard/desktop/api/unsplash/wallpapers?query=${encodeURIComponent(normalizedQuery)}`,
-      );
-      const payload = await response.json() as OnlineWallpaperResponse;
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Online wallpapers could not be loaded.");
-      }
-      setUnsplashPhotos(payload.photos ?? []);
-      setUnsplashQuery(payload.query ?? normalizedQuery);
-    } catch (unsplashRequestError) {
-      setUnsplashPhotos([]);
-      setUnsplashError(
-        unsplashRequestError instanceof Error
-          ? unsplashRequestError.message
-          : "Online wallpapers could not be loaded.",
-      );
-    } finally {
-      setUnsplashLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (source !== "discover" || unsplashLoadedRef.current) return;
-    unsplashLoadedRef.current = true;
-    void searchUnsplash(unsplashQuery);
-  }, [searchUnsplash, source, unsplashQuery]);
 
   const chooseWallpaper = () => {
     setError("");
@@ -406,46 +470,6 @@ function DesktopWallpaperPicker({
       return;
     }
     setError("");
-  };
-
-  const selectUnsplashWallpaper = async (photo: OnlineWallpaper) => {
-    setApplyingUnsplashId(photo.id);
-    setUnsplashError("");
-    try {
-      if (photo.downloadLocation) {
-        const response = await fetch("/dashboard/desktop/api/unsplash/wallpapers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ downloadLocation: photo.downloadLocation }),
-        });
-        const payload = await response.json() as { error?: string };
-        if (!response.ok) {
-          throw new Error(payload.error ?? "The wallpaper could not be applied.");
-        }
-      }
-      const saved = onWallpaperChange(photo.wallpaperUrl, {
-        photoUrl: photo.photoUrl,
-        photographerName: photo.photographer.name,
-        photographerUrl: photo.photographer.profileUrl,
-        providerName: photo.provider.name,
-      });
-      if (!saved) throw new Error("The wallpaper could not be saved. Try again.");
-      setError("");
-    } catch (unsplashRequestError) {
-      setUnsplashError(
-        unsplashRequestError instanceof Error
-          ? unsplashRequestError.message
-          : "The wallpaper could not be applied.",
-      );
-    } finally {
-      setApplyingUnsplashId(undefined);
-    }
-  };
-
-  const handleUnsplashSearch = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    unsplashLoadedRef.current = true;
-    void searchUnsplash(unsplashQuery);
   };
 
   const handleWallpaperFile = (event: ChangeEvent<HTMLInputElement>) => {
@@ -520,7 +544,7 @@ function DesktopWallpaperPicker({
           Desktop Wallpaper
         </DialogTitle>
         <DialogDescription className="sr-only">
-          Choose a Talome or online wallpaper, or upload a custom image.
+          Choose a Talome wallpaper or upload a custom image.
         </DialogDescription>
         <span />
       </header>
@@ -533,13 +557,12 @@ function DesktopWallpaperPicker({
         >
           <TabsList className="self-center">
             <TabsTab value="talome" className="min-w-20">Talome</TabsTab>
-            <TabsTab value="discover" className="min-w-20">Discover</TabsTab>
             <TabsTab value="custom" className="min-w-20">Custom</TabsTab>
           </TabsList>
 
           <TabsPanel value="talome">
             <div
-              className="grid grid-cols-2 gap-3 sm:grid-cols-5"
+              className="grid max-h-[22rem] grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-5"
               role="radiogroup"
               aria-label="Talome wallpapers"
             >
@@ -554,77 +577,10 @@ function DesktopWallpaperPicker({
             </div>
           </TabsPanel>
 
-          <TabsPanel value="discover" className="grid gap-3">
-            <form className="flex gap-2" role="search" onSubmit={handleUnsplashSearch}>
-              <div className="relative min-w-0 flex-1">
-                <HugeiconsIcon
-                  icon={Search01Icon}
-                  size={15}
-                  className="pointer-events-none absolute top-1/2 left-3 z-10 -translate-y-1/2 text-muted-foreground"
-                />
-                <Input
-                  value={unsplashQuery}
-                  aria-label="Search online wallpapers"
-                  placeholder="Search landscapes, cities, textures…"
-                  className="h-9 pl-9 text-sm"
-                  onChange={(event) => setUnsplashQuery(event.currentTarget.value)}
-                />
-              </div>
-              <Button type="submit" size="sm" variant="secondary" disabled={unsplashLoading}>
-                Search
-              </Button>
-            </form>
-
-            <div className="max-h-[21rem] min-h-40 overflow-y-auto pr-1">
-              {unsplashLoading ? (
-                <div className="flex min-h-40 items-center justify-center gap-2 text-sm text-muted-foreground">
-                  <Spinner />
-                  Finding wallpapers…
-                </div>
-              ) : unsplashError ? (
-                <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-card/45 px-6 text-center">
-                  <HugeiconsIcon icon={Image01Icon} size={24} className="text-muted-foreground" />
-                  <p className="max-w-md text-sm text-muted-foreground" role="alert">
-                    {unsplashError}
-                  </p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void searchUnsplash(unsplashQuery)}
-                  >
-                    Try Again
-                  </Button>
-                </div>
-              ) : unsplashPhotos.length > 0 ? (
-                <div
-                  className="grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3"
-                  role="radiogroup"
-                  aria-label="Online wallpapers"
-                >
-                  {unsplashPhotos.map((photo) => (
-                    <OnlineWallpaperCard
-                      key={photo.id}
-                      photo={photo}
-                      selected={photo.wallpaperUrl === wallpaperUrl}
-                      applying={applyingUnsplashId === photo.id}
-                      onSelect={() => void selectUnsplashWallpaper(photo)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">
-                  Search for a desktop wallpaper.
-                </div>
-              )}
-            </div>
-          </TabsPanel>
-
           <TabsPanel value="custom" className="grid gap-3">
             {wallpaperUrl
             && !isPresetWallpaper(wallpaperUrl)
-            && !wallpaperAttribution
-            && !isUnsplashWallpaper(wallpaperUrl) ? (
+            ? (
               <div className="relative h-36 overflow-hidden rounded-lg border border-border bg-card">
                 <WallpaperImage
                   wallpaperUrl={wallpaperUrl}

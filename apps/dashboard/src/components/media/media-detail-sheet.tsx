@@ -45,8 +45,10 @@ import { Switch } from "@/components/ui/switch";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { CORE_URL, getDirectCoreUrl, resolvePosterUrl } from "@/lib/constants";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { useDownloads } from "@/hooks/use-downloads";
 import { cn } from "@/lib/utils";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { toast } from "sonner";
 import type { DownloadQueueItem } from "@talome/types";
 
@@ -599,6 +601,7 @@ export function UnifiedMediaSheet({
 }) {
   const router = useRouter();
   const isMobile = useIsMobile();
+  const embeddedFrame = useIsEmbeddedFrame();
 
   // Remove-from-library state
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
@@ -703,14 +706,16 @@ export function UnifiedMediaSheet({
     onClose();
     setAddState("idle");
     setErrorMsg("");
-    router.push(`/dashboard/media?${params.toString()}`);
+    const href = `/dashboard/media?${params.toString()}`;
+    if (!requestDesktopNavigation(href)) router.push(href);
   }, [itemData, onClose, router]);
 
   // Library: navigate to detail page
   const handleViewDetails = useCallback(() => {
     if (!libraryData) return;
     onClose();
-    router.push(`/dashboard/media/${libraryData.type}/${libraryData.id}`);
+    const href = `/dashboard/media/${libraryData.type}/${libraryData.id}`;
+    if (!requestDesktopNavigation(href)) router.push(href);
   }, [libraryData, onClose, router]);
 
   // Lookup: add to library
@@ -760,7 +765,8 @@ export function UnifiedMediaSheet({
         side={isMobile ? "bottom" : "right"}
         className={cn(
           "w-full p-0 flex flex-col overflow-hidden",
-          isMobile ? "h-[92svh] rounded-t-xl" : "sm:max-w-md"
+          isMobile ? "h-[92svh] rounded-t-xl" : "sm:max-w-md",
+          embeddedFrame && "pb-20"
         )}
       >
         <SheetHeader className="sr-only">

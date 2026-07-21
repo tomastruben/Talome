@@ -13,6 +13,8 @@ import {
   SPEED_KEY,
   DIRECT_PLAY_EXTS,
   HLS_EXTS,
+  BROWSER_AUDIO,
+  type PlaybackMode,
   type FsSettings,
   type SubtitleStyle,
 } from "./types";
@@ -70,6 +72,62 @@ export function needsHls(fileName: string): boolean {
   if (DIRECT_PLAY_EXTS.has(ext)) return false;
   if (HLS_EXTS.has(ext)) return true;
   return false;
+}
+
+export interface PlaybackProbe {
+  optimized?: boolean;
+  videoCodec?: string;
+  videoColorTransfer?: string;
+  videoPixFmt?: string;
+  audio?: Array<{ codec?: string }>;
+}
+
+export interface PlaybackStrategy {
+  mode: PlaybackMode;
+  ready: boolean;
+  needsOptimization: boolean;
+}
+
+/**
+ * Start browser-native containers immediately. Metadata probing and Jellyfin
+ * discovery can still upgrade the source, but neither is allowed to gate MP4
+ * playback behind an "Analyzing" screen.
+ */
+export function initialPlaybackMode(fileName: string, preferDirect = false): PlaybackMode {
+  return preferDirect || DIRECT_PLAY_EXTS.has(fileExt(fileName)) ? "direct" : "deciding";
+}
+
+/** Select the quickest safe local playback path from ffprobe metadata. */
+export function chooseLocalPlaybackStrategy(
+  probe: PlaybackProbe,
+  fileName: string,
+  capabilities: { safari: boolean; hevc: boolean },
+): PlaybackStrategy {
+  const vCodec = (probe.videoCodec ?? "").toLowerCase();
+  const aCodec = (probe.audio?.[0]?.codec ?? "").toLowerCase();
+  const ext = fileExt(fileName);
+  const transfer = probe.videoColorTransfer ?? "";
+  const pixFmt = probe.videoPixFmt ?? "";
+  const is10bit = pixFmt.includes("10");
+  const isHevc = vCodec === "hevc" || vCodec === "h265";
+  const isSdrTransfer = transfer === "bt709" || transfer === "bt2020-10" || transfer === "iec61966-2-1";
+  const isHdr = isHevc && is10bit && !isSdrTransfer;
+  const videoOk = vCodec === "h264" || (isHevc && (capabilities.safari || capabilities.hevc));
+  const audioOk = BROWSER_AUDIO.has(aCodec);
+  const isDirectContainer = DIRECT_PLAY_EXTS.has(ext);
+
+  if (isHdr) return { mode: "hls", ready: false, needsOptimization: true };
+  if (probe.optimized || (isDirectContainer && videoOk && audioOk)) {
+    return { mode: "direct", ready: true, needsOptimization: false };
+  }
+  if (!capabilities.safari && ext === "mkv" && videoOk && audioOk) {
+    return { mode: "direct-mkv", ready: true, needsOptimization: true };
+  }
+
+  // HLS emits its first fMP4 segment as soon as it is ready. The previous
+  // transmux path waited for a complete movie-sized MP4 whenever audio was
+  // AC-3/E-AC-3/DTS, which could take minutes before playback began.
+  return { mode: "hls", ready: false, needsOptimization: true };
 }
 
 // ── Browser detection ───────────────────────────────────────────────────

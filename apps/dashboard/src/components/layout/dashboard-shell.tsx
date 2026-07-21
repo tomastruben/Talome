@@ -44,6 +44,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const embeddedFrame = useIsEmbeddedFrame();
   const desktopRoute = pathname === "/dashboard/desktop";
   const embeddedPlayerRoute = embeddedFrame && pathname === "/dashboard/player";
+  const embeddedFilesRoute = embeddedFrame && pathname === "/dashboard/files";
   const embeddedAudiobookRoute = embeddedFrame && pathname.startsWith("/dashboard/audiobooks");
   const { user, isLoading: userLoading } = useUser();
   const contentScrollRef = useRef<HTMLDivElement>(null);
@@ -94,7 +95,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 ) : null}
                 <DesktopShellHeaderActions />
                 <DesktopAppActionBridge />
-                <div ref={contentScrollRef} className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${embeddedPlayerRoute ? "overflow-hidden bg-black" : "overflow-y-auto p-4"}`}>
+                <div
+                  ref={contentScrollRef}
+                  className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${
+                    embeddedPlayerRoute
+                      ? "overflow-hidden bg-black"
+                      : embeddedFilesRoute
+                        ? "overflow-hidden"
+                        : "overflow-y-auto p-4"
+                  }`}
+                >
                   {children}
                 </div>
               </main>

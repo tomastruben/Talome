@@ -54,6 +54,7 @@ interface DesktopWindowProps {
   minimum: Pick<DesktopBounds, "width" | "height">;
   active: boolean;
   maximized: boolean;
+  backgrounded?: boolean;
   disabled?: boolean;
   zIndex: number;
   actions?: DesktopAppActionDescriptor[];
@@ -92,6 +93,7 @@ export const DesktopWindow = memo(function DesktopWindow({
   minimum,
   active,
   maximized,
+  backgrounded = false,
   disabled = false,
   zIndex,
   actions = [],
@@ -403,8 +405,8 @@ export const DesktopWindow = memo(function DesktopWindow({
       ref={windowRef}
       data-desktop-window={id}
       aria-label={`${title} window`}
-      aria-hidden={disabled || undefined}
-      inert={disabled}
+      aria-hidden={disabled || backgrounded || undefined}
+      inert={disabled || backgrounded}
       className={cn(
         "absolute flex min-h-0 flex-col overflow-hidden bg-card",
         "transition-[border-color,opacity] duration-150 ease-out",
@@ -413,6 +415,7 @@ export const DesktopWindow = memo(function DesktopWindow({
           : "rounded-xl border",
         !maximized && (active ? "border-foreground/30" : "border-border opacity-95"),
         disabled && "pointer-events-none",
+        backgrounded && "invisible pointer-events-none opacity-0",
       )}
       style={{
         left: bounds.x,

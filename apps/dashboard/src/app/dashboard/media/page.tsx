@@ -70,6 +70,10 @@ import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { useFeatureStack } from "@/hooks/use-feature-stacks";
 import { StackSetup } from "@/components/ui/stack-setup";
+import {
+  continueWatchingFallbackRoute,
+  resolveContinueWatchingRoute,
+} from "@/lib/media-navigation";
 
 interface CalendarData {
   episodes: { id: number; seriesId?: number | null; seriesTitle: string; title: string; season: number; episode: number; airDate: string; poster?: string | null }[];
@@ -1217,6 +1221,14 @@ function MediaPageInner({
     router.push(`/dashboard/media/${item.type}/${item.id}`);
   }, [router]);
 
+  const navigateToContinueWatching = useCallback((item: PlexContinueWatchingItem) => {
+    const route = resolveContinueWatchingRoute(item, [
+      ...(library?.movies ?? []),
+      ...(library?.tv ?? []),
+    ]) ?? continueWatchingFallbackRoute(item);
+    router.push(route);
+  }, [library?.movies, library?.tv, router]);
+
   // Selection key: "movie-123" or "tv-456"
   const toggleSelect = useCallback((item: MediaItem) => {
     const key = `${item.type}-${item.id}`;
@@ -1516,30 +1528,44 @@ function MediaPageInner({
                 const thumb = cw.thumb
                   ? `${CORE_URL}/api/media/poster?service=plex&path=${encodeURIComponent(cw.thumb)}&w=120`
                   : null;
+                const title = cw.title?.trim() || (cw.type === "tv" ? "TV show" : "Movie");
                 return (
-                  <div key={cw.ratingKey ?? i} className="shrink-0 w-[90px]">
+                  <button
+                    key={cw.ratingKey ?? i}
+                    type="button"
+                    className="group shrink-0 w-[90px] text-left outline-none"
+                    onClick={() => navigateToContinueWatching(cw)}
+                    aria-label={`Open ${title}`}
+                  >
                     <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-muted/30">
                       {thumb ? (
-                        <Image src={thumb} alt={cw.title ?? ""} fill className="object-cover" sizes="90px" />
+                        <Image
+                          src={thumb}
+                          alt={title}
+                          fill
+                          className="object-cover transition-transform duration-200 group-hover:scale-[1.03] group-focus-visible:scale-[1.03]"
+                          sizes="90px"
+                        />
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center">
                           <HugeiconsIcon icon={cw.type === "tv" ? Tv01Icon : Film01Icon} size={16} className="text-dim-foreground" />
                         </div>
                       )}
+                      <span className="absolute inset-0 rounded-lg ring-2 ring-inset ring-transparent transition-colors group-hover:ring-foreground/20 group-focus-visible:ring-primary" />
                       {pct > 0 && (
                         <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/60">
                           <div className="h-full bg-white/80 rounded-r-full" style={{ width: `${pct}%` }} />
                         </div>
                       )}
                     </div>
-                    <p className="text-xs font-medium truncate mt-1.5 text-foreground">{cw.title}</p>
+                    <p className="text-xs font-medium truncate mt-1.5 text-foreground">{title}</p>
                     {cw.episodeTitle && (
                       <p className="text-[10px] text-muted-foreground truncate">
                         {cw.parentIndex != null && cw.index != null ? `S${cw.parentIndex}E${cw.index} · ` : ""}
                         {cw.episodeTitle}
                       </p>
                     )}
-                  </div>
+                  </button>
                 );
               })}
             </div>

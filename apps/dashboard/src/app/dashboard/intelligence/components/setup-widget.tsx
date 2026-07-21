@@ -17,6 +17,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { CORE_URL } from "@/lib/constants";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { toast } from "sonner";
 
 interface AppHealthResult {
@@ -170,7 +171,9 @@ export function SetupWidget() {
         setTerminalSession(data.sessionName);
         setTerminalCommand(data.command);
         toast.success("Opening Claude Code for setup");
-        router.push("/dashboard/terminal");
+        if (!requestDesktopNavigation("/dashboard/terminal")) {
+          router.push("/dashboard/terminal");
+        }
       } else {
         toast.error(data.error ?? "Failed to delegate");
       }

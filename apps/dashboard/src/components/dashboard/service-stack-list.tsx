@@ -49,6 +49,7 @@ import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { useSWRConfig } from "swr";
 import { useRouter } from "next/navigation";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import {
   Dialog,
   DialogContent,
@@ -268,7 +269,9 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
     ].filter(Boolean).join("\n");
 
     void handleSubmit(userMessage, systemContext);
-    router.push("/dashboard/assistant");
+    if (!requestDesktopNavigation("/dashboard/assistant")) {
+      router.push("/dashboard/assistant");
+    }
   }, [handleSubmit, router]);
 
   const statusVariant = (status: Container["status"]) =>

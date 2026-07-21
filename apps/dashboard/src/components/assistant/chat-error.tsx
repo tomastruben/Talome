@@ -1,7 +1,34 @@
 "use client";
 
-import Link from "next/link";
+import type { MouseEvent, ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { HugeiconsIcon, AlertCircleIcon } from "@/components/icons";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+
+function AssistantDashboardLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: ReactNode;
+}) {
+  const router = useRouter();
+
+  const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    if (!requestDesktopNavigation(href)) router.push(href);
+  };
+
+  return (
+    <a
+      href={href}
+      className="underline underline-offset-2 hover:text-destructive/90"
+      onClick={handleClick}
+    >
+      {children}
+    </a>
+  );
+}
 
 function getErrorMessageForDisplay(error: Error): string {
   const e = error as unknown as Record<string, unknown>;
@@ -32,12 +59,26 @@ function getErrorMessageForDisplay(error: Error): string {
 
 export function AssistantChatError({
   error,
+  provider = "anthropic",
   onDismiss,
 }: {
   error: Error;
+  provider?: string;
   onDismiss: () => void;
 }) {
   const displayMessage = getErrorMessageForDisplay(error);
+  const providerLabel = provider === "openai"
+    ? "OpenAI"
+    : provider === "ollama"
+      ? "Ollama"
+      : provider === "anthropic"
+        ? "Anthropic"
+        : provider;
+  const billingUrl = provider === "openai"
+    ? "https://platform.openai.com/settings/organization/billing/overview"
+    : provider === "anthropic"
+      ? "https://console.anthropic.com/settings/billing"
+      : null;
 
   const isApiKeyError =
     displayMessage.includes("API key") ||
@@ -54,38 +95,42 @@ export function AssistantChatError({
   const title = isApiKeyError
     ? "No API key configured"
     : isCreditError
-      ? "Anthropic credit balance too low"
+      ? `${providerLabel} credit balance too low`
       : isBudgetError
         ? "Daily AI budget reached"
         : "Something went wrong";
 
   const body = isApiKeyError ? (
     <>
-      Add your Anthropic API key in{" "}
-      <Link href="/dashboard/settings" className="underline underline-offset-2 hover:text-destructive/90">
+      Add your {providerLabel} API key in{" "}
+      <AssistantDashboardLink href="/dashboard/settings">
         Settings
-      </Link>{" "}
+      </AssistantDashboardLink>{" "}
       to start using the assistant.
     </>
   ) : isCreditError ? (
     <>
-      Your Anthropic account has insufficient credits.{" "}
-      <a
-        href="https://console.anthropic.com/settings/billing"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="underline underline-offset-2 hover:text-destructive/90"
-      >
-        Add credits
-      </a>{" "}
-      to continue using the assistant.
+      Your {providerLabel} account has insufficient credits.{" "}
+      {billingUrl ? (
+        <>
+          <a
+            href={billingUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 hover:text-destructive/90"
+          >
+            Add credits
+          </a>{" "}
+          to continue using the assistant.
+        </>
+      ) : "Choose another configured model or update the provider in Settings."}
     </>
   ) : isBudgetError ? (
     <>
       You&apos;ve hit today&apos;s spending cap. Increase or disable it in{" "}
-      <Link href="/dashboard/settings" className="underline underline-offset-2 hover:text-destructive/90">
+      <AssistantDashboardLink href="/dashboard/settings">
         Settings &rarr; AI Cost
-      </Link>
+      </AssistantDashboardLink>
       .
     </>
   ) : (

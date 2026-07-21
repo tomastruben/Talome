@@ -46,6 +46,33 @@ describe("DesktopWindow", () => {
     });
   });
 
+  it("lets pointer dragging place a normal window flush with the top-left edges", () => {
+    const onBoundsChange = vi.fn();
+
+    render(
+      <DesktopWindow
+        {...defaultProps}
+        onBoundsChange={onBoundsChange}
+      >
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    fireEvent.pointerDown(screen.getByText("Files"), {
+      button: 0,
+      clientX: 200,
+      clientY: 220,
+    });
+    fireEvent.pointerMove(window, { clientX: 0, clientY: 0 });
+
+    expect(onBoundsChange).toHaveBeenLastCalledWith({
+      x: 0,
+      y: 0,
+      width: 700,
+      height: 500,
+    });
+  });
+
   it("renders leading, trailing, and toggle actions in the titlebar", () => {
     const onAction = vi.fn();
 
@@ -110,6 +137,20 @@ describe("DesktopWindow", () => {
     expect(windowRegion).toHaveAttribute("inert");
     expect(windowRegion).toHaveAttribute("aria-hidden", "true");
     expect(windowRegion).toHaveClass("pointer-events-none");
+  });
+
+  it("keeps a backgrounded window mounted without exposing it to interaction", () => {
+    render(
+      <DesktopWindow {...defaultProps} backgrounded>
+        <iframe title="Persistent audio engine" src="about:blank" />
+      </DesktopWindow>,
+    );
+
+    const windowRegion = document.querySelector('[data-desktop-window="files"]');
+    expect(windowRegion).toHaveAttribute("inert");
+    expect(windowRegion).toHaveAttribute("aria-hidden", "true");
+    expect(windowRegion).toHaveClass("invisible", "pointer-events-none", "opacity-0");
+    expect(screen.getByTitle("Persistent audio engine")).toBeInTheDocument();
   });
 
   it("renders a titlebar menu and dispatches its selected item", async () => {

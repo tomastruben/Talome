@@ -47,7 +47,7 @@ interface SettingsLink {
 }
 
 const GENERAL_ITEMS: SettingsLink[] = [
-  { slug: "users", icon: UserIcon, title: "Users & Access", description: "Create members, manage roles", adminOnly: true },
+  { slug: "users", icon: UserIcon, title: "Users & Access", description: "Invite family, manage roles", adminOnly: true },
 ];
 
 const AI_ITEMS: SettingsLink[] = [

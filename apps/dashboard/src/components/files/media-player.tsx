@@ -55,9 +55,6 @@ import type {
   AudioPlayerProps,
 } from "./media-player/types";
 import {
-  DIRECT_PLAY_EXTS,
-  HLS_EXTS,
-  BROWSER_AUDIO,
   SPEED_OPTIONS,
   SUBTITLE_FONT_SIZES,
   SUBTITLE_DEFAULTS,
@@ -69,8 +66,8 @@ import {
   formatTime,
   getVolumeIcon,
   trackLabel,
-  fileExt,
-  needsHls,
+  chooseLocalPlaybackStrategy,
+  initialPlaybackMode,
   isSafari,
   supportsHevc,
   supportsPiP,
@@ -82,7 +79,49 @@ import {
   saveSpeed,
   isIntroChapter,
   isCreditsChapter,
+  type PlaybackProbe,
 } from "./media-player/helpers";
+
+async function fetchJsonWithDeadline<T>(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ response: Response; data: T }> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    const data = await response.json() as T;
+    return { response, data };
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+interface JellyfinPlaybackResponse {
+  available?: boolean;
+  jellyfinBaseUrl: string;
+  apiKey: string;
+  itemId: string;
+  mediaSourceId: string;
+  playSessionId: string;
+  audioTracks?: AudioTrackInfo[];
+  subtitleTracks?: Array<SubtitleTrackInfo & { isTextBased: boolean }>;
+  duration?: number;
+  resumePositionTicks?: number;
+  chapters?: ChapterInfo[];
+  directPlayUrl?: string;
+  transcodeUrl?: string;
+  transcodeQualities?: Array<{ label: string; height: number; bitrate: number; url: string }>;
+  trickplay?: TrickplayInfo;
+  playMethod?: "DirectPlay" | "Transcode";
+}
+
+interface ProbeResponse extends PlaybackProbe {
+  duration?: number;
+  audio?: AudioTrackInfo[];
+  subtitle?: SubtitleTrackInfo[];
+}
 
 // ── MediaSlider (from extracted module) ──────────────────────────────────
 import { MediaSlider } from "./media-player/media-slider";
@@ -110,7 +149,9 @@ export function VideoPlayer({
   const { handleSubmit: assistantSubmit, openPaletteInChatMode } = useAssistant();
 
   // ── Playback mode ──────────────────────────────────────────────────────
-  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("deciding");
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(() =>
+    initialPlaybackMode(fileName, preferDirect),
+  );
   const hlsRequired = playbackMode === "hls" || playbackMode === "jellyfin-hls";
 
   // ── Refs ───────────────────────────────────────────────────────────────
@@ -229,17 +270,14 @@ export function VideoPlayer({
         }
         if (isMediaLibrary) {
           try {
-            const controller = new AbortController();
-            const timeout = window.setTimeout(() => controller.abort(), 5_000);
-            const jfRes = await fetch(`${apiBase}/jellyfin-playback`, {
+            const { response: jfRes, data: jf } = await fetchJsonWithDeadline<JellyfinPlaybackResponse>(
+              `${apiBase}/jellyfin-playback`, {
               method: "POST",
               credentials: "include",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ path: filePath }),
-              signal: controller.signal,
-            }).finally(() => window.clearTimeout(timeout));
+            }, 1_500);
             if (jfRes.ok && !cancelled) {
-              const jf = await jfRes.json();
               if (jf.available) {
                 // Store session info for progress reporting
                 jfSessionRef.current = {
@@ -256,11 +294,11 @@ export function VideoPlayer({
                 if (jf.subtitleTracks?.length) setSubtitleTracks(
                   jf.subtitleTracks.filter((s: { isTextBased: boolean }) => s.isTextBased),
                 );
-                if (jf.duration > 0) setDuration(jf.duration);
+                if ((jf.duration ?? 0) > 0) setDuration(jf.duration ?? 0);
 
                 // Resume position from Jellyfin
-                if (jf.resumePositionTicks > 0) {
-                  setResumePosition(jf.resumePositionTicks / 10_000_000);
+                if ((jf.resumePositionTicks ?? 0) > 0) {
+                  setResumePosition((jf.resumePositionTicks ?? 0) / 10_000_000);
                 }
 
                 // Chapters from Jellyfin
@@ -280,12 +318,12 @@ export function VideoPlayer({
 
                 const useDirectPlay = (jf.playMethod === "DirectPlay" || preferOriginal) && jf.directPlayUrl;
                 if (useDirectPlay) {
-                  setJellyfinSrc(jf.directPlayUrl);
+                  setJellyfinSrc(jf.directPlayUrl ?? null);
                   setPlaybackMode("jellyfin");
                   setCurrentQuality(-2);
                   setHlsReady(true);
                 } else if (jf.transcodeUrl) {
-                  setHlsSrc(jf.transcodeUrl);
+                  setHlsSrc(jf.transcodeUrl ?? null);
                   setPlaybackMode("jellyfin-hls");
                   // Select the first Jellyfin quality preset if available, otherwise default
                   setCurrentQuality(jf.transcodeQualities?.length ? 100 : -1);
@@ -301,86 +339,56 @@ export function VideoPlayer({
           } catch { /* Jellyfin unavailable — fall through to Talome pipeline */ }
         }
 
-        const res = await fetch(
+        const { response: res, data } = await fetchJsonWithDeadline<ProbeResponse>(
           `${apiBase}/probe?path=${encodeURIComponent(filePath)}`,
           { credentials: "include" },
+          6_000,
         );
         if (!res.ok || cancelled) {
-          // Probe failed (e.g. no ffmpeg on host) — show error instead of staying in "deciding"
-          if (!cancelled) setError(true);
+          // Fail open: a missing probe must never strand playback in "Analyzing".
+          if (!cancelled) {
+            const fallback = initialPlaybackMode(fileName, preferDirect);
+            setPlaybackMode(fallback === "deciding" ? "hls" : fallback);
+            setHlsReady(fallback === "direct");
+          }
           return;
         }
-        const data = await res.json();
         if (cancelled) return;
         if (data.audio) setAudioTracks(data.audio);
         if (data.subtitle) setSubtitleTracks(data.subtitle.filter((s: SubtitleTrackInfo) => s.textBased));
-        if (data.duration > 0) setDuration(data.duration);
+        if ((data.duration ?? 0) > 0) setDuration(data.duration ?? 0);
 
         // Decide playback strategy based on container, video codec, and audio codec.
-        // Priority: optimized MP4 > direct (MP4+native codecs) > direct-mkv (Chrome+MKV) > transmux (any→MP4) > hls
         if (!cancelled) {
-          if (data.optimized) {
-            const vCodec = data.videoCodec ?? "";
-            const transfer = data.videoColorTransfer ?? "";
-            const pixFmt = data.videoPixFmt ?? "";
-            const is10bit = pixFmt.includes("10");
-            const isSdrTransfer = transfer === "bt709" || transfer === "bt2020-10" || transfer === "iec61966-2-1";
-            const isHdr = (vCodec === "hevc" || vCodec === "h265") && is10bit && !isSdrTransfer;
+          const strategy = chooseLocalPlaybackStrategy(data, fileName, {
+            safari: isSafari(),
+            hevc: supportsHevc(),
+          });
+          setPlaybackMode(strategy.mode);
+          setHlsReady(strategy.ready);
+          setProbedVideoCodec(data.videoCodec ?? "");
 
-            if (isHdr) {
-              setPlaybackMode("hls");
-            } else {
-              setPlaybackMode("direct");
-              setHlsReady(true);
-            }
-          } else {
-            const vCodec = data.videoCodec ?? "";
-            const aCodec = (data.audio?.[0]?.codec ?? "").toLowerCase();
-            const ext = fileExt(fileName);
-            const safari = isSafari();
-            const transfer = data.videoColorTransfer ?? "";
-            const pixFmt = data.videoPixFmt ?? "";
-            const is10bit = pixFmt.includes("10");
-            const isHevc = vCodec === "hevc" || vCodec === "h265";
-            const isSdrTransfer = transfer === "bt709" || transfer === "bt2020-10" || transfer === "iec61966-2-1";
-            const isHdr = isHevc && is10bit && !isSdrTransfer;
-            const videoOk = vCodec === "h264" || (isHevc && (safari || supportsHevc()));
-            const audioOk = BROWSER_AUDIO.has(aCodec);
-            const isDirectContainer = DIRECT_PLAY_EXTS.has(ext);
-
-            let needsOptimization = true;
-            if (isHdr) {
-              setPlaybackMode("hls");
-            } else if (isDirectContainer && videoOk && audioOk) {
-              setPlaybackMode("direct");
-              setHlsReady(true);
-              needsOptimization = false;
-            } else if (!safari && ext === "mkv" && videoOk && audioOk) {
-              setPlaybackMode("direct-mkv");
-            } else if (videoOk) {
-              setPlaybackMode("transmux");
-            } else {
-              setPlaybackMode("hls");
-            }
-            // Queue for permanent optimization so it direct-plays next time
-            if (needsOptimization) {
-              void fetch(`${baseUrl}/api/optimization/queue`, {
-                method: "POST", credentials: "include",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ paths: [filePath] }),
-              }).catch(() => {});
-            }
-            setProbedVideoCodec(vCodec);
+          // Queue for permanent optimization so it direct-plays next time.
+          if (strategy.needsOptimization) {
+            void fetch(`${baseUrl}/api/optimization/queue`, {
+              method: "POST", credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ paths: [filePath] }),
+            }).catch(() => {});
           }
         }
       } catch {
-        // Entire probe/Jellyfin flow failed — show error instead of staying in "deciding"
-        if (!cancelled) setError(true);
+        // Timeouts and optional service failures fail open to a playable path.
+        if (!cancelled) {
+          const fallback = initialPlaybackMode(fileName, preferDirect);
+          setPlaybackMode(fallback === "deciding" ? "hls" : fallback);
+          setHlsReady(fallback === "direct");
+        }
       }
     })();
 
     return () => { cancelled = true; };
-  }, [filePath, apiBase]);
+  }, [filePath, fileName, apiBase, baseUrl, isMediaLibrary, preferDirect, preferOriginal]);
 
   // ── Stop current transmux job (fire-and-forget) ───────────────────────
   const stopCurrentTransmux = useCallback(() => {
@@ -548,16 +556,17 @@ export function VideoPlayer({
       try {
         const isHevc = probedVideoCodec === "hevc" || probedVideoCodec === "h265";
         const needsTranscode = (isHevc || !["h264", "hevc", "h265"].includes(probedVideoCodec)) ? "&transcodeVideo=1" : "";
-        const startRes = await fetch(
+        const { response: startRes, data: startData } = await fetchJsonWithDeadline<{ hash: string; duration?: number }>(
           `${apiBase}/hls-start?path=${encodeURIComponent(filePath)}&audioTrack=${selectedAudio}&seekTo=${hlsSeekOffset}${needsTranscode}`,
           { credentials: "include" },
+          8_000,
         );
         if (!startRes.ok) { setError(true); return; }
-        const { hash, duration: srcDuration } = await startRes.json();
+        const { hash, duration: srcDuration } = startData;
         if (cancelled) return;
 
         hlsHashRef.current = hash;
-        if (srcDuration > 0) setDuration(srcDuration);
+        if ((srcDuration ?? 0) > 0) setDuration(srcDuration ?? 0);
         hlsStartedAt.current = Date.now();
 
         const playlistUrl = `${apiBase}/hls/${hash}/playlist.m3u8`;
@@ -916,13 +925,14 @@ export function VideoPlayer({
     // Auto-cascade through all playback modes before showing the error screen.
     // The user should never have to pick a technical fallback — we try everything.
     if (playbackMode === "direct" || playbackMode === "direct-mkv") {
-      // Direct failed → try Jellyfin transcode if available, else Talome transmux
+      // Direct failed → use a streaming transcode. Never wait for a complete
+      // movie-sized transmux before showing the first frame.
       if (jfTranscodeUrl.current) {
         setHlsSrc(jfTranscodeUrl.current);
         setPlaybackMode("jellyfin-hls");
         return;
       }
-      setPlaybackMode("transmux");
+      setPlaybackMode("hls");
       return;
     }
     if (playbackMode === "jellyfin" && jfTranscodeUrl.current) {

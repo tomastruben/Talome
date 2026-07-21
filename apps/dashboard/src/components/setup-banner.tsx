@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSetupStatus } from "@/hooks/use-setup-status";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 const TOAST_AI = "setup-ai-warning";
 const TOAST_BUILDING = "setup-building";
@@ -26,7 +27,10 @@ export function SetupBanner() {
         duration: Infinity,
         action: {
           label: "Configure",
-          onClick: () => router.push("/dashboard/settings/ai-provider"),
+          onClick: () => {
+            const href = "/dashboard/settings/ai-provider";
+            if (!requestDesktopNavigation(href)) router.push(href);
+          },
         },
       });
     } else if (isConfigured) {
@@ -43,7 +47,11 @@ export function SetupBanner() {
         duration: 10000,
         action: {
           label: "Continue",
-          onClick: () => router.push(nearestStack.dashboardPage),
+          onClick: () => {
+            if (!requestDesktopNavigation(nearestStack.dashboardPage)) {
+              router.push(nearestStack.dashboardPage);
+            }
+          },
         },
       });
     } else if (phase !== "building") {

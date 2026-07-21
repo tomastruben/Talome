@@ -8,10 +8,38 @@ export const users = sqliteTable("users", {
   role: text("role", { enum: ["admin", "member"] }).notNull().default("member"),
   /** JSON-serialized UserPermissions — only enforced for member role */
   permissions: text("permissions"),
+  /** JSON-serialized account-scoped UI preferences */
+  preferences: text("preferences"),
   /** Bcrypt hash of the recovery code — used for password reset without email */
   recoveryCodeHash: text("recovery_code_hash"),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   lastLoginAt: text("last_login_at"),
+});
+
+export const userInvitations = sqliteTable("user_invitations", {
+  id: text("id").primaryKey(),
+  /** SHA-256 hash of the capability token. The raw token is only returned once. */
+  tokenHash: text("token_hash").notNull().unique(),
+  email: text("email").notNull(),
+  role: text("role", { enum: ["admin", "member"] }).notNull().default("member"),
+  /** JSON-serialized UserPermissions for member invitations. */
+  permissions: text("permissions"),
+  createdBy: text("created_by").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  acceptedAt: text("accepted_at"),
+  revokedAt: text("revoked_at"),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const sharedStacks = sqliteTable("shared_stacks", {
+  id: text("id").primaryKey(),
+  /** Sanitized TalomeStack JSON. Public metadata endpoints never expose compose. */
+  stackJson: text("stack_json").notNull(),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  expiresAt: text("expires_at").notNull(),
+  revokedAt: text("revoked_at"),
+  viewCount: integer("view_count").notNull().default(0),
 });
 
 export const conversations = sqliteTable("conversations", {

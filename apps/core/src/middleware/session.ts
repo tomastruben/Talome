@@ -100,6 +100,8 @@ export const requireSession: MiddlewareHandler = async (c, next) => {
   if (
     path === "/api/health" ||
     path.startsWith("/api/auth/") ||
+    // Public previews expose only metadata or a sanitized portable manifest.
+    path.startsWith("/api/stacks/public/") ||
     // MCP and terminal use their own Bearer token auth
     path.startsWith("/api/mcp") ||
     path.startsWith("/api/terminal") ||

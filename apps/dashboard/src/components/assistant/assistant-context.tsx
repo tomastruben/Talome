@@ -68,6 +68,8 @@ export interface AssistantContextValue {
   setModel: (model: ChatModel) => void;
   modelOptions: ModelOption[];
   activeProvider: string;
+  /** True once the backend model/provider selection has populated request refs. */
+  modelReady: boolean;
 
   // Actions
   handleSubmit: (
@@ -201,7 +203,6 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!modelsConfig?.providers) return;
-    setActiveProvider(modelsConfig.activeProvider);
 
     // Build options from ALL configured providers — active provider first
     const allOptions: ModelOption[] = [];
@@ -222,10 +223,17 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     }
     setModelOptions(allOptions);
 
-    // Only set model if not already set or if it's not in the new options
-    if (!model || !allOptions.some((o) => o.id === model)) {
-      setModel(modelsConfig.activeModel);
-    }
+    // Populate request refs synchronously with the config. A prompt can arrive
+    // from a URL before React has committed the corresponding state updates.
+    const selectedModel = model && allOptions.some((option) => option.id === model)
+      ? model
+      : modelsConfig.activeModel;
+    const selectedProvider = allOptions.find((option) => option.id === selectedModel)?.provider
+      ?? modelsConfig.activeProvider;
+    modelRef.current = selectedModel;
+    providerRef.current = selectedProvider;
+    setModel(selectedModel);
+    setActiveProvider(selectedProvider);
   }, [modelsConfig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -239,8 +247,13 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Track current provider for the selected model
     const opt = modelOptions.find((o) => o.id === model);
-    if (opt) providerRef.current = opt.provider;
+    if (opt) {
+      providerRef.current = opt.provider;
+      setActiveProvider(opt.provider);
+    }
   }, [model, modelOptions]);
+
+  const modelReady = Boolean(modelsConfig?.providers);
 
   // Holds a reference to the CommandPalette's open-in-chat-mode function,
   // registered once the palette mounts.
@@ -550,6 +563,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       setModel,
       modelOptions,
       activeProvider,
+      modelReady,
       handleSubmit,
       startNew,
       autoMode,
@@ -562,7 +576,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       conversations, activeId, setActiveId, deleteConversation,
       messages, status, error, clearError, stop, setMessages,
       addToolApprovalResponse, regenerate, model, setModel,
-      modelOptions, activeProvider,
+      modelOptions, activeProvider, modelReady,
       handleSubmit, startNew,
       autoMode, setAutoMode, isSubmitting,
       openPaletteInChatMode, registerOpenPalette,

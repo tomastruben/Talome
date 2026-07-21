@@ -1,9 +1,22 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { DesktopWallpaperDialog } from "@/components/desktop/desktop-customization";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import {
+  DesktopWallpaperDialog,
+  normalizeDesktopWallpaperUrl,
+} from "@/components/desktop/desktop-customization";
 
-afterEach(() => {
-  vi.unstubAllGlobals();
+describe("normalizeDesktopWallpaperUrl", () => {
+  it("clears retired fantasy wallpapers while preserving current and custom choices", () => {
+    expect(normalizeDesktopWallpaperUrl(
+      "/wallpapers/generated/talome-29.jpg",
+    )).toBeUndefined();
+    expect(normalizeDesktopWallpaperUrl(
+      "/wallpapers/generated/talome-46.jpg",
+    )).toBe("/wallpapers/generated/talome-46.jpg");
+    expect(normalizeDesktopWallpaperUrl("data:image/jpeg;base64,custom")).toBe(
+      "data:image/jpeg;base64,custom",
+    );
+  });
 });
 
 describe("DesktopWallpaperDialog", () => {
@@ -32,7 +45,6 @@ describe("DesktopWallpaperDialog", () => {
     expect(screen.getByRole("button", { name: "Close Desktop Wallpaper" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Minimize Desktop Wallpaper" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Maximize Desktop Wallpaper" })).toBeDisabled();
-    expect(screen.queryByText("Choose a Talome scene or use your own image stored in this browser.")).not.toBeInTheDocument();
 
     vi.spyOn(dialog, "getBoundingClientRect").mockReturnValue({
       bottom: 740,
@@ -66,39 +78,7 @@ describe("DesktopWallpaperDialog", () => {
     expect(dialog.style.translate).toBe("calc(-50% + 240px) calc(-50% + 44px)");
   });
 
-  it("searches Unsplash, tracks the download, and applies the wallpaper with attribution", async () => {
-    const wallpaperUrl = "https://images.unsplash.com/photo-example?ixid=test&w=2560";
-    const downloadLocation = "https://api.unsplash.com/photos/example/download";
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        configured: true,
-        query: "nature wallpaper",
-        page: 1,
-        total: 1,
-        totalPages: 1,
-        photos: [{
-          id: "example",
-          description: "Mountain lake",
-          color: "#334155",
-          width: 3000,
-          height: 2000,
-          thumbnailUrl: "https://images.unsplash.com/photo-example?ixid=test&w=400",
-          wallpaperUrl,
-          photoUrl: "https://unsplash.com/photos/example?utm_source=talome&utm_medium=referral",
-          downloadLocation,
-          photographer: {
-            name: "Ada Photo",
-            username: "adaphoto",
-            profileUrl: "https://unsplash.com/@adaphoto?utm_source=talome&utm_medium=referral",
-          },
-          provider: {
-            name: "Unsplash",
-            url: "https://unsplash.com/photos/example?utm_source=talome&utm_medium=referral",
-          },
-        }],
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tracked: true }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
+  it("offers generated wallpapers in Talome without a Discover section", () => {
     const onWallpaperChange = vi.fn(() => true);
 
     render(
@@ -110,89 +90,30 @@ describe("DesktopWallpaperDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "Discover" }));
-    const wallpaper = await screen.findByRole("radio", {
-      name: "Use photo by Ada Photo from Unsplash",
-    });
-    expect(screen.getByRole("link", { name: "Ada Photo" })).toHaveAttribute(
-      "href",
-      expect.stringContaining("utm_source=talome"),
-    );
+    expect(screen.queryByRole("tab", { name: "Discover" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Talome" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Custom" })).toBeVisible();
 
-    fireEvent.click(wallpaper);
-    await waitFor(() => {
-      expect(onWallpaperChange).toHaveBeenCalledWith(wallpaperUrl, {
-        photoUrl: expect.stringContaining("unsplash.com/photos/example"),
-        photographerName: "Ada Photo",
-        photographerUrl: expect.stringContaining("unsplash.com/@adaphoto"),
-        providerName: "Unsplash",
-      });
-    });
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "/dashboard/desktop/api/unsplash/wallpapers",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ downloadLocation }),
-      },
-    );
-  });
+    expect(screen.getByRole("radio", {
+      name: "Use Luminous Fold wallpaper",
+    })).toBeVisible();
+    expect(screen.getByRole("radio", {
+      name: "Use Glacier Dawn wallpaper",
+    })).toBeVisible();
 
-  it("uses the setup-free online provider without download tracking", async () => {
-    const wallpaperUrl = "https://w.wallhaven.cc/full/example.jpg";
-    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
-      configured: false,
-      provider: "wallhaven",
-      query: "nature wallpaper",
-      page: 1,
-      total: 1,
-      totalPages: 1,
-      photos: [{
-        id: "wallhaven-example",
-        description: "Mountain lake wallpaper",
-        color: "#334155",
-        width: 3000,
-        height: 2000,
-        thumbnailUrl: "https://th.wallhaven.cc/lg/example.jpg",
-        wallpaperUrl,
-        photoUrl: "https://wallhaven.cc/w/example",
-        photographer: {
-          name: "Wallhaven contributor",
-          username: "example",
-          profileUrl: "https://wallhaven.cc/w/example",
-        },
-        provider: {
-          name: "Wallhaven",
-          url: "https://wallhaven.cc/w/example",
-        },
-      }],
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-    const onWallpaperChange = vi.fn(() => true);
+    expect(screen.queryByRole("radio", {
+      name: "Use Bioluminescent Valley wallpaper",
+    })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", {
+      name: "Use Celestial Tidepools wallpaper",
+    })).not.toBeInTheDocument();
 
-    render(
-      <DesktopWallpaperDialog
-        open
-        wallpaperUrl="/wallpapers/dune.jpg"
-        onOpenChange={vi.fn()}
-        onWallpaperChange={onWallpaperChange}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("tab", { name: "Discover" }));
-    fireEvent.click(await screen.findByRole("radio", {
-      name: "Use photo by Wallhaven contributor from Wallhaven",
+    fireEvent.click(screen.getByRole("radio", {
+      name: "Use Sage Contours wallpaper",
     }));
-
-    await waitFor(() => {
-      expect(onWallpaperChange).toHaveBeenCalledWith(wallpaperUrl, {
-        photoUrl: "https://wallhaven.cc/w/example",
-        photographerName: "Wallhaven contributor",
-        photographerUrl: "https://wallhaven.cc/w/example",
-        providerName: "Wallhaven",
-      });
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onWallpaperChange).toHaveBeenCalledWith(
+      "/wallpapers/generated/talome-46.jpg",
+      undefined,
+    );
   });
 });

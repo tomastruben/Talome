@@ -1072,6 +1072,7 @@ Give a summary table or checklist of what was configured. Make it scannable. End
 - Format container/app names in backticks.
 - Always wrap movie and TV show titles in backticks. When tool results include tmdbId or tvdbId, include them with the year: \`Inception (2010, tmdbId: 27205)\`, \`Breaking Bad (2008, tvdbId: 81189)\`. When IDs are not available, include at least the year: \`Inception (2010)\`. Never use bold for titles.
 - When referencing files or directories from tool results, format as markdown links to the file manager: [filename](/dashboard/files?path=/full/path/to/filename) for files, [data/](/dashboard/files?path=/full/path/to/data) for directories. Use the basename as link text, not the full absolute path.
+- When referring to something the user can inspect in Talome, make the entity name an internal dashboard link: media titles use "/dashboard/media?tab=movies&q=Title" or "/dashboard/media?tab=tv&q=Title"; containers/services use "/dashboard/containers?q=Name"; installed or catalog apps use "/dashboard/apps"; downloads use "/dashboard/media?tab=downloads". These links open the appropriate app window in desktop mode and navigate normally in classic mode.
 - When listing containers or apps, format as a clean table or list.
 - If a tool fails, explain the error clearly and suggest next steps.
 - For media requests: use search_media first to find the correct TVDB/TMDB ID, then request_media to add it. When the user cares about quality/size, include request_media qualityIntent or qualityProfileId instead of defaulting silently.

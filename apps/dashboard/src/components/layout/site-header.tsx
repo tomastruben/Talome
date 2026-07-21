@@ -37,6 +37,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { CORE_URL } from "@/lib/constants";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import type { Container } from "@talome/types";
 
 const pathLabels: Record<string, string> = {
@@ -352,7 +353,9 @@ function ServicesHeaderAction() {
     ].join("\n");
 
     void handleSubmit(prompt, "Current page: /dashboard/containers");
-    router.push("/dashboard/assistant");
+    if (!requestDesktopNavigation("/dashboard/assistant")) {
+      router.push("/dashboard/assistant");
+    }
   };
 
   return (

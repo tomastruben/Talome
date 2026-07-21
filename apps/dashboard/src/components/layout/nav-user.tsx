@@ -25,7 +25,12 @@ import {
   Moon02Icon,
 } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
-import { useDesktopModeAvailable } from "@/hooks/use-desktop-mode";
+import {
+  persistDashboardModePreference,
+  useDesktopModeAvailable,
+  writeDashboardModePreference,
+} from "@/hooks/use-desktop-mode";
+import { useUser } from "@/hooks/use-user";
 
 const subscribeToHydration = () => () => {};
 
@@ -33,6 +38,7 @@ export function NavUser() {
   const { resolvedTheme, setTheme } = useTheme();
   const router = useRouter();
   const desktopModeAvailable = useDesktopModeAvailable();
+  const { user, mutate: mutateUser } = useUser();
   // Track hydration so theme-dependent content renders correctly.
   // The DropdownMenu wrapper is always rendered to keep a stable component
   // tree — the previous conditional early-return produced a different tree
@@ -44,6 +50,18 @@ export function NavUser() {
     () => false,
   );
   const isDark = mounted && resolvedTheme === "dark";
+
+  const selectDesktopMode = () => {
+    writeDashboardModePreference(user?.userId, "desktop");
+    void mutateUser((current) => current ? {
+      ...current,
+      preferences: { ...current.preferences, desktopMode: "desktop" },
+    } : current, { revalidate: false });
+    router.push("/dashboard/desktop");
+    void persistDashboardModePreference(user?.userId, "desktop").then((saved) => {
+      if (saved) void mutateUser();
+    });
+  };
 
   return (
     <SidebarMenu>
@@ -63,7 +81,7 @@ export function NavUser() {
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56" side="top" align="start" sideOffset={4}>
             {desktopModeAvailable && (
-              <DropdownMenuItem onSelect={() => router.push("/dashboard/desktop")}>
+              <DropdownMenuItem onSelect={selectDesktopMode}>
                 <AppWindowMacIcon className="size-4" />
                 <span>Desktop mode</span>
               </DropdownMenuItem>

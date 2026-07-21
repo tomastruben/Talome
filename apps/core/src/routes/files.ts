@@ -3,7 +3,7 @@ import { readdir, stat, readFile, writeFile, unlink, mkdir, rename, rm } from "n
 import { join, resolve, basename, dirname, extname } from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
-import { execSync, spawn } from "node:child_process";
+import { execFile, execSync, spawn } from "node:child_process";
 import { Readable } from "node:stream";
 import { getSetting, setSetting } from "../utils/settings.js";
 import { serverError } from "../middleware/request-logger.js";
@@ -291,17 +291,12 @@ const IMAGE_SUB_CODECS = new Set(["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subt
 export { MIME_MAP, getMimeType, hasFfmpeg };
 export type { ProbeResult, ProbeAudioTrack, ProbeSubTrack };
 
-export function probeFile(filePath: string): ProbeResult {
+function emptyProbeResult(): ProbeResult {
+  return { duration: 0, videoCodec: "", audio: [], subtitle: [] };
+}
+
+function parseProbeOutput(out: string): ProbeResult {
   try {
-    // Derive ffprobe path from resolved ffmpeg binary (same directory)
-    const ffmpegBin = getFfmpegBin();
-    const ffprobeBin = ffmpegBin.endsWith("ffmpeg")
-      ? ffmpegBin.replace(/ffmpeg$/, "ffprobe")
-      : "ffprobe";
-    const out = execSync(
-      `"${ffprobeBin}" -v error -print_format json -show_format -show_streams "${filePath}"`,
-      { encoding: "utf-8", timeout: 15_000 },
-    );
     const data = JSON.parse(out);
     const duration = parseFloat(data.format?.duration ?? "0") || 0;
 
@@ -347,8 +342,46 @@ export function probeFile(filePath: string): ProbeResult {
 
     return { duration, videoCodec, videoCodecTag, videoColorTransfer, videoColorPrimaries, videoColorSpace, videoPixFmt, audio, subtitle };
   } catch {
-    return { duration: 0, videoCodec: "", audio: [], subtitle: [] };
+    return emptyProbeResult();
   }
+}
+
+function getFfprobeBin(): string {
+  const ffmpegBin = getFfmpegBin();
+  return ffmpegBin.endsWith("ffmpeg")
+    ? ffmpegBin.replace(/ffmpeg$/, "ffprobe")
+    : "ffprobe";
+}
+
+export function probeFile(filePath: string): ProbeResult {
+  try {
+    const out = execSync(
+      `"${getFfprobeBin()}" -v error -print_format json -show_format -show_streams "${filePath}"`,
+      { encoding: "utf-8", timeout: 15_000 },
+    );
+    return parseProbeOutput(out);
+  } catch {
+    return emptyProbeResult();
+  }
+}
+
+/** Non-blocking ffprobe for playback endpoints; never stalls the core event loop. */
+export function probeFileAsync(filePath: string): Promise<ProbeResult> {
+  return new Promise((resolveProbe) => {
+    execFile(
+      getFfprobeBin(),
+      ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", filePath],
+      { encoding: "utf-8", timeout: 15_000, maxBuffer: 4 * 1024 * 1024 },
+      (error, stdout) => {
+        if (error) {
+          log.warn("ffprobe failed", { path: filePath, error: error.message });
+          resolveProbe(emptyProbeResult());
+          return;
+        }
+        resolveProbe(parseProbeOutput(stdout));
+      },
+    );
+  });
 }
 
 /** GET /probe — return track metadata for a media file. */
@@ -360,7 +393,7 @@ files.get("/probe", async (c) => {
   if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
   if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
-  return c.json(probeFile(abs));
+  return c.json(await probeFileAsync(abs));
 });
 
 /** GET /subtitle — extract a subtitle track as WebVTT. */
@@ -887,7 +920,7 @@ files.get("/hls-start", async (c) => {
   const audioTrack = parseInt(c.req.query("audioTrack") ?? "0", 10);
   const seekTo = parseFloat(c.req.query("seekTo") ?? "0");
   const transcodeVideo = c.req.query("transcodeVideo") === "1";
-  const probe = probeFile(abs);
+  const probe = await probeFileAsync(abs);
   const hash = startHls(abs, audioTrack, seekTo, probe.videoCodec, transcodeVideo, probe.videoColorTransfer ?? "", probe.videoColorPrimaries ?? "", probe.videoColorSpace ?? "");
   return c.json({ hash, ...probe });
 });
@@ -1132,7 +1165,7 @@ files.get("/transmux-start", async (c) => {
   if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
   if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
-  const probe = probeFile(abs);
+  const probe = await probeFileAsync(abs);
   const primaryAudioCodec = probe.audio[0]?.codec ?? "";
   const hash = startTransmux(abs, probe.videoCodec, probe.duration, primaryAudioCodec);
   return c.json({ hash, ...probe });

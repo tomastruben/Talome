@@ -16,6 +16,7 @@ import { Streamdown } from "streamdown";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 interface NotificationDetailSheetProps {
   open: boolean;
@@ -60,7 +61,9 @@ export function NotificationDetailSheet({
 
     void handleSubmit(userMessage, systemContext);
     onOpenChange(false);
-    router.push("/dashboard/assistant");
+    if (!requestDesktopNavigation("/dashboard/assistant")) {
+      router.push("/dashboard/assistant");
+    }
   };
 
   return (

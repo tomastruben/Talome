@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useSetupStatus, type SetupPhase } from "@/hooks/use-setup-status";
 import type { IconSvgElement } from "@/components/icons";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 const DISMISS_KEY = "talome-welcome-dismissed";
 const OPERATIONAL_DISMISS_KEY = "talome-welcome-operational-dismissed";
@@ -93,9 +94,8 @@ export function WelcomeCard() {
   const goToAssistant = useCallback(
     (prompt: string) => {
       if (previewState) return;
-      router.push(
-        `/dashboard/assistant?prompt=${encodeURIComponent(prompt)}`
-      );
+      const href = `/dashboard/assistant?prompt=${encodeURIComponent(prompt)}`;
+      if (!requestDesktopNavigation(href)) router.push(href);
     },
     [router, previewState]
   );
@@ -262,7 +262,11 @@ export function WelcomeCard() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => router.push(nearestStack.dashboardPage)}
+              onClick={() => {
+                if (!requestDesktopNavigation(nearestStack.dashboardPage)) {
+                  router.push(nearestStack.dashboardPage);
+                }
+              }}
             >
               Continue setup
               <HugeiconsIcon icon={ArrowRight01Icon} size={14} />

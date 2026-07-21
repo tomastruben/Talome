@@ -46,6 +46,7 @@ import { ClaudeTerminal } from "@/components/terminal/claude-terminal";
 import { Switch } from "@/components/ui/switch";
 import { useConfirmAction } from "@/hooks/use-confirm-action";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import useSWR from "swr";
 
 interface SuggestionItem {
@@ -320,7 +321,7 @@ export default function AssistantPage() {
     messages, status, error, clearError, stop,
     conversations, activeId, setActiveId, deleteConversation,
     handleSubmit, addToolApprovalResponse, regenerate,
-    model, setModel, modelOptions, startNew, autoMode, setAutoMode,
+    model, setModel, modelOptions, activeProvider, modelReady, startNew, autoMode, setAutoMode,
   } = useAssistant();
   const embeddedFrame = useIsEmbeddedFrame();
   const keyboard = useKeyboardMode();
@@ -373,7 +374,11 @@ export default function AssistantPage() {
     if (originRef.current) {
       const dest = originRef.current;
       originRef.current = null;
-      router.push(dest);
+      if (embeddedFrame && dest === "/dashboard/desktop") {
+        setDismissed(true);
+      } else if (!requestDesktopNavigation(dest)) {
+        router.push(dest);
+      }
     } else {
       setDismissed(true);
     }
@@ -382,7 +387,7 @@ export default function AssistantPage() {
     setBlueprint({});
     setBuildSession(null);
     setBuildResult(null);
-  }, [router, setBlueprint]);
+  }, [embeddedFrame, router, setBlueprint]);
 
   const handleNew = useCallback(async () => {
     // If streaming, confirm before discarding the active conversation
@@ -468,6 +473,7 @@ export default function AssistantPage() {
 
     if (!prompt && !from) return;
     if (prompt && messages.length > 0) return;
+    if (prompt && !modelReady) return;
 
     if (prompt) promptSubmittedRef.current = true;
 
@@ -475,11 +481,32 @@ export default function AssistantPage() {
     params.delete("prompt");
     params.delete("from");
     const qs = params.toString();
-    router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
+    const cleanUrl = `${pathname}${qs ? `?${qs}` : ""}`;
+    // Remove one-shot parameters before sending. Next navigation is async and
+    // a newly-created conversation may otherwise race it and preserve prompt.
+    window.history.replaceState(window.history.state, "", cleanUrl);
+    router.replace(cleanUrl, { scroll: false });
 
     if (prompt) handleSubmit(prompt);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [modelReady]);
+
+  // A conversation state update can complete after Next's URL replacement and
+  // restore the previous search string. Re-assert removal after the first
+  // message/active conversation is committed so refresh can never replay it.
+  useEffect(() => {
+    if (!activeId && messages.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("prompt") && !params.has("from")) return;
+    params.delete("prompt");
+    params.delete("from");
+    const qs = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${pathname}${qs ? `?${qs}` : ""}`,
+    );
+  }, [activeId, messages.length, pathname]);
 
   // Sync activeId to URL for state preservation across page navigations
   const prevActiveIdRef = useRef<string | null>(activeId);
@@ -488,6 +515,10 @@ export default function AssistantPage() {
     prevActiveIdRef.current = activeId;
 
     const params = new URLSearchParams(window.location.search);
+    // A conversation can be created before the earlier router.replace commits.
+    // Never let the active-id sync reintroduce one-shot handoff parameters.
+    params.delete("prompt");
+    params.delete("from");
     const currentC = params.get("c");
 
     // Skip if URL already matches
@@ -581,7 +612,8 @@ export default function AssistantPage() {
           });
         }
       } else {
-        router.push(`/dashboard/apps/${data.storeId}/${data.appId}`);
+        const href = `/dashboard/apps/${data.storeId}/${data.appId}`;
+        if (!requestDesktopNavigation(href)) router.push(href);
         setBlueprint({});
       }
     } catch (err: unknown) {
@@ -637,7 +669,8 @@ export default function AssistantPage() {
     setBuildResult(null);
     setBlueprint({});
     if (appId && buildResult?.ok) {
-      router.push(`/dashboard/apps/user-apps/${appId}`);
+      const href = `/dashboard/apps/user-apps/${appId}`;
+      if (!requestDesktopNavigation(href)) router.push(href);
     }
   }, [buildResult, setBlueprint, router]);
 
@@ -694,7 +727,7 @@ export default function AssistantPage() {
         {isActive && messages[messages.length - 1]?.role === "user" && (
           <ThinkingMessage />
         )}
-        {error && <AssistantChatError error={error} onDismiss={clearError} />}
+        {error && <AssistantChatError error={error} provider={activeProvider} onDismiss={clearError} />}
       </ConversationContent>
       <ConversationScrollButton />
     </Conversation>
@@ -704,7 +737,7 @@ export default function AssistantPage() {
         <div className="flex size-full flex-col items-center justify-center px-2 sm:px-4">
           {error ? (
             <div className="w-full max-w-md mb-6">
-              <AssistantChatError error={error} onDismiss={clearError} />
+              <AssistantChatError error={error} provider={activeProvider} onDismiss={clearError} />
             </div>
           ) : null}
           <h2 className="text-xl sm:text-2xl font-medium tracking-tight text-foreground mb-6 sm:mb-8">

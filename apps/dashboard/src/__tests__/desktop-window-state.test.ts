@@ -18,7 +18,17 @@ describe("desktop window geometry", () => {
         { width: 1024, height: 720 },
         { width: 360, height: 260 },
       ),
-    ).toEqual({ x: 904, y: 16, width: 700, height: 500 });
+    ).toEqual({ x: 904, y: 0, width: 700, height: 500 });
+  });
+
+  it("allows a dragged window to meet the top-left desktop edges", () => {
+    expect(
+      clampDesktopBounds(
+        { x: -80, y: -60, width: 700, height: 500 },
+        { width: 1024, height: 720 },
+        { width: 360, height: 260 },
+      ),
+    ).toEqual({ x: 0, y: 0, width: 700, height: 500 });
   });
 
   it("constrains oversize windows to the desktop area", () => {

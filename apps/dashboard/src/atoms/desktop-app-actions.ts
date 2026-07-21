@@ -50,6 +50,8 @@ export interface DesktopAppChromeDescriptor {
   actions: DesktopAppActionDescriptor[];
 }
 
+export const DESKTOP_APP_ACTIONS_REQUEST_MESSAGE = "talome:desktop-app-actions-request";
+
 export const desktopAppActionsAtom = atom<DesktopAppAction[]>([]);
 export const desktopShellActionsAtom = atom<DesktopAppAction[]>([]);
 
@@ -169,6 +171,13 @@ export function parseDesktopAppActionTriggerMessage(value: unknown) {
     type: "talome:desktop-app-action-trigger" as const,
     actionId: value.actionId,
   };
+}
+
+export function parseDesktopAppActionsRequestMessage(value: unknown) {
+  if (!isRecord(value) || value.type !== DESKTOP_APP_ACTIONS_REQUEST_MESSAGE) {
+    return null;
+  }
+  return { type: DESKTOP_APP_ACTIONS_REQUEST_MESSAGE } as const;
 }
 
 export function parseDesktopAppFocusMessage(value: unknown) {

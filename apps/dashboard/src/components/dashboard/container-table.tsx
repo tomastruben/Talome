@@ -44,6 +44,7 @@ import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { useSWRConfig } from "swr";
 import { useRouter } from "next/navigation";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 function formatMb(mb: number) {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
@@ -148,7 +149,9 @@ export function ContainerTable({ containers }: ContainerTableProps) {
     ].filter(Boolean).join("\n");
 
     void handleSubmit(userMessage, systemContext);
-    router.push("/dashboard/assistant");
+    if (!requestDesktopNavigation("/dashboard/assistant")) {
+      router.push("/dashboard/assistant");
+    }
   };
 
   return (

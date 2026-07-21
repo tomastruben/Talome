@@ -43,6 +43,7 @@ import { InsightsWidget, SuggestionsWidget } from "./components/intelligence-wid
 import { ActivityLogWidget } from "./components/activity-log-widget";
 import { AiOverviewWidget } from "./components/ai-overview-widget";
 import { SetupWidget } from "./components/setup-widget";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 import type { AuditLogEntry } from "@talome/types";
 import {
@@ -523,7 +524,9 @@ export default function ActivityPage() {
 
   const handleViewTerminal = useCallback((sessionName: string) => {
     setTerminalSession(sessionName);
-    router.push("/dashboard/terminal");
+    if (!requestDesktopNavigation("/dashboard/terminal")) {
+      router.push("/dashboard/terminal");
+    }
   }, [setTerminalSession, router]);
 
   // View: reattach to an existing session inline (no new command)
@@ -549,7 +552,9 @@ export default function ActivityPage() {
       });
       if (!res.ok) {
         setTerminalSession(`sess_evolution-${runId}`);
-        router.push("/dashboard/terminal");
+        if (!requestDesktopNavigation("/dashboard/terminal")) {
+          router.push("/dashboard/terminal");
+        }
         return;
       }
       const data = (await res.json()) as {
@@ -578,11 +583,15 @@ export default function ActivityPage() {
         void mutateActiveHunts();
       } else {
         setTerminalSession(`sess_evolution-${runId}`);
-        router.push("/dashboard/terminal");
+        if (!requestDesktopNavigation("/dashboard/terminal")) {
+          router.push("/dashboard/terminal");
+        }
       }
     } catch {
       setTerminalSession(`sess_evolution-${runId}`);
-      router.push("/dashboard/terminal");
+      if (!requestDesktopNavigation("/dashboard/terminal")) {
+        router.push("/dashboard/terminal");
+      }
     }
   }, [setTerminalSession, router, mutateSuggestions, mutateActiveHunts]);
 

@@ -1,6 +1,21 @@
 import useSWR from "swr";
 import type { UserPermissions, FeaturePermission } from "@talome/types";
 
+export interface UserWallpaperAttribution {
+  photoUrl: string;
+  photographerName: string;
+  photographerUrl: string;
+  providerName?: string;
+}
+
+export interface UserPreferences {
+  desktopMode?: "classic" | "desktop";
+  desktopWallpaper?: {
+    wallpaperUrl: string | null;
+    attribution: UserWallpaperAttribution | null;
+  };
+}
+
 interface UserInfo {
   authenticated: boolean;
   userId?: string;
@@ -8,6 +23,7 @@ interface UserInfo {
   email?: string;
   role?: "admin" | "member";
   permissions?: UserPermissions;
+  preferences?: UserPreferences;
 }
 
 const fetcher = (url: string) => fetch(url, { credentials: "include" }).then((r) => {

@@ -119,22 +119,38 @@ function ControlCenterTile({
   );
 }
 
-function AudiobookCover({ src, title }: { src: string; title: string }) {
+function AudiobookCover({
+  src,
+  title,
+  size = "compact",
+}: {
+  src: string;
+  title: string;
+  size?: "compact" | "large";
+}) {
   const [failed, setFailed] = useState(false);
+  const large = size === "large";
 
   return (
-    <span className="relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
+    <span className={large
+      ? "relative flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted"
+      : "relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted"}
+    >
       {!failed && src ? (
         <Image
           src={src}
           alt={`${title} cover`}
           fill
-          sizes="48px"
+          sizes={large ? "80px" : "48px"}
           className="object-cover"
           onError={() => setFailed(true)}
         />
       ) : (
-        <HugeiconsIcon icon={HeadphonesIcon} size={20} className="text-muted-foreground" />
+        <HugeiconsIcon
+          icon={HeadphonesIcon}
+          size={large ? 26 : 20}
+          className="text-muted-foreground"
+        />
       )}
     </span>
   );
@@ -371,7 +387,12 @@ export function DesktopAudiobooksControlCenter({
         {book ? (
           <div className="grid gap-4">
             <div className="flex items-center gap-4">
-              <AudiobookCover key={book.bookId} src={book.coverUrl} title={book.title} />
+              <AudiobookCover
+                key={book.bookId}
+                src={book.coverUrl}
+                title={book.title}
+                size="large"
+              />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{book.title}</p>
                 <p className="truncate text-xs text-muted-foreground">{book.author}</p>

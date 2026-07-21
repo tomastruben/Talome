@@ -3,11 +3,12 @@ import { z } from "zod";
 import { hash as bcryptHash } from "bcryptjs";
 import { generateRecoveryCode } from "./auth.js";
 import { db, schema } from "../db/index.js";
-import { eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { UserPermissions } from "@talome/types";
 import { getDefaultPermissions } from "@talome/types";
 import { writeAuditEntry } from "../db/audit.js";
+import { generateInvitationToken, hashInvitationToken } from "../auth/invitations.js";
 
 const createUserSchema = z.object({
   username: z.string().min(2).max(100),
@@ -25,6 +26,12 @@ const updateUserSchema = z.object({
 
 const resetPasswordSchema = z.object({
   password: z.string().min(8).max(500),
+});
+
+const createInvitationSchema = z.object({
+  email: z.string().trim().email().max(200),
+  role: z.enum(["admin", "member"]).optional(),
+  permissions: z.record(z.string(), z.unknown()).optional(),
 });
 
 const BCRYPT_ROUNDS = 12;
@@ -109,6 +116,109 @@ users.post("/", async (c) => {
     },
     201,
   );
+});
+
+/** GET /invitations — list invitations for access management. */
+users.get("/invitations", (c) => {
+  const rows = db
+    .select()
+    .from(schema.userInvitations)
+    .orderBy(desc(schema.userInvitations.createdAt))
+    .all();
+
+  const now = Date.now();
+  return c.json(rows.map((invitation) => ({
+    id: invitation.id,
+    email: invitation.email,
+    role: invitation.role,
+    permissions: parsePermissions(invitation.permissions) ?? getDefaultPermissions(),
+    createdAt: invitation.createdAt,
+    expiresAt: invitation.expiresAt,
+    acceptedAt: invitation.acceptedAt,
+    revokedAt: invitation.revokedAt,
+    status: invitation.acceptedAt
+      ? "accepted"
+      : invitation.revokedAt
+        ? "revoked"
+        : Date.parse(invitation.expiresAt) <= now
+          ? "expired"
+          : "pending",
+  })));
+});
+
+/** POST /invitations — create a seven-day, single-use family invitation. */
+users.post("/invitations", async (c) => {
+  const parsed = createInvitationSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const email = parsed.data.email.toLowerCase();
+  const existingUser = db.get(sql`SELECT id FROM users WHERE lower(email) = ${email} LIMIT 1`) as
+    | { id: string }
+    | undefined;
+  if (existingUser) return c.json({ error: "A user with this email already exists" }, 409);
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const existingInvitation = db.get(sql`
+    SELECT id FROM user_invitations
+    WHERE lower(email) = ${email}
+      AND accepted_at IS NULL
+      AND revoked_at IS NULL
+      AND expires_at > ${nowIso}
+    LIMIT 1
+  `) as { id: string } | undefined;
+  if (existingInvitation) {
+    return c.json({ error: "An active invitation already exists for this email" }, 409);
+  }
+
+  const role = parsed.data.role ?? "member";
+  const permissions = role === "admin"
+    ? null
+    : JSON.stringify(parsed.data.permissions ?? getDefaultPermissions());
+  const token = generateInvitationToken();
+  const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60_000).toISOString();
+  const id = randomUUID();
+  const createdBy = c.get("sessionUser" as never) as string;
+
+  db.insert(schema.userInvitations).values({
+    id,
+    tokenHash: hashInvitationToken(token),
+    email,
+    role,
+    permissions,
+    createdBy,
+    expiresAt,
+    createdAt: nowIso,
+  }).run();
+
+  writeAuditEntry("family_invitation_created", "modify", `email=${email} role=${role}`);
+  return c.json({
+    id,
+    token,
+    email,
+    role,
+    permissions: role === "admin" ? getDefaultPermissions() : (parsed.data.permissions ?? getDefaultPermissions()),
+    createdAt: nowIso,
+    expiresAt,
+    status: "pending",
+  }, 201);
+});
+
+/** DELETE /invitations/:id — revoke a pending invitation. */
+users.delete("/invitations/:id", (c) => {
+  const id = c.req.param("id");
+  const invitation = db.select().from(schema.userInvitations)
+    .where(eq(schema.userInvitations.id, id)).get();
+  if (!invitation) return c.json({ error: "Invitation not found" }, 404);
+  if (invitation.acceptedAt) return c.json({ error: "Accepted invitations cannot be revoked" }, 409);
+  if (invitation.revokedAt) return c.json({ ok: true });
+
+  db.update(schema.userInvitations)
+    .set({ revokedAt: new Date().toISOString() })
+    .where(eq(schema.userInvitations.id, id))
+    .run();
+  writeAuditEntry("family_invitation_revoked", "modify", `email=${invitation.email}`);
+  return c.json({ ok: true });
 });
 
 /** PUT /:id — update user (role, email, username) */

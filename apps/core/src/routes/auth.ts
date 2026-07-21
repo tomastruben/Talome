@@ -4,7 +4,7 @@ import { z } from "zod";
 import { setCookie, deleteCookie } from "hono/cookie";
 import { hash as bcryptHash, compare as bcryptCompare } from "bcryptjs";
 import { db, schema } from "../db/index.js";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   createSessionToken,
   revokeSession,
@@ -16,6 +16,8 @@ import { getCookie } from "hono/cookie";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { UserPermissions } from "@talome/types";
 import { getDefaultPermissions } from "@talome/types";
+import { hashInvitationToken } from "../auth/invitations.js";
+import { writeAuditEntry } from "../db/audit.js";
 
 /**
  * Produce session-cookie options that flip `secure` on automatically when
@@ -53,6 +55,27 @@ const recoverSchema = z.object({
   newPassword: z.string().min(8).max(500),
 });
 
+const acceptInvitationSchema = z.object({
+  username: z.string().trim().min(2).max(100),
+  password: z.string().min(8).max(500),
+});
+
+const wallpaperAttributionSchema = z.object({
+  photoUrl: z.string().max(2048),
+  photographerName: z.string().max(200),
+  photographerUrl: z.string().max(2048),
+  providerName: z.string().max(100).optional(),
+});
+
+const desktopWallpaperPreferenceSchema = z.object({
+  mode: z.enum(["classic", "desktop"]).optional(),
+  wallpaperUrl: z.string().max(3_000_000).refine(
+    (value) => value.startsWith("/") || value.startsWith("data:image/") || value.startsWith("https://"),
+    "Unsupported wallpaper URL",
+  ).nullable().optional(),
+  attribution: wallpaperAttributionSchema.nullable().optional(),
+});
+
 /** Generate a 24-character alphanumeric recovery code (URL-safe, easy to copy). */
 export function generateRecoveryCode(): string {
   return randomBytes(18).toString("base64url").slice(0, 24);
@@ -66,6 +89,18 @@ function hasAnyUsers(): boolean {
     return !!row;
   } catch {
     return false;
+  }
+}
+
+function parsePreferences(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
   }
 }
 
@@ -135,6 +170,118 @@ auth.post("/login", async (c) => {
   return c.json({ ok: true, setup: false });
 });
 
+/** GET /api/auth/invitations/:token — inspect a public, single-use invitation. */
+auth.get("/invitations/:token", (c) => {
+  const token = c.req.param("token");
+  if (token.length < 20 || token.length > 200) {
+    return c.json({ error: "Invitation not found", status: "invalid" }, 404);
+  }
+
+  const invitation = db.select().from(schema.userInvitations)
+    .where(eq(schema.userInvitations.tokenHash, hashInvitationToken(token))).get();
+  if (!invitation) return c.json({ error: "Invitation not found", status: "invalid" }, 404);
+
+  if (invitation.acceptedAt) {
+    return c.json({ error: "This invitation has already been accepted", status: "accepted" }, 410);
+  }
+  if (invitation.revokedAt) {
+    return c.json({ error: "This invitation was revoked", status: "revoked" }, 410);
+  }
+  if (Date.parse(invitation.expiresAt) <= Date.now()) {
+    return c.json({ error: "This invitation has expired", status: "expired" }, 410);
+  }
+
+  return c.json({
+    email: invitation.email,
+    role: invitation.role,
+    expiresAt: invitation.expiresAt,
+  });
+});
+
+/** POST /api/auth/invitations/:token/accept — create the invited account and sign in. */
+auth.post("/invitations/:token/accept", async (c) => {
+  const token = c.req.param("token");
+  if (token.length < 20 || token.length > 200) {
+    return c.json({ error: "Invitation not found" }, 404);
+  }
+
+  const parsed = acceptInvitationSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const tokenHash = hashInvitationToken(token);
+  const invitation = db.select().from(schema.userInvitations)
+    .where(eq(schema.userInvitations.tokenHash, tokenHash)).get();
+  if (!invitation) return c.json({ error: "Invitation not found" }, 404);
+  if (invitation.acceptedAt || invitation.revokedAt || Date.parse(invitation.expiresAt) <= Date.now()) {
+    return c.json({ error: "This invitation is no longer available" }, 410);
+  }
+
+  const existingUsername = db.select().from(schema.users)
+    .where(eq(schema.users.username, parsed.data.username)).get();
+  if (existingUsername) return c.json({ error: "Username already exists" }, 409);
+  const existingEmail = db.get(sql`SELECT id FROM users WHERE lower(email) = ${invitation.email.toLowerCase()} LIMIT 1`) as
+    | { id: string }
+    | undefined;
+  if (existingEmail) return c.json({ error: "An account for this email already exists" }, 409);
+
+  const passwordHash = await bcryptHash(parsed.data.password, BCRYPT_ROUNDS);
+  const recoveryCode = generateRecoveryCode();
+  const recoveryCodeHash = await bcryptHash(recoveryCode, BCRYPT_ROUNDS);
+  const userId = randomUUID();
+  const now = new Date().toISOString();
+  const permissions = invitation.role === "admin"
+    ? null
+    : invitation.permissions ?? JSON.stringify(getDefaultPermissions());
+
+  try {
+    db.transaction((tx) => {
+      const current = tx.select().from(schema.userInvitations)
+        .where(eq(schema.userInvitations.id, invitation.id)).get();
+      if (!current || current.acceptedAt || current.revokedAt || Date.parse(current.expiresAt) <= Date.now()) {
+        throw new Error("INVITATION_UNAVAILABLE");
+      }
+
+      tx.insert(schema.users).values({
+        id: userId,
+        username: parsed.data.username,
+        email: invitation.email,
+        passwordHash,
+        role: invitation.role,
+        permissions,
+        recoveryCodeHash,
+        createdAt: now,
+        lastLoginAt: now,
+      }).run();
+      tx.update(schema.userInvitations)
+        .set({ acceptedAt: now })
+        .where(eq(schema.userInvitations.id, invitation.id))
+        .run();
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "INVITATION_UNAVAILABLE") {
+      return c.json({ error: "This invitation is no longer available" }, 410);
+    }
+    if (error instanceof Error && error.message.includes("UNIQUE")) {
+      return c.json({ error: "Username or email already exists" }, 409);
+    }
+    throw error;
+  }
+
+  const sessionToken = await createSessionToken(
+    userId,
+    invitation.role as "admin" | "member",
+    parsed.data.username,
+  );
+  setCookie(c, SESSION_COOKIE, sessionToken, sessionCookieOptions(c));
+  writeAuditEntry("family_invitation_accepted", "modify", `email=${invitation.email} user=${parsed.data.username}`);
+
+  return c.json({
+    ok: true,
+    username: parsed.data.username,
+    recoveryCode,
+  });
+});
+
 /** POST /api/auth/logout */
 auth.post("/logout", (c) => {
   const token = getCookie(c, SESSION_COOKIE);
@@ -184,7 +331,52 @@ auth.get("/me", async (c) => {
     email: user.email,
     role: user.role,
     permissions,
+    preferences: parsePreferences(user.preferences),
   });
+});
+
+/** PUT /api/auth/preferences/desktop — persist desktop preferences for this account. */
+auth.put("/preferences/desktop", async (c) => {
+  const token = getCookie(c, SESSION_COOKIE);
+  const payload = token ? await verifySessionToken(token) : null;
+  if (!payload) return c.json({ error: "Unauthorized — please log in" }, 401);
+
+  const parsed = desktopWallpaperPreferenceSchema.safeParse(
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const user = db.select().from(schema.users).where(eq(schema.users.id, payload.sub)).get();
+  if (!user) return c.json({ error: "User not found" }, 404);
+
+  const preferences = parsePreferences(user.preferences);
+  if (parsed.data.mode) preferences.desktopMode = parsed.data.mode;
+
+  if (parsed.data.wallpaperUrl !== undefined || parsed.data.attribution !== undefined) {
+    const currentWallpaper = preferences.desktopWallpaper;
+    const currentWallpaperRecord = currentWallpaper
+      && typeof currentWallpaper === "object"
+      && !Array.isArray(currentWallpaper)
+      ? currentWallpaper as Record<string, unknown>
+      : {};
+    preferences.desktopWallpaper = {
+      wallpaperUrl: parsed.data.wallpaperUrl !== undefined
+        ? parsed.data.wallpaperUrl
+        : typeof currentWallpaperRecord.wallpaperUrl === "string"
+          ? currentWallpaperRecord.wallpaperUrl
+          : null,
+      attribution: parsed.data.attribution !== undefined
+        ? parsed.data.attribution
+        : currentWallpaperRecord.attribution ?? null,
+    };
+  }
+
+  db.update(schema.users)
+    .set({ preferences: JSON.stringify(preferences) })
+    .where(eq(schema.users.id, user.id))
+    .run();
+
+  return c.json({ ok: true, preferences });
 });
 
 /**

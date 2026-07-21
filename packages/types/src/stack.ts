@@ -10,6 +10,10 @@ export interface StackEnvVar {
 export interface StackApp {
   appId: string;
   name: string;
+  /** Optional catalog description included in exported custom stacks. */
+  description?: string;
+  /** Preferred catalog source used to recreate the app on another Talome instance. */
+  storeId?: string;
   /** docker-compose YAML as a string. Secrets replaced with <PLACEHOLDER: KEY> on export. */
   compose: string;
   configSchema: {

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Table,
   TableBody,
@@ -14,9 +15,10 @@ import { SearchField } from "@/components/ui/search-field";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { ServiceStackList } from "@/components/dashboard/service-stack-list";
 import { useServiceStacks } from "@/hooks/use-service-stacks";
-import { HugeiconsIcon, Package01Icon } from "@/components/icons";
+import { Package01Icon } from "@/components/icons";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { Button } from "@/components/ui/button";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -55,11 +57,17 @@ export default function ContainersPage() {
   const { handleSubmit, openPaletteInChatMode } = useAssistant();
   const router = useRouter();
 
-  const totalContainers = stacks.reduce((sum, s) => sum + s.totalCount, 0);
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search).get("q")?.trim();
+    if (!query) return;
+    const frame = window.requestAnimationFrame(() => setSearch(query));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
   const runningCount = stacks.filter((s) => s.status === "running").length;
   const stoppedCount = stacks.filter((s) => s.status === "stopped").length;
-  const isManaged = (s: (typeof stacks)[number]) =>
-    s.kind === "talome" || s.primaryContainer.labels["talome.managed"] === "true";
+  const isManaged = useCallback((s: (typeof stacks)[number]) =>
+    s.kind === "talome" || s.primaryContainer.labels["talome.managed"] === "true", []);
   const managedCount = stacks.filter(isManaged).length;
   const externalCount = stacks.filter((s) => !isManaged(s)).length;
   const hasExternal = externalCount > 0;
@@ -83,7 +91,7 @@ export default function ContainersPage() {
         (sourceFilter === "external" && !isManaged(s));
       return matchesSearch && matchesStatus && matchesSource;
     });
-  }, [stacks, search, statusFilter, sourceFilter]);
+  }, [stacks, search, statusFilter, sourceFilter, isManaged]);
 
   return (
     <div className="grid gap-5">
@@ -167,7 +175,9 @@ export default function ContainersPage() {
                 void handleSubmit(
                   "The Services page can't load container data from the Talome server. Can you check Docker and diagnose why the containers API is failing?",
                 );
-                router.push("/dashboard/assistant");
+                if (!requestDesktopNavigation("/dashboard/assistant")) {
+                  router.push("/dashboard/assistant");
+                }
               }}
             >
               Ask Talome
@@ -197,7 +207,7 @@ export default function ContainersPage() {
             stacks.length === 0 ? (
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" asChild>
-                  <a href="/dashboard/apps">Browse App Store</a>
+                  <Link href="/dashboard/apps">Browse App Store</Link>
                 </Button>
                 <Button
                   variant="ghost"

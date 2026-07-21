@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DESKTOP_OPEN_ROUTE_EVENT,
+  DESKTOP_OPEN_ROUTE_MESSAGE,
   dashboardRouteFromHref,
   desktopRouteFromEvent,
+  desktopRouteFromMessage,
   requestDesktopNavigation,
 } from "@/lib/desktop-navigation";
 
@@ -55,5 +57,20 @@ describe("desktop navigation", () => {
   it("falls back to normal navigation outside desktop mode", () => {
     window.history.replaceState({}, "", "/dashboard");
     expect(requestDesktopNavigation("/dashboard/media")).toBe(false);
+  });
+
+  it("parses only safe same-origin desktop route messages", () => {
+    expect(desktopRouteFromMessage({
+      type: DESKTOP_OPEN_ROUTE_MESSAGE,
+      url: "/dashboard/media/movie/448?autoplay=1",
+    })).toBe("/dashboard/media/movie/448?autoplay=1");
+    expect(desktopRouteFromMessage({
+      type: DESKTOP_OPEN_ROUTE_MESSAGE,
+      url: "https://example.com/dashboard/media",
+    })).toBeNull();
+    expect(desktopRouteFromMessage({
+      type: "not-a-desktop-route",
+      url: "/dashboard/media",
+    })).toBeNull();
   });
 });

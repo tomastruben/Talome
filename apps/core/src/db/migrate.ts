@@ -51,6 +51,41 @@ export function runMigrations() {
     // Column already exists — ignore
   }
 
+  // ── Account-scoped UI preferences ─────────────────────────────────────────
+  try {
+    db.run(sql`ALTER TABLE users ADD COLUMN preferences TEXT`);
+  } catch {
+    // Column already exists — ignore
+  }
+
+  // ── Family invitations ────────────────────────────────────────────────────
+  db.run(sql`CREATE TABLE IF NOT EXISTS user_invitations (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member',
+    permissions TEXT,
+    created_by TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    accepted_at TEXT,
+    revoked_at TEXT,
+    created_at TEXT NOT NULL
+  )`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_user_invitations_email ON user_invitations(email)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_user_invitations_expires_at ON user_invitations(expires_at)`);
+
+  // ── Public stack share links ──────────────────────────────────────────────
+  db.run(sql`CREATE TABLE IF NOT EXISTS shared_stacks (
+    id TEXT PRIMARY KEY,
+    stack_json TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT,
+    view_count INTEGER NOT NULL DEFAULT 0
+  )`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_shared_stacks_expires_at ON shared_stacks(expires_at)`);
+
   // ── Metrics history ────────────────────────────────────────────────────────
   db.run(sql`CREATE TABLE IF NOT EXISTS metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -873,6 +908,8 @@ export function runMigrations() {
   recordMigration(13, "Optimization jobs: ai_diagnosis column for AI-first error handling");
   recordMigration(14, "Installed apps: display_name column for user-defined app names");
   recordMigration(15, "Setup loop: setup_runs and setup_attempts for autonomous app configuration");
+  recordMigration(16, "Account-scoped UI preferences");
+  recordMigration(17, "Family invitations and expiring public stack share links");
 
   console.log("Database migrations complete");
 }

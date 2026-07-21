@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { HugeiconsIcon, Add01Icon } from "@/components/icons";
+import { HugeiconsIcon, Add01Icon, Copy01Icon, LinkSquare01Icon } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
 import { useUser } from "@/hooks/use-user";
@@ -23,6 +23,22 @@ interface UserRow {
   permissions: UserPermissions;
   createdAt: string;
   lastLoginAt: string | null;
+}
+
+interface InvitationRow {
+  id: string;
+  email: string;
+  role: "admin" | "member";
+  permissions: UserPermissions;
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  status: "pending" | "accepted" | "revoked" | "expired";
+}
+
+function apiErrorMessage(error: unknown, fallback: string): string {
+  return typeof error === "string" ? error : fallback;
 }
 
 function PermissionsGrid({
@@ -353,6 +369,11 @@ export function UsersSection() {
     (url: string) => fetch(url, { credentials: "include" }).then((r) => r.json()),
     { revalidateOnFocus: false },
   );
+  const { data: invitations, mutate: mutateInvitations } = useSWR<InvitationRow[]>(
+    isAdmin ? `${CORE_URL}/api/users/invitations` : null,
+    (url: string) => fetch(url, { credentials: "include" }).then((r) => r.json()),
+    { revalidateOnFocus: false },
+  );
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -360,11 +381,78 @@ export function UsersSection() {
   const [newPermissions, setNewPermissions] = useState<UserPermissions>(getDefaultPermissions());
   const [creating, setCreating] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
+  const [invitePermissions, setInvitePermissions] = useState<UserPermissions>(getDefaultPermissions());
+  const [inviting, setInviting] = useState(false);
+  const [showInviteForm, setShowInviteForm] = useState(false);
+  const [inviteLink, setInviteLink] = useState("");
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
 
   if (!isAdmin) return null;
 
   const adminCount = users?.filter((u) => u.role === "admin").length ?? 0;
   const memberUsers = users?.filter((u) => u.role === "member") ?? [];
+  const pendingInvitations = invitations?.filter((invitation) => invitation.status === "pending") ?? [];
+
+  async function handleInvite(e: React.FormEvent) {
+    e.preventDefault();
+    if (!inviteEmail.trim()) return;
+    setInviting(true);
+    try {
+      const res = await fetch(`${CORE_URL}/api/users/invitations`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          role: inviteRole,
+          permissions: inviteRole === "member" ? invitePermissions : undefined,
+        }),
+      });
+      const data = await res.json() as { token?: string; email?: string; error?: unknown };
+      if (!res.ok || !data.token) throw new Error(apiErrorMessage(data.error, "Failed to create invitation"));
+
+      setInviteLink(`${window.location.origin}/invite/${encodeURIComponent(data.token)}`);
+      setInviteEmail("");
+      setInviteRole("member");
+      setInvitePermissions(getDefaultPermissions());
+      setShowInviteForm(false);
+      await mutateInvitations();
+      toast.success(`Invitation ready for ${data.email}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Network error");
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  async function copyInviteLink() {
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setInviteLinkCopied(true);
+      toast.success("Invitation link copied");
+      setTimeout(() => setInviteLinkCopied(false), 2000);
+    } catch {
+      toast.error("Clipboard unavailable");
+    }
+  }
+
+  async function revokeInvitation(invitation: InvitationRow) {
+    if (!confirm(`Revoke the invitation for ${invitation.email}?`)) return;
+    try {
+      const res = await fetch(`${CORE_URL}/api/users/invitations/${invitation.id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await res.json() as { error?: unknown };
+      if (!res.ok) throw new Error(apiErrorMessage(data.error, "Failed to revoke invitation"));
+      toast.success("Invitation revoked");
+      await mutateInvitations();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Network error");
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -432,9 +520,85 @@ export function UsersSection() {
   return (
     <div className="grid gap-6">
       <p className="text-sm text-muted-foreground leading-relaxed">
-        Members can use the dashboard and assistant based on their feature permissions.
-        Admins have full access to everything. Tap a user to edit.
+        Invite family without sharing a password. Each person chooses their own credentials,
+        then gets access based on the permissions you select.
       </p>
+
+      <SettingsGroup>
+        <SettingsRow className="py-2.5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Family Invitations</p>
+          {pendingInvitations.length > 0 && (
+            <Badge variant="secondary" className="ml-auto text-xs">{pendingInvitations.length} pending</Badge>
+          )}
+        </SettingsRow>
+
+        {inviteLink && (
+          <SettingsRow className="flex-col !items-stretch gap-3 bg-primary/[0.04]">
+            <div className="flex items-center gap-2">
+              <HugeiconsIcon icon={LinkSquare01Icon} size={15} className="text-muted-foreground" />
+              <p className="text-sm font-medium">Invitation link ready</p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Send this private link to the invited person. It works once and expires after seven days.
+            </p>
+            <div className="flex items-center gap-2">
+              <Input readOnly value={inviteLink} className="h-8 text-xs font-mono" onFocus={(event) => event.currentTarget.select()} />
+              <Button size="sm" className="h-8 gap-1.5 shrink-0" onClick={() => void copyInviteLink()}>
+                <HugeiconsIcon icon={Copy01Icon} size={13} />
+                {inviteLinkCopied ? "Copied" : "Copy link"}
+              </Button>
+            </div>
+          </SettingsRow>
+        )}
+
+        {pendingInvitations.map((invitation) => (
+          <SettingsRow key={invitation.id} className="gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium truncate">{invitation.email}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {invitation.role === "admin" ? "Admin" : "Family member"} · expires {new Date(invitation.expiresAt).toLocaleDateString()}
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive/70" onClick={() => void revokeInvitation(invitation)}>
+              Revoke
+            </Button>
+          </SettingsRow>
+        ))}
+
+        {showInviteForm ? (
+          <SettingsRow className="flex-col !items-stretch gap-3">
+            <form onSubmit={handleInvite} className="grid gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="invite-email" className="text-xs text-muted-foreground">Email</Label>
+                <Input id="invite-email" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="family@example.com" className="h-8 text-sm" autoFocus />
+              </div>
+              <div className="flex items-center gap-3">
+                <Label className="text-xs text-muted-foreground">Admin access</Label>
+                <Switch checked={inviteRole === "admin"} onCheckedChange={(checked) => setInviteRole(checked ? "admin" : "member")} />
+              </div>
+              {inviteRole === "member" && (
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">Feature Access</p>
+                  <PermissionsGrid permissions={invitePermissions} onChange={setInvitePermissions} />
+                </div>
+              )}
+              <div className="flex items-center justify-end gap-2">
+                <Button variant="ghost" size="sm" type="button" className="h-7 text-xs" onClick={() => setShowInviteForm(false)}>Cancel</Button>
+                <Button size="sm" type="submit" className="h-7 text-xs px-4" disabled={inviting || !inviteEmail.trim()}>
+                  {inviting ? "Creating…" : "Create invitation"}
+                </Button>
+              </div>
+            </form>
+          </SettingsRow>
+        ) : (
+          <SettingsRow className="bg-muted/30 py-3">
+            <Button variant="ghost" size="sm" className="text-xs gap-1.5" onClick={() => setShowInviteForm(true)}>
+              <HugeiconsIcon icon={Add01Icon} size={14} />
+              Invite family
+            </Button>
+          </SettingsRow>
+        )}
+      </SettingsGroup>
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
@@ -525,7 +689,7 @@ export function UsersSection() {
               onClick={() => setShowForm(true)}
             >
               <HugeiconsIcon icon={Add01Icon} size={14} />
-              Add User
+              Create account manually
             </Button>
           </SettingsRow>
         )}

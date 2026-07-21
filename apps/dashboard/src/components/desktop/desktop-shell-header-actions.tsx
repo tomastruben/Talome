@@ -12,6 +12,7 @@ import { useAutomation } from "@/components/automations/automation-context";
 import { useWidgetEdit } from "@/components/widgets/widget-edit-context";
 import { useWidgetLayout } from "@/hooks/use-widget-layout";
 import { useCheckServiceUpdates } from "@/hooks/use-check-service-updates";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { toast } from "sonner";
 
 function usePublishShellActions(actions: DesktopAppAction[]) {
@@ -39,7 +40,9 @@ function HomeShellActions() {
   }, [resetLayout, restoreLayout]);
 
   const handleShare = useCallback(() => {
-    router.push("/dashboard/share");
+    if (!requestDesktopNavigation("/dashboard/share")) {
+      router.push("/dashboard/share");
+    }
   }, [router]);
 
   const handleEdit = useCallback(() => {
@@ -86,7 +89,8 @@ function AppStoreShellActions() {
   const router = useRouter();
   const setPageTitle = useSetAtom(pageTitleAtom);
   const handleCreate = useCallback(() => {
-    router.push("/dashboard/assistant?prompt=I+want+to+create+a+new+app");
+    const href = "/dashboard/assistant?prompt=I+want+to+create+a+new+app";
+    if (!requestDesktopNavigation(href)) router.push(href);
   }, [router]);
   const actions = useMemo<DesktopAppAction[]>(() => [{
     id: "app-store-create",
@@ -118,8 +122,11 @@ function ServicesShellActions() {
 function RouteBackShellAction({ home = false }: { home?: boolean }) {
   const router = useRouter();
   const handleBack = useCallback(() => {
-    if (home) router.push("/dashboard");
-    else router.back();
+    if (!home) {
+      router.back();
+      return;
+    }
+    if (!requestDesktopNavigation("/dashboard")) router.push("/dashboard");
   }, [home, router]);
   const actions = useMemo<DesktopAppAction[]>(() => [{
     id: "shell-route-back",

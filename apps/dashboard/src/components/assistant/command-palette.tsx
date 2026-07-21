@@ -18,6 +18,7 @@ import {
 import {
   HugeiconsIcon,
   Home01Icon,
+  DashboardSquare02Icon,
   Film01Icon,
   Tv01Icon,
   DownloadSquare01Icon,
@@ -59,6 +60,7 @@ import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { QUALITY_TIERS, type QualityTier } from "@talome/types";
 import type { MediaSearchResult } from "@talome/types";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 
 // ── Nav commands ──────────────────────────────────────────────────────────────
 
@@ -79,6 +81,12 @@ const NAV_COMMANDS: NavCommand[] = [
   { label: "Intelligence", path: "/dashboard/intelligence", icon: Activity01Icon,     shortcut: "⌘7" },
   { label: "Settings",    path: "/dashboard/settings",   icon: Settings01Icon,      shortcut: "⌘," },
 ];
+
+const DESKTOP_NAV_COMMANDS: NavCommand[] = NAV_COMMANDS.map((command) =>
+  command.path === "/dashboard"
+    ? { ...command, label: "Widgets", icon: DashboardSquare02Icon }
+    : command,
+);
 
 // ── Service icon (small, for command items) ──────────────────────────────────
 
@@ -286,6 +294,10 @@ export function CommandPalette() {
   const [terminalCommand, setTerminalCommand] = useAtom(terminalCommandAtom);
   const router = useRouter();
   const pathname = usePathname();
+  const embeddedFrame = useIsEmbeddedFrame();
+  const navCommands = pathname === "/dashboard/desktop" || embeddedFrame
+    ? DESKTOP_NAV_COMMANDS
+    : NAV_COMMANDS;
   const bugHunt = useBugHunt();
   const { captureContext } = useBugContext();
   const {
@@ -299,6 +311,7 @@ export function CommandPalette() {
     addToolApprovalResponse,
     regenerate,
     registerOpenPalette,
+    activeProvider,
   } = useAssistant();
   const quickLook = useQuickLook();
 
@@ -434,7 +447,7 @@ export function CommandPalette() {
   // Fallback to assistant on Enter with no matching nav
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && query.trim()) {
-      const matches = NAV_COMMANDS.filter((c) =>
+      const matches = navCommands.filter((c) =>
         c.label.toLowerCase().includes(query.toLowerCase())
       );
       if (matches.length === 0) {
@@ -505,7 +518,7 @@ export function CommandPalette() {
             {hasMessages ? (
               <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto">
                 <div className="py-3 px-3.5 flex flex-col gap-3">
-                  {error && <AssistantChatError error={error} onDismiss={clearError} />}
+                  {error && <AssistantChatError error={error} provider={activeProvider} onDismiss={clearError} />}
                   {messages.slice(-4).map((message, index, arr) => (
                     <ChatMessage
                       key={`${message.id}-${index}`}
@@ -534,7 +547,7 @@ export function CommandPalette() {
               <div className="flex-1 flex items-center justify-center py-8">
                 <div className="w-full px-3.5">
                   {error ? (
-                    <AssistantChatError error={error} onDismiss={clearError} />
+                    <AssistantChatError error={error} provider={activeProvider} onDismiss={clearError} />
                   ) : (
                     <p className="text-xs text-center text-muted-foreground">
                       Ask anything about your server
@@ -970,7 +983,7 @@ export function CommandPalette() {
 
               {/* Navigate */}
               <CommandGroup heading="Navigate">
-                {NAV_COMMANDS.map((cmd) => (
+                {navCommands.map((cmd) => (
                   <CommandItem
                     key={cmd.path}
                     value={cmd.label}

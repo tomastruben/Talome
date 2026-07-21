@@ -11,7 +11,6 @@ import {
   type SyntheticEvent,
 } from "react";
 import Image from "next/image";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
 import { animate } from "motion";
@@ -36,7 +35,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   HugeiconsIcon,
-  LayoutGridIcon,
+  StartUp02Icon,
   Home01Icon,
   HardDriveIcon,
   Film01Icon,
@@ -57,6 +56,7 @@ import {
   DashboardSquareEditIcon,
   Image01Icon,
   SlidersHorizontalIcon,
+  Share04Icon,
   Tick01Icon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
@@ -92,6 +92,7 @@ import {
 import {
   DesktopWallpaperDialog,
   DesktopWidgetsPanel,
+  normalizeDesktopWallpaperUrl,
   type DesktopWallpaperAttribution,
 } from "@/components/desktop/desktop-customization";
 import {
@@ -103,7 +104,9 @@ import { ControlledWidgetGrid } from "@/components/widgets/widget-grid";
 import { allNav, type NavItem } from "@/components/layout/nav-config";
 import {
   DESKTOP_MODE_MEDIA_QUERY,
+  persistDashboardModePreference,
   useDesktopModeAvailable,
+  writeDashboardModePreference,
 } from "@/hooks/use-desktop-mode";
 import { useUser } from "@/hooks/use-user";
 import { useServiceStacks } from "@/hooks/use-service-stacks";
@@ -131,6 +134,7 @@ import {
 } from "@/lib/desktop-window-state";
 import { cn } from "@/lib/utils";
 import {
+  DESKTOP_APP_ACTIONS_REQUEST_MESSAGE,
   parseDesktopAppFocusMessage,
   parseDesktopAppActionsMessage,
   parseDesktopPlayerOpenMessage,
@@ -144,6 +148,7 @@ import {
   DESKTOP_OPEN_ROUTE_EVENT,
   dashboardRouteFromHref,
   desktopRouteFromEvent,
+  desktopRouteFromMessage,
 } from "@/lib/desktop-navigation";
 import {
   INITIAL_AUDIO_PLAYER_STATE,
@@ -304,6 +309,14 @@ const DESKTOP_APPS: DesktopAppDefinition[] = [
     icon: ComputerTerminal01Icon,
     adminOnly: true,
     minimum: { width: 520, height: 340 },
+  },
+  {
+    id: "share",
+    title: "Share",
+    url: "/dashboard/share",
+    icon: Share04Icon,
+    permission: "apps",
+    minimum: { width: 480, height: 360 },
   },
   {
     id: "settings",
@@ -663,7 +676,7 @@ function DesktopSurfaceContextMenuContent({
 export function DesktopExperience() {
   const router = useRouter();
   const desktopModeAvailable = useDesktopModeAvailable();
-  const { user, hasPermission } = useUser();
+  const { user, hasPermission, mutate: mutateUser } = useUser();
   const { stacks } = useServiceStacks();
   const dashboardWidgetLayoutController = useWidgetLayout();
   const desktopWidgetLayoutController = useDesktopWidgetLayout();
@@ -672,6 +685,7 @@ export function DesktopExperience() {
   const desktopWindowRefs = useRef(new Map<string, HTMLElement>());
   const dockButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const desktopWidgetDoneButtonRef = useRef<HTMLButtonElement>(null);
+  const wallpaperAccountRestoredRef = useRef<string | undefined>(undefined);
   const minimizingWindowIdsRef = useRef(new Set<string>());
   const restoringWindowIdsRef = useRef(new Set<string>());
   const zIndexRef = useRef(4);
@@ -886,7 +900,13 @@ export function DesktopExperience() {
 
   useEffect(() => {
     try {
-      setWallpaperUrl(localStorage.getItem(DESKTOP_WALLPAPER_STORAGE_KEY) ?? undefined);
+      const storedWallpaperUrl = localStorage.getItem(DESKTOP_WALLPAPER_STORAGE_KEY);
+      const nextWallpaperUrl = normalizeDesktopWallpaperUrl(storedWallpaperUrl);
+      setWallpaperUrl(nextWallpaperUrl);
+      if (storedWallpaperUrl && !nextWallpaperUrl) {
+        localStorage.removeItem(DESKTOP_WALLPAPER_STORAGE_KEY);
+        localStorage.removeItem(DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY);
+      }
       const storedAttribution = localStorage.getItem(
         DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY,
       );
@@ -909,6 +929,81 @@ export function DesktopExperience() {
       setShowDesktopDrives(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (!user?.authenticated || !user.userId) return;
+    if (wallpaperAccountRestoredRef.current === user.userId) return;
+    wallpaperAccountRestoredRef.current = user.userId;
+
+    const accountWallpaper = user.preferences?.desktopWallpaper;
+    if (accountWallpaper) {
+      const nextWallpaperUrl = normalizeDesktopWallpaperUrl(accountWallpaper.wallpaperUrl);
+      const retiredWallpaperWasSelected = Boolean(
+        accountWallpaper.wallpaperUrl && !nextWallpaperUrl,
+      );
+      const nextAttribution = retiredWallpaperWasSelected
+        ? undefined
+        : accountWallpaper.attribution ?? undefined;
+      setWallpaperUrl(nextWallpaperUrl);
+      setWallpaperAttribution(nextAttribution);
+      try {
+        if (nextWallpaperUrl) {
+          localStorage.setItem(DESKTOP_WALLPAPER_STORAGE_KEY, nextWallpaperUrl);
+        } else {
+          localStorage.removeItem(DESKTOP_WALLPAPER_STORAGE_KEY);
+        }
+        if (nextAttribution) {
+          localStorage.setItem(
+            DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY,
+            JSON.stringify(nextAttribution),
+          );
+        } else {
+          localStorage.removeItem(DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY);
+        }
+      } catch {
+        // The account preference remains authoritative when browser storage is unavailable.
+      }
+      if (retiredWallpaperWasSelected) {
+        void fetch("/api/auth/preferences/desktop", {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ wallpaperUrl: null, attribution: null }),
+        }).then((response) => {
+          if (response.ok) void mutateUser();
+        }).catch(() => undefined);
+      }
+      return;
+    }
+
+    // One-time migration for people who selected a wallpaper before preferences
+    // became account-scoped.
+    try {
+      const storedWallpaperUrl = normalizeDesktopWallpaperUrl(
+        localStorage.getItem(DESKTOP_WALLPAPER_STORAGE_KEY),
+      );
+      const storedAttribution = localStorage.getItem(
+        DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY,
+      );
+      if (!storedWallpaperUrl && !storedAttribution) return;
+      const parsedAttribution = storedAttribution
+        ? JSON.parse(storedAttribution) as DesktopWallpaperAttribution
+        : undefined;
+      void fetch("/api/auth/preferences/desktop", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          wallpaperUrl: storedWallpaperUrl,
+          attribution: parsedAttribution ?? null,
+        }),
+      }).then((response) => {
+        if (response.ok) void mutateUser();
+      }).catch(() => undefined);
+    } catch {
+      // Keep the existing browser-only preference if migration is unavailable.
+    }
+  }, [mutateUser, user?.authenticated, user?.preferences?.desktopWallpaper, user?.userId]);
 
   useEffect(() => {
     if (!desktopWidgetsEditing) return;
@@ -1185,6 +1280,22 @@ export function DesktopExperience() {
   }, [openDashboardRoute]);
 
   useEffect(() => {
+    const handleDesktopRouteMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const route = desktopRouteFromMessage(event.data);
+      if (!route) return;
+      const isAppWindow = Array.from(appFrameRefs.current.values()).some(
+        (frame) => frame.contentWindow === event.source,
+      );
+      if (!isAppWindow) return;
+      openDashboardRoute(route);
+    };
+
+    window.addEventListener("message", handleDesktopRouteMessage);
+    return () => window.removeEventListener("message", handleDesktopRouteMessage);
+  }, [openDashboardRoute]);
+
+  useEffect(() => {
     const handleDesktopLink = (event: MouseEvent) => {
       if (
         event.defaultPrevented
@@ -1288,6 +1399,20 @@ export function DesktopExperience() {
   }, [finishDockDrag, reorderableDockAppIds]);
 
   const closeWindow = useCallback((id: string) => {
+    if (desktopAudiobookWindowId === id && desktopAudiobookPlayback?.book) {
+      setWindows((current) => {
+        const next = current.map((windowModel) =>
+          windowModel.id === id ? { ...windowModel, minimized: true } : windowModel,
+        );
+        const nextActive = next
+          .filter((windowModel) => !windowModel.minimized && windowModel.id !== id)
+          .sort((a, b) => b.zIndex - a.zIndex)[0];
+        setActiveWindowId(nextActive?.id ?? "");
+        return next;
+      });
+      return;
+    }
+
     appFrameRefs.current.delete(id);
     setDesktopAudiobookPlayback((current) => current?.windowId === id ? undefined : current);
     setAppChromeByWindow((current) => {
@@ -1301,7 +1426,7 @@ export function DesktopExperience() {
       setActiveWindowId(nextActive?.id ?? "");
       return remaining;
     });
-  }, []);
+  }, [desktopAudiobookPlayback?.book, desktopAudiobookWindowId]);
 
   const finishMinimizingWindow = useCallback((id: string) => {
     setWindows((current) => {
@@ -1363,6 +1488,18 @@ export function DesktopExperience() {
     );
   };
 
+  const selectClassicMode = () => {
+    writeDashboardModePreference(user?.userId, "classic");
+    void mutateUser((current) => current ? {
+      ...current,
+      preferences: { ...current.preferences, desktopMode: "classic" },
+    } : current, { revalidate: false });
+    router.push("/dashboard");
+    void persistDashboardModePreference(user?.userId, "classic").then((saved) => {
+      if (saved) void mutateUser();
+    });
+  };
+
   const openDesktopWidgetEditor = () => {
     setControlCenterOpen(false);
     setLaunchpadOpen(false);
@@ -1389,13 +1526,19 @@ export function DesktopExperience() {
 
   const openNowPlayingAudiobook = useCallback(() => {
     const book = desktopAudiobookPlayer.book;
-    const app = appById.get("audiobooks");
-    if (!book || !app) return;
-    openApp({
-      ...app,
-      url: `/dashboard/audiobooks/${book.bookId}`,
-    });
+    const app = appDefinitionFromDashboardRoute(
+      book ? `/dashboard/audiobooks/${book.bookId}` : "/dashboard/audiobooks",
+    );
+    if (!app) return;
+    setControlCenterOpen(false);
+    openApp(app);
   }, [desktopAudiobookPlayer.book, openApp]);
+
+  const showNowPlayingAudiobookControls = useCallback(() => {
+    setControlCenterNavigationDirection("push");
+    setControlCenterView("audiobooks");
+    setControlCenterOpen(true);
+  }, []);
 
   const pushControlCenterView = useCallback((view: Exclude<DesktopControlCenterView, "main">) => {
     if (view === "dashboard") setDashboardEditing(false);
@@ -1412,6 +1555,7 @@ export function DesktopExperience() {
     nextWallpaperUrl?: string,
     nextAttribution?: DesktopWallpaperAttribution,
   ) => {
+    let savedLocally = true;
     try {
       if (nextWallpaperUrl) {
         localStorage.setItem(DESKTOP_WALLPAPER_STORAGE_KEY, nextWallpaperUrl);
@@ -1426,13 +1570,26 @@ export function DesktopExperience() {
       } else {
         localStorage.removeItem(DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY);
       }
-      setWallpaperUrl(nextWallpaperUrl);
-      setWallpaperAttribution(nextAttribution);
-      return true;
     } catch {
-      return false;
+      savedLocally = false;
     }
-  }, []);
+    setWallpaperUrl(nextWallpaperUrl);
+    setWallpaperAttribution(nextAttribution);
+    if (user?.authenticated) {
+      void fetch("/api/auth/preferences/desktop", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          wallpaperUrl: nextWallpaperUrl ?? null,
+          attribution: nextAttribution ?? null,
+        }),
+      }).then((response) => {
+        if (response.ok) void mutateUser();
+      }).catch(() => undefined);
+    }
+    return savedLocally || user?.authenticated === true;
+  }, [mutateUser, user?.authenticated]);
 
   const updateShowDesktopDrives = useCallback((show: boolean) => {
     try {
@@ -1479,9 +1636,10 @@ export function DesktopExperience() {
     windowId: string,
     event: SyntheticEvent<HTMLIFrameElement>,
   ) => {
-    setAppChromeByWindow((current) => {
-      return removeWindowChrome(current, windowId);
-    });
+    event.currentTarget.contentWindow?.postMessage(
+      { type: DESKTOP_APP_ACTIONS_REQUEST_MESSAGE },
+      window.location.origin,
+    );
     try {
       const pathname = event.currentTarget.contentWindow?.location.pathname;
       if (pathname === "/login") {
@@ -1558,11 +1716,9 @@ export function DesktopExperience() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-48">
             <DropdownMenuLabel>Talome</DropdownMenuLabel>
-            <DropdownMenuItem asChild>
-              <Link href="/dashboard" data-desktop-navigation="bypass">
-                Classic mode
-                <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="ml-auto" />
-              </Link>
+            <DropdownMenuItem onSelect={selectClassicMode}>
+              Classic mode
+              <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="ml-auto" />
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => openApp(appById.get("settings")!)}>
@@ -1634,7 +1790,9 @@ export function DesktopExperience() {
                   type="button"
                   className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch px-2 text-left transition-colors hover:bg-muted/55"
                   aria-label={`Open now playing audiobook: ${desktopAudiobookPlayer.book.title}`}
-                  onClick={openNowPlayingAudiobook}
+                  aria-haspopup="dialog"
+                  aria-expanded={controlCenterOpen && controlCenterView === "audiobooks"}
+                  onClick={showNowPlayingAudiobookControls}
                 >
                   <HugeiconsIcon icon={HeadphonesIcon} size={14} className="shrink-0 text-muted-foreground" />
                   <span className="truncate font-medium">
@@ -1754,7 +1912,7 @@ export function DesktopExperience() {
                       <DesktopAudiobooksControlCenter
                         audiobookPlayer={desktopAudiobookPlayer}
                         onBack={popControlCenterView}
-                        onOpenApp={() => openControlCenterApp("/dashboard/audiobooks")}
+                        onOpenApp={openNowPlayingAudiobook}
                       />
                     ) : controlCenterView === "downloads" ? (
                       <DesktopDownloadsControlCenter
@@ -1938,7 +2096,12 @@ export function DesktopExperience() {
         ) : null}
 
         {windows.map((windowModel) => {
-          if (windowModel.minimized) return null;
+          const keepAudiobookPlaybackMounted = Boolean(
+            windowModel.minimized
+            && windowModel.id === desktopAudiobookWindowId
+            && desktopAudiobookPlayback?.book,
+          );
+          if (windowModel.minimized && !keepAudiobookPlaybackMounted) return null;
           const appChrome = appChromeByWindow[windowModel.id];
           const app = resolveAppDefinition(
             windowModel.appId,
@@ -1960,6 +2123,7 @@ export function DesktopExperience() {
               minimum={app.minimum}
               active={windowModel.id === activeWindowId}
               maximized={windowModel.maximized}
+              backgrounded={keepAudiobookPlaybackMounted}
               disabled={desktopWidgetsEditing}
               zIndex={windowModel.zIndex}
               actions={appChrome?.actions}
@@ -2022,7 +2186,7 @@ export function DesktopExperience() {
                 <span className="flex">
                   <DockButton
                     label="Launchpad"
-                    icon={LayoutGridIcon}
+                    icon={StartUp02Icon}
                     active={launchpadOpen}
                     running={false}
                     onClick={() => setLaunchpadOpen((current) => !current)}
@@ -2327,7 +2491,8 @@ function DockButton({
       className={cn(
         "relative isolate flex size-12 origin-bottom transform-gpu items-center justify-center rounded-xl border border-transparent bg-transparent transition-[background-color,border-color,opacity] duration-150 ease-out will-change-transform hover:border-border hover:bg-muted/40",
         dragHandle && "cursor-grab touch-none active:cursor-grabbing",
-        minimized && "opacity-70",
+        active ? "opacity-100" : "opacity-75 hover:opacity-100",
+        minimized && "opacity-55",
       )}
       onClick={onClick}
     >
@@ -2337,12 +2502,17 @@ function DockButton({
             key="active"
             layoutId="desktop-dock-active"
             data-dock-active-indicator
-            className="pointer-events-none absolute inset-0 z-0 rounded-xl border border-foreground/20 bg-muted/70"
+            className="pointer-events-none absolute inset-0 z-0 rounded-xl border border-black/10 bg-white/70 shadow-sm dark:border-white/25 dark:bg-white/15 dark:shadow-black/30"
             transition={motionTransition}
           />
         ) : null}
       </AnimatePresence>
-      <span className="relative z-10 flex">
+      <span
+        className={cn(
+          "relative z-10 flex transition-[filter] duration-150 ease-out",
+          active && "brightness-110 saturate-110",
+        )}
+      >
         <DockAppIcon
           label={label}
           icon={icon}
