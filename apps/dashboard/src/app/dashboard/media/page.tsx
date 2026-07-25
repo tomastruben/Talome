@@ -36,6 +36,10 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { useDownloads } from "@/hooks/use-downloads";
 import type { DownloadQueueItem, DownloadTorrent, MediaSearchResult } from "@talome/types";
+import {
+  getDownloadDisplayStatus,
+  getDownloadHealthFacts,
+} from "@/lib/download-status";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -218,6 +222,7 @@ const QUEUE_STATUS_MAP: Record<string, { label: string; color: string }> = {
   completed:     { label: "Complete",     color: "text-status-healthy" },
   failed:        { label: "Failed",       color: "text-status-critical" },
   warning:       { label: "Warning",      color: "text-status-warning" },
+  stalled:       { label: "Stalled",      color: "text-status-warning" },
   paused:        { label: "Paused",       color: "text-muted-foreground" },
   queued:        { label: "Queued",       color: "text-muted-foreground" },
 };
@@ -260,7 +265,9 @@ function DownloadQueueRow({
   const normalizedProgress = rawProgress == null ? null : Math.min(1, Math.max(0, rawProgress));
   const pct = Math.round((normalizedProgress ?? 0) * 100);
   const downloaded = hasKnownSize ? item.size * (normalizedProgress ?? 0) : 0;
-  const statusInfo = QUEUE_STATUS_MAP[item.status] ?? { label: item.status, color: "text-muted-foreground" };
+  const displayStatus = getDownloadDisplayStatus(item);
+  const statusInfo = QUEUE_STATUS_MAP[displayStatus] ?? { label: displayStatus, color: "text-muted-foreground" };
+  const healthFacts = displayStatus === "stalled" ? getDownloadHealthFacts(item) : [];
   const eta = item.eta != null ? formatEta(item.eta) : "";
   const resolved = resolvePosterUrl(item.poster, 120);
   const [imgFailed, setImgFailed] = useState(false);
@@ -381,6 +388,11 @@ function DownloadQueueRow({
               {normalizedProgress == null ? "—" : `${pct}%`}
             </span>
           </div>
+          {healthFacts.length > 0 && (
+            <p className="text-[11px] text-status-warning/90 tabular-nums">
+              {healthFacts.join(" · ")}
+            </p>
+          )}
         </div>
       </div>
 

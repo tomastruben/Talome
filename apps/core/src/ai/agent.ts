@@ -131,6 +131,11 @@ import { backupAppTool, restoreAppTool } from "./tools/backup-tools.js";
 import { searchContainerLogsTool } from "./tools/log-tools.js";
 // ── App blueprint tool ───────────────────────────────────────────────────────
 import { designAppBlueprintTool } from "./tools/blueprint-tool.js";
+import {
+  inspectNativeAppTool,
+  listNativeAppsTool,
+  runNativeAppActionTool,
+} from "./tools/app-spec-tools.js";
 import { getSettingsTool, setSettingTool, revertSettingTool, listConfiguredAppsTool } from "./tools/settings-tools.js";
 import { getSetting } from "../utils/settings.js";
 import { sendNotificationTool, getNotificationsTool } from "./tools/notification-tools.js";
@@ -412,6 +417,9 @@ registerDomain({
     restore_app: restoreAppTool,
     search_container_logs: searchContainerLogsTool,
     design_app_blueprint: designAppBlueprintTool,
+    list_native_apps: listNativeAppsTool,
+    inspect_native_app: inspectNativeAppTool,
+    run_native_app_action: runNativeAppActionTool,
     get_settings: getSettingsTool,
     set_setting: setSettingTool,
     revert_setting: revertSettingTool,
@@ -518,6 +526,9 @@ registerDomain({
     restore_app: "destructive",
     search_container_logs: "read",
     design_app_blueprint: "read",
+    list_native_apps: "read",
+    inspect_native_app: "read",
+    run_native_app_action: "modify",
     get_settings: "read",
     set_setting: "modify",
     revert_setting: "modify",
@@ -562,6 +573,9 @@ registerDomain({
     add_store: "apps", rollback_update: "apps",
     list_groups: "apps", create_group: "apps", update_group: "apps", delete_group: "apps", group_action: "apps",
     design_app_blueprint: "apps",
+    list_native_apps: "apps",
+    inspect_native_app: "apps",
+    run_native_app_action: "apps",
     // Compose & Config
     get_app_config: "config", set_app_env: "config", change_port_mapping: "config",
     add_volume_mount: "config", set_resource_limits: "config", upgrade_app_image: "config",
@@ -1167,17 +1181,20 @@ When the user wants to create, build, set up, or design a new self-hosted app, u
 **Important — system awareness:** Every call to design_app_blueprint returns systemContext with usedPorts (host ports already in use) and runningServices (name, image, ports of running containers). You MUST read the systemContext from the identity call response BEFORE designing the services section — pick host ports that are NOT in usedPorts. If a port conflicts, increment until you find a free one. Briefly mention which ports you avoided in your response so the user understands your choices. If the new app needs to connect to existing services (e.g. a dashboard connecting to an existing database), use the container name from runningServices as the hostname.
 
 Call design_app_blueprint once per section to build the blueprint iteratively:
-1. Start with section "identity" — name, description, category, icon, id. Infer category from what the app does and pick an appropriate emoji icon yourself — never ask the user for these. **Read the systemContext in the response carefully before proceeding.**
-2. Then section "services" — Docker services with images, ports (avoid conflicts!), volumes, env, healthchecks, dependsOn. If existing runningServices have APIs the new app needs (e.g. Sonarr, Radarr, qBittorrent), wire them by container name and port.
-3. Then section "env" — user-configurable environment variables.
-4. Then section "criteria" — success criteria for testing.
-5. If the user wants a custom UI, section "scaffold".
+1. Start with section "identity" — name, description, category, icon, id. Infer category from what the app does and pick an appropriate domain-specific emoji icon yourself — never ask the user for these. Never use a Wi-Fi emoji or Wi-Fi glyph as a generic app, AI, server, status, or connectivity symbol; it is allowed only for an app whose actual job is managing Wi-Fi or wireless networks. **Read the systemContext in the response carefully before proceeding.**
+2. Then section "research" — define concrete use cases, GitHub search queries, product-pattern questions, and library capabilities worth investigating. These are a research plan, not findings: never invent repository, license, maintenance, or API facts. The build workspace will record evidence before implementation.
+3. Then section "design" — map the use cases to named multi-step workflows and purposeful screens. Every screen needs a user job, one primary action, a proven pattern, required states, component candidates, and one committed visual direction. Use image-concept mode only when a visually bespoke external surface genuinely benefits from it; native AppSpec apps normally use native-system or reference-led mode.
+4. Then section "services" — Docker services with images, ports (avoid conflicts!), volumes, env, healthchecks, dependsOn. Use only verified existing image names and specific tags. Never invent a registry, repository, or public image. For a custom service that will be created by the scaffold, use 'app-id:local' until the workspace builds it. If existing runningServices have APIs the new app needs (e.g. Sonarr, Radarr, qBittorrent), wire them by container name and port.
+5. Then section "env" — user-configurable environment variables.
+6. Then section "experience" — create AppSpec v1 using the returned componentRegistry. Its surfaces must implement the researched use cases and screen plan. Include native data sources, useful actions, assistant suggestions, and expose only safe action IDs. Every new app needs this section, even when it also has an external UI.
+7. Then section "criteria" — observable functional, responsive, accessibility, visual, and assistant-integration success criteria.
+8. If the user wants custom implementation beyond the native surface, section "scaffold".
 
 Be decisive — make reasonable defaults and state them. Only ask the user what the app should be called and what it should do. Everything else (category, icon, ports, volumes, env defaults) you should decide yourself based on the app's purpose. The user can ask to change anything.
 
-Docker best practices: use stable official images with specific version tags (never latest), relative volume paths (./data, ./config), restart: unless-stopped, healthchecks when supported, PUID=1000 PGID=1000 TZ=America/New_York defaults.
+Docker best practices: use verified stable official images with specific version tags (never latest), use 'app-id:local' for not-yet-built custom services, relative volume paths (./data, ./config), restart: unless-stopped, healthchecks when supported, PUID=1000 PGID=1000 TZ=America/New_York defaults.
 
-The "Build with Claude Code" button enables once the blueprint has a name, at least one service, and success criteria. Tell the user when the blueprint is ready to build.`;
+The "Build with Claude Code" button enables once the blueprint has a name, research plan, screen design, at least one service, a native experience, and success criteria. Tell the user when the blueprint is ready to build. The workspace then executes four gates in order: evidence-backed research, screen/design specification, implementation, and rendered/functional validation.`;
 
 export { DEFAULT_SYSTEM_PROMPT };
 
@@ -1265,12 +1282,13 @@ const ANTHROPIC_MODEL_MAP: Record<string, string> = {
 const DEFAULT_MODELS: Record<AiProvider, string> = {
   anthropic: "claude-haiku-4-5-20251001",
   openai: "gpt-4o-mini",
+  kimi: "kimi-k3",
   ollama: "",
 };
 
 function getActiveProvider(): AiProvider {
   const stored = getSetting("ai_provider");
-  if (stored === "anthropic" || stored === "openai" || stored === "ollama") return stored;
+  if (stored === "anthropic" || stored === "openai" || stored === "kimi" || stored === "ollama") return stored;
   return "anthropic";
 }
 
@@ -1309,6 +1327,20 @@ function createModelInstance(provider: AiProvider, modelId: string): LanguageMod
       }
       return createOpenAI({ apiKey })(modelId);
     }
+    case "kimi": {
+      const apiKey = getSetting("kimi_key") || process.env.MOONSHOT_API_KEY;
+      if (!apiKey) {
+        throw new Error(
+          "AI_PROVIDER_NOT_CONFIGURED: No Kimi API key configured. Add one in Settings → AI Provider."
+        );
+      }
+      // Moonshot implements OpenAI Chat Completions, not the Responses API.
+      return createOpenAI({
+        name: "moonshotai",
+        baseURL: "https://api.moonshot.ai/v1",
+        apiKey,
+      }).chat(modelId);
+    }
     case "ollama": {
       const url = getSetting("ollama_url");
       if (!url) {
@@ -1324,7 +1356,7 @@ function createModelInstance(provider: AiProvider, modelId: string): LanguageMod
 }
 
 export async function createChatStream(messages: UIMessage[], pageContext?: string, modelHint?: string, abortSignal?: AbortSignal, providerHint?: string) {
-  const provider = (providerHint === "anthropic" || providerHint === "openai" || providerHint === "ollama")
+  const provider = (providerHint === "anthropic" || providerHint === "openai" || providerHint === "kimi" || providerHint === "ollama")
     ? providerHint
     : getActiveProvider();
   const modelId = resolveModel(provider, modelHint);
@@ -1442,6 +1474,15 @@ Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive
     system: systemMessages,
     messages: modelMessages,
     tools,
+    ...(provider === "openai"
+      ? {
+          providerOptions: {
+            openai: {
+              reasoningSummary: "auto",
+            },
+          },
+        }
+      : {}),
     abortSignal,
     stopWhen: stepCountIs(10),
     onStepFinish: ({ toolCalls, toolResults }) => {

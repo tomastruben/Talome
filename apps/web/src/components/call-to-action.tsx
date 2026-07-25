@@ -13,13 +13,13 @@ const steps = [
   },
   {
     num: "02",
-    title: "Talk",
-    desc: "Tell it what you want.",
+    title: "Choose your space",
+    desc: "Classic or Desktop Mode.",
   },
   {
     num: "03",
-    title: "Done",
-    desc: "Apps running. Monitoring active.",
+    title: "Ask Talome",
+    desc: "Apps, workflows, and fixes.",
   },
 ];
 
@@ -29,11 +29,11 @@ export default function CallToAction() {
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <h2 className="text-center text-balance text-4xl font-medium tracking-tight lg:text-5xl">
-            Ready in 60 seconds
+            Your workspace is one command away
           </h2>
           <p className="mx-auto mt-4 max-w-md text-center text-muted-foreground">
-            Probably less. We timed it. Just your server and a single
-            command — up and running before your coffee gets cold.
+            Install Talome, choose the workspace that fits the moment, and
+            start working with your server instead of maintaining it by hand.
           </p>
         </Reveal>
 

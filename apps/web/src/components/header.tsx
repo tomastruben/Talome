@@ -8,6 +8,7 @@ import { useScroll, motion, AnimatePresence } from "motion/react";
 import { cn } from "@/lib/utils";
 
 const menuItems = [
+  { name: "Desktop", href: "#desktop-mode" },
   { name: "Features", href: "#features" },
   { name: "Apps", href: "#apps" },
   { name: "Docs", href: "/docs" },
@@ -32,6 +33,8 @@ function MenuToggle({
     <button
       onClick={onClick}
       aria-label={open ? "Close Menu" : "Open Menu"}
+      aria-expanded={open}
+      aria-controls="mobile-navigation"
       className="relative z-20 -m-2.5 -mr-4 flex size-10 cursor-pointer items-center justify-center lg:hidden"
     >
       <div className="relative flex h-4 w-5 flex-col justify-between">
@@ -135,6 +138,7 @@ export const HeroHeader = () => {
         <AnimatePresence>
           {menuState && (
             <motion.div
+              id="mobile-navigation"
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}

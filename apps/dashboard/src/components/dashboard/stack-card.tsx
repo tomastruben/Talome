@@ -1,24 +1,27 @@
 import Image from "next/image";
 import Link from "next/link";
-import { HugeiconsIcon, Package01Icon, CheckmarkCircle01Icon } from "@/components/icons";
+import { HugeiconsIcon, CheckmarkCircle01Icon } from "@/components/icons";
 import type { StackListItem, EnrichedStackApp } from "@talome/types";
+import {
+  resolveApplicationIcon,
+  resolveApplicationIconUrl,
+} from "@/components/native-app/native-app-icons";
 
 function StackAppIcon({ app }: { app: EnrichedStackApp }) {
-  const hasImage = app.iconUrl && !app.iconUrl.startsWith("file://");
+  const iconUrl = resolveApplicationIconUrl(app.iconUrl);
+  const fallbackIcon = resolveApplicationIcon(app.icon, app.name);
 
   return (
     <div className="relative size-9 rounded-[10px] bg-card/60 backdrop-blur-sm flex items-center justify-center shrink-0 overflow-hidden border border-white/[0.06]">
-      {hasImage ? (
+      {iconUrl ? (
         <Image
-          src={app.iconUrl!}
+          src={iconUrl}
           alt=""
           className="object-cover" fill
           sizes="36px"
         />
-      ) : app.icon ? (
-        <span className="text-lg leading-none">{app.icon}</span>
       ) : (
-        <HugeiconsIcon icon={Package01Icon} size={16} className="text-dim-foreground" />
+        <HugeiconsIcon icon={fallbackIcon} size={16} className="text-dim-foreground" />
       )}
     </div>
   );

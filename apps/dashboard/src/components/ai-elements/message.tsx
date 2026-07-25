@@ -34,9 +34,14 @@ import { Streamdown } from "streamdown";
 import { useRouter } from "next/navigation";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
+import { useMediaDetail } from "@/components/media/media-detail-context";
 import { useContainers } from "@/hooks/use-containers";
 import type { Container } from "@talome/types";
 import { motion, useReducedMotion } from "motion/react";
+import {
+  findAssistantEntityReference,
+  type AssistantEntityReference,
+} from "@/lib/assistant-entity-references";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -335,7 +340,6 @@ const streamdownControls = { code: false, table: false } as const;
 const MEDIA_TOOL_NAMES = new Set([
   "search_media",
   "request_media",
-  "get_downloads",
   "get_calendar",
   "get_library",
 ]);
@@ -347,7 +351,16 @@ const CONTAINER_TOOL_NAMES = new Set([
   "stop_container",
   "restart_container",
 ]);
-type ToolIntent = "unknown" | "media" | "containers" | "mixed";
+const NON_MEDIA_ENTITY_TOOL_NAMES = new Set([
+  "list_automations",
+  "create_automation",
+  "update_automation",
+  "get_automation_runs",
+  "list_apps",
+  "search_apps",
+  "get_downloads",
+]);
+type ToolIntent = "unknown" | "media" | "containers" | "nonmedia" | "mixed";
 
 function getTcpPorts(container: Container): number[] {
   return container.ports
@@ -392,10 +405,14 @@ function resolveContainerFromLink(
 function MessageLink({
   href,
   children,
+  entityReferences = [],
   ...props
-}: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+}: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+  entityReferences?: AssistantEntityReference[];
+}) {
   const { containers } = useContainers();
   const quickLook = useQuickLook();
+  const { openDetail } = useMediaDetail();
   const router = useRouter();
 
   const textLabel =
@@ -411,6 +428,31 @@ function MessageLink({
       {...props}
       onClick={(event) => {
         if (!href) return;
+
+        const entity = findAssistantEntityReference(textLabel, entityReferences);
+        if (entity?.href) {
+          event.preventDefault();
+          if (!requestDesktopNavigation(entity.href)) router.push(entity.href);
+          return;
+        }
+        if (entity?.kind === "media") {
+          event.preventDefault();
+          openDetail(entity.label, {
+            typeHint: entity.mediaType,
+            yearHint: entity.year,
+          });
+          return;
+        }
+        if (entity?.kind === "container") {
+          const entityContainer = containers.find(
+            (container) => normalizeContainerLabel(container.name) === normalizeContainerLabel(entity.label),
+          );
+          if (entityContainer) {
+            event.preventDefault();
+            quickLook.open(entityContainer);
+            return;
+          }
+        }
 
         // Internal dashboard navigation (e.g., file manager links)
         if (href.startsWith("/dashboard/")) {
@@ -437,26 +479,49 @@ function inferToolIntent(toolContextNames?: string[]): ToolIntent {
 
   let hasMedia = false;
   let hasContainers = false;
+  let hasNonMediaEntity = false;
   for (const toolName of toolContextNames) {
     if (MEDIA_TOOL_NAMES.has(toolName)) hasMedia = true;
     if (CONTAINER_TOOL_NAMES.has(toolName)) hasContainers = true;
+    if (
+      NON_MEDIA_ENTITY_TOOL_NAMES.has(toolName)
+      || toolName.startsWith("audiobookshelf_")
+    ) {
+      hasNonMediaEntity = true;
+    }
   }
 
-  if (hasMedia && hasContainers) return "mixed";
+  const intentCount = Number(hasMedia) + Number(hasContainers) + Number(hasNonMediaEntity);
+  if (intentCount > 1) return "mixed";
   if (hasMedia) return "media";
   if (hasContainers) return "containers";
+  if (hasNonMediaEntity) return "nonmedia";
   return "unknown";
 }
 
 export const MessageResponse = memo(
-  ({ className, toolContextNames, ...props }: MessageResponseProps & { toolContextNames?: string[] }) => {
+  ({
+    className,
+    toolContextNames,
+    entityReferences = [],
+    ...props
+  }: MessageResponseProps & {
+    toolContextNames?: string[];
+    entityReferences?: AssistantEntityReference[];
+  }) => {
     const toolIntent = useMemo(() => inferToolIntent(toolContextNames), [toolContextNames]);
     const streamdownComponents = useMemo(
       () => ({
         code: (codeProps: ComponentPropsWithoutRef<"code"> & { node?: unknown }) => (
-          <MediaCodeTag {...codeProps} toolIntent={toolIntent} />
+          <MediaCodeTag
+            {...codeProps}
+            toolIntent={toolIntent}
+            entityReferences={entityReferences}
+          />
         ),
-        a: MessageLink,
+        a: (linkProps: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+          <MessageLink {...linkProps} entityReferences={entityReferences} />
+        ),
         // Override streamdown's list-inside positioning — keep numbers in the margin
         ol: ({ node: _node, ...olProps }: ComponentPropsWithoutRef<"ol"> & { node?: unknown }) => (
           <ol {...olProps} className={cn("list-outside list-decimal", olProps.className)} />
@@ -468,7 +533,7 @@ export const MessageResponse = memo(
           <li {...liProps} className={cn("[&>p]:inline", liProps.className)} />
         ),
       }),
-      [toolIntent]
+      [entityReferences, toolIntent]
     );
 
     return (
@@ -481,7 +546,10 @@ export const MessageResponse = memo(
       />
     );
   },
-  (prevProps, nextProps) => prevProps.children === nextProps.children
+  (prevProps, nextProps) =>
+    prevProps.children === nextProps.children
+    && prevProps.toolContextNames === nextProps.toolContextNames
+    && prevProps.entityReferences === nextProps.entityReferences
 );
 
 MessageResponse.displayName = "MessageResponse";

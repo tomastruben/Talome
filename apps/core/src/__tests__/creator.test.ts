@@ -72,6 +72,7 @@ vi.mock("../creator/workspace-executor.js", () => ({
     workspaceRoot: "/tmp/test-workspace",
     scaffoldPath: "/tmp/test-workspace/generated-app",
     sourceSnapshots: [],
+    designArtifacts: [],
   }),
 }));
 
@@ -88,6 +89,51 @@ const SAMPLE_BLUEPRINT = {
   prompt: "A PostgreSQL database",
   category: "developer",
   sourceReferences: [],
+  research: {
+    useCases: [
+      {
+        id: "manage-database",
+        title: "Manage the database",
+        userGoal: "See whether PostgreSQL is healthy",
+        outcome: "Resolve database issues from Talome",
+        frequency: "daily",
+      },
+    ],
+    githubQueries: ["postgres self hosted admin dashboard github"],
+    patternQuestions: ["How do database tools surface health and recovery actions?"],
+    libraryNeeds: [],
+  },
+  experienceDesign: {
+    primaryUseCaseId: "manage-database",
+    workflows: [
+      {
+        id: "review-health",
+        name: "Review health",
+        useCaseId: "manage-database",
+        outcome: "Know whether PostgreSQL needs attention",
+        steps: ["Open overview", "Review health", "Run a recovery action if needed"],
+      },
+    ],
+    screens: [
+      {
+        id: "dashboard",
+        name: "Database overview",
+        useCaseIds: ["manage-database"],
+        job: "Understand current database health",
+        primaryAction: "Inspect the active issue",
+        pattern: "Operational status overview",
+        componentCandidates: ["stat", "actions"],
+        states: ["default", "loading", "error", "compact-window"],
+      },
+    ],
+    visualDirection: {
+      mode: "native-system",
+      summary: "A calm Talome-native operational view",
+      layout: "Single task-first overview",
+      signatureElements: ["large app icon"],
+      motion: ["restrained transitions"],
+    },
+  },
   services: [
     {
       name: "postgres",

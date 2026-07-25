@@ -115,6 +115,7 @@ describe("desktop app action messages", () => {
       title: "Send Help",
       filePath: "/Volumes/Media/Send Help.mkv",
       fileName: "Send Help.mkv",
+      artworkUrl: "http://localhost:4000/api/media/poster?id=448&w=240",
       preferOriginal: true,
       preferDirect: false,
     })).toEqual({
@@ -122,6 +123,7 @@ describe("desktop app action messages", () => {
       title: "Send Help",
       filePath: "/Volumes/Media/Send Help.mkv",
       fileName: "Send Help.mkv",
+      artworkUrl: "http://localhost:4000/api/media/poster?id=448&w=240",
       preferOriginal: true,
       preferDirect: false,
     });

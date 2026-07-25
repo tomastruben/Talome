@@ -496,52 +496,61 @@ export default function AudiobookDetailPage() {
 
       {/* ─────────────────── DESKTOP ────────────────────── */}
       <div className={cn(
-        "audiobook-detail-wide gap-6 flex-1 min-h-0",
+        "audiobook-detail-wide flex-1 min-h-0",
         chapters.length > 0
           ? "audiobook-detail-wide--chapters"
           : "audiobook-detail-wide--solo",
       )}>
         {/* ── Left column: cover, metadata, player ────── */}
-        <ScrollArea className="h-full min-w-0">
-          <div className="flex flex-col items-center text-center space-y-4 pb-8">
-            <div className="audiobook-detail-wide-cover">{coverWithGlow}</div>
+        <div className="audiobook-detail-now-playing min-h-0 min-w-0">
+          <ScrollArea className="audiobook-detail-now-playing-scroll h-full min-w-0">
+            <div className="audiobook-detail-now-playing-content flex min-h-full flex-col items-center space-y-4 text-center">
+              <div className="audiobook-detail-wide-cover">{coverWithGlow}</div>
 
-            <div className="space-y-1 max-w-sm">
-              <h1 className="text-2xl font-medium leading-tight">{meta?.title}</h1>
-              {meta?.subtitle && <p className="text-sm text-muted-foreground">{meta.subtitle}</p>}
-              {meta?.authorName && (
-                <p className="text-sm text-muted-foreground mt-1 line-clamp-1">
-                  Written By {meta.authorName}{meta?.narratorName ? `, Narrated By ${meta.narratorName.split(",")[0]}` : ""}
-                </p>
+              <div className="space-y-1 max-w-sm">
+                <h1 className="text-2xl font-medium leading-tight">{meta?.title}</h1>
+                {meta?.subtitle && <p className="text-sm text-muted-foreground">{meta.subtitle}</p>}
+                {meta?.authorName && (
+                  <p className="text-sm text-muted-foreground mt-1 line-clamp-1">
+                    Written By {meta.authorName}{meta?.narratorName ? `, Narrated By ${meta.narratorName.split(",")[0]}` : ""}
+                  </p>
+                )}
+              </div>
+
+              {statsRow}
+              <div className="w-full max-w-sm">{playerWidget}</div>
+
+              {meta?.description && (
+                <div className="text-left w-full pt-2">
+                  <h2 className="text-sm font-medium mb-2">About</h2>
+                  <div
+                    className="text-sm text-muted-foreground leading-relaxed prose-sm [&_p]:mb-2 [&_p:last-child]:mb-0"
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(meta.description) }}
+                  />
+                </div>
               )}
+              {meta?.genres && meta.genres.length > 0 && (
+                <div className="flex flex-wrap gap-2 w-full">
+                  {meta.genres.map((g) => <span key={g} className="media-genre-pill">{g}</span>)}
+                </div>
+              )}
+              <div className="pt-4">{removeButton}</div>
             </div>
-
-            {statsRow}
-            <div className="w-full max-w-sm">{playerWidget}</div>
-
-            {meta?.description && (
-              <div className="text-left w-full pt-2">
-                <h2 className="text-sm font-medium mb-2">About</h2>
-                <div
-                  className="text-sm text-muted-foreground leading-relaxed prose-sm [&_p]:mb-2 [&_p:last-child]:mb-0"
-                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(meta.description) }}
-                />
-              </div>
-            )}
-            {meta?.genres && meta.genres.length > 0 && (
-              <div className="flex flex-wrap gap-2 w-full">
-                {meta.genres.map((g) => <span key={g} className="media-genre-pill">{g}</span>)}
-              </div>
-            )}
-            <div className="pt-4">{removeButton}</div>
-          </div>
-        </ScrollArea>
+          </ScrollArea>
+        </div>
 
         {/* ── Right column: chapters ── */}
         {chapters.length > 0 && (
-          <div className="flex min-w-0 flex-col min-h-0">
-            <ScrollArea className="flex-1 min-h-0">
-              <div className="pb-6">{chapterRows}</div>
+          <div className="audiobook-detail-chapters flex min-w-0 flex-col min-h-0">
+            <div className="audiobook-detail-chapters-header flex shrink-0 items-end justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Up next</p>
+                <h2 className="text-base font-medium">Chapters</h2>
+              </div>
+              <span className="text-xs tabular-nums text-muted-foreground">{chapters.length}</span>
+            </div>
+            <ScrollArea className="audiobook-detail-chapters-scroll flex-1 min-h-0">
+              <div className="audiobook-detail-chapters-list">{chapterRows}</div>
             </ScrollArea>
           </div>
         )}

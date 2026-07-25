@@ -1,14 +1,21 @@
 "use client";
 
 import type { ComponentPropsWithoutRef } from "react";
+import { useRouter } from "next/navigation";
 import { useMediaDetail } from "@/components/media/media-detail-context";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { useContainers } from "@/hooks/use-containers";
+import {
+  findAssistantEntityReference,
+  type AssistantEntityReference,
+} from "@/lib/assistant-entity-references";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { cn } from "@/lib/utils";
 
 type CodeProps = ComponentPropsWithoutRef<"code"> & {
   node?: unknown;
-  toolIntent?: "unknown" | "media" | "containers" | "mixed";
+  toolIntent?: "unknown" | "media" | "containers" | "nonmedia" | "mixed";
+  entityReferences?: AssistantEntityReference[];
 };
 
 function normalizeLabel(value: string): string {
@@ -73,10 +80,17 @@ function isLikelyMediaReference(title: string, inLibrary: boolean): boolean {
  * - Inline code with no library match → still interactive, triggers a Radarr/Sonarr
  *   metadata lookup and opens a "peek" sheet with an Add to Library button.
  */
-export function MediaCodeTag({ className, children, toolIntent = "unknown", ...props }: CodeProps) {
+export function MediaCodeTag({
+  className,
+  children,
+  toolIntent = "unknown",
+  entityReferences = [],
+  ...props
+}: CodeProps) {
   const { openDetail, findItem } = useMediaDetail();
   const quickLook = useQuickLook();
   const { containers } = useContainers();
+  const router = useRouter();
 
   const isBlock = className?.startsWith("language-");
   const title = typeof children === "string" ? children : "";
@@ -85,15 +99,30 @@ export function MediaCodeTag({ className, children, toolIntent = "unknown", ...p
     return <code className={className} {...props}>{children}</code>;
   }
 
-  const matchingContainer = findMatchingContainer(title, containers);
+  const entityReference = findAssistantEntityReference(title, entityReferences);
+  const matchingContainer = findMatchingContainer(
+    entityReference?.kind === "container" ? entityReference.label : title,
+    containers,
+  );
   const inLibrary = !!findItem(title);
   const mediaLikely = isLikelyMediaReference(title, inLibrary);
 
   const shouldPreferMedia = toolIntent === "media";
   const shouldPreferContainers = toolIntent === "containers";
-  const canOpenContainer = shouldPreferMedia ? false : !!matchingContainer;
-  const canOpenMedia = shouldPreferContainers ? false : mediaLikely;
-  const isInteractive = canOpenContainer || canOpenMedia;
+  const shouldAvoidHeuristics = toolIntent === "nonmedia";
+  const canOpenEntity = !!entityReference
+    && (entityReference.kind !== "container" || !!matchingContainer);
+  const canOpenContainer = canOpenEntity
+    ? entityReference?.kind === "container" && !!matchingContainer
+    : shouldPreferMedia || shouldAvoidHeuristics
+      ? false
+      : !!matchingContainer;
+  const canOpenMedia = canOpenEntity
+    ? entityReference?.kind === "media"
+    : shouldPreferContainers || shouldAvoidHeuristics
+      ? false
+      : mediaLikely;
+  const isInteractive = canOpenEntity || canOpenContainer || canOpenMedia;
 
   if (!isInteractive) {
     return <code className={className} {...props}>{children}</code>;
@@ -103,15 +132,34 @@ export function MediaCodeTag({ className, children, toolIntent = "unknown", ...p
     <button
       type="button"
       onClick={() => {
+        if (entityReference?.href) {
+          if (!requestDesktopNavigation(entityReference.href)) {
+            router.push(entityReference.href);
+          }
+          return;
+        }
         if (canOpenContainer && matchingContainer) {
           quickLook.open(matchingContainer);
+          return;
+        }
+        if (entityReference?.kind === "media") {
+          openDetail(entityReference.label, {
+            typeHint: entityReference.mediaType,
+            yearHint: entityReference.year,
+          });
           return;
         }
         openDetail(title);
       }}
       className={cn("media-tag", !inLibrary && "media-tag--lookup", className)}
       title={
-        canOpenContainer && matchingContainer
+        entityReference?.kind === "automation"
+          ? `Open "${title}" automation`
+          : entityReference?.kind === "audiobook"
+          ? `Open "${title}" audiobook`
+          : entityReference?.kind === "app"
+          ? `Open "${title}" app`
+          : canOpenContainer && matchingContainer
           ? `Open "${title}" preview`
           : inLibrary
           ? `View "${title}" details`

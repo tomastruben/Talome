@@ -7,12 +7,16 @@ import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { Widget } from "./widget";
 import {
   HugeiconsIcon,
-  Package01Icon,
   PackageOpenIcon,
 } from "@/components/icons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getHostUrl } from "@/lib/constants";
+import { getContainerWebPort } from "@/lib/container-web-port";
 import { cn } from "@/lib/utils";
+import {
+  resolveApplicationIcon,
+  resolveApplicationIconUrl,
+} from "@/components/native-app/native-app-icons";
 import type { Container, ServiceStack } from "@talome/types";
 
 export interface LaunchableApp {
@@ -24,58 +28,29 @@ export interface LaunchableApp {
   container: Container;
 }
 
-const COMMON_WEB_CONTAINER_PORTS = new Set([
-  80,
-  443,
-  3000,
-  3001,
-  4000,
-  5000,
-  8000,
-  8001,
-  8080,
-  8081,
-  8090,
-  8096,
-  8123,
-  8181,
-  8191,
-  8345,
-  8443,
-  8787,
-  8920,
-  8989,
-  9000,
-  9117,
-  9443,
-  9696,
-  13378,
-  54323,
-]);
-
-const NON_WEB_CONTAINER_PORTS = new Set([
-  53,
-  1900,
-  5353,
-  5432,
-  6379,
-  6881,
-  7359,
-]);
-
-/** Prefer the container's conventional web UI port over discovery or protocol ports. */
-export function getContainerWebPort(container: Container) {
-  const tcpPorts = container.ports.filter((port) => port.protocol === "tcp" && port.host > 0);
-  return tcpPorts.find((port) => COMMON_WEB_CONTAINER_PORTS.has(port.container))?.host
-    ?? tcpPorts.find((port) => !NON_WEB_CONTAINER_PORTS.has(port.container))?.host
-    ?? tcpPorts[0]?.host;
-}
-
 /** Extract individual launchable apps (running containers with web ports) from stacks. */
 export function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
   const apps: LaunchableApp[] = [];
 
   for (const stack of stacks) {
+    const nativePrimary = stack.nativeSurface && stack.storeId && stack.appId
+      ? stack.primaryContainer
+      : null;
+    if (nativePrimary?.status === "running") {
+      const primaryIcon = stack.containerIcons?.[nativePrimary.id];
+      apps.push({
+        id: nativePrimary.name,
+        name: stack.name,
+        url: `${typeof window === "undefined" ? "http://localhost:3000" : window.location.origin}/dashboard/native-apps/${encodeURIComponent(stack.storeId!)}/${encodeURIComponent(stack.appId!)}`,
+        icon: stack.icon ?? primaryIcon?.icon,
+        iconUrl: stack.iconUrl ?? primaryIcon?.iconUrl,
+        container: nativePrimary,
+      });
+      // A native AppSpec represents the whole stack. Its internal API/database
+      // containers are implementation details, not separate Launchpad apps.
+      continue;
+    }
+
     for (const container of stack.containers) {
       if (container.status !== "running") continue;
       const webPort = getContainerWebPort(container);
@@ -103,7 +78,8 @@ export function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
 }
 
 function AppIcon({ app }: { app: LaunchableApp }) {
-  const realIconUrl = app.iconUrl && !app.iconUrl.startsWith("file://") ? app.iconUrl : null;
+  const realIconUrl = resolveApplicationIconUrl(app.iconUrl);
+  const appIcon = resolveApplicationIcon(app.icon, app.name);
 
   return (
     <div
@@ -124,12 +100,14 @@ function AppIcon({ app }: { app: LaunchableApp }) {
               img.nextElementSibling?.classList.remove("hidden");
             }}
           />
-          <span className="hidden text-xl">{app.icon || "📦"}</span>
+          <HugeiconsIcon
+            icon={appIcon}
+            size={26}
+            className="hidden text-foreground"
+          />
         </>
-      ) : app.icon && app.icon !== "📦" ? (
-        <span className="text-xl">{app.icon}</span>
       ) : (
-        <HugeiconsIcon icon={Package01Icon} size={20} className="text-dim-foreground" />
+        <HugeiconsIcon icon={appIcon} size={26} className="text-foreground" />
       )}
     </div>
   );

@@ -46,6 +46,45 @@ describe("DesktopWindow", () => {
     });
   });
 
+  it("captures resize gestures and keeps the handle inside the workspace", () => {
+    const onBoundsChange = vi.fn();
+    const setPointerCapture = vi.fn();
+    const resizePrototype = HTMLElement.prototype as HTMLElement & {
+      setPointerCapture?: (pointerId: number) => void;
+    };
+    const originalSetPointerCapture = resizePrototype.setPointerCapture;
+    resizePrototype.setPointerCapture = setPointerCapture;
+
+    try {
+      render(
+        <DesktopWindow
+          {...defaultProps}
+          onBoundsChange={onBoundsChange}
+        >
+          <iframe title="Service app" />
+        </DesktopWindow>,
+      );
+
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Resize Files" }), {
+        button: 0,
+        pointerId: 7,
+        clientX: 780,
+        clientY: 600,
+      });
+      fireEvent.pointerMove(window, { pointerId: 7, clientX: 2400, clientY: 1600 });
+
+      expect(setPointerCapture).toHaveBeenCalledWith(7);
+      expect(onBoundsChange).toHaveBeenLastCalledWith({
+        x: 80,
+        y: 100,
+        width: 1320,
+        height: 720,
+      });
+    } finally {
+      resizePrototype.setPointerCapture = originalSetPointerCapture;
+    }
+  });
+
   it("lets pointer dragging place a normal window flush with the top-left edges", () => {
     const onBoundsChange = vi.fn();
 
@@ -109,6 +148,36 @@ describe("DesktopWindow", () => {
     expect(screen.getByText("Files")).toHaveAttribute("data-title-placement", "leading");
   });
 
+  it("uses simple Hugeicons glyphs for the semaphore controls", () => {
+    render(
+      <DesktopWindow {...defaultProps}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    expect(document.querySelector('[data-window-control-glyph="close"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-window-control-glyph="minimize"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-window-control-glyph="maximize"]')).toBeInTheDocument();
+    for (const kind of ["close", "minimize", "maximize"]) {
+      expect(document.querySelector(`[data-window-control-glyph="${kind}"]`)).toHaveClass(
+        "absolute",
+        "left-1/2",
+        "top-1/2",
+        "-translate-x-1/2",
+        "-translate-y-1/2",
+      );
+    }
+    expect(
+      screen.getByRole("button", { name: "Close Files" }).querySelector("svg"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Minimize Files" }).querySelector("svg"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Maximize Files" }).querySelector("svg"),
+    ).toBeInTheDocument();
+  });
+
   it("removes inset window chrome when maximized", () => {
     render(
       <DesktopWindow
@@ -139,18 +208,23 @@ describe("DesktopWindow", () => {
     expect(windowRegion).toHaveClass("pointer-events-none");
   });
 
-  it("keeps a backgrounded window mounted without exposing it to interaction", () => {
+  it("keeps a minimized window mounted without exposing it to interaction", () => {
     render(
-      <DesktopWindow {...defaultProps} backgrounded>
-        <iframe title="Persistent audio engine" src="about:blank" />
+      <DesktopWindow {...defaultProps} minimized>
+        <iframe title="Persistent app frame" src="about:blank" />
       </DesktopWindow>,
     );
 
     const windowRegion = document.querySelector('[data-desktop-window="files"]');
+    expect(windowRegion).toHaveAttribute("data-window-minimized", "true");
     expect(windowRegion).toHaveAttribute("inert");
     expect(windowRegion).toHaveAttribute("aria-hidden", "true");
-    expect(windowRegion).toHaveClass("invisible", "pointer-events-none", "opacity-0");
-    expect(screen.getByTitle("Persistent audio engine")).toBeInTheDocument();
+    expect(windowRegion).toHaveClass(
+      "invisible",
+      "pointer-events-none",
+      "opacity-0",
+    );
+    expect(screen.getByTitle("Persistent app frame")).toBeInTheDocument();
   });
 
   it("renders a titlebar menu and dispatches its selected item", async () => {

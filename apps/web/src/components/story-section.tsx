@@ -36,7 +36,7 @@ export function StorySection() {
   });
 
   const text =
-    "Every home server today works the same way: a dashboard, a list of apps, and you as the operator. You install. You configure. You debug at midnight. You are the intelligence. What if the server itself could think? Read its own source code. Spot problems before you notice them. Fix crashes at 3 AM while you sleep. Learn your preferences and remember everything. Rewrite its own code to get faster. This is Talome. Running on your hardware. Right now.";
+    "Most home servers still work the same way: one dashboard, one page at a time, and you as the operator. Talome gives everything on your machine a shared workspace — then gives that workspace intelligence. It can read logs, connect apps, spot problems before you notice them, and fix crashes while you sleep. It remembers how your system works. It can even improve its own code. This is Talome. Your server, working as one system.";
   const words = text.split(" ");
 
   return (

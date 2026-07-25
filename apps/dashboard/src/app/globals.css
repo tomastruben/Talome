@@ -652,7 +652,7 @@
   display: none;
 }
 
-@container (min-width: 700px) {
+@container (min-width: 620px) {
   .audiobook-detail-page {
     display: flex;
     flex: 1;
@@ -670,10 +670,11 @@
     width: 100%;
     max-width: 980px;
     margin-inline: auto;
+    gap: 0.75rem;
   }
 
   .audiobook-detail-wide--chapters {
-    grid-template-columns: minmax(260px, 0.9fr) minmax(300px, 1.1fr);
+    grid-template-columns: minmax(230px, 0.85fr) minmax(280px, 1.15fr);
   }
 
   .audiobook-detail-wide--solo {
@@ -681,6 +682,46 @@
     justify-content: center;
   }
 
+  .audiobook-detail-wide-cover {
+    width: 176px;
+  }
+
+  .audiobook-detail-now-playing,
+  .audiobook-detail-chapters {
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    border-radius: 0.875rem;
+    background: color-mix(in srgb, var(--card) 56%, transparent);
+  }
+
+  .audiobook-detail-now-playing {
+    padding: 0;
+  }
+
+  .audiobook-detail-now-playing-content {
+    padding: 0 1rem 1.25rem;
+  }
+
+  .audiobook-detail-now-playing-content > .audiobook-detail-wide-cover {
+    margin-top: 1.25rem;
+  }
+
+  .audiobook-detail-now-playing-scroll,
+  .audiobook-detail-chapters-scroll {
+    overflow: hidden;
+  }
+
+  .audiobook-detail-chapters-header {
+    padding: 0.875rem 1rem 0.75rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  }
+
+  .audiobook-detail-chapters-list {
+    padding: 0.375rem 0.5rem 0.75rem;
+  }
+}
+
+@container (min-width: 760px) {
   .audiobook-detail-wide-cover {
     width: 200px;
   }
@@ -1797,4 +1838,84 @@
 [data-sonner-toast][data-styled='true'] [data-close-button] svg {
   width: 0.75rem;
   height: 0.75rem;
+}
+
+/* ── Shadcn Shimmer ───────────────────────────────────────────────────────
+   Keep the catalog utility local so Next/Tailwind reliably emits it even
+   when package CSS utilities are not discovered during the production scan. */
+@property --shimmer-angle {
+  syntax: "<angle>";
+  inherits: true;
+  initial-value: 20deg;
+}
+
+@property --shimmer-image {
+  syntax: "*";
+  inherits: false;
+}
+
+@property --shimmer-text-fill {
+  syntax: "*";
+  inherits: false;
+}
+
+@keyframes tw-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+.shimmer {
+  --_spread: var(--shimmer-spread, calc(3ch + 40px));
+  --_base: currentColor;
+  --_highlight: var(
+    --shimmer-color,
+    oklch(from currentColor l c h / calc(alpha * 0.2))
+  );
+  background-image: var(
+    --shimmer-image,
+    linear-gradient(
+      calc(90deg + var(--shimmer-angle)),
+      var(--_base) calc(50% - var(--_spread)),
+      color-mix(in oklch, var(--_highlight), var(--_base) 50%)
+        calc(50% - var(--_spread) * 0.5),
+      var(--_highlight) 50%,
+      color-mix(in oklch, var(--_highlight), var(--_base) 50%)
+        calc(50% + var(--_spread) * 0.5),
+      var(--_base) calc(50% + var(--_spread))
+    )
+  );
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  background-size: calc(200% + var(--_spread) * 2) 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: var(--shimmer-text-fill, transparent);
+  animation: tw-shimmer var(--shimmer-duration, 2s) linear infinite;
+}
+
+.dark .shimmer {
+  --_highlight: var(
+    --shimmer-color,
+    oklch(from currentColor max(0.8, calc(l + 0.4)) c h / calc(alpha + 0.4))
+  );
+}
+
+.shimmer:where([dir="rtl"], [dir="rtl"] *) {
+  animation-direction: reverse;
+}
+
+.shimmer-duration-1800 {
+  --shimmer-duration: 1800ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
 }

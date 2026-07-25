@@ -24,7 +24,7 @@ export function useTerminalHeaderAction() {
 
   useEffect(() => {
     const savedAgent = localStorage.getItem(TERMINAL_AGENT_STORAGE_KEY);
-    if (savedAgent === "claude-code" || savedAgent === "codex") {
+    if (savedAgent === "claude-code" || savedAgent === "codex" || savedAgent === "kimi") {
       setAgent(savedAgent);
     }
   }, [setAgent]);
@@ -46,6 +46,12 @@ export function useTerminalHeaderAction() {
       label: "Codex",
       active: agent === "codex",
       onSelect: () => selectAgent("codex"),
+    },
+    {
+      id: "terminal-agent-kimi",
+      label: "Kimi Code",
+      active: agent === "kimi",
+      onSelect: () => selectAgent("kimi"),
     },
   ], [agent, selectAgent]);
 
@@ -69,6 +75,6 @@ export function useTerminalHeaderAction() {
     agentItems,
     commandItems,
     disabled: !launchAgent,
-    label: agent === "codex" ? "Codex" : "Claude Code",
+    label: agent === "codex" ? "Codex" : agent === "kimi" ? "Kimi Code" : "Claude Code",
   };
 }

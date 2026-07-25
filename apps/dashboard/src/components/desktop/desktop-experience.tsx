@@ -47,7 +47,6 @@ import {
   Logout01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
-  Package01Icon,
   PinIcon,
   PinOffIcon,
   HeadphonesIcon,
@@ -103,7 +102,7 @@ import { NotificationsBell } from "@/components/notifications/notifications-bell
 import { ControlledWidgetGrid } from "@/components/widgets/widget-grid";
 import { allNav, type NavItem } from "@/components/layout/nav-config";
 import {
-  DESKTOP_MODE_MEDIA_QUERY,
+  isDesktopModeAvailableNow,
   persistDashboardModePreference,
   useDesktopModeAvailable,
   writeDashboardModePreference,
@@ -134,6 +133,10 @@ import {
 } from "@/lib/desktop-window-state";
 import { cn } from "@/lib/utils";
 import {
+  resolveApplicationIcon,
+  resolveApplicationIconUrl,
+} from "@/components/native-app/native-app-icons";
+import {
   DESKTOP_APP_ACTIONS_REQUEST_MESSAGE,
   parseDesktopAppFocusMessage,
   parseDesktopAppActionsMessage,
@@ -161,7 +164,6 @@ interface DesktopAppDefinition {
   title: string;
   url: string;
   icon: IconSvgElement;
-  iconText?: string;
   iconUrl?: string;
   serviceApp?: PersistedDesktopServiceApp;
   permission?: FeaturePermission;
@@ -194,8 +196,8 @@ type DesktopControlCenterNavigationDirection = "push" | "pop";
 const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
 const DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY = "talome-desktop-wallpaper-attribution-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
-const DESKTOP_WINDOW_MOTION_SECONDS = 0.19;
-const DESKTOP_WINDOW_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
+const DESKTOP_WINDOW_MOTION_SECONDS = 0.32;
+const DESKTOP_WINDOW_MOTION_EASE = [0.32, 0.72, 0, 1] as const;
 const DESKTOP_DOCK_MOTION_SECONDS = 0.16;
 const DESKTOP_DOCK_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const DESKTOP_DOCK_POINTER_CONSTRAINT = { distance: 6 } as const;
@@ -227,9 +229,20 @@ async function playDesktopWindowMotion(
   windowElement: HTMLElement,
   offset: { x: number; y: number },
   direction: DesktopWindowMotionDirection,
+  beforeStyleCleanup?: () => void,
 ) {
   const keyframes = desktopWindowMotionKeyframes(offset, direction);
   const previousPointerEvents = windowElement.style.pointerEvents;
+  const previousVisibility = direction === "restore"
+    ? ""
+    : windowElement.style.visibility;
+
+  // Minimized windows stay mounted so their iframe/application state survives.
+  // Release the visibility guard from the previous minimize before restoring.
+  if (direction === "restore") {
+    windowElement.style.removeProperty("visibility");
+  }
+
   windowElement.style.pointerEvents = "none";
   windowElement.style.transformOrigin = "center";
   windowElement.style.willChange = "transform, opacity";
@@ -254,6 +267,27 @@ async function playDesktopWindowMotion(
   } catch {
     // A window can be closed while its transition is in flight.
   } finally {
+    // Commit the persistent window's hidden state before releasing Motion's
+    // compositor styles. This prevents WebKit from presenting the untransformed
+    // iframe for one frame at the end of the animation.
+    if (direction === "minimize") {
+      windowElement.style.visibility = "hidden";
+    }
+    beforeStyleCleanup?.();
+
+    if (direction === "minimize") {
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => resolve());
+          });
+        }),
+        // requestAnimationFrame pauses in a background tab, so keep the
+        // minimize transaction from remaining locked indefinitely.
+        new Promise<void>((resolve) => window.setTimeout(resolve, 80)),
+      ]);
+    }
+
     const clearAnimationStyles = () => {
       windowElement.style.removeProperty("transform");
       windowElement.style.removeProperty("transform-origin");
@@ -263,7 +297,14 @@ async function playDesktopWindowMotion(
     playback.cancel();
     windowElement.style.pointerEvents = previousPointerEvents;
     clearAnimationStyles();
-    window.requestAnimationFrame(clearAnimationStyles);
+    if (direction === "restore") {
+      if (previousVisibility) {
+        windowElement.style.visibility = previousVisibility;
+      } else {
+        windowElement.style.removeProperty("visibility");
+      }
+      window.requestAnimationFrame(clearAnimationStyles);
+    }
   }
 }
 
@@ -410,20 +451,32 @@ function serviceAppDefinition({
     id: `${SERVICE_APP_PREFIX}${id}`,
     title: name,
     url,
-    icon: Package01Icon,
-    iconText: icon,
+    icon: resolveApplicationIcon(icon, name),
     iconUrl,
     serviceApp: { id, name, url, icon, iconUrl },
     minimum: { width: 520, height: 360 },
   };
 }
 
-function playerAppDefinition(title: string, url: string): DesktopAppDefinition {
+function playerArtworkFromUrl(url: string) {
+  try {
+    return new URL(url, "http://talome.local").searchParams.get("artwork") ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function playerAppDefinition(
+  title: string,
+  url: string,
+  iconUrl = playerArtworkFromUrl(url),
+): DesktopAppDefinition {
   return {
     id: PLAYER_APP_ID,
     title,
     url,
     icon: Film01Icon,
+    iconUrl,
     permission: "media",
     minimum: { width: 480, height: 320 },
   };
@@ -627,6 +680,7 @@ function DesktopClock() {
 }
 
 interface DesktopSurfaceContextMenuContentProps {
+  canEditWidgets: boolean;
   editingWidgets: boolean;
   showDesktopDrives: boolean;
   onShowDesktopDrivesChange: (show: boolean) => void;
@@ -636,6 +690,7 @@ interface DesktopSurfaceContextMenuContentProps {
 }
 
 function DesktopSurfaceContextMenuContent({
+  canEditWidgets,
   editingWidgets,
   showDesktopDrives,
   onShowDesktopDrivesChange,
@@ -655,15 +710,17 @@ function DesktopSurfaceContextMenuContent({
       </ContextMenuGroup>
       <ContextMenuSeparator />
       <ContextMenuGroup>
-        <ContextMenuItem
-          onSelect={editingWidgets ? onFinishEditingWidgets : onEditWidgets}
-        >
-          <HugeiconsIcon
-            icon={editingWidgets ? Tick01Icon : DashboardSquareEditIcon}
-            size={16}
-          />
-          {editingWidgets ? "Finish Editing Widgets" : "Edit Desktop Widgets…"}
-        </ContextMenuItem>
+        {canEditWidgets ? (
+          <ContextMenuItem
+            onSelect={editingWidgets ? onFinishEditingWidgets : onEditWidgets}
+          >
+            <HugeiconsIcon
+              icon={editingWidgets ? Tick01Icon : DashboardSquareEditIcon}
+              size={16}
+            />
+            {editingWidgets ? "Finish Editing Widgets" : "Edit Desktop Widgets…"}
+          </ContextMenuItem>
+        ) : null}
         <ContextMenuItem onSelect={onOpenWallpaper}>
           <HugeiconsIcon icon={Image01Icon} size={16} />
           Change Wallpaper…
@@ -677,6 +734,14 @@ export function DesktopExperience() {
   const router = useRouter();
   const desktopModeAvailable = useDesktopModeAvailable();
   const { user, hasPermission, mutate: mutateUser } = useUser();
+  const canUseApp = useCallback((app: DesktopAppDefinition) => {
+    if (app.adminOnly && user?.role !== "admin") return false;
+    return !app.permission || hasPermission(app.permission);
+  }, [hasPermission, user?.role]);
+  const defaultWindowApps = useMemo(
+    () => [appById.get("files")!, appById.get("media")!].filter(canUseApp),
+    [canUseApp],
+  );
   const { stacks } = useServiceStacks();
   const dashboardWidgetLayoutController = useWidgetLayout();
   const desktopWidgetLayoutController = useDesktopWidgetLayout();
@@ -690,11 +755,12 @@ export function DesktopExperience() {
   const restoringWindowIdsRef = useRef(new Set<string>());
   const zIndexRef = useRef(4);
   const [area, setArea] = useState<DesktopArea>(DEFAULT_AREA);
-  const [windows, setWindows] = useState<DesktopWindowModel[]>(() => [
-    createWindow(appById.get("files")!, DEFAULT_AREA, 2),
-    createWindow(appById.get("media")!, DEFAULT_AREA, 1),
-  ]);
-  const [activeWindowId, setActiveWindowId] = useState("files");
+  const [windows, setWindows] = useState<DesktopWindowModel[]>(() =>
+    defaultWindowApps.map((app, index) =>
+      createWindow(app, DEFAULT_AREA, defaultWindowApps.length - index + 1),
+    ),
+  );
+  const [activeWindowId, setActiveWindowId] = useState(() => defaultWindowApps[0]?.id ?? "");
   const [launchpadOpen, setLaunchpadOpen] = useState(false);
   const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [controlCenterView, setControlCenterView] = useState<DesktopControlCenterView>("main");
@@ -733,11 +799,6 @@ export function DesktopExperience() {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
-
-  const canUseApp = useCallback((app: DesktopAppDefinition) => {
-    if (app.adminOnly && user?.role !== "admin") return false;
-    return !app.permission || hasPermission(app.permission);
-  }, [hasPermission, user?.role]);
 
   const dockApps = useMemo(
     () => DESKTOP_APPS.filter(canUseApp),
@@ -840,7 +901,7 @@ export function DesktopExperience() {
   useEffect(() => {
     if (
       !desktopModeAvailable &&
-      !window.matchMedia(DESKTOP_MODE_MEDIA_QUERY).matches
+      !isDesktopModeAvailableNow()
     ) {
       router.replace("/dashboard");
     }
@@ -850,14 +911,31 @@ export function DesktopExperience() {
     const workspace = workspaceRef.current;
     if (!workspace) return;
 
+    let measurementFrame = 0;
     const updateArea = () => {
-      const rect = workspace.getBoundingClientRect();
-      setArea({ width: rect.width, height: rect.height });
+      window.cancelAnimationFrame(measurementFrame);
+      measurementFrame = window.requestAnimationFrame(() => {
+        const rect = workspace.getBoundingClientRect();
+        const width = workspace.clientWidth || rect.width;
+        const height = workspace.clientHeight || rect.height;
+        setArea((current) => (
+          current.width === width && current.height === height
+            ? current
+            : { width, height }
+        ));
+      });
     };
     updateArea();
     const observer = new ResizeObserver(updateArea);
     observer.observe(workspace);
-    return () => observer.disconnect();
+    window.addEventListener("resize", updateArea);
+    window.visualViewport?.addEventListener("resize", updateArea);
+    return () => {
+      window.cancelAnimationFrame(measurementFrame);
+      observer.disconnect();
+      window.removeEventListener("resize", updateArea);
+      window.visualViewport?.removeEventListener("resize", updateArea);
+    };
   }, [desktopModeAvailable]);
 
   useEffect(() => {
@@ -1155,9 +1233,11 @@ export function DesktopExperience() {
           original: String(playerMessage.preferOriginal),
           direct: String(playerMessage.preferDirect),
         });
+        if (playerMessage.artworkUrl) params.set("artwork", playerMessage.artworkUrl);
         const app = playerAppDefinition(
           `${playerMessage.title} — Player`,
           `/dashboard/player?${params.toString()}`,
+          playerMessage.artworkUrl,
         );
         const zIndex = zIndexRef.current++;
         setAppChromeByWindow((current) => removeWindowChrome(current, PLAYER_APP_ID));
@@ -1256,6 +1336,7 @@ export function DesktopExperience() {
     if (!normalized) return;
     const pathname = normalized.split(/[?#]/, 1)[0];
     if (pathname === "/dashboard") {
+      if (!hasPermission("dashboard")) return;
       setLaunchpadOpen(false);
       setControlCenterNavigationDirection("push");
       setControlCenterView("dashboard");
@@ -1265,7 +1346,7 @@ export function DesktopExperience() {
 
     const app = appDefinitionFromDashboardRoute(normalized);
     if (app) openApp(app);
-  }, [openApp]);
+  }, [hasPermission, openApp]);
 
   useEffect(() => {
     const handleDesktopRouteRequest = (event: Event) => {
@@ -1459,10 +1540,16 @@ export function DesktopExperience() {
       windowElement.getBoundingClientRect(),
       dockButton.getBoundingClientRect(),
     );
+    let minimizedStateCommitted = false;
     try {
-      await playDesktopWindowMotion(windowElement, offset, "minimize");
+      await playDesktopWindowMotion(windowElement, offset, "minimize", () => {
+        flushSync(() => finishMinimizingWindow(id));
+        minimizedStateCommitted = true;
+      });
     } finally {
-      finishMinimizingWindow(id);
+      if (!minimizedStateCommitted) {
+        finishMinimizingWindow(id);
+      }
       minimizingWindowIdsRef.current.delete(id);
     }
   }, [finishMinimizingWindow]);
@@ -1501,6 +1588,7 @@ export function DesktopExperience() {
   };
 
   const openDesktopWidgetEditor = () => {
+    if (!hasPermission("dashboard")) return;
     setControlCenterOpen(false);
     setLaunchpadOpen(false);
     setWallpaperDialogOpen(false);
@@ -1899,7 +1987,7 @@ export function DesktopExperience() {
                       ? { duration: 0 }
                       : CONTROL_CENTER_PAGE_TRANSITION}
                   >
-                    {controlCenterView === "dashboard" ? (
+                    {controlCenterView === "dashboard" && hasPermission("dashboard") ? (
                       <DesktopWidgetsPanel
                         controller={dashboardWidgetLayoutController}
                         title="Widgets"
@@ -1922,6 +2010,7 @@ export function DesktopExperience() {
                     ) : (
                       <DesktopControlCenter
                         audiobookPlayer={desktopAudiobookPlayer}
+                        canOpenDashboard={hasPermission("dashboard")}
                         onOpenAudiobooks={() => pushControlCenterView("audiobooks")}
                         onOpenDownloads={() => pushControlCenterView("downloads")}
                         onOpenDashboard={() => pushControlCenterView("dashboard")}
@@ -1989,6 +2078,7 @@ export function DesktopExperience() {
             </div>
           </ContextMenuTrigger>
           <DesktopSurfaceContextMenuContent
+            canEditWidgets={hasPermission("dashboard")}
             editingWidgets={desktopWidgetsEditing}
             showDesktopDrives={showDesktopDrives}
             onShowDesktopDrivesChange={updateShowDesktopDrives}
@@ -2013,44 +2103,47 @@ export function DesktopExperience() {
           ) : null}
         </AnimatePresence>
 
-        <ContextMenu>
-          <ContextMenuTrigger asChild>
-            <div
-              data-desktop-widget-canvas
-              data-drive-lane-reserved={showDesktopDrives && !desktopWidgetsEditing ? "true" : "false"}
-              aria-label="Desktop widgets"
-              className={cn(
-                "absolute top-6 left-6 opacity-90 transition-opacity duration-150",
-                desktopWidgetsEditing
-                  ? "z-[1100] max-h-[calc(100%-6rem)] overflow-y-auto overscroll-contain p-3 pb-4 pr-4 opacity-100"
-                  : "z-[1]",
-              )}
-              style={{
-                width: showDesktopDrives && !desktopWidgetsEditing
-                  ? "min(44rem, calc(100% - 10.5rem))"
-                  : "min(44rem, calc(100% - 3rem))",
-              }}
-            >
-              <ControlledWidgetGrid
-                controller={desktopWidgetLayoutController}
-                editMode={desktopWidgetsEditing}
-                showAddDock={desktopWidgetsEditing}
-                maxColumns={3}
-                maxWidgetCols={2}
-                maxWidgetRows={2}
-                onEditDoneRequested={() => setDesktopWidgetsEditing(false)}
-              />
-            </div>
-          </ContextMenuTrigger>
-          <DesktopSurfaceContextMenuContent
-            editingWidgets={desktopWidgetsEditing}
-            showDesktopDrives={showDesktopDrives}
-            onShowDesktopDrivesChange={updateShowDesktopDrives}
-            onEditWidgets={openDesktopWidgetEditor}
-            onFinishEditingWidgets={() => setDesktopWidgetsEditing(false)}
-            onOpenWallpaper={openWallpaperEditor}
-          />
-        </ContextMenu>
+        {hasPermission("dashboard") ? (
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <div
+                data-desktop-widget-canvas
+                data-drive-lane-reserved={showDesktopDrives && !desktopWidgetsEditing ? "true" : "false"}
+                aria-label="Desktop widgets"
+                className={cn(
+                  "absolute top-6 left-6 opacity-90 transition-opacity duration-150",
+                  desktopWidgetsEditing
+                    ? "z-[1100] max-h-[calc(100%-6rem)] overflow-y-auto overscroll-contain p-3 pb-4 pr-4 opacity-100"
+                    : "z-[1]",
+                )}
+                style={{
+                  width: showDesktopDrives && !desktopWidgetsEditing
+                    ? "min(44rem, calc(100% - 10.5rem))"
+                    : "min(44rem, calc(100% - 3rem))",
+                }}
+              >
+                <ControlledWidgetGrid
+                  controller={desktopWidgetLayoutController}
+                  editMode={desktopWidgetsEditing}
+                  showAddDock={desktopWidgetsEditing}
+                  maxColumns={3}
+                  maxWidgetCols={2}
+                  maxWidgetRows={2}
+                  onEditDoneRequested={() => setDesktopWidgetsEditing(false)}
+                />
+              </div>
+            </ContextMenuTrigger>
+            <DesktopSurfaceContextMenuContent
+              canEditWidgets
+              editingWidgets={desktopWidgetsEditing}
+              showDesktopDrives={showDesktopDrives}
+              onShowDesktopDrivesChange={updateShowDesktopDrives}
+              onEditWidgets={openDesktopWidgetEditor}
+              onFinishEditingWidgets={() => setDesktopWidgetsEditing(false)}
+              onOpenWallpaper={openWallpaperEditor}
+            />
+          </ContextMenu>
+        ) : null}
 
         <AnimatePresence>
           {desktopWidgetsEditing ? (
@@ -2096,12 +2189,6 @@ export function DesktopExperience() {
         ) : null}
 
         {windows.map((windowModel) => {
-          const keepAudiobookPlaybackMounted = Boolean(
-            windowModel.minimized
-            && windowModel.id === desktopAudiobookWindowId
-            && desktopAudiobookPlayback?.book,
-          );
-          if (windowModel.minimized && !keepAudiobookPlaybackMounted) return null;
           const appChrome = appChromeByWindow[windowModel.id];
           const app = resolveAppDefinition(
             windowModel.appId,
@@ -2123,7 +2210,7 @@ export function DesktopExperience() {
               minimum={app.minimum}
               active={windowModel.id === activeWindowId}
               maximized={windowModel.maximized}
-              backgrounded={keepAudiobookPlaybackMounted}
+              minimized={windowModel.minimized}
               disabled={desktopWidgetsEditing}
               zIndex={windowModel.zIndex}
               actions={appChrome?.actions}
@@ -2166,6 +2253,7 @@ export function DesktopExperience() {
 
         <DesktopLaunchpad
           open={launchpadOpen}
+          zIndex={Math.max(1400, ...windows.map((windowModel) => windowModel.zIndex + 1))}
           onOpenChange={setLaunchpadOpen}
           onLaunch={launchNavItem}
           onLaunchService={launchService}
@@ -2175,7 +2263,7 @@ export function DesktopExperience() {
           <nav
             aria-label="Desktop applications"
             className={cn(
-              "absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
+              "absolute bottom-1 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
               DESKTOP_FROSTED_MATERIAL_CLASS,
               draggingDockAppId && "border-foreground/20 bg-card/95 shadow-xl shadow-black/25",
             )}
@@ -2218,7 +2306,6 @@ export function DesktopExperience() {
                     <DockButton
                       label={app.title}
                       icon={app.icon}
-                      iconText={app.iconText}
                       iconUrl={app.iconUrl}
                       active={
                         !launchpadOpen
@@ -2443,7 +2530,6 @@ function DockAppContextMenu({
 interface DockButtonProps {
   label: string;
   icon: IconSvgElement;
-  iconText?: string;
   iconUrl?: string;
   active: boolean;
   running: boolean;
@@ -2456,7 +2542,6 @@ interface DockButtonProps {
 function DockButton({
   label,
   icon,
-  iconText,
   iconUrl,
   active,
   running,
@@ -2516,7 +2601,6 @@ function DockButton({
         <DockAppIcon
           label={label}
           icon={icon}
-          iconText={iconText}
           iconUrl={iconUrl}
         />
       </span>
@@ -2547,15 +2631,16 @@ function DockButton({
 function DockAppIcon({
   label,
   icon,
-  iconText,
   iconUrl,
-}: Pick<DockButtonProps, "label" | "icon" | "iconText" | "iconUrl">) {
+}: Pick<DockButtonProps, "label" | "icon" | "iconUrl">) {
   const [failedUrl, setFailedUrl] = useState<string>();
-  const realIconUrl = iconUrl &&
-    !iconUrl.startsWith("file://") &&
-    failedUrl !== iconUrl
-    ? iconUrl
+  const candidateIconUrl = resolveApplicationIconUrl(iconUrl);
+  const realIconUrl = candidateIconUrl && failedUrl !== candidateIconUrl
+    ? candidateIconUrl
     : undefined;
+  const resolvedIcon = typeof icon === "string"
+    ? resolveApplicationIcon(icon, label)
+    : icon;
 
   if (realIconUrl) {
     return (
@@ -2572,9 +2657,5 @@ function DockAppIcon({
     );
   }
 
-  if (iconText && iconText !== "📦") {
-    return <span className="text-2xl leading-none">{iconText}</span>;
-  }
-
-  return <HugeiconsIcon icon={icon} size={24} strokeWidth={1.4} />;
+  return <HugeiconsIcon icon={resolvedIcon} size={24} strokeWidth={1.4} />;
 }

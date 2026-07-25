@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import type { ChatStatus, FileUIPart } from "ai";
+import type { ChatStatus, FileUIPart, UIMessage } from "ai";
+import { isToolUIPart } from "ai";
 import { useAtom, useSetAtom } from "jotai";
 import {
   HugeiconsIcon,
@@ -15,6 +16,7 @@ import {
   CheckmarkCircle02Icon,
   AlertCircleIcon,
   PackageOpenIcon,
+  AiIdeaIcon,
 } from "@/components/icons";
 import {
   Conversation,
@@ -28,6 +30,7 @@ import {
 import { ChatInputBar } from "@/components/ai-elements/chat-input-bar";
 import { ChatMessage } from "@/components/chat/chat-message";
 import { useAssistant } from "@/components/assistant/assistant-context";
+import { AssistantModelSelector } from "@/components/assistant/assistant-model-selector";
 import { AssistantChatError } from "@/components/assistant/chat-error";
 import { useKeyboardMode } from "@/hooks/use-keyboard-mode";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -100,21 +103,36 @@ function ThinkingMessage() {
   return (
     <Message from="assistant">
       <MessageContent>
-        <div className="flex items-center gap-1.5 py-1">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="h-1.5 w-1.5 rounded-full bg-foreground/40"
-              style={{
-                animation: "thinking-dot 1.4s ease-in-out infinite",
-                animationDelay: `${i * 150}ms`,
-              }}
-            />
-          ))}
+        <div
+          className="flex items-center gap-2 rounded-xl border border-border/40 bg-card/20 px-3.5 py-3 text-sm text-muted-foreground backdrop-blur-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/8 text-primary">
+            <HugeiconsIcon icon={AiIdeaIcon} size={17} />
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className="shimmer shimmer-duration-1800 font-medium leading-none text-muted-foreground">
+              Thinking…
+            </span>
+            <span className="text-xs text-muted-foreground">
+              Working through the request
+            </span>
+          </div>
         </div>
       </MessageContent>
     </Message>
   );
+}
+
+function hasVisibleAssistantProgress(message: UIMessage | undefined): boolean {
+  if (!message || message.role !== "assistant") return false;
+
+  return message.parts.some((part) => {
+    if (part.type === "reasoning" || part.type === "file") return true;
+    if (part.type === "text") return part.text.trim().length > 0;
+    return isToolUIPart(part);
+  });
 }
 
 /** Extract blueprint section update from a design_app_blueprint tool input. */
@@ -132,6 +150,12 @@ function applyBlueprintUpdate(prev: BlueprintState, input: Record<string, unknow
         icon: input.icon as string | undefined,
       };
       break;
+    case "research":
+      next.research = input.research as BlueprintState["research"];
+      break;
+    case "design":
+      next.experienceDesign = input.experienceDesign as BlueprintState["experienceDesign"];
+      break;
     case "services":
       next.services = input.services as BlueprintState["services"];
       break;
@@ -147,6 +171,9 @@ function applyBlueprintUpdate(prev: BlueprintState, input: Record<string, unknow
       break;
     case "criteria":
       next.criteria = input.criteria as string[];
+      break;
+    case "experience":
+      next.appSpec = input.appSpec as BlueprintState["appSpec"];
       break;
   }
 
@@ -556,7 +583,16 @@ export default function AssistantPage() {
 
   // Build flow: create draft → show inline Claude Code terminal
   const handleBlueprintBuild = useCallback(async () => {
-    if (!blueprint.identity?.name || !blueprint.services?.length || !blueprint.criteria?.length) return;
+    if (
+      !blueprint.identity?.name ||
+      !blueprint.research?.useCases.length ||
+      !blueprint.research.githubQueries.length ||
+      !blueprint.experienceDesign?.workflows.length ||
+      !blueprint.experienceDesign.screens.length ||
+      !blueprint.services?.length ||
+      !blueprint.appSpec?.surfaces.length ||
+      !blueprint.criteria?.length
+    ) return;
     if (building) return;
 
     setBuilding(true);
@@ -724,7 +760,7 @@ export default function AssistantPage() {
             isStreaming={isActive && index === messages.length - 1}
           />
         ))}
-        {isActive && messages[messages.length - 1]?.role === "user" && (
+        {isActive && !hasVisibleAssistantProgress(messages[messages.length - 1]) && (
           <ThinkingMessage />
         )}
         {error && <AssistantChatError error={error} provider={activeProvider} onDismiss={clearError} />}
@@ -839,36 +875,15 @@ export default function AssistantPage() {
       placeholder="Ask Talome anything..."
       extraTools={
         <>
+          <AssistantModelSelector
+            model={model}
+            modelOptions={modelOptions}
+            modelReady={modelReady}
+            onModelChange={setModel}
+          />
           {/* Always render Tooltip components to keep the React tree shape stable
               between server and client — conditional mounting shifts Radix's useId()
               counter and causes hydration ID mismatches. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => {
-                  const idx = modelOptions.findIndex((o) => o.id === model);
-                  const next = modelOptions[(idx + 1) % modelOptions.length];
-                  if (next) setModel(next.id);
-                }}
-                className={`inline-flex items-center justify-center h-8 rounded-md px-2 text-xs font-medium transition-colors duration-150 hover:bg-accent ${
-                  modelOptions.findIndex((o) => o.id === model) > 0
-                    ? "text-foreground"
-                    : "text-dim-foreground"
-                }`}
-                hidden={modelOptions.length <= 1}
-              >
-                {modelOptions.find((o) => o.id === model)?.name ?? model.split("/").pop()?.split("-")[0] ?? "Model"}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="text-xs">
-              {(() => {
-                const idx = modelOptions.findIndex((o) => o.id === model);
-                const next = modelOptions[(idx + 1) % modelOptions.length];
-                return `Switch to ${next?.name ?? "next model"}`;
-              })()}
-            </TooltipContent>
-          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <button

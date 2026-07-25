@@ -22,11 +22,15 @@ import type {
 } from "./contracts.js";
 import type { InstructionPack, ReferenceSnapshot } from "./instructions.js";
 import { runClaudeCode } from "../ai/claude-runner.js";
+import { TalomeAppSpecSchema } from "../app-specs/schema.js";
 
 const WORKSPACES_ROOT = join(homedir(), ".talome", "generated-apps");
 const INTERNAL_DIR = ".talome-creator";
 const SCAFFOLD_DIR = "generated-app";
 const IGNORED_DIRS = new Set([".git", "node_modules", INTERNAL_DIR]);
+const RESEARCH_FINDINGS_PATH = join(INTERNAL_DIR, "research", "findings.md");
+const SCREEN_SPEC_PATH = join(INTERNAL_DIR, "design", "screen-spec.md");
+const VALIDATION_REPORT_PATH = join(INTERNAL_DIR, "validation", "report.md");
 
 interface ExecuteWorkspaceOptions {
   app: GeneratedApp;
@@ -166,6 +170,191 @@ async function writeInstructionSnapshots(
   }
 }
 
+async function writeFileIfMissing(path: string, content: string): Promise<void> {
+  try {
+    await writeFile(path, content, { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+}
+
+function renderResearchBrief(blueprint: AppBlueprint): string {
+  const useCases = blueprint.research.useCases.flatMap((useCase) => [
+    `### ${useCase.title}`,
+    `- ID: \`${useCase.id}\``,
+    `- User goal: ${useCase.userGoal}`,
+    `- Outcome: ${useCase.outcome}`,
+    `- Frequency: ${useCase.frequency}`,
+    "",
+  ]);
+  const libraryNeeds = blueprint.research.libraryNeeds.flatMap((need) => [
+    `- **${need.capability}:** ${need.reason}`,
+    ...(need.constraints.length > 0 ? [`  Constraints: ${need.constraints.join("; ")}`] : []),
+  ]);
+
+  return [
+    "# Research Brief",
+    "",
+    "This file records the intent supplied by the blueprint. Put verified evidence and decisions in `findings.md`.",
+    "",
+    "## Use cases",
+    "",
+    ...(useCases.length > 0 ? useCases : ["No use cases were supplied.", ""]),
+    "## GitHub queries",
+    "",
+    ...(blueprint.research.githubQueries.length > 0
+      ? blueprint.research.githubQueries.map((query) => `- ${query}`)
+      : ["- No query supplied"]),
+    "",
+    "## Product-pattern questions",
+    "",
+    ...(blueprint.research.patternQuestions.length > 0
+      ? blueprint.research.patternQuestions.map((question) => `- ${question}`)
+      : ["- No question supplied"]),
+    "",
+    "## Library capabilities to investigate",
+    "",
+    ...(libraryNeeds.length > 0 ? libraryNeeds : ["- No additional library capability requested"]),
+    "",
+  ].join("\n");
+}
+
+function renderDesignBrief(blueprint: AppBlueprint): string {
+  const workflows = blueprint.experienceDesign.workflows.flatMap((workflow) => [
+    `### ${workflow.name}`,
+    `- ID: \`${workflow.id}\``,
+    `- Use case: \`${workflow.useCaseId}\``,
+    `- Outcome: ${workflow.outcome}`,
+    ...workflow.steps.map((step, index) => `${index + 1}. ${step}`),
+    "",
+  ]);
+  const screens = blueprint.experienceDesign.screens.flatMap((screen) => [
+    `### ${screen.name}`,
+    `- ID: \`${screen.id}\``,
+    `- Use cases: ${screen.useCaseIds.map((id) => `\`${id}\``).join(", ")}`,
+    `- Job: ${screen.job}`,
+    `- Primary action: ${screen.primaryAction}`,
+    `- Pattern: ${screen.pattern}`,
+    `- Component candidates: ${screen.componentCandidates.join(", ") || "to research"}`,
+    `- States: ${screen.states.join(", ") || "default, loading, empty, error, compact-window"}`,
+    "",
+  ]);
+  const direction = blueprint.experienceDesign.visualDirection;
+
+  return [
+    "# Experience Design Brief",
+    "",
+    `Primary use case: \`${blueprint.experienceDesign.primaryUseCaseId || "not-selected"}\``,
+    "",
+    "## Workflows",
+    "",
+    ...(workflows.length > 0 ? workflows : ["No workflows were supplied.", ""]),
+    "## Screens",
+    "",
+    ...(screens.length > 0 ? screens : ["No screens were supplied.", ""]),
+    "## Visual direction",
+    "",
+    ...(direction
+      ? [
+          `- Mode: ${direction.mode}`,
+          `- Summary: ${direction.summary}`,
+          `- Layout: ${direction.layout}`,
+          `- Signature elements: ${direction.signatureElements.join(", ") || "none specified"}`,
+          `- Motion: ${direction.motion.join(", ") || "none specified"}`,
+        ]
+      : ["No visual direction was supplied."]),
+    "",
+  ].join("\n");
+}
+
+async function writeDesignWorkflowArtifacts(
+  workspaceRoot: string,
+  blueprint: AppBlueprint,
+): Promise<string[]> {
+  const researchDir = join(workspaceRoot, INTERNAL_DIR, "research");
+  const designDir = join(workspaceRoot, INTERNAL_DIR, "design");
+  const validationDir = join(workspaceRoot, INTERNAL_DIR, "validation");
+  await Promise.all([
+    mkdir(researchDir, { recursive: true }),
+    mkdir(designDir, { recursive: true }),
+    mkdir(validationDir, { recursive: true }),
+  ]);
+
+  const researchBriefPath = join(researchDir, "brief.md");
+  const designBriefPath = join(designDir, "brief.md");
+  const findingsPath = join(workspaceRoot, RESEARCH_FINDINGS_PATH);
+  const screenSpecPath = join(workspaceRoot, SCREEN_SPEC_PATH);
+  const reportPath = join(workspaceRoot, VALIDATION_REPORT_PATH);
+
+  await writeFile(researchBriefPath, renderResearchBrief(blueprint));
+  await writeFile(designBriefPath, renderDesignBrief(blueprint));
+  await writeFileIfMissing(findingsPath, [
+    "# Research Findings",
+    "",
+    "Status: pending",
+    "",
+    "Complete this before implementing application UI. Use exact URLs and verified facts.",
+    "",
+    "## Candidates",
+    "",
+    "| Candidate | Exact URL/ref | License | Maintenance evidence | Talome fit | Decision | Reusable part |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    "| [pending] | [pending] | [pending] | [pending] | [pending] | reuse / adapt / inspiration / reject | [pending] |",
+    "",
+    "## Screen-pattern findings",
+    "",
+    "- [pending]",
+    "",
+    "## Final source and library choices",
+    "",
+    "- [pending]",
+    "",
+  ].join("\n"));
+  await writeFileIfMissing(screenSpecPath, [
+    "# Screen Specification",
+    "",
+    "Status: pending",
+    "",
+    "Resolve the design brief against the research findings before writing application UI.",
+    "",
+    renderDesignBrief(blueprint),
+    "## Research-driven changes",
+    "",
+    "- [pending]",
+    "",
+    "## Accepted component and container model",
+    "",
+    "- [pending]",
+    "",
+  ].join("\n"));
+  await writeFileIfMissing(reportPath, [
+    "# Validation Report",
+    "",
+    "Status: pending",
+    "",
+    "## Primary workflow exercised",
+    "",
+    "- [pending]",
+    "",
+    "## Reference/render comparison",
+    "",
+    "| Check | Reference or specification evidence | Rendered evidence | Result/fix |",
+    "| --- | --- | --- | --- |",
+    "| 1 | [pending] | [pending] | [pending] |",
+    "| 2 | [pending] | [pending] | [pending] |",
+    "| 3 | [pending] | [pending] | [pending] |",
+    "| 4 | [pending] | [pending] | [pending] |",
+    "| 5 | [pending] | [pending] | [pending] |",
+    "",
+    "## Responsive, state, accessibility, and assistant checks",
+    "",
+    "- [pending]",
+    "",
+  ].join("\n"));
+
+  return [researchBriefPath, findingsPath, designBriefPath, screenSpecPath, reportPath];
+}
+
 export function buildClaudeTask(app: GeneratedApp, blueprint: AppBlueprint, userDescription?: string): string {
   const sourceHint =
     blueprint.sourceReferences.length > 0
@@ -185,6 +374,12 @@ export function buildClaudeTask(app: GeneratedApp, blueprint: AppBlueprint, user
     "Read .talome-creator/system-context.json for installed apps, used ports, and system info — avoid port conflicts.",
     "Read every markdown file in .talome-creator/instructions before making changes.",
     "Study the files in .talome-creator/references and mirror Talome's design language.",
+    "Follow the staged workflow: complete evidence-backed research in .talome-creator/research/findings.md, then resolve .talome-creator/design/screen-spec.md, then build, then complete .talome-creator/validation/report.md.",
+    "Do not write application UI before the research and screen-spec statuses are complete, and do not claim completion before the validation report is complete.",
+    "When researching GitHub projects or libraries, use exact verified sources and record URL/ref, license, maintenance evidence, compatibility, decision, and the exact reusable part. Never invent a repository or fact when network access is unavailable.",
+    "Treat blueprint.appSpec as the source of truth for native screens, data sources, actions, and assistant capabilities.",
+    "Do not reimplement AppSpec blocks with bespoke cards or styling; Talome renders them with its native component registry.",
+    "If you build a supplementary external UI, keep talome-app.json in sync and preserve all declared assistant actions.",
     sourceHint,
     "Prefer coherent shadcn-based flows and reuse the same interaction grammar as Talome.",
     "Do not modify files outside this workspace.",
@@ -199,6 +394,100 @@ function mergeSnapshots(before: FileSnapshot[], after: FileSnapshot[]): string[]
     .filter((item) => beforeMap.get(item.path) !== item.hash)
     .map((item) => item.path)
     .sort();
+}
+
+interface ArtifactCheckOptions {
+  id: string;
+  label: string;
+  relativePath: string;
+  minimumComparisonRows?: number;
+  requiredPatterns?: Array<{ pattern: RegExp; label: string }>;
+}
+
+async function validateArtifact(
+  workspaceRoot: string,
+  options: ArtifactCheckOptions,
+): Promise<ValidationCheck> {
+  try {
+    const content = await readFile(join(workspaceRoot, options.relativePath), "utf-8");
+    const isComplete = /^Status:\s*complete\s*$/im.test(content);
+    const hasPendingMarkers = /\[pending\]/i.test(content);
+    const comparisonRows = content.match(/^\|\s*\d+\s*\|/gm)?.length ?? 0;
+    const hasRequiredRows = comparisonRows >= (options.minimumComparisonRows ?? 0);
+    const missingRequiredEvidence = (options.requiredPatterns ?? [])
+      .filter(({ pattern }) => !pattern.test(content))
+      .map(({ label }) => label);
+    const hasRequiredEvidence = missingRequiredEvidence.length === 0;
+    const passed = isComplete && !hasPendingMarkers && hasRequiredRows && hasRequiredEvidence;
+
+    return {
+      id: options.id,
+      label: options.label,
+      status: passed ? "passed" : "failed",
+      details: passed
+        ? `${options.relativePath} is complete`
+        : `${options.relativePath} must have Status: complete, no [pending] markers${options.minimumComparisonRows ? `, at least ${options.minimumComparisonRows} comparison rows` : ""}${missingRequiredEvidence.length ? `, and evidence for ${missingRequiredEvidence.join(", ")}` : ""}`,
+    };
+  } catch {
+    return {
+      id: options.id,
+      label: options.label,
+      status: "failed",
+      details: `${options.relativePath} is missing`,
+    };
+  }
+}
+
+async function validateResearchArtifact(workspaceRoot: string): Promise<ValidationCheck> {
+  const baseCheck = await validateArtifact(workspaceRoot, {
+    id: "research-evidence",
+    label: "Research evidence and reuse decisions are complete",
+    relativePath: RESEARCH_FINDINGS_PATH,
+  });
+  if (baseCheck.status !== "passed") return baseCheck;
+
+  const content = await readFile(join(workspaceRoot, RESEARCH_FINDINGS_PATH), "utf-8");
+  const hasEvidenceRow = content.split("\n").some((line) => {
+    if (!line.trim().startsWith("|") || /^\|\s*(Candidate|---)/i.test(line)) return false;
+    const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+    if (cells.length < 7) return false;
+    const [candidate, exactSource, license, maintenance, fit, decision, reusablePart] = cells;
+    return Boolean(
+      candidate &&
+      /^(https?:\/\/|local:|\.talome-creator\/sources\/)/i.test(exactSource) &&
+      license &&
+      maintenance &&
+      fit &&
+      /^(reuse|adapt|inspiration|reject)$/i.test(decision) &&
+      reusablePart,
+    );
+  });
+
+  return hasEvidenceRow
+    ? baseCheck
+    : {
+        ...baseCheck,
+        status: "failed",
+        details: `${RESEARCH_FINDINGS_PATH} needs at least one evidence row with an exact source/ref, license, maintenance signal, Talome fit, explicit decision, and reusable part`,
+      };
+}
+
+export async function validateDesignArtifacts(workspaceRoot: string): Promise<ValidationCheck[]> {
+  return Promise.all([
+    validateResearchArtifact(workspaceRoot),
+    validateArtifact(workspaceRoot, {
+      id: "screen-spec",
+      label: "Research-resolved screen specification is complete",
+      relativePath: SCREEN_SPEC_PATH,
+    }),
+    validateArtifact(workspaceRoot, {
+      id: "rendered-validation",
+      label: "Rendered workflow validation is complete",
+      relativePath: VALIDATION_REPORT_PATH,
+      minimumComparisonRows: 5,
+      requiredPatterns: [{ pattern: /dark(?:\s+mode|-mode|\s+theme)/i, label: "dark mode" }],
+    }),
+  ]);
 }
 
 export async function validateWorkspace(
@@ -230,6 +519,20 @@ export async function validateWorkspace(
     label: "Docker app definition is populated",
     status: app.services.length > 0 ? "passed" : "failed",
     details: `${app.services.length} service(s) in generated definition`,
+  });
+
+  const appSpecResult = blueprint.appSpec
+    ? TalomeAppSpecSchema.safeParse(blueprint.appSpec)
+    : null;
+  validations.push({
+    id: "app-spec",
+    label: "Native Talome AppSpec is valid",
+    status: appSpecResult?.success ? "passed" : "failed",
+    details: appSpecResult?.success
+      ? `${appSpecResult.data.surfaces.length} surface(s), ${appSpecResult.data.actions.length} action(s)`
+      : appSpecResult
+        ? appSpecResult.error.issues.slice(0, 3).map((issue) => issue.message).join("; ")
+        : "Blueprint has no AppSpec",
   });
 
   validations.push({
@@ -274,6 +577,7 @@ export async function validateWorkspace(
     status: sourceSnapshots.length > 0 ? "passed" : "skipped",
     details: sourceSnapshots.length > 0 ? `${sourceSnapshots.length} source snapshot artifact(s)` : "No source was reused",
   });
+  validations.push(...await validateDesignArtifacts(workspaceRoot));
 
   try {
     parseYaml(
@@ -370,6 +674,7 @@ export interface PreparedWorkspace {
   scaffoldPath: string;
   taskPrompt: string;
   sourceSnapshots: string[];
+  designArtifacts: string[];
   beforeSnapshot: FileSnapshot[];
 }
 
@@ -383,12 +688,20 @@ export async function prepareWorkspace(
   await mkdir(join(internalRoot, "runs"), { recursive: true });
   await mkdir(scaffoldPath, { recursive: true });
 
+  if (options.blueprint.appSpec) {
+    await writeFile(
+      join(scaffoldPath, "talome-app.json"),
+      JSON.stringify(options.blueprint.appSpec, null, 2),
+    );
+  }
+
   await writeInstructionSnapshots(
     workspaceRoot,
     options.instructionPack,
     options.blueprint,
     options.talomeReferences,
   );
+  const designArtifacts = await writeDesignWorkflowArtifacts(workspaceRoot, options.blueprint);
 
   // Write CLAUDE.md so Claude Code has context on every session (new or resumed)
   const claudeMd = [
@@ -408,9 +721,20 @@ export async function prepareWorkspace(
       ? "5. Study `.talome-creator/sources/` — existing app sources to adapt from"
       : "",
     "",
+    "## Required design gates",
+    "",
+    "1. Complete `.talome-creator/research/findings.md` with verified source, library, license, maintenance, compatibility, and reuse evidence",
+    "2. Complete `.talome-creator/design/screen-spec.md` with research-resolved workflows, screens, states, visual direction, and component choices",
+    "3. Implement the real primary workflow in `generated-app/`",
+    "4. Exercise the rendered and assistant workflows, then complete `.talome-creator/validation/report.md` with at least five comparison checks",
+    "",
+    "Do not begin application UI before gates 1 and 2 are complete. Do not claim completion while gate 4 is pending.",
+    "",
     "## Output",
     "",
     `Write all generated files to the \`${SCAFFOLD_DIR}/\` directory.`,
+    "Preserve `generated-app/talome-app.json`; it is the native Talome experience contract.",
+    "Use only component IDs declared by the AppSpec contract. Native UI is rendered by Talome, not copied into this workspace.",
     "Do not modify files outside this workspace.",
     "",
     "## Docker Compose rules for scaffold apps",
@@ -512,7 +836,7 @@ export async function prepareWorkspace(
   const beforeSnapshot = await listWorkspaceFiles(workspaceRoot);
   const taskPrompt = buildClaudeTask(options.app, options.blueprint, options.userDescription);
 
-  return { workspaceRoot, scaffoldPath, taskPrompt, sourceSnapshots, beforeSnapshot };
+  return { workspaceRoot, scaffoldPath, taskPrompt, sourceSnapshots, designArtifacts, beforeSnapshot };
 }
 
 export async function completeWorkspace(
@@ -520,7 +844,7 @@ export async function completeWorkspace(
   app: GeneratedApp,
   blueprint: AppBlueprint,
 ): Promise<{ workspace: WorkspaceSummary; validations: ValidationCheck[] }> {
-  const { workspaceRoot, scaffoldPath, sourceSnapshots, beforeSnapshot } = prepared;
+  const { workspaceRoot, scaffoldPath, sourceSnapshots, designArtifacts, beforeSnapshot } = prepared;
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const runLogPath = join(workspaceRoot, INTERNAL_DIR, "runs", `${runId}.json`);
 
@@ -555,6 +879,7 @@ export async function completeWorkspace(
     fileCount: validation.fileCount,
     entryFiles: validation.entryFiles,
     sourceSnapshots: sourceSnapshots.map((path) => path.replace(`${workspaceRoot}/`, "")),
+    designArtifacts: designArtifacts.map((path) => path.replace(`${workspaceRoot}/`, "")),
     generatedWithClaudeCode: changedFiles.length > 0,
     runLogPath,
   };

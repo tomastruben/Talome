@@ -19,7 +19,7 @@ import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 
 /* ── Types ───────────────────────────────────────────────────────────────── */
 
-type AiProvider = "anthropic" | "openai" | "ollama";
+type AiProvider = "anthropic" | "openai" | "kimi" | "ollama";
 
 interface ModelInfo {
   id: string;
@@ -50,6 +50,7 @@ interface OllamaModel {
 const PROVIDER_META: Record<AiProvider, { label: string; hint: string; badge?: string }> = {
   anthropic: { label: "Anthropic", hint: "Claude models", badge: "Recommended" },
   openai: { label: "OpenAI", hint: "GPT models" },
+  kimi: { label: "Kimi", hint: "Kimi K3 models" },
   ollama: { label: "Ollama", hint: "Local models" },
 };
 
@@ -131,6 +132,8 @@ export function AiProviderSection() {
   const [anthropicEditing, setAnthropicEditing] = useState(false);
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiEditing, setOpenaiEditing] = useState(false);
+  const [kimiKey, setKimiKey] = useState("");
+  const [kimiEditing, setKimiEditing] = useState(false);
   const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434");
   const [saving, setSaving] = useState(false);
 
@@ -170,6 +173,7 @@ export function AiProviderSection() {
       .then((data: Record<string, string>) => {
         if (data.anthropic_key) setAnthropicKey(data.anthropic_key);
         if (data.openai_key) setOpenaiKey(data.openai_key);
+        if (data.kimi_key) setKimiKey(data.kimi_key);
         if (data.ollama_url) setOllamaUrl(data.ollama_url);
       })
       .catch(() => {});
@@ -190,6 +194,9 @@ export function AiProviderSection() {
       if (!providerScope || providerScope === "openai") {
         if (openaiEditing || !openaiKey) body.openai_key = openaiKey;
       }
+      if (!providerScope || providerScope === "kimi") {
+        if (kimiEditing || !kimiKey) body.kimi_key = kimiKey;
+      }
       if (!providerScope || providerScope === "ollama") {
         body.ollama_url = ollamaUrl;
       }
@@ -204,6 +211,7 @@ export function AiProviderSection() {
       });
       if (providerScope === "anthropic" || !providerScope) setAnthropicEditing(false);
       if (providerScope === "openai" || !providerScope) setOpenaiEditing(false);
+      if (providerScope === "kimi" || !providerScope) setKimiEditing(false);
       toast.success("Saved");
       mutateModels();
     } catch {
@@ -312,8 +320,8 @@ export function AiProviderSection() {
           Choose an AI provider. You can configure multiple and switch anytime.
         </p>
 
-        <div className="grid sm:grid-cols-3 gap-3">
-          {(["anthropic", "openai", "ollama"] as const).map((p) => (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {(["anthropic", "openai", "kimi", "ollama"] as const).map((p) => (
             <ProviderCard
               key={p}
               provider={p}
@@ -395,6 +403,46 @@ export function AiProviderSection() {
             />
             <SettingsRow className="bg-muted/30 justify-end py-3">
               <Button size="sm" onClick={() => saveKeys("openai")} disabled={saving} className="h-7 text-xs px-4">
+                {saving ? "Saving..." : "Save"}
+              </Button>
+            </SettingsRow>
+          </SettingsGroup>
+        )}
+
+        {activeProvider === "kimi" && (
+          <SettingsGroup>
+            <SettingsRow className="py-2.5">
+              <div className="flex items-center gap-2 flex-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Kimi</p>
+                {getConfigured("kimi") && (
+                  <span className="flex items-center gap-1 text-[10px] text-status-healthy font-medium">
+                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={10} />
+                    Connected
+                  </span>
+                )}
+              </div>
+              <a
+                href="https://platform.kimi.ai/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <HugeiconsIcon icon={LinkSquare01Icon} size={12} />
+                Get key
+              </a>
+            </SettingsRow>
+            <SecretRow
+              label="API Key" hint="Required for Kimi models in Assistant and Intelligence"
+              id="kimi-key" placeholder="sk-..."
+              storedValue={kimiKey} isEditing={kimiEditing}
+              onEdit={() => { setKimiEditing(true); setKimiKey(""); }}
+              onChange={setKimiKey}
+            />
+            <SettingsRow className="bg-muted/30 py-3">
+              <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+                API usage is billed by Moonshot. Terminal uses the native Kimi Code login separately.
+              </p>
+              <Button size="sm" onClick={() => saveKeys("kimi")} disabled={saving} className="h-7 text-xs px-4">
                 {saving ? "Saving..." : "Save"}
               </Button>
             </SettingsRow>

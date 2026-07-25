@@ -12,6 +12,7 @@ export const FEATURE_PERMISSIONS = [
   "files",
   "apps",
   "automations",
+  "intelligence",
 ] as const;
 
 export type FeaturePermission = (typeof FEATURE_PERMISSIONS)[number];
@@ -28,6 +29,7 @@ export const PERMISSION_LABELS: Record<FeaturePermission, { label: string; descr
   files: { label: "Files", description: "Browse and manage files" },
   apps: { label: "Apps", description: "Install and manage applications" },
   automations: { label: "Automations", description: "Create and manage automations" },
+  intelligence: { label: "Intelligence", description: "View system insights and activity" },
 };
 
 /** Returns default permissions — all features enabled. */

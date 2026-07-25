@@ -232,6 +232,21 @@ export const widgetManifests = sqliteTable("widget_manifests", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+/** Versioned declarative application surfaces rendered by Talome itself. */
+export const appSpecs = sqliteTable("app_specs", {
+  id: text("id").primaryKey(),
+  appId: text("app_id").notNull(),
+  storeSourceId: text("store_source_id").notNull(),
+  schemaVersion: integer("schema_version").notNull().default(1),
+  revision: integer("revision").notNull().default(1),
+  status: text("status", { enum: ["draft", "approved", "disabled"] })
+    .notNull()
+    .default("draft"),
+  specJson: text("spec_json").notNull(),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 export const evolutionLog = sqliteTable("evolution_log", {
   id: text("id").primaryKey(),
   timestamp: text("timestamp").notNull().$defaultFn(() => new Date().toISOString()),

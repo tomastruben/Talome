@@ -12,12 +12,14 @@ import { useUser } from "@/hooks/use-user";
 
 interface DesktopLaunchpadProps {
   open: boolean;
+  zIndex: number;
   onOpenChange: (open: boolean) => void;
   onLaunch: (item: NavItem) => void;
   onLaunchService: (app: LaunchableApp) => void;
 }
 export function DesktopLaunchpad({
   open,
+  zIndex,
   onOpenChange,
   onLaunch,
   onLaunchService,
@@ -34,7 +36,8 @@ export function DesktopLaunchpad({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="absolute inset-0 z-[1000] flex items-center justify-center bg-black/20 px-6 pt-6 pb-24 backdrop-blur-[2px]"
+          className="absolute inset-0 flex items-center justify-center bg-black/20 px-6 pt-6 pb-24 backdrop-blur-[2px]"
+          style={{ zIndex }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

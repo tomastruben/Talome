@@ -55,12 +55,22 @@ import { cn } from "@/lib/utils";
 import { CORE_URL } from "@/lib/constants";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePathname } from "next/navigation";
-import type { Container, ServiceStack, SearchResult } from "@talome/types";
+import type {
+  Container,
+  FeaturePermission,
+  ServiceStack,
+  SearchResult,
+} from "@talome/types";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { QUALITY_TIERS, type QualityTier } from "@talome/types";
 import type { MediaSearchResult } from "@talome/types";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { useUser } from "@/hooks/use-user";
+import {
+  resolveApplicationIcon,
+  resolveApplicationIconUrl,
+} from "@/components/native-app/native-app-icons";
 
 // ── Nav commands ──────────────────────────────────────────────────────────────
 
@@ -69,16 +79,17 @@ interface NavCommand {
   path: string;
   icon: IconSvgElement;
   shortcut?: string;
+  permission?: FeaturePermission;
 }
 
 const NAV_COMMANDS: NavCommand[] = [
-  { label: "Home",        path: "/dashboard",            icon: Home01Icon,          shortcut: "⌘1" },
-  { label: "Media",       path: "/dashboard/media",      icon: Film01Icon,          shortcut: "⌘2" },
-  { label: "Services",    path: "/dashboard/containers", icon: Package01Icon,       shortcut: "⌘3" },
-  { label: "App Store",   path: "/dashboard/apps",       icon: DownloadSquare01Icon,shortcut: "⌘4" },
-  { label: "Files",       path: "/dashboard/files",      icon: HardDriveIcon,       shortcut: "⌘5" },
-  { label: "Automations", path: "/dashboard/automations",icon: FlashIcon,           shortcut: "⌘6" },
-  { label: "Intelligence", path: "/dashboard/intelligence", icon: Activity01Icon,     shortcut: "⌘7" },
+  { label: "Home",        path: "/dashboard",            icon: Home01Icon,          shortcut: "⌘1", permission: "dashboard" },
+  { label: "Media",       path: "/dashboard/media",      icon: Film01Icon,          shortcut: "⌘2", permission: "media" },
+  { label: "Services",    path: "/dashboard/containers", icon: Package01Icon,       shortcut: "⌘3", permission: "apps" },
+  { label: "App Store",   path: "/dashboard/apps",       icon: DownloadSquare01Icon,shortcut: "⌘4", permission: "apps" },
+  { label: "Files",       path: "/dashboard/files",      icon: HardDriveIcon,       shortcut: "⌘5", permission: "files" },
+  { label: "Automations", path: "/dashboard/automations",icon: FlashIcon,           shortcut: "⌘6", permission: "automations" },
+  { label: "Intelligence", path: "/dashboard/intelligence", icon: Activity01Icon,     shortcut: "⌘7", permission: "intelligence" },
   { label: "Settings",    path: "/dashboard/settings",   icon: Settings01Icon,      shortcut: "⌘," },
 ];
 
@@ -91,7 +102,8 @@ const DESKTOP_NAV_COMMANDS: NavCommand[] = NAV_COMMANDS.map((command) =>
 // ── Service icon (small, for command items) ──────────────────────────────────
 
 function ServiceIcon({ iconUrl, icon, name }: { iconUrl?: string; icon?: string; name?: string }) {
-  const realUrl = iconUrl && !iconUrl.startsWith("file://") ? iconUrl : null;
+  const realUrl = resolveApplicationIconUrl(iconUrl);
+  const fallbackIcon = resolveApplicationIcon(icon, name);
   return (
     <div className="relative size-5 rounded-md bg-muted/50 border border-border/30 flex items-center justify-center overflow-hidden shrink-0">
       {realUrl ? (
@@ -106,12 +118,10 @@ function ServiceIcon({ iconUrl, icon, name }: { iconUrl?: string; icon?: string;
               img.nextElementSibling?.classList.remove("hidden");
             }}
           />
-          <span className="hidden text-xs">{icon || "📦"}</span>
+          <HugeiconsIcon icon={fallbackIcon} size={11} className="hidden text-dim-foreground" />
         </>
-      ) : icon && icon !== "📦" ? (
-        <span className="text-xs">{icon}</span>
       ) : (
-        <HugeiconsIcon icon={Package01Icon} size={11} className="text-dim-foreground" />
+        <HugeiconsIcon icon={fallbackIcon} size={11} className="text-dim-foreground" />
       )}
     </div>
   );
@@ -295,9 +305,13 @@ export function CommandPalette() {
   const router = useRouter();
   const pathname = usePathname();
   const embeddedFrame = useIsEmbeddedFrame();
-  const navCommands = pathname === "/dashboard/desktop" || embeddedFrame
+  const { hasPermission } = useUser();
+  const availableNavCommands = pathname === "/dashboard/desktop" || embeddedFrame
     ? DESKTOP_NAV_COMMANDS
     : NAV_COMMANDS;
+  const navCommands = availableNavCommands.filter((command) =>
+    !command.permission || hasPermission(command.permission),
+  );
   const bugHunt = useBugHunt();
   const { captureContext } = useBugContext();
   const {
@@ -340,12 +354,26 @@ export function CommandPalette() {
   const { results: searchResults, isSearching } = useUnifiedSearch(
     open && mode === "search" && query.length >= 3 ? query : "",
   );
-  const mediaResults = searchResults.filter((r): r is SearchResult & { kind: "media" } => r.kind === "media");
-  const appResults = searchResults.filter((r): r is SearchResult & { kind: "app" } => r.kind === "app");
-  const containerResults = searchResults.filter((r): r is SearchResult & { kind: "container" } => r.kind === "container");
-  const audiobookResults = searchResults.filter((r): r is SearchResult & { kind: "audiobook" } => r.kind === "audiobook");
-  const automationResults = searchResults.filter((r): r is SearchResult & { kind: "automation" } => r.kind === "automation");
-  const hasEntityResults = searchResults.length > 0;
+  const mediaResults = hasPermission("media")
+    ? searchResults.filter((r): r is SearchResult & { kind: "media" } => r.kind === "media")
+    : [];
+  const appResults = hasPermission("apps")
+    ? searchResults.filter((r): r is SearchResult & { kind: "app" } => r.kind === "app")
+    : [];
+  const containerResults = hasPermission("apps")
+    ? searchResults.filter((r): r is SearchResult & { kind: "container" } => r.kind === "container")
+    : [];
+  const audiobookResults = hasPermission("audiobooks")
+    ? searchResults.filter((r): r is SearchResult & { kind: "audiobook" } => r.kind === "audiobook")
+    : [];
+  const automationResults = hasPermission("automations")
+    ? searchResults.filter((r): r is SearchResult & { kind: "automation" } => r.kind === "automation")
+    : [];
+  const hasEntityResults = mediaResults.length > 0
+    || appResults.length > 0
+    || containerResults.length > 0
+    || audiobookResults.length > 0
+    || automationResults.length > 0;
 
   // Register the open-in-chat-mode function so external callers can trigger it
   const openInChatMode = useCallback((prefill?: string) => {
@@ -924,11 +952,11 @@ export function CommandPalette() {
                           value={`app store ${r.name}`}
                           onSelect={() => navigate(`/dashboard/apps/${r.storeId}/${r.id}`)}
                         >
-                          {r.icon && r.icon !== "📦" ? (
-                            <span className="text-sm shrink-0">{r.icon}</span>
-                          ) : (
-                            <HugeiconsIcon icon={DownloadSquare01Icon} size={15} className="shrink-0 text-dim-foreground" />
-                          )}
+                          <HugeiconsIcon
+                            icon={resolveApplicationIcon(r.icon, r.name)}
+                            size={15}
+                            className="shrink-0 text-dim-foreground"
+                          />
                           <span className="flex-1 min-w-0 truncate">{r.name}</span>
                           <span className="text-xs text-muted-foreground shrink-0">
                             {r.installed ? "Installed" : r.category}

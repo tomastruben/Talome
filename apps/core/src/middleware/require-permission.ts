@@ -10,6 +10,18 @@ import { hasPermission } from "@talome/types";
  * Must be applied after requireSession (which sets sessionUser + sessionRole).
  */
 export function requirePermission(feature: FeaturePermission): MiddlewareHandler {
+  return requireAnyPermission(feature);
+}
+
+/**
+ * Allow a member through when at least one of the supplied feature permissions
+ * is enabled. Useful for shared APIs (for example activity data used by both
+ * Dashboard widgets and Intelligence) without exposing them to users who have
+ * access to neither surface.
+ */
+export function requireAnyPermission(
+  ...features: FeaturePermission[]
+): MiddlewareHandler {
   return async (c, next) => {
     const role = c.get("sessionRole" as never) as string | undefined;
 
@@ -42,9 +54,9 @@ export function requirePermission(feature: FeaturePermission): MiddlewareHandler
       }
     }
 
-    if (!hasPermission(permissions, feature)) {
+    if (!features.some((feature) => hasPermission(permissions, feature))) {
       return c.json(
-        { error: `Access denied — you don't have permission to access ${feature}` },
+        { error: "Access denied — you don't have permission to access this feature" },
         403,
       );
     }

@@ -10,6 +10,7 @@ import { SearchField } from "@/components/ui/search-field";
 import {
   HugeiconsIcon,
   CheckmarkCircle01Icon,
+  AiMagicIcon,
 } from "@/components/icons";
 import { Tabs, TabsList, TabsTrigger, TabsBadge } from "@/components/ui/tabs";
 import { AppCard } from "@/components/dashboard/app-card";
@@ -430,7 +431,7 @@ function AppsPageContent() {
                 href={`/dashboard/assistant?prompt=${encodeURIComponent(`Create an app: ${search}`)}`}
                 className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 p-6 text-center hover:border-foreground/20 hover:bg-muted/30 transition-colors min-h-[248px]"
               >
-                <span className="text-2xl">✨</span>
+                <HugeiconsIcon icon={AiMagicIcon} size={24} className="text-dim-foreground" />
                 <span className="text-sm font-medium">
                   Create &ldquo;{search}&rdquo;
                 </span>

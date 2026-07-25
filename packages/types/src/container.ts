@@ -48,6 +48,8 @@ export interface ServiceStack {
   storeId?: string;
   /** App ID (Talome-installed only) */
   appId?: string;
+  /** Approved declarative surface rendered by Talome instead of the external UI. */
+  nativeSurface?: import("./app-spec.ts").TalomeNativeSurfaceDescriptor;
   /** Per-container icon metadata (container ID → icon info) */
   containerIcons?: Record<string, { icon?: string; iconUrl?: string; name?: string }>;
 }

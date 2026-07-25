@@ -30,6 +30,10 @@ import { DesktopAppActionBridge } from "@/components/desktop/desktop-app-action-
 import { DesktopAudiobookPlayerBridge } from "@/components/desktop/desktop-audiobook-player-bridge";
 import { DesktopShellHeaderActions } from "@/components/desktop/desktop-shell-header-actions";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import {
+  canAccessDashboardRoute,
+  firstAccessibleDashboardRoute,
+} from "@/lib/dashboard-feature-access";
 
 const subscribeToHydration = () => () => {};
 
@@ -47,6 +51,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const embeddedFilesRoute = embeddedFrame && pathname === "/dashboard/files";
   const embeddedAudiobookRoute = embeddedFrame && pathname.startsWith("/dashboard/audiobooks");
   const { user, isLoading: userLoading } = useUser();
+  const routeAllowed = canAccessDashboardRoute(pathname, user?.role, user?.permissions);
+  const restrictedLandingRoute = pathname === "/dashboard" && !routeAllowed;
   const contentScrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => { registerServiceWorker(); }, []);
 
@@ -65,7 +71,33 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       router.replace("/login");
     }
   }, [userLoading, user, router]);
+  useEffect(() => {
+    if (!userLoading && user?.authenticated && restrictedLandingRoute) {
+      router.replace(firstAccessibleDashboardRoute(user.role, user.permissions));
+    }
+  }, [restrictedLandingRoute, router, user, userLoading]);
   const hideHeader = useAtomValue(hideShellHeaderAtom);
+
+  if (userLoading || !user || user.authenticated === false || restrictedLandingRoute) {
+    return (
+      <main className="flex h-dvh items-center justify-center bg-background text-sm text-muted-foreground">
+        Opening an available app…
+      </main>
+    );
+  }
+
+  if (!routeAllowed) {
+    return (
+      <main className="flex h-dvh items-center justify-center bg-background p-6">
+        <div className="max-w-sm text-center">
+          <h1 className="text-lg font-medium text-foreground">Access unavailable</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Your account does not have permission to use this feature.
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <MediaDetailProvider>

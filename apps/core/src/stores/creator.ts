@@ -13,6 +13,8 @@ import type {
   ValidationCheck,
   WorkspaceSummary,
 } from "../creator/contracts.js";
+import { deleteAppSpec, saveAppSpec } from "../app-specs/service.js";
+import { createDefaultAppSpec, TalomeAppSpecSchema } from "../app-specs/schema.js";
 
 const USER_APPS_DIR = join(homedir(), ".talome", "user-apps");
 
@@ -284,6 +286,23 @@ export function createUserApp(input: CreateAppInput): {
       atomicWriteFileSync(join(appDir, "docker-compose.yml"), composeYaml);
     }
 
+    const nativeSpec = input.creator?.blueprint?.appSpec ?? createDefaultAppSpec({
+      appId: input.id,
+      storeId,
+      name: input.name,
+      description: input.description,
+      icon: input.creator?.blueprint?.icon ?? manifest.icon,
+    });
+    const parsedSpec = TalomeAppSpecSchema.parse({
+      ...nativeSpec,
+      appId: input.id,
+      name: input.name,
+      description: input.description,
+      icon: input.creator?.blueprint?.icon ?? nativeSpec.icon,
+    });
+    atomicWriteFileSync(join(appDir, "talome-app.json"), JSON.stringify(parsedSpec, null, 2));
+    saveAppSpec({ storeId, spec: parsedSpec, status: "approved" });
+
     updateRegistry(input.id);
 
     const manifests = talomeAdapter.parse(USER_APPS_DIR, storeId);
@@ -434,6 +453,7 @@ export async function deleteUserApp(appId: string): Promise<{ success: boolean; 
       )
       .run();
 
+    deleteAppSpec("user-apps", appId);
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message };

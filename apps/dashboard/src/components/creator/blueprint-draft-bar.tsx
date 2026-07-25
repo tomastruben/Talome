@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   HugeiconsIcon,
   ArrowDown01Icon,
@@ -11,9 +11,15 @@ import {
   Settings01Icon,
   PackageOpenIcon,
   ComputerTerminal01Icon,
+  DashboardSquare02Icon,
+  Cancel01Icon,
+  AiSearch02Icon,
+  LayoutGridIcon,
 } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
+import type { TalomeAppSpec } from "@talome/types";
+import { resolveApplicationIcon } from "@/components/native-app/native-app-icons";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -53,12 +59,60 @@ export interface BlueprintScaffold {
   framework?: string;
 }
 
+export interface BlueprintResearch {
+  useCases: Array<{
+    id: string;
+    title: string;
+    userGoal: string;
+    outcome: string;
+    frequency: "daily" | "weekly" | "monthly" | "occasional";
+  }>;
+  githubQueries: string[];
+  patternQuestions: string[];
+  libraryNeeds: Array<{
+    capability: string;
+    reason: string;
+    constraints: string[];
+  }>;
+}
+
+export interface BlueprintExperienceDesign {
+  primaryUseCaseId: string;
+  workflows: Array<{
+    id: string;
+    name: string;
+    useCaseId: string;
+    outcome: string;
+    steps: string[];
+  }>;
+  screens: Array<{
+    id: string;
+    name: string;
+    useCaseIds: string[];
+    job: string;
+    primaryAction: string;
+    pattern: string;
+    componentCandidates: string[];
+    states: string[];
+  }>;
+  visualDirection?: {
+    mode: "native-system" | "reference-led" | "image-concept";
+    summary: string;
+    layout: string;
+    signatureElements: string[];
+    motion: string[];
+  };
+}
+
 export interface BlueprintState {
   identity?: BlueprintIdentity;
+  research?: BlueprintResearch;
+  experienceDesign?: BlueprintExperienceDesign;
   services?: BlueprintService[];
   env?: BlueprintEnvVar[];
   scaffold?: BlueprintScaffold;
   criteria?: string[];
+  appSpec?: TalomeAppSpec;
 }
 
 // ── Readiness ───────────────────────────────────────────────────────────────
@@ -68,10 +122,21 @@ interface ReadinessCheck {
   met: boolean;
 }
 
-function getReadiness(bp: BlueprintState): { checks: ReadinessCheck[]; ready: boolean } {
+export function getReadiness(bp: BlueprintState): { checks: ReadinessCheck[]; ready: boolean } {
   const checks: ReadinessCheck[] = [
     { label: "Identity", met: !!bp.identity?.name },
+    {
+      label: "Research",
+      met: (bp.research?.useCases.length ?? 0) > 0 && (bp.research?.githubQueries.length ?? 0) > 0,
+    },
+    {
+      label: "Screen design",
+      met:
+        (bp.experienceDesign?.workflows.length ?? 0) > 0 &&
+        (bp.experienceDesign?.screens.length ?? 0) > 0,
+    },
     { label: "Services", met: (bp.services?.length ?? 0) > 0 },
+    { label: "Experience", met: !!bp.appSpec?.surfaces.length },
     { label: "Criteria", met: (bp.criteria?.length ?? 0) > 0 },
   ];
   return { checks, ready: checks.every((c) => c.met) };
@@ -80,8 +145,57 @@ function getReadiness(bp: BlueprintState): { checks: ReadinessCheck[]; ready: bo
 // ── Expanded detail ─────────────────────────────────────────────────────────
 
 function ExpandedDetail({ blueprint }: { blueprint: BlueprintState }) {
+  const research = blueprint.research;
+  const experienceDesign = blueprint.experienceDesign;
+
   return (
     <div className="grid gap-3 px-4 pb-4 pt-2">
+      {/* Research foundation */}
+      {research && research.useCases.length > 0 && (
+        <div className="grid gap-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">
+            <HugeiconsIcon icon={AiSearch02Icon} size={10} />
+            Research foundation
+          </div>
+          <div className="rounded-lg bg-muted/20 px-3 py-2.5">
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">
+                {research.useCases.length} use case{research.useCases.length === 1 ? "" : "s"}
+              </span>
+              <span>{research.githubQueries.length} GitHub quer{research.githubQueries.length === 1 ? "y" : "ies"}</span>
+              <span>{research.libraryNeeds.length} library need{research.libraryNeeds.length === 1 ? "" : "s"}</span>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+              {research.useCases[0]?.title} — {research.useCases[0]?.outcome}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Screen design */}
+      {experienceDesign && experienceDesign.screens.length > 0 && (
+        <div className="grid gap-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">
+            <HugeiconsIcon icon={LayoutGridIcon} size={10} />
+            Screen design
+          </div>
+          <div className="rounded-lg bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              <span className="font-medium text-foreground">
+                {experienceDesign.workflows.length} workflow{experienceDesign.workflows.length === 1 ? "" : "s"}
+              </span>
+              <span>{experienceDesign.screens.length} purposeful screen{experienceDesign.screens.length === 1 ? "" : "s"}</span>
+              {experienceDesign.visualDirection && (
+                <span>{experienceDesign.visualDirection.mode.replaceAll("-", " ")}</span>
+              )}
+            </div>
+            <p className="mt-1.5 leading-relaxed">
+              {experienceDesign.screens[0]?.name}: {experienceDesign.screens[0]?.job}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Services */}
       {blueprint.services && blueprint.services.length > 0 && (
         <div className="grid gap-1.5">
@@ -130,6 +244,27 @@ function ExpandedDetail({ blueprint }: { blueprint: BlueprintState }) {
               ) : null}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Native experience */}
+      {blueprint.appSpec && (
+        <div className="grid gap-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">
+            <HugeiconsIcon icon={DashboardSquare02Icon} size={10} />
+            Native Experience
+          </div>
+          <div className="rounded-lg bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {blueprint.appSpec.surfaces.length} surface{blueprint.appSpec.surfaces.length === 1 ? "" : "s"}
+            </span>
+            <span> · </span>
+            <span>
+              {blueprint.appSpec.surfaces.reduce((count, surface) => count + surface.blocks.length, 0)} native blocks
+            </span>
+            <span> · </span>
+            <span>{blueprint.appSpec.assistant.exposedActions.length} assistant actions</span>
+          </div>
         </div>
       )}
 
@@ -185,11 +320,11 @@ export function BlueprintDraftBar({
       <div className="flex items-center gap-3 px-4 py-3">
         {/* Icon + name */}
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-          {icon ? (
-            <span className="text-base leading-none shrink-0">{icon}</span>
-          ) : (
-            <HugeiconsIcon icon={PackageOpenIcon} size={16} className="text-dim-foreground shrink-0" />
-          )}
+          <HugeiconsIcon
+            icon={icon || name ? resolveApplicationIcon(icon, name) : PackageOpenIcon}
+            size={16}
+            className="text-dim-foreground shrink-0"
+          />
           <div className="min-w-0">
             <p className="text-sm font-medium text-muted-foreground truncate">
               {name || "New App"}
@@ -218,9 +353,18 @@ export function BlueprintDraftBar({
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
+          aria-label={expanded ? "Collapse blueprint" : "Expand blueprint"}
           className="flex items-center justify-center size-7 rounded-md text-dim-foreground hover:text-muted-foreground hover:bg-muted/20 transition-colors shrink-0"
         >
           <HugeiconsIcon icon={expanded ? ArrowDown01Icon : ArrowUp01Icon} size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss blueprint"
+          className="flex items-center justify-center size-7 rounded-md text-dim-foreground hover:text-muted-foreground hover:bg-muted/20 transition-colors shrink-0"
+        >
+          <HugeiconsIcon icon={Cancel01Icon} size={14} />
         </button>
       </div>
 

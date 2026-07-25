@@ -100,6 +100,33 @@ describe("DesktopWallpaperDialog", () => {
     expect(screen.getByRole("radio", {
       name: "Use Glacier Dawn wallpaper",
     })).toBeVisible();
+    expect(screen.getByRole("radio", {
+      name: "Use Mineral Veil wallpaper",
+    })).toBeVisible();
+    expect(screen.getByRole("radio", {
+      name: "Use Quiet Fjord wallpaper",
+    })).toBeVisible();
+    expect(screen.getByRole("radio", {
+      name: "Use Ring Garden wallpaper",
+    })).toBeVisible();
+    expect(screen.getByRole("radio", {
+      name: "Use Azure Bloom wallpaper",
+    })).toBeVisible();
+    expect(screen.getByRole("radio", {
+      name: "Use Silver Tempest wallpaper",
+    })).toBeVisible();
+    expect(screen.getByRole("radio", {
+      name: "Use Porcelain Helix wallpaper",
+    })).toBeVisible();
+    expect(screen.getByRole("radio", {
+      name: "Use Dusk Ribbon wallpaper",
+    })).toBeVisible();
+    expect(screen.getByRole("radio", {
+      name: "Use Pearl Event wallpaper",
+    })).toBeVisible();
+    expect(screen.getByRole("radio", {
+      name: "Use Whispered Lens wallpaper",
+    })).toBeVisible();
 
     expect(screen.queryByRole("radio", {
       name: "Use Bioluminescent Valley wallpaper",
@@ -107,12 +134,37 @@ describe("DesktopWallpaperDialog", () => {
     expect(screen.queryByRole("radio", {
       name: "Use Celestial Tidepools wallpaper",
     })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", {
+      name: "Use Midnight Botanica wallpaper",
+    })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", {
+      name: "Use Deep Nebula wallpaper",
+    })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", {
+      name: "Use Magenta Rift wallpaper",
+    })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("radio", {
       name: "Use Sage Contours wallpaper",
     }));
     expect(onWallpaperChange).toHaveBeenCalledWith(
       "/wallpapers/generated/talome-46.jpg",
+      undefined,
+    );
+
+    fireEvent.click(screen.getByRole("radio", {
+      name: "Use Pearl Event wallpaper",
+    }));
+    expect(onWallpaperChange).toHaveBeenLastCalledWith(
+      "/wallpapers/generated/talome-75.jpg",
+      undefined,
+    );
+
+    fireEvent.click(screen.getByRole("radio", {
+      name: "Use Coral Strand wallpaper",
+    }));
+    expect(onWallpaperChange).toHaveBeenLastCalledWith(
+      "/wallpapers/generated/talome-65.jpg",
       undefined,
     );
   });

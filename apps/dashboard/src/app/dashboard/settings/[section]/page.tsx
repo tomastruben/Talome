@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useSetAtom } from "jotai";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { useUser } from "@/hooks/use-user";
+import { getSettingsAccessDecision } from "@/lib/settings-navigation";
 
 import { GeneralSection } from "@/components/settings/sections/general";
 import { UsersSection } from "@/components/settings/sections/users";
@@ -66,21 +67,28 @@ export default function SettingsSectionPage() {
   const params = useParams();
   const router = useRouter();
   const setPageTitle = useSetAtom(pageTitleAtom);
-  const { isAdmin } = useUser();
+  const { user, isAdmin, isLoading, error } = useUser();
   const slug = params.section as string;
   const section = SECTIONS[slug];
+  const accessDecision = getSettingsAccessDecision({
+    sectionExists: Boolean(section),
+    adminOnly: section?.adminOnly === true,
+    isAdmin,
+    userPending: isLoading || (user === undefined && error === undefined),
+  });
 
   useEffect(() => {
-    if (!section || (section.adminOnly && !isAdmin)) {
+    if (accessDecision === "pending") return;
+    if (accessDecision === "redirect" || !section) {
       router.replace("/dashboard/settings");
       return;
     }
+
     setPageTitle(section.title);
     return () => setPageTitle(null);
-  }, [section, setPageTitle, router, isAdmin]);
+  }, [accessDecision, section, setPageTitle, router]);
 
-  if (!section) return null;
-  if (section.adminOnly && !isAdmin) return null;
+  if (!section || accessDecision !== "allow") return null;
 
   const Component = section.component;
 

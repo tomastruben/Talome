@@ -59,7 +59,7 @@ Key frontend paths:
 - **Zod for all schemas** — API routes, tool input schemas, structured outputs
 - **Error handling** — use Result types where possible, never throw in library code
 - **No alternative icon libraries** — see Icons section below
-- **No alternative UI component libraries** — only shadcn/ui and Talome's own components
+- **Approved component sources only** — Talome components first, then shadcn/ui primitives/blocks and curated Skiper UI source components. Premium components require a valid Talome license. Imported source must be adapted to Talome tokens, HugeIcons, motion, accessibility, and window responsiveness; never add a competing runtime UI system or expose registry license keys.
 - Match the style of the file you are editing — don't introduce new patterns if existing ones work
 
 ---
@@ -126,6 +126,8 @@ When generating new UI for a generated app, start with these components and adap
 ## Icons
 
 **Use `HugeiconsIcon` exclusively.** Never import from `lucide-react` directly (it exists only as a peer dep for shadcn internals).
+
+Never use a Wi-Fi icon as a generic app icon, AI/server symbol, status decoration, or connectivity metaphor. Use it only when presenting actual Wi-Fi or wireless-network state; otherwise choose a domain-specific HugeIcon.
 
 ```tsx
 import { HugeiconsIcon } from "@/components/icons";

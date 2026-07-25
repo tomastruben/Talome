@@ -6,6 +6,7 @@ import {
   useScroll,
   useTransform,
   useInView,
+  useReducedMotion,
   AnimatePresence,
 } from "motion/react";
 import { HugeiconsIcon } from "@/components/icons";
@@ -17,7 +18,7 @@ const features = [
     label: "Intelligence",
     title: "It observes. It improves.",
     description:
-      "Talome watches your services around the clock. It reads logs, spots anomalies, and ranks improvement suggestions by impact. Click one; it delegates to Claude Code with full context \u2014 the right tools loaded via internal MCP servers, the exact files to touch, and a supervisor that refuses to save a change that won\u2019t compile. At 3\u202FAM when your media server runs out of memory, it diagnoses and fixes it before you wake up. Every change is logged. Every change is reversible. You can go back to bed.",
+      "Talome watches your services, reads logs, and ranks improvement ideas by impact. Approve one and it delegates the work with the right context, files, and tools already loaded. Every change is compiled, logged, and reversible.",
     videoSlug: "intelligence-dashboard",
     videoCaption:
       "Screen recording: open the Intelligence page, see a suggestion from Jellyfin log analysis, click to execute, watch Claude Code edit the code, compiler passes, change saved",
@@ -26,25 +27,25 @@ const features = [
     label: "Bug hunt",
     title: "Point at it. It understands.",
     description:
-      "Hit \u21e7\u2318X from anywhere. Talome captures your screen, your exact position in the app, viewport dimensions, every console error and failed network request \u2014 the full diagnostic context behind what you\u2019re seeing. Describe the problem in a sentence. AI augments your report into a structured diagnosis with steps to reproduce, root cause analysis, and a fix strategy. Execute immediately or queue it. Your bug report becomes a resolved issue in minutes.",
+      "Hit ⇧⌘X from anywhere and describe what looks wrong. Talome captures the screen, route, viewport, console errors, and failed requests, then turns the evidence into a structured diagnosis and fix strategy. Execute it immediately or add it to the queue.",
     videoSlug: "bug-hunt",
     videoCaption:
-      "Screen recording: hit \u21e7\u2318X, see the screenshot with captured signals, type a description, AI generates a structured bug report, click execute, watch the fix happen in the terminal",
+      "Screen recording: hit ⇧⌘X, see the screenshot with captured signals, type a description, AI generates a structured bug report, click execute, watch the fix happen in the terminal",
   },
   {
     label: "Conversation",
     title: "One conversation. Fully configured.",
     description:
-      "\u2018Set up a media server.\u2019 Five apps installed. Downloads, media management, and search wired together automatically. Health verified, URLs ready to go. 219 purpose-built tools behind the chat box doing the unglamorous work. It remembers your preferences, your setup, your file paths. Ask once. You\u2019re done asking.",
+      "Ask for a media server and Talome installs the apps, connects their settings, verifies their health, and returns working URLs. Purpose-built tools do the unglamorous work behind the chat. Your preferences, paths, and setup stay in context.",
     videoSlug: "conversational-intelligence",
     videoCaption:
-      "Screen recording: type \u2018set up a media server with automatic downloads\u2019 in the chat, watch tools fire in sequence installing Jellyfin, Sonarr, Radarr, qBittorrent, wiring them together, and returning live URLs",
+      "Screen recording: type ‘set up a media server with automatic downloads’ in the chat, watch tools fire in sequence installing Jellyfin, Sonarr, Radarr, qBittorrent, wiring them together, and returning live URLs",
   },
   {
     label: "Media",
     title: "Your entire library. One place.",
     description:
-      "Browse everything you\u2019re watching, downloading, and waiting for. Search across all your media apps at once. See upcoming releases on the calendar. Track watch progress from Plex and Jellyfin. Search for specific releases and pick your quality tier. Request movies and shows with a single tap. When Plex or Jellyfin isn\u2019t available, switch to cinema mode \u2014 a built-in player that streams directly from your files, right in the browser. Works perfectly on your TV in the living room.",
+      "Browse what you’re watching, downloading, and waiting for across your media stack. Track progress, inspect upcoming releases, choose quality, and request something new. Cinema mode can stream directly from your files when you want a player inside Talome.",
     videoSlug: "media-management",
     videoCaption:
       "Screen recording: open the Media page, browse wanted items, switch to the calendar showing upcoming releases, tap a movie to see its detail sheet with poster art and streaming link, then search for a specific release",
@@ -53,7 +54,7 @@ const features = [
     label: "Files",
     title: "Every file. Right here.",
     description:
-      "Navigate your server\u2019s file systems with a full-featured browser. Preview videos in cinema mode with a built-in player that handles MKV, MP4, and most formats with subtitle support. Listen to audio, view images, read code with syntax highlighting. Manage files across all your mounted drives. Create folders, rename, move, organize. Your AI assistant can work with files too. Say \u2018clean up my downloads folder\u2019 and watch it go.",
+      "Browse every mounted drive, preview media, inspect code, and organize files without reaching for another tool. The same file context is available to the assistant, so a request like ‘clean up my downloads folder’ can become an action instead of instructions.",
     videoSlug: "file-browser",
     videoCaption:
       "Screen recording: open the Files page, navigate into a media folder, click a video file to preview it inline with the built-in player, then browse an external drive showing images and code files with syntax highlighting",
@@ -62,37 +63,37 @@ const features = [
     label: "Automations",
     title: "Workflows that think.",
     description:
-      "Build automations that go beyond simple if-then rules. Set a trigger: a container crashes, disk usage hits a threshold, a new app gets installed, or a cron schedule fires. Then chain steps: send a notification, call a tool, or hand the situation to the AI and let it reason about what to do. Your server responds to events intelligently, even when you\u2019re away.",
+      "Trigger a workflow when a container stops, storage fills up, an app is installed, or a schedule fires. Chain notifications and tools, or hand the situation to AI for a reasoned response. Your server keeps operating when you are away.",
     videoSlug: "automations",
     videoCaption:
-      "Screen recording: open the Automations page, create a new automation with a \u2018container stopped\u2019 trigger, add an AI reasoning step, save it, then show it firing when a container is stopped",
+      "Screen recording: open the Automations page, create a new automation with a ‘container stopped’ trigger, add an AI reasoning step, save it, then show it firing when a container is stopped",
   },
   {
     label: "Integrations",
     title: "Your entire stack, understood.",
     description:
-      "Talome understands how your apps relate to each other: media libraries, network settings, backup systems, home automation, all of it. Ask \u2018why are my new files missing in Jellyfin?\u2019 and it checks storage paths, scans folders, inspects permissions, and tells you exactly what to fix. It thinks across everything you run.",
+      "Talome understands how your media, storage, networking, backups, and home automation fit together. Ask why a file is missing and it can inspect paths, permissions, services, and logs across the stack instead of treating every app as an island.",
     videoSlug: "deep-integrations",
     videoCaption:
-      "Screen recording: ask the assistant \u2018why are my downloads stuck?\u2019 and watch it check qBittorrent status, read Sonarr logs, inspect network connectivity, and pinpoint the issue across three apps",
+      "Screen recording: ask the assistant ‘why are my downloads stuck?’ and watch it check qBittorrent status, read Sonarr logs, inspect network connectivity, and pinpoint the issue across three apps",
   },
   {
     label: "App creation",
     title: "Describe an app. It builds it.",
     description:
-      "Describe what you need in a sentence. AI generates a structured blueprint \u2014 Docker services, ports, volumes, environment variables, UI surfaces \u2014 then delegates to Claude Code with Talome\u2019s design system rules, component references, and source snapshots loaded into the workspace. It builds against the same primitives the dashboard uses, validates with TypeScript and design checks, and publishes to your personal app store. Installable with one click. Or open the persistent AI terminal: a full coding session that survives page refreshes, browser crashes, even reboots.",
+      "Describe what you need and Talome turns it into a blueprint for services, ports, storage, configuration, and UI. A persistent coding session builds and validates the result against Talome’s own design system, then publishes it to your personal app store.",
     videoSlug: "app-creation",
     videoCaption:
-      "Screen recording: type \u2018create a recipe manager app\u2019 in the assistant, watch the blueprint form fill out, then the terminal opens and builds the full application with a web UI, ending with a one-click install",
+      "Screen recording: type ‘create a recipe manager app’ in the assistant, watch the blueprint form fill out, then the terminal opens and builds the full application with a web UI, ending with a one-click install",
   },
   {
     label: "Everywhere",
     title: "Your server in your pocket.",
     description:
-      "Fully responsive dashboard that works on any screen. Add Talome to your home screen on iOS or Android for an app-like experience. Open the terminal from your phone and you have a full coding session \u2014 persistent, resumable, right next to your grocery list app. Or message your server on Telegram like it\u2019s a colleague: install apps, check status, get alerts. It replies. Politely. Usually.",
+      "Talome’s mobile interface keeps the important work comfortable on smaller screens. Add it to your home screen, resume a terminal session, or message the server through Telegram to install apps, check health, and receive alerts.",
     videoSlug: "mobile-messaging",
     videoCaption:
-      "Screen recording: open Talome on a phone, browse the dashboard, then switch to Telegram and send a message asking for server status \u2014 Talome replies with container health and disk usage",
+      "Screen recording: open Talome on a phone, browse the dashboard, then switch to Telegram and send a message asking for server status — Talome replies with container health and disk usage",
   },
 ];
 
@@ -112,6 +113,40 @@ const VIDEO_ASSETS: Record<string, { mp4?: string; webm: string; low: string; po
   "mobile-messaging": { mp4: "/mobile.mp4", webm: "/mobile.webm", low: "/mobile-low.mp4", poster: "/mobile-poster.jpg", aspect: "1440/1080" },
 };
 
+type VideoAsset = (typeof VIDEO_ASSETS)[string];
+
+function FeatureVideo({
+  asset,
+  className,
+  mobile = false,
+}: {
+  asset: VideoAsset;
+  className: string;
+  mobile?: boolean;
+}) {
+  const reduceMotion = useReducedMotion();
+
+  return (
+    <video
+      autoPlay={!reduceMotion}
+      muted
+      loop={!reduceMotion}
+      playsInline
+      preload="metadata"
+      poster={asset.poster}
+      className={className}
+    >
+      {!mobile ? (
+        <source src={asset.webm} type="video/webm" media="(min-width: 768px)" />
+      ) : null}
+      {!mobile && asset.mp4 ? (
+        <source src={asset.mp4} type="video/mp4" media="(min-width: 768px)" />
+      ) : null}
+      <source src={asset.low} type="video/mp4" />
+    </video>
+  );
+}
+
 const EASE = [0.2, 0.8, 0.2, 1] as const;
 
 /* ---------- Nav ---------- */
@@ -130,6 +165,7 @@ function FeatureNav({
           <li key={i}>
             <button
               onClick={() => onSelect(i)}
+              aria-current={activeIndex === i ? "true" : undefined}
               className={cn(
                 "group relative flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] transition-all duration-300",
                 activeIndex === i
@@ -215,16 +251,10 @@ function StackedCard({
           const v = VIDEO_ASSETS[feature.videoSlug];
           return (
             <div className="mt-5 flex min-h-0 flex-1 items-center justify-center">
-              <video
-                autoPlay muted loop playsInline
-                preload="metadata"
-                poster={v.poster}
+              <FeatureVideo
+                asset={v}
                 className="max-h-full max-w-full rounded-xl"
-              >
-                <source src={v.webm} type="video/webm" media="(min-width: 768px)" />
-                {v.mp4 ? <source src={v.mp4} type="video/mp4" media="(min-width: 768px)" /> : null}
-                <source src={v.low} type="video/mp4" />
-              </video>
+              />
             </div>
           );
         })() : (
@@ -332,6 +362,8 @@ function MobileFeatureAccordion({
     >
       <button
         onClick={onToggle}
+        aria-expanded={isOpen}
+        aria-controls={`mobile-feature-panel-${index}`}
         className="w-full cursor-pointer p-5 text-left"
       >
         <div className="flex items-center justify-between">
@@ -354,6 +386,9 @@ function MobileFeatureAccordion({
       <AnimatePresence>
         {isOpen && (
           <motion.div
+            id={`mobile-feature-panel-${index}`}
+            role="region"
+            aria-label={`${feature.label} details`}
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
@@ -368,14 +403,11 @@ function MobileFeatureAccordion({
                 const v = VIDEO_ASSETS[feature.videoSlug];
                 return (
                   <div className="relative mt-5 overflow-hidden rounded-lg" style={{ aspectRatio: v.aspect }}>
-                    <video
-                      autoPlay muted loop playsInline
-                      preload="metadata"
-                      poster={v.poster}
-                      className="absolute inset-0 w-full h-full object-cover"
-                    >
-                      <source src={v.low} type="video/mp4" />
-                    </video>
+                    <FeatureVideo
+                      asset={v}
+                      mobile
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
                   </div>
                 );
               })() : (

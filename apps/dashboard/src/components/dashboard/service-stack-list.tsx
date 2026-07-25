@@ -60,6 +60,10 @@ import {
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
+import {
+  resolveApplicationIcon,
+  resolveApplicationIconUrl,
+} from "@/components/native-app/native-app-icons";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -96,20 +100,24 @@ function StatusBadge({ status }: { status: "running" | "partial" | "stopped" | C
 function IconBox({
   iconUrl,
   icon,
+  name,
   fallbackIcon,
   size = "md",
   status,
 }: {
   iconUrl?: string | null;
   icon?: string;
+  name?: string;
   fallbackIcon?: IconSvgElement;
   size?: "sm" | "md";
   status?: "running" | "partial" | "stopped" | Container["status"];
 }) {
-  const hasRealIcon = iconUrl && !iconUrl.startsWith("file://");
+  const realIconUrl = resolveApplicationIconUrl(iconUrl);
   const sizeClass = size === "sm" ? "size-6 rounded-md text-sm" : "size-9 rounded-lg text-lg";
   const iconSize = size === "sm" ? 12 : 18;
-  const FallbackIcon = fallbackIcon ?? Package01Icon;
+  const FallbackIcon = icon || name
+    ? resolveApplicationIcon(icon, name)
+    : fallbackIcon ?? Package01Icon;
 
   return (
     <div className={cn("relative shrink-0", size === "sm" ? "size-6" : "size-9")}>
@@ -117,10 +125,10 @@ function IconBox({
         "relative bg-muted/60 border border-border/40 flex items-center justify-center overflow-hidden",
         sizeClass,
       )}>
-        {hasRealIcon ? (
+        {realIconUrl ? (
           <>
             <Image
-              src={iconUrl!}
+              src={realIconUrl}
               alt=""
               role="presentation"
               className="object-cover" fill
@@ -130,10 +138,8 @@ function IconBox({
                 img.nextElementSibling?.classList.remove("hidden");
               }}
             />
-            <span className="hidden">{icon || "📦"}</span>
+            <HugeiconsIcon icon={FallbackIcon} size={iconSize} className="hidden text-dim-foreground" />
           </>
-        ) : icon && icon !== "📦" ? (
-          <span>{icon}</span>
         ) : (
           <HugeiconsIcon icon={FallbackIcon} size={iconSize} className="text-dim-foreground" />
         )}
@@ -150,6 +156,7 @@ function StackIcon({ stack }: { stack: ServiceStack }) {
     <IconBox
       iconUrl={stack.iconUrl}
       icon={stack.icon}
+      name={stack.name}
       fallbackIcon={stack.kind === "compose" ? Layers01Icon : Package01Icon}
       status={stack.status}
     />
@@ -164,6 +171,7 @@ function ContainerIcon({ container, stack }: { container: Container; stack: Serv
     <IconBox
       iconUrl={iconInfo?.iconUrl}
       icon={iconInfo?.icon}
+      name={iconInfo?.name ?? container.name}
       fallbackIcon={Package01Icon}
       size="sm"
       status={container.status}

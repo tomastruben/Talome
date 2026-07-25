@@ -20,6 +20,12 @@ interface ReleaseData {
   raw?: Record<string, unknown>;
 }
 
+function isOutsideProfile(release: ReleaseData) {
+  return release.rejected === true
+    || release.downloadAllowed === false
+    || (release.rejections?.length ?? 0) > 0;
+}
+
 export function ReleaseSearchPanel({
   loading,
   error,
@@ -58,9 +64,28 @@ export function ReleaseSearchPanel({
   onShowAll?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const visible = expanded ? releases : releases.slice(0, maxResults);
-  const hasMore = releases.length > maxResults;
+  const [showAlternatives, setShowAlternatives] = useState(false);
+  const matching = releases.filter((release) => !isOutsideProfile(release));
+  const alternatives = releases.filter(isOutsideProfile);
+  const noMatchingReleases = releases.length > 0 && matching.length === 0;
+  const primaryReleases = noMatchingReleases ? alternatives : matching;
+  const visiblePrimary = expanded ? primaryReleases : primaryReleases.slice(0, maxResults);
+  const visibleAlternatives = showAlternatives ? alternatives : [];
+  const hasMore = primaryReleases.length > maxResults;
   const hiddenByFilter = totalFromIndexer != null && totalFromIndexer > releases.length && !showAll;
+  const renderRelease = (release: ReleaseData, index: number, group: "match" | "alternative") => {
+    const queuePct = queueByTitle?.get(release.title.toLowerCase()) ?? null;
+    return (
+      <ReleaseResultCard
+        key={`${group}-${String(release.raw?.guid ?? release.title)}-${index}`}
+        release={release}
+        isSubmitting={submittingTitle === release.title}
+        isSubmitted={submittedTitles?.has(release.title) ?? false}
+        queuePercent={queuePct}
+        onAction={() => onGrab(release)}
+      />
+    );
+  };
 
   return (
     <div className="space-y-2">
@@ -128,34 +153,71 @@ export function ReleaseSearchPanel({
         </div>
       )}
 
-      {error && <p className="text-xs text-destructive">{error}</p>}
-
-      {!error && releases.length === 0 && !loading && (
-        <p className="text-xs text-muted-foreground">No releases loaded yet.</p>
+      {error && (
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-destructive">Release search failed</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-destructive/80">{error}</p>
+          </div>
+          {onSearch && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 shrink-0 px-2 text-xs"
+              onClick={onSearch}
+              disabled={loading}
+            >
+              Try again
+            </Button>
+          )}
+        </div>
       )}
 
-      {visible.length > 0 && (
+      {!error && releases.length === 0 && !loading && (
+        <div className="rounded-lg border border-dashed border-border/50 px-3 py-4 text-center">
+          <p className="text-xs font-medium">No matching releases found</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Search again, change the quality preference, or include every result returned by the indexers.
+          </p>
+          {hiddenByFilter && onShowAll && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="mt-3 h-7 text-xs"
+              onClick={onShowAll}
+            >
+              Show {totalFromIndexer} indexer releases
+            </Button>
+          )}
+        </div>
+      )}
+
+      {!error && noMatchingReleases && !loading && (
+        <div className="rounded-lg border border-status-warning/20 bg-status-warning/5 px-3 py-2.5">
+          <p className="text-xs font-medium text-status-warning">No releases match the current profile</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            Showing the best available alternatives. Each result explains which requirement it misses, and can still be downloaded manually.
+          </p>
+        </div>
+      )}
+
+      {(visiblePrimary.length > 0 || visibleAlternatives.length > 0) && (
         <div className="space-y-1">
-          {visible.map((r, i) => {
-            const queuePct = queueByTitle?.get(r.title.toLowerCase()) ?? null;
-            return (
-              <ReleaseResultCard
-                key={`${String(r.raw?.guid ?? r.title)}-${i}`}
-                release={r}
-                isSubmitting={submittingTitle === r.title}
-                isSubmitted={submittedTitles?.has(r.title) ?? false}
-                queuePercent={queuePct}
-                onAction={() => onGrab(r)}
-              />
-            );
-          })}
+          {!noMatchingReleases && matching.length > 0 && (
+            <p className="px-0.5 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-dim-foreground">
+              Matches profile · {matching.length}
+            </p>
+          )}
+          {visiblePrimary.map((release, index) => renderRelease(release, index, noMatchingReleases ? "alternative" : "match"))}
           {hasMore && !hiddenByFilter && (
             <button
               type="button"
               className="w-full text-xs text-muted-foreground hover:text-foreground py-1 transition-colors"
               onClick={() => setExpanded(!expanded)}
             >
-              {expanded ? "Show less" : `Show all ${releases.length} releases`}
+              {expanded ? "Show less" : `Show all ${primaryReleases.length} releases`}
             </button>
           )}
           {/* When the title filter hid results, offer to show everything */}
@@ -174,8 +236,27 @@ export function ReleaseSearchPanel({
               className="w-full text-xs text-muted-foreground hover:text-foreground py-1 transition-colors"
               onClick={() => setExpanded(!expanded)}
             >
-              {expanded ? "Show less" : `Show all ${releases.length} matched`}
+              {expanded ? "Show less" : `Show all ${primaryReleases.length} matched`}
             </button>
+          )}
+          {!noMatchingReleases && alternatives.length > 0 && (
+            <button
+              type="button"
+              className="mt-1 w-full rounded-md border border-status-warning/15 bg-status-warning/[0.025] py-2 text-xs text-status-warning/80 transition-colors hover:border-status-warning/30 hover:text-status-warning"
+              onClick={() => setShowAlternatives((current) => !current)}
+            >
+              {showAlternatives
+                ? "Hide releases outside profile"
+                : `Show ${alternatives.length} release${alternatives.length === 1 ? "" : "s"} outside profile`}
+            </button>
+          )}
+          {!noMatchingReleases && visibleAlternatives.length > 0 && (
+            <div className="space-y-1 pt-2">
+              <p className="px-0.5 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-status-warning/70">
+                Outside profile · {alternatives.length}
+              </p>
+              {visibleAlternatives.map((release, index) => renderRelease(release, index, "alternative"))}
+            </div>
           )}
         </div>
       )}

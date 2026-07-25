@@ -10,7 +10,7 @@ import { pageTitleAtom } from "@/atoms/page-title";
 import { toast } from "sonner";
 import useSWR from "swr";
 import { motion, AnimatePresence } from "framer-motion";
-import { HugeiconsIcon, Cancel01Icon, AiChat02Icon, CloudUploadIcon, Edit02Icon, Share04Icon, ArrowUp01Icon, SystemUpdate01Icon, Refresh01Icon } from "@/components/icons";
+import { HugeiconsIcon, Cancel01Icon, AiChat02Icon, CloudUploadIcon, Edit02Icon, Share04Icon, SystemUpdate01Icon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { CORE_URL, getHostUrl } from "@/lib/constants";
+import { getContainerWebPort } from "@/lib/container-web-port";
 import { talomePost, talomeDelete, talomePatch } from "@/hooks/use-talome-api";
 import { Streamdown } from "streamdown";
 import { PillIndicator } from "@/components/kibo-ui/pill";
@@ -25,6 +26,10 @@ import { ClaudeTerminal } from "@/components/terminal/claude-terminal";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import type { CatalogApp } from "@talome/types";
 import type { ServiceStack } from "@talome/types";
+import {
+  resolveApplicationIcon,
+  resolveApplicationIconUrl,
+} from "@/components/native-app/native-app-icons";
 
 function ExternalLinkDialog({
   url,
@@ -480,7 +485,8 @@ export default function AppDetailPage() {
   const isInstalled = !!app.installed;
   const status = app.installed?.status;
   const isRunning = status === "running";
-  const hasRealIcon = app.iconUrl && !app.iconUrl.startsWith("file://");
+  const originalWebPort = app.webPort ?? (appStack ? getContainerWebPort(appStack.primaryContainer) : undefined);
+  const realIconUrl = resolveApplicationIconUrl(app.iconUrl);
   const isUserCreated = storeId === "user-apps";
   const requiresSetup = !isInstalled && needsAiSetup(app);
   const validScreenshots = (app.screenshots || []).filter(
@@ -548,9 +554,9 @@ export default function AppDetailPage() {
 
         <div className="flex flex-col items-center gap-2">
           <div className={`app-detail-hero-icon relative size-20 flex items-center justify-center rounded-[1.25rem] bg-muted text-2xl overflow-hidden${coverImage ? " app-detail-hero-icon--elevated" : ""}`}>
-            {hasRealIcon ? (
+            {realIconUrl ? (
               <Image
-                src={app.iconUrl!}
+                src={realIconUrl}
                 alt=""
                 className="object-cover" fill
                 sizes="80px"
@@ -561,7 +567,11 @@ export default function AppDetailPage() {
                 }}
               />
             ) : null}
-            <span className={hasRealIcon ? "hidden" : ""}>{app.icon}</span>
+            <HugeiconsIcon
+              icon={resolveApplicationIcon(app.icon, app.name)}
+              size={32}
+              className={realIconUrl ? "hidden text-dim-foreground" : "text-dim-foreground"}
+            />
           </div>
           {isUserCreated && (
             <label className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
@@ -695,10 +705,29 @@ export default function AppDetailPage() {
             <InstallProgress stage={installStage} message={installMessage} />
           ) : isInstalled ? (
             <>
-              {isRunning && app.webPort ? (
+              {isRunning && app.nativeSurface ? (
+                <>
+                  <Button size="lg" className="w-full" asChild>
+                    <Link href={`/dashboard/native-apps/${encodeURIComponent(storeId)}/${encodeURIComponent(appId)}`}>
+                      Open {app.name}
+                    </Link>
+                  </Button>
+                  {originalWebPort ? (
+                    <Button variant="outline" className="w-full" asChild>
+                      <a
+                        href={getHostUrl(originalWebPort)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Open original interface
+                      </a>
+                    </Button>
+                  ) : null}
+                </>
+              ) : isRunning && originalWebPort ? (
                 <Button size="lg" className="w-full" asChild>
                   <a
-                    href={getHostUrl(app.webPort)}
+                    href={getHostUrl(originalWebPort)}
                     target="_blank"
                     rel="noopener noreferrer"
                   >

@@ -10,7 +10,7 @@ export interface ModelInfo {
   contextWindow?: number;
 }
 
-export type AiProvider = "anthropic" | "openai" | "ollama";
+export type AiProvider = "anthropic" | "openai" | "kimi" | "ollama";
 
 export interface ProviderModels {
   provider: AiProvider;
@@ -29,6 +29,15 @@ export interface AiModelsResponse {
 const ANTHROPIC_MODELS: ModelInfo[] = [
   { id: "claude-haiku-4-5-20251001", name: "Haiku", description: "Fast and affordable", contextWindow: 200_000 },
   { id: "claude-sonnet-4-20250514", name: "Sonnet", description: "Balanced performance", contextWindow: 200_000 },
+];
+
+// Kimi exposes an OpenAI-compatible Chat Completions API. Keep this catalog
+// explicit so model selection still works before (and without) a network call.
+const KIMI_MODELS: ModelInfo[] = [
+  { id: "kimi-k3", name: "Kimi K3", description: "Flagship reasoning model · 1M context", contextWindow: 1_000_000 },
+  { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", description: "Agentic coding model", contextWindow: 262_144 },
+  { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code Highspeed", description: "Faster agentic coding model", contextWindow: 262_144 },
+  { id: "kimi-k2.6", name: "Kimi K2.6", description: "General-purpose reasoning model", contextWindow: 262_144 },
 ];
 
 // ── Fetch OpenAI models from API ─────────────────────────────────────────────
@@ -98,10 +107,12 @@ aiModels.get("/models", async (c) => {
 
   const anthropicKey = getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
   const openaiKey = getSetting("openai_key") || process.env.OPENAI_API_KEY;
+  const kimiKey = getSetting("kimi_key") || process.env.MOONSHOT_API_KEY;
   const ollamaUrl = getSetting("ollama_url");
 
   const anthropicConfigured = !!anthropicKey;
   const openaiConfigured = !!openaiKey;
+  const kimiConfigured = !!kimiKey;
   const ollamaConfigured = !!ollamaUrl;
 
   // Fetch OpenAI and Ollama models in parallel
@@ -116,6 +127,7 @@ aiModels.get("/models", async (c) => {
   const providers: ProviderModels[] = [
     { provider: "anthropic", configured: anthropicConfigured, models: ANTHROPIC_MODELS },
     { provider: "openai", configured: openaiConfigured, models: openaiModels },
+    { provider: "kimi", configured: kimiConfigured, models: KIMI_MODELS },
     { provider: "ollama", configured: ollamaReady, models: ollamaModels },
   ];
 
@@ -128,6 +140,7 @@ aiModels.post("/test", async (c) => {
   const activeProvider = (getSetting("ai_provider") || "anthropic") as AiProvider;
   const anthropicKey = getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
   const openaiKey = getSetting("openai_key") || process.env.OPENAI_API_KEY;
+  const kimiKey = getSetting("kimi_key") || process.env.MOONSHOT_API_KEY;
   const ollamaUrl = getSetting("ollama_url");
 
   try {
@@ -163,6 +176,19 @@ aiModels.post("/test", async (c) => {
         });
         if (!res.ok) return c.json({ ok: false, error: `HTTP ${res.status}` });
         return c.json({ ok: true, provider: "openai" });
+      }
+
+      case "kimi": {
+        if (!kimiKey) return c.json({ ok: false, error: "No Kimi API key configured" });
+        const res = await fetch("https://api.moonshot.ai/v1/models", {
+          headers: { Authorization: `Bearer ${kimiKey}` },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({})) as { error?: { message?: string } };
+          return c.json({ ok: false, error: data.error?.message || `HTTP ${res.status}` });
+        }
+        return c.json({ ok: true, provider: "kimi" });
       }
 
       case "ollama": {
@@ -214,6 +240,8 @@ function getDefaultModel(provider: AiProvider): string {
       return "claude-haiku-4-5-20251001";
     case "openai":
       return "gpt-4o-mini";
+    case "kimi":
+      return "kimi-k3";
     case "ollama":
       return "";
     default:

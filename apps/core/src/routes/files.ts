@@ -255,10 +255,14 @@ function hasTonemapx(): boolean {
 // ── Media probing ────────────────────────────────────────────────────────
 
 interface ProbeTrack {
+  /** Zero-based ordinal within this track type, used by ffmpeg selectors. */
   index: number;
+  /** Global stream index reported by ffprobe. */
+  streamIndex?: number;
   codec: string;
   language: string;
   title: string;
+  isDefault?: boolean;
 }
 
 interface ProbeAudioTrack extends ProbeTrack {
@@ -321,21 +325,27 @@ function parseProbeOutput(out: string): ProbeResult {
         videoColorSpace = s.color_space ?? "";
         videoPixFmt = s.pix_fmt ?? "";
       } else if (s.codec_type === "audio") {
+        const index = audioIdx++;
         audio.push({
-          index: audioIdx++,
+          index,
+          streamIndex: Number.isInteger(s.index) ? s.index : index,
           language: s.tags?.language ?? "und",
           title: s.tags?.title ?? "",
           codec: s.codec_name ?? "",
           channels: s.channels ?? 0,
+          isDefault: s.disposition?.default === 1,
         });
       } else if (s.codec_type === "subtitle") {
         const codec = s.codec_name ?? "";
+        const index = subIdx++;
         subtitle.push({
-          index: subIdx++,
+          index,
+          streamIndex: Number.isInteger(s.index) ? s.index : index,
           language: s.tags?.language ?? "und",
           title: s.tags?.title ?? "",
           codec,
           textBased: !IMAGE_SUB_CODECS.has(codec),
+          isDefault: s.disposition?.default === 1,
         });
       }
     }
@@ -344,6 +354,17 @@ function parseProbeOutput(out: string): ProbeResult {
   } catch {
     return emptyProbeResult();
   }
+}
+
+/** Resolve an untrusted requested audio ordinal to a playable track. */
+export function resolveAudioTrackIndex(
+  tracks: ProbeAudioTrack[],
+  requested: number,
+): number {
+  if (Number.isInteger(requested) && tracks.some((track) => track.index === requested)) {
+    return requested;
+  }
+  return tracks.find((track) => track.isDefault)?.index ?? tracks[0]?.index ?? 0;
 }
 
 function getFfprobeBin(): string {
@@ -464,10 +485,15 @@ interface HlsJob {
   createdAt: number;
   /** Last time a segment was fetched or a ping was received. */
   lastActivity: number;
+  /** Player instances currently using this shared source. */
+  clients: Set<string>;
 }
 
 /** Track in-flight HLS jobs. Key = srcPath:aTrack:sSeek */
 const hlsJobs = new Map<string, HlsJob>();
+/** Delayed releases absorb unload/start races when a page reloads. */
+const hlsReleaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const HLS_RELEASE_GRACE_MS = 10_000;
 
 /** Idle reaper interval — started once, runs forever. */
 let idleReaperStarted = false;
@@ -517,6 +543,9 @@ export function touchJob(hash: string) {
 
 /** Kill an ffmpeg process and clean up its output directory. */
 async function killJob(key: string, job: HlsJob) {
+  const releaseTimer = hlsReleaseTimers.get(key);
+  if (releaseTimer) clearTimeout(releaseTimer);
+  hlsReleaseTimers.delete(key);
   if (job.proc && !job.done) {
     try { job.proc.kill("SIGKILL"); } catch { /* already dead */ }
   }
@@ -549,6 +578,31 @@ async function pruneHlsCache() {
 export async function stopHls(hash: string) {
   const entries = [...hlsJobs.entries()].filter(([, j]) => j.hash === hash);
   await Promise.all(entries.map(([k, j]) => killJob(k, j)));
+}
+
+/**
+ * Release one player without tearing down another player using the same hash.
+ * The grace period also prevents a late unload request from killing the new
+ * job during a reload, before its probe has selected HLS again.
+ */
+export function releaseHls(hash: string, clientId = "") {
+  for (const [key, job] of hlsJobs.entries()) {
+    if (job.hash !== hash) continue;
+    if (clientId) job.clients.delete(clientId);
+    if (job.clients.size > 0) continue;
+
+    const previousTimer = hlsReleaseTimers.get(key);
+    if (previousTimer) clearTimeout(previousTimer);
+    const timer = setTimeout(() => {
+      hlsReleaseTimers.delete(key);
+      const current = hlsJobs.get(key);
+      if (current === job && current.clients.size === 0) {
+        void killJob(key, current);
+      }
+    }, HLS_RELEASE_GRACE_MS);
+    timer.unref();
+    hlsReleaseTimers.set(key, timer);
+  }
 }
 
 /** Stop ALL running HLS jobs (server shutdown). */
@@ -783,11 +837,16 @@ function buildVideoArgs(videoCodec: string, transcodeVideo = false, colorTransfe
 }
 
 /** Start HLS segmentation in background. Returns hash immediately. */
-export function startHls(srcPath: string, audioTrack = 0, seekTo = 0, videoCodec = "", transcodeVideo = false, colorTransfer = "", colorPrimaries = "", colorSpace = ""): string {
+export function startHls(srcPath: string, audioTrack = 0, seekTo = 0, videoCodec = "", transcodeVideo = false, colorTransfer = "", colorPrimaries = "", colorSpace = "", clientId = ""): string {
   const hash = hlsHash(srcPath, audioTrack, seekTo, transcodeVideo);
   // Use hash as key so version bumps (v4→v5) naturally invalidate old entries
   const existing = hlsJobs.get(hash);
   if (existing) {
+    if (clientId) existing.clients.add(clientId);
+    existing.lastActivity = Date.now();
+    const releaseTimer = hlsReleaseTimers.get(hash);
+    if (releaseTimer) clearTimeout(releaseTimer);
+    hlsReleaseTimers.delete(hash);
     // Reuse if: playlist exists, or process is genuinely still running
     const playlistExists = existsSync(join(existing.outDir, "playlist.m3u8"));
     const processAlive = existing.proc && !existing.proc.killed && existing.proc.exitCode === null;
@@ -813,7 +872,16 @@ export function startHls(srcPath: string, audioTrack = 0, seekTo = 0, videoCodec
     outDir = join(getHlsOutRoot(), hash);
   }
   const now = Date.now();
-  const job: HlsJob = { hash, outDir, srcPath, proc: null, done: false, createdAt: now, lastActivity: now };
+  const job: HlsJob = {
+    hash,
+    outDir,
+    srcPath,
+    proc: null,
+    done: false,
+    createdAt: now,
+    lastActivity: now,
+    clients: new Set(clientId ? [clientId] : []),
+  };
   ensureIdleReaper();
   hlsJobs.set(hash, job);
 
@@ -917,12 +985,14 @@ files.get("/hls-start", async (c) => {
   if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
   if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
-  const audioTrack = parseInt(c.req.query("audioTrack") ?? "0", 10);
+  const requestedAudioTrack = parseInt(c.req.query("audioTrack") ?? "0", 10);
   const seekTo = parseFloat(c.req.query("seekTo") ?? "0");
   const transcodeVideo = c.req.query("transcodeVideo") === "1";
   const probe = await probeFileAsync(abs);
-  const hash = startHls(abs, audioTrack, seekTo, probe.videoCodec, transcodeVideo, probe.videoColorTransfer ?? "", probe.videoColorPrimaries ?? "", probe.videoColorSpace ?? "");
-  return c.json({ hash, ...probe });
+  const audioTrack = resolveAudioTrackIndex(probe.audio, requestedAudioTrack);
+  const clientId = (c.req.query("clientId") ?? "").slice(0, 128);
+  const hash = startHls(abs, audioTrack, seekTo, probe.videoCodec, transcodeVideo, probe.videoColorTransfer ?? "", probe.videoColorPrimaries ?? "", probe.videoColorSpace ?? "", clientId);
+  return c.json({ hash, selectedAudio: audioTrack, ...probe });
 });
 
 /** GET /hls/:hash/:file — serve HLS playlist and segments. */
@@ -969,9 +1039,12 @@ files.get("/hls/:hash/:file", async (c) => {
 
 /** POST /hls-stop — kill ffmpeg process and clean up HLS files for a given hash. */
 files.post("/hls-stop", async (c) => {
-  const body = await c.req.json<{ hash: string }>().catch(() => ({ hash: "" }));
+  const body: { hash: string; clientId?: string; force?: boolean } = await c.req
+    .json<{ hash: string; clientId?: string; force?: boolean }>()
+    .catch(() => ({ hash: "" }));
   if (!body.hash) return c.json({ error: "hash required" }, 400);
-  await stopHls(body.hash);
+  if (body.force) await stopHls(body.hash);
+  else releaseHls(body.hash, body.clientId?.slice(0, 128));
   return c.json({ ok: true });
 });
 

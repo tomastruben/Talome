@@ -15,6 +15,11 @@ import {
   clearAudioState,
 } from "@/atoms/audio-player";
 import { CORE_URL } from "@/lib/constants";
+import {
+  createAudioAttemptUrl,
+  isAudioSourceCurrent,
+  normalizeAudioSource,
+} from "@/lib/audio-source";
 
 /* ── Types ─────────────────────────────────────────────── */
 
@@ -35,14 +40,54 @@ let _lastSaveTs = 0;
 let _currentTrackIndex = 0;
 let _globalTime = 0;
 let _isPlaying = false;
+// The listener's intent is distinct from the media element's current state.
+// play() can still be pending while Safari reports a source error and Talome
+// swaps in a recovery URL. Keeping this outside React also lets the intent
+// survive route/window remounts and physical chapter-file boundaries.
+let _playbackDesired = false;
 let _primedPlayback: Promise<void> | null = null;
+let _mediaRecoveryKey: string | null = null;
+let _audioSourceAttempt = 0;
+let _expectedAudioSource: string | null = null;
+
+function assignAudioSource(audio: HTMLAudioElement, source: string, fresh = true): string {
+  const baseUrl = typeof window === "undefined" ? "http://localhost" : window.location.href;
+  const nextSource = fresh
+    ? createAudioAttemptUrl(source, baseUrl, `${Date.now()}-${++_audioSourceAttempt}`)
+    : normalizeAudioSource(source, baseUrl);
+  _expectedAudioSource = nextSource;
+  audio.src = nextSource;
+  return nextSource;
+}
+
+function currentAudioSourceBelongsToLatestAttempt(audio: HTMLAudioElement): boolean {
+  if (!_expectedAudioSource || typeof window === "undefined") return true;
+  const currentSource = audio.currentSrc || audio.src;
+  return !currentSource || isAudioSourceCurrent(currentSource, _expectedAudioSource, window.location.href);
+}
 
 function getSharedAudio(): HTMLAudioElement {
   if (!_audio) {
     _audio = new Audio();
     _audio.preload = "metadata";
+    _audio.setAttribute("playsinline", "");
   }
   return _audio;
+}
+
+function updateMediaSessionMetadata(book: AudioPlayerBook): void {
+  if (typeof navigator === "undefined" || !("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: book.title,
+    artist: book.author,
+    album: "Talome Audiobooks",
+    artwork: book.coverUrl ? [{ src: book.coverUrl }] : [],
+  });
+}
+
+function updateMediaSessionState(state: MediaSessionPlaybackState): void {
+  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+  navigator.mediaSession.playbackState = state;
 }
 
 /**
@@ -66,8 +111,13 @@ export function primeAudiobookPlayback(book: AudioPlayerBook, initialTime: numbe
 
   const source = `${CORE_URL}/api/audiobooks/file/${encodeURIComponent(book.bookId)}/${encodeURIComponent(track.ino)}`;
   const audio = getSharedAudio();
-  const absoluteSource = new URL(source, window.location.href).href;
-  if (audio.src !== absoluteSource && audio.currentSrc !== absoluteSource) audio.src = source;
+  audio.autoplay = true;
+  _playbackDesired = true;
+  _mediaRecoveryKey = null;
+  // A failed HTMLMediaElement cannot reliably be revived by calling play()
+  // with the same URL in Safari. A new attempt URL also prevents a cached,
+  // incomplete Range response from being reused.
+  assignAudioSource(audio, source);
   _primedPlayback = audio.play();
   void _primedPlayback.catch(() => {
     // The engine records and presents the actionable failure after it consumes
@@ -88,7 +138,18 @@ function getPlaybackErrorMessage(error: unknown): string {
   ) {
     return "Your browser blocked audio playback. Select Play again to allow sound.";
   }
+  if (
+    (error instanceof DOMException && error.name === "NotSupportedError") ||
+    message.includes("MEDIA_ELEMENT_ERROR") ||
+    message.includes("Format error")
+  ) {
+    return "This chapter could not be decoded. Select Play to request a fresh stream.";
+  }
   return message || "Playback could not start";
+}
+
+function isSupersededPlayback(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 /* ── Hook ──────────────────────────────────────────────── */
@@ -108,7 +169,7 @@ export function useAudioEngine() {
   // Track whether we've already restored from localStorage in this mount cycle
   const restoredRef = useRef(false);
   // Holds the latest refreshCurrentStream for use inside event-handler effects
-  const refreshFnRef = useRef<(() => Promise<void>) | undefined>(undefined);
+  const refreshFnRef = useRef<(() => Promise<boolean>) | undefined>(undefined);
 
   const [command, setCommand] = useAtom(audioPlayerCommandAtom);
   const setBook = useSetAtom(audioPlayerBookAtom);
@@ -220,20 +281,24 @@ export function useAudioEngine() {
 
   /* ── Refresh current stream (recover from expired URLs / stalls) ── */
 
-  const refreshCurrentStream = useCallback(async () => {
-    if (!bookIdRef.current || !_currentBook) return;
+  const refreshCurrentStream = useCallback(async (): Promise<boolean> => {
+    if (!bookIdRef.current || !_currentBook) return false;
     const a = getSharedAudio();
     const idx = _currentTrackIndex;
     const localTime = a.currentTime;
-    const wasPlaying = _isPlaying;
+    // A media error commonly arrives before the original play() promise has
+    // resolved, so `_isPlaying` alone loses the user's intent. Preserve it
+    // through the source swap to make the retry audible and to keep chapter
+    // changes playing while the page is backgrounded.
+    const shouldResume = _playbackDesired || _isPlaying;
 
     try {
       const tracks = await fetchStreams(bookIdRef.current, _currentBook.trackMetas);
       streamsRef.current = tracks;
       trackOffsetsRef.current = computeOffsets(tracks);
 
-      const newSrc = tracks[idx]?.streamUrl;
-      if (!newSrc) return;
+      const streamUrl = tracks[idx]?.streamUrl;
+      if (!streamUrl) return false;
 
       // Cancel any pending seek from prior operations
       if (pendingSeekRef.current) {
@@ -242,15 +307,20 @@ export function useAudioEngine() {
       }
 
       a.pause();
-      a.src = newSrc;
+      a.autoplay = shouldResume;
+      const ownedSource = assignAudioSource(a, streamUrl);
 
       const onLoaded = () => {
+        if (!isAudioSourceCurrent(a.currentSrc || a.src, ownedSource, window.location.href)) return;
         a.currentTime = localTime;
-        if (wasPlaying) {
-          void a.play().catch(() => {
+        if (shouldResume) {
+          void a.play().catch((error: unknown) => {
+            if (_mediaRecoveryKey && isSupersededPlayback(error)) return;
+            _playbackDesired = false;
             _isPlaying = false;
             stateRef.current.isPlaying = false;
             setState((prev) => ({ ...prev, isPlaying: false }));
+            setError(getPlaybackErrorMessage(error));
           });
         }
         pendingSeekRef.current = null;
@@ -260,8 +330,11 @@ export function useAudioEngine() {
       a.addEventListener("loadedmetadata", onLoaded);
 
       setState((prev) => ({ ...prev, isBuffering: true }));
-    } catch { /* stream refresh failed — non-critical */ }
-  }, [fetchStreams, computeOffsets, setState]);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [fetchStreams, computeOffsets, setError, setState]);
 
   // Keep ref in sync for use in event-handler effects (avoids stale closures)
   refreshFnRef.current = refreshCurrentStream;
@@ -284,6 +357,15 @@ export function useAudioEngine() {
       stateRef.current.currentTime = globalTime;
       _globalTime = globalTime;
       setState((prev) => ({ ...prev, currentTime: globalTime }));
+      if ("mediaSession" in navigator && _currentBook?.totalDuration) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: _currentBook.totalDuration,
+            playbackRate: a.playbackRate,
+            position: Math.min(globalTime, Math.max(0, _currentBook.totalDuration - 0.01)),
+          });
+        } catch { /* browser may reject position updates during a source swap */ }
+      }
       return;
     }
 
@@ -296,16 +378,18 @@ export function useAudioEngine() {
       }
     }
 
-    const wasPlaying = stateRef.current.isPlaying;
+    const wasPlaying = stateRef.current.isPlaying || _playbackDesired;
 
     if (trackIdx !== stateRef.current.currentTrackIndex) {
       a.pause();
+      a.autoplay = wasPlaying;
       stateRef.current.currentTrackIndex = trackIdx;
       _currentTrackIndex = trackIdx;
       const newSrc = tracks[trackIdx]?.streamUrl;
-      if (newSrc) a.src = newSrc;
+      const ownedSource = newSrc ? assignAudioSource(a, newSrc) : null;
 
       const onLoaded = () => {
+        if (ownedSource && !isAudioSourceCurrent(a.currentSrc || a.src, ownedSource, window.location.href)) return;
         a.currentTime = localTime;
         pendingSeekRef.current = null;
         if (wasPlaying) void a.play().catch(() => {/* seek recovery — non-critical */});
@@ -347,19 +431,8 @@ export function useAudioEngine() {
       const idx = stateRef.current.currentTrackIndex;
 
       if (idx < tracks.length - 1) {
-        // Auto-advance to next track. Three subtle points this has to get
-        // right — earlier implementations failed at each one:
-        //
-        //  1. Attach the `loadedmetadata` listener BEFORE assigning `src`.
-        //     Cached or fast responses can fire metadata synchronously from
-        //     the src setter; a listener added afterwards misses it and the
-        //     next track silently stalls.
-        //  2. Handle `readyState >= HAVE_METADATA` after attachment — the
-        //     event may have already fired in the microtask window.
-        //  3. Surface play() rejection instead of swallowing it. Browsers
-        //     sometimes lose the user-gesture chain across the `ended` event,
-        //     and silently eating the failure makes this look like "auto-
-        //     advance is broken" when the real answer is "tap to continue."
+        // Auto-advance to the next physical file while preserving the user's
+        // continuous-play intent, including when the page is backgrounded.
         if (pendingSeekRef.current) {
           a.removeEventListener("loadedmetadata", pendingSeekRef.current);
           pendingSeekRef.current = null;
@@ -370,35 +443,30 @@ export function useAudioEngine() {
         const nextSrc = tracks[nextIdx]?.streamUrl;
         if (!nextSrc) return;
 
-        const onLoaded = () => {
-          a.removeEventListener("loadedmetadata", onLoaded);
-          pendingSeekRef.current = null;
-          void a.play().catch((err: unknown) => {
-            // Browser blocked programmatic play — most likely autoplay policy
-            // after a pause across the `ended` transition. Mark us paused so
-            // the UI shows a resume control instead of a phantom-playing state.
-            console.warn("[audio-engine] autoplay after chapter end blocked:", err);
-            stateRef.current.isPlaying = false;
-            _isPlaying = false;
-            setState((prev) => ({ ...prev, isPlaying: false, isBuffering: false }));
-          });
-        };
-
-        // Attach listener BEFORE src assignment so we can't miss a fast-fire.
-        pendingSeekRef.current = onLoaded;
-        a.addEventListener("loadedmetadata", onLoaded);
-        a.src = nextSrc;
-        a.load(); // Force a fresh load — some browsers skip it if the URL matches the previous value after a proxy rewrite.
-
-        // If metadata already loaded in the microtask window (e.g. the browser
-        // had a cached Range response ready), fire our handler manually.
-        if (a.readyState >= HTMLMediaElement.HAVE_METADATA) onLoaded();
+        // Keep the continuous-play intent on the media element itself and
+        // call play() from the ended event. Waiting for loadedmetadata can
+        // lose the gesture chain while mobile Safari is in the background.
+        a.autoplay = true;
+        _playbackDesired = true;
+        assignAudioSource(a, nextSrc);
+        a.load();
+        void a.play().catch((err: unknown) => {
+          console.warn("[audio-engine] autoplay after chapter end blocked:", err);
+          _playbackDesired = false;
+          stateRef.current.isPlaying = false;
+          _isPlaying = false;
+          setState((prev) => ({ ...prev, isPlaying: false, isBuffering: false }));
+          setError(getPlaybackErrorMessage(err));
+        });
 
         setState((prev) => ({ ...prev, currentTrackIndex: nextIdx, isBuffering: true }));
       } else {
         // Final track ended — book finished
         stateRef.current.isPlaying = false;
         _isPlaying = false;
+        _playbackDesired = false;
+        a.autoplay = false;
+        updateMediaSessionState("none");
         setState((prev) => ({ ...prev, isPlaying: false }));
         if (bookIdRef.current) {
           const book = bookIdRef.current;
@@ -415,13 +483,44 @@ export function useAudioEngine() {
 
     const onError = () => {
       const err = a.error;
+      // Source changes are asynchronous. Safari may dispatch the old source's
+      // terminal error after a newer chapter/attempt already owns the element.
+      // Do not let that stale event consume the new source's single retry.
+      if (!currentAudioSourceBelongsToLatestAttempt(a)) return;
       // Ignore MEDIA_ERR_SRC_NOT_SUPPORTED when no source is set (intentional reset)
       if (err?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED && !a.src) return;
-      // Audio element error — mark as not playing
+      const recoveryKey = `${bookIdRef.current ?? "unknown"}:${stateRef.current.currentTrackIndex}`;
+      const isRecoverableFormatError = err?.code === MediaError.MEDIA_ERR_DECODE
+        || err?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
+
+      // Safari can retain a stale or mismatched Range response across chapter
+      // source changes. Retry this chapter once with a unique URL before
+      // surfacing a failure to the listener.
+      if (isRecoverableFormatError && _mediaRecoveryKey !== recoveryKey) {
+        _mediaRecoveryKey = recoveryKey;
+        setError(null);
+        setState((prev) => ({ ...prev, isBuffering: true }));
+        void refreshFnRef.current?.().then((started) => {
+          if (!started) {
+            _playbackDesired = false;
+            stateRef.current.isPlaying = false;
+            _isPlaying = false;
+            setState((prev) => ({ ...prev, isPlaying: false, isBuffering: false }));
+            setError("This chapter could not be reloaded. Select Play to try again.");
+          }
+        });
+        return;
+      }
+
+      // Audio element error — mark as not playing after recovery was exhausted.
       stateRef.current.isPlaying = false;
       _isPlaying = false;
+      _playbackDesired = false;
+      updateMediaSessionState("paused");
       setState((prev) => ({ ...prev, isPlaying: false, isBuffering: false }));
-      setError(err?.message || "The audio stream could not be loaded");
+      setError(isRecoverableFormatError
+        ? "This chapter could not be decoded. Select Play to request a fresh stream."
+        : "The audio stream could not be loaded.");
       console.warn("[audio-engine] media failed to load:", {
         code: err?.code,
         message: err?.message,
@@ -443,7 +542,7 @@ export function useAudioEngine() {
         // Phase 2: If still stalled, refresh stream URLs (may have expired)
         stallRecoveryTimer = setTimeout(() => {
           if (!_isPlaying || a.readyState >= 3) return;
-          refreshFnRef.current?.();
+          void refreshFnRef.current?.();
         }, STALL_REFRESH_DELAY_MS - STALL_NUDGE_DELAY_MS);
       }, STALL_NUDGE_DELAY_MS);
     };
@@ -458,6 +557,9 @@ export function useAudioEngine() {
         clearTimeout(stallRecoveryTimer);
         stallRecoveryTimer = null;
       }
+      _mediaRecoveryKey = null;
+      _playbackDesired = true;
+      updateMediaSessionState("playing");
       setState((prev) => ({ ...prev, isBuffering: false }));
     };
 
@@ -497,7 +599,7 @@ export function useAudioEngine() {
           // If still stalled after nudge, refresh stream URLs
           setTimeout(() => {
             if (_isPlaying && a.readyState < 2) {
-              refreshFnRef.current?.();
+              void refreshFnRef.current?.();
             }
           }, 3000);
         }
@@ -549,6 +651,9 @@ export function useAudioEngine() {
       case "load": {
         const loadRequestId = ++loadRequestRef.current;
         const autoPlay = cmd.autoPlay !== false; // default true
+        _mediaRecoveryKey = null;
+        _playbackDesired = autoPlay;
+        a.autoplay = autoPlay;
         setError(null);
 
         // 1. Stop current playback + flush progress
@@ -573,6 +678,7 @@ export function useAudioEngine() {
         bookIdRef.current = cmd.book.bookId;
         _currentBook = cmd.book;
         setBook(cmd.book);
+        updateMediaSessionMetadata(cmd.book);
 
         // 3. Fetch streams
         let tracks: StreamTrack[];
@@ -586,6 +692,7 @@ export function useAudioEngine() {
           bookIdRef.current = null;
           _currentBook = null;
           _isPlaying = false;
+          _playbackDesired = false;
           _globalTime = 0;
           _currentTrackIndex = 0;
           setBook(null);
@@ -611,10 +718,13 @@ export function useAudioEngine() {
 
         // 5. Load source + seek + optionally play
         const src = tracks[trackIdx]?.streamUrl;
-        if (src) {
-          const absoluteSrc = new URL(src, window.location.href).href;
-          if (a.src !== absoluteSrc && a.currentSrc !== absoluteSrc) a.src = src;
-        }
+        // The synchronous gesture bridge already selected and started this
+        // exact track. Reassigning its URL here aborts the primed play promise
+        // and can expose WebKit's stale decode state. Unprimed restores still
+        // receive a fresh, independently cacheable attempt URL.
+        const ownedSource = cmd.playbackPrimed
+          ? _expectedAudioSource
+          : (src ? assignAudioSource(a, src) : null);
 
         stateRef.current = { isPlaying: false, currentTime: cmd.initialTime, currentTrackIndex: trackIdx };
         _isPlaying = false;
@@ -632,6 +742,11 @@ export function useAudioEngine() {
         });
 
         const onLoaded = () => {
+          if (loadRequestId !== loadRequestRef.current) {
+            a.removeEventListener("loadedmetadata", onLoaded);
+            return;
+          }
+          if (ownedSource && !isAudioSourceCurrent(a.currentSrc || a.src, ownedSource, window.location.href)) return;
           if (localTime > 0) a.currentTime = localTime;
           if (autoPlay && !cmd.playbackPrimed) {
             void a.play().then(() => {
@@ -641,6 +756,8 @@ export function useAudioEngine() {
               setState((prev) => ({ ...prev, isPlaying: true, isBuffering: false }));
               startSyncInterval(cmd.book.bookId, cmd.book.totalDuration);
             }).catch((error: unknown) => {
+              if (_mediaRecoveryKey) return;
+              _playbackDesired = false;
               stateRef.current.isPlaying = false;
               _isPlaying = false;
               setState((prev) => ({ ...prev, isPlaying: false, isBuffering: false }));
@@ -651,7 +768,9 @@ export function useAudioEngine() {
           a.removeEventListener("loadedmetadata", onLoaded);
         };
 
-        if (a.readyState >= 1) {
+        const ownedSourceIsReady = !ownedSource
+          || isAudioSourceCurrent(a.currentSrc || a.src, ownedSource, window.location.href);
+        if (a.readyState >= 1 && ownedSourceIsReady) {
           onLoaded();
         } else {
           a.addEventListener("loadedmetadata", onLoaded);
@@ -672,6 +791,10 @@ export function useAudioEngine() {
               startSyncInterval(cmd.book.bookId, cmd.book.totalDuration);
             }).catch((error: unknown) => {
               if (loadRequestId !== loadRequestRef.current) return;
+              // The source recovery owns playback now. The rejected promise
+              // belongs to the URL that the media-error handler replaced.
+              if (_mediaRecoveryKey) return;
+              _playbackDesired = false;
               stateRef.current.isPlaying = false;
               _isPlaying = false;
               setState((prev) => ({ ...prev, isPlaying: false, isBuffering: false }));
@@ -686,9 +809,13 @@ export function useAudioEngine() {
       }
 
       case "play": {
+        _mediaRecoveryKey = null;
+        _playbackDesired = true;
         setError(null);
+        a.autoplay = true;
         // Guard: don't attempt play if no source is loaded
         if (!a.src && !a.currentSrc) {
+          _playbackDesired = false;
           setError("The audio source is not ready. Try Play again.");
           break;
         }
@@ -707,7 +834,9 @@ export function useAudioEngine() {
           }
           persistStateImmediate();
         }).catch((error: unknown) => {
+          if (_mediaRecoveryKey) return;
           // Play failed
+          _playbackDesired = false;
           stateRef.current.isPlaying = false;
           _isPlaying = false;
           setState((prev) => ({ ...prev, isPlaying: false }));
@@ -717,7 +846,10 @@ export function useAudioEngine() {
       }
 
       case "pause": {
+        _playbackDesired = false;
+        a.autoplay = false;
         a.pause();
+        updateMediaSessionState("paused");
         stateRef.current.isPlaying = false;
         _isPlaying = false;
         setState((prev) => ({ ...prev, isPlaying: false }));
@@ -736,8 +868,12 @@ export function useAudioEngine() {
       }
 
       case "stop": {
+        _playbackDesired = false;
+        a.autoplay = false;
         a.pause();
+        updateMediaSessionState("none");
         a.removeAttribute("src");
+        _expectedAudioSource = null;
         // Note: intentionally NOT calling a.load() — that triggers
         // MEDIA_ERR_SRC_NOT_SUPPORTED (code 4) when there's no source.
 
@@ -803,6 +939,53 @@ export function useAudioEngine() {
       console.warn("[audio-engine] playback command failed:", error);
     });
   }, [command, setCommand, setError, processCommand]);
+
+  /* ── OS / lock-screen media controls ──────────────── */
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    const register = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler);
+      } catch { /* action unsupported by this browser */ }
+    };
+
+    register("play", () => setCommand({ type: "play" }));
+    register("pause", () => setCommand({ type: "pause" }));
+    register("seekbackward", (details) => setCommand({
+      type: "seek",
+      time: Math.max(0, _globalTime - (details.seekOffset ?? 15)),
+    }));
+    register("seekforward", (details) => setCommand({
+      type: "seek",
+      time: Math.min(_currentBook?.totalDuration ?? _globalTime, _globalTime + (details.seekOffset ?? 15)),
+    }));
+    register("seekto", (details) => {
+      if (typeof details.seekTime === "number") setCommand({ type: "seek", time: details.seekTime });
+    });
+    register("previoustrack", () => {
+      const chapters = _currentBook?.chapters ?? [];
+      const index = chapters.findIndex((chapter) => _globalTime >= chapter.start && _globalTime < chapter.end);
+      const current = index >= 0 ? chapters[index] : undefined;
+      const target = current && _globalTime - current.start > 3
+        ? current
+        : chapters[Math.max(0, index - 1)];
+      if (target) setCommand({ type: "seek", time: target.start });
+    });
+    register("nexttrack", () => {
+      const chapters = _currentBook?.chapters ?? [];
+      const index = chapters.findIndex((chapter) => _globalTime >= chapter.start && _globalTime < chapter.end);
+      const target = chapters[Math.min(chapters.length - 1, Math.max(0, index + 1))];
+      if (target) setCommand({ type: "seek", time: target.start });
+    });
+
+    return () => {
+      for (const action of ["play", "pause", "seekbackward", "seekforward", "seekto", "previoustrack", "nexttrack"] as MediaSessionAction[]) {
+        register(action, null);
+      }
+    };
+  }, [setCommand]);
 
   /* ── Restore from localStorage on mount ────────────── */
 

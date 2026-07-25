@@ -3,6 +3,8 @@
 When generating Docker app definitions:
 
 - use stable images and prefer official images
+- verify that every public registry image and tag exists; never invent a plausible registry URL
+- for custom scaffold code, use an explicit local image name such as `<app-id>:local` with a compose `build` definition until a real published image exists
 - prefer smaller images when there is no downside
 - use relative paths such as `./data`, `./config`, `./postgres`
 - never use absolute host paths unless the user explicitly requires them

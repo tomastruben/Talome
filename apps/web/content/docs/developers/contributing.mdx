@@ -104,7 +104,9 @@ Follow the existing pattern in each file. Generally:
 
 - Match the style of the file you are editing -- do not introduce new patterns
 - No alternative icon libraries -- only HugeIcons via `@/components/icons`
-- No alternative UI component libraries -- only shadcn/ui
+- Approved component sources only -- Talome components first, then shadcn/ui primitives/blocks and curated Skiper UI source components
+- Premium shadcn-compatible and Skiper UI components require a valid Talome license
+- Adapt imported source to Talome tokens, HugeIcons, restrained motion, accessibility, and responsive window behavior; never add a competing runtime UI system or expose registry license keys
 - Prefer composition over inheritance
 - Keep functions small and focused
 

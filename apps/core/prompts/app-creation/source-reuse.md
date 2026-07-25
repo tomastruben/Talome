@@ -16,6 +16,10 @@ When a source exists:
 - do not discard a good source just to generate something novel
 
 When working from a public repo:
+- verify the exact URL, ref or commit, license, maintenance signal, stack compatibility, and self-hosting implications
 - preserve its useful structure
 - adapt it to Talome's conventions
 - only replace parts that materially improve fit, quality, or consistency
+- record the exact reused files, components, or patterns and any required attribution
+
+Do not treat a GitHub search result as approved source code. Research candidates first and choose one of: reuse, adapt, visual inspiration only, or reject. Never fabricate repository facts when network access is unavailable.

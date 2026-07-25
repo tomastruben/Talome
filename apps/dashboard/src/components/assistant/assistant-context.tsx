@@ -161,6 +161,7 @@ interface AiModelsResponse {
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
+  kimi: "Kimi",
   ollama: "Ollama",
 };
 
@@ -453,6 +454,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       if (submittingRef.current) return;
       submittingRef.current = true;
       setIsSubmitting(true);
+      clearError();
 
       const parts: UIMessage["parts"] = [
         ...(trimmedText ? [{ type: "text" as const, text: trimmedText }] : []),
@@ -483,7 +485,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         setIsSubmitting(false);
       }
     },
-    [ensureConversation, sendMessage]
+    [clearError, ensureConversation, sendMessage]
   );
 
   const setActiveId = useCallback(
@@ -496,11 +498,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   const startNew = useCallback(() => {
     stop();
+    clearError();
     setActiveId(null);
     setMessages([]);
     submittingRef.current = false;
     setIsSubmitting(false);
-  }, [stop, setActiveId, setMessages]);
+  }, [stop, clearError, setActiveId, setMessages]);
 
   const deleteConversation = useCallback(
     async (id: string) => {

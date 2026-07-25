@@ -194,6 +194,7 @@ export function parseDesktopPlayerOpenMessage(value: unknown) {
     !isBoundedTitle(value.title) ||
     !isBoundedFilePath(value.filePath) ||
     !isBoundedFileName(value.fileName) ||
+    (value.artworkUrl !== undefined && !isBoundedFilePath(value.artworkUrl)) ||
     typeof value.preferOriginal !== "boolean" ||
     typeof value.preferDirect !== "boolean"
   ) {
@@ -205,6 +206,7 @@ export function parseDesktopPlayerOpenMessage(value: unknown) {
     title: value.title,
     filePath: value.filePath,
     fileName: value.fileName,
+    ...(value.artworkUrl !== undefined ? { artworkUrl: value.artworkUrl as string } : {}),
     preferOriginal: value.preferOriginal,
     preferDirect: value.preferDirect,
   };

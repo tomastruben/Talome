@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TalomeAppSpecSchema } from "../app-specs/schema.js";
 
 export const AppCategorySchema = z.enum([
   "ai",
@@ -8,6 +9,9 @@ export const AppCategorySchema = z.enum([
   "networking",
   "storage",
   "security",
+  "finance",
+  "files",
+  "automation",
   "other",
 ]);
 
@@ -110,6 +114,62 @@ export const DesignAlignmentSchema = z.object({
   notes: z.array(z.string()).default([]),
 });
 
+export const AppUseCaseSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  userGoal: z.string().min(1),
+  outcome: z.string().min(1),
+  frequency: z.enum(["daily", "weekly", "monthly", "occasional"]).default("weekly"),
+});
+
+export const LibraryNeedSchema = z.object({
+  capability: z.string().min(1),
+  reason: z.string().min(1),
+  constraints: z.array(z.string()).default([]),
+});
+
+/** Questions and search intent only. Evidence-backed findings are produced in the workspace. */
+export const AppResearchPlanSchema = z.object({
+  useCases: z.array(AppUseCaseSchema).default([]),
+  githubQueries: z.array(z.string().min(3)).default([]),
+  patternQuestions: z.array(z.string().min(3)).default([]),
+  libraryNeeds: z.array(LibraryNeedSchema).default([]),
+});
+
+export const AppWorkflowSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  useCaseId: z.string().min(1),
+  outcome: z.string().min(1),
+  steps: z.array(z.string().min(1)).min(2),
+});
+
+export const AppScreenPlanSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  useCaseIds: z.array(z.string().min(1)).min(1),
+  job: z.string().min(1),
+  primaryAction: z.string().min(1),
+  pattern: z.string().min(1),
+  componentCandidates: z.array(z.string()).default([]),
+  states: z.array(z.string()).default([]),
+});
+
+export const VisualDirectionSchema = z.object({
+  mode: z.enum(["native-system", "reference-led", "image-concept"]).default("native-system"),
+  summary: z.string().min(1),
+  layout: z.string().min(1),
+  signatureElements: z.array(z.string()).default([]),
+  motion: z.array(z.string()).default([]),
+});
+
+export const ExperienceDesignPlanSchema = z.object({
+  primaryUseCaseId: z.string().default(""),
+  workflows: z.array(AppWorkflowSchema).default([]),
+  screens: z.array(AppScreenPlanSchema).default([]),
+  visualDirection: VisualDirectionSchema.optional(),
+});
+
 export const AppBlueprintSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -118,6 +178,17 @@ export const AppBlueprintSchema = z.object({
   icon: z.string().optional(),
   category: AppCategorySchema,
   sourceReferences: z.array(SourceReferenceSchema).default([]),
+  research: AppResearchPlanSchema.default({
+    useCases: [],
+    githubQueries: [],
+    patternQuestions: [],
+    libraryNeeds: [],
+  }),
+  experienceDesign: ExperienceDesignPlanSchema.default({
+    primaryUseCaseId: "",
+    workflows: [],
+    screens: [],
+  }),
   services: z.array(DockerServiceSchema).min(1),
   env: z.array(EnvVarSchema).default([]),
   scaffold: ScaffoldPlanSchema,
@@ -127,6 +198,8 @@ export const AppBlueprintSchema = z.object({
     designConstraints: z.array(z.string()).default([]),
     references: z.array(UiReferenceSchema).default([]),
   }),
+  /** Declarative, executable-free native Talome experience. Optional only for legacy drafts. */
+  appSpec: TalomeAppSpecSchema.optional(),
   successCriteria: z.array(z.string()).default([]),
   designAlignment: DesignAlignmentSchema,
   instructionsVersion: z.string().min(1),
@@ -152,6 +225,7 @@ export const WorkspaceSummarySchema = z.object({
   fileCount: z.number().int().nonnegative(),
   entryFiles: z.array(z.string()).default([]),
   sourceSnapshots: z.array(z.string()).default([]),
+  designArtifacts: z.array(z.string()).default([]),
   generatedWithClaudeCode: z.boolean(),
   runLogPath: z.string().optional(),
 });
@@ -176,6 +250,8 @@ export const PreBuiltBlueprintSchema = z.object({
     category: AppCategorySchema.optional(),
     icon: z.string().optional(),
   }).optional(),
+  research: AppResearchPlanSchema.optional(),
+  experienceDesign: ExperienceDesignPlanSchema.optional(),
   services: z.array(DockerServiceSchema).optional(),
   env: z.array(EnvVarSchema).optional(),
   scaffold: z.object({
@@ -184,6 +260,7 @@ export const PreBuiltBlueprintSchema = z.object({
     framework: z.string().optional(),
   }).optional(),
   criteria: z.array(z.string()).optional(),
+  appSpec: TalomeAppSpecSchema.optional(),
 });
 
 export const CreatorRequestSchema = z.object({
@@ -210,6 +287,8 @@ export const PublishDraftRequestSchema = z.object({
 export type GeneratedApp = z.infer<typeof GeneratedAppSchema>;
 export type SourceInput = z.infer<typeof SourceInputSchema>;
 export type SourceReference = z.infer<typeof SourceReferenceSchema>;
+export type AppResearchPlan = z.infer<typeof AppResearchPlanSchema>;
+export type ExperienceDesignPlan = z.infer<typeof ExperienceDesignPlanSchema>;
 export type AppBlueprint = z.infer<typeof AppBlueprintSchema>;
 export type ValidationCheck = z.infer<typeof ValidationCheckSchema>;
 export type InstructionPackSummary = z.infer<typeof InstructionPackSummarySchema>;

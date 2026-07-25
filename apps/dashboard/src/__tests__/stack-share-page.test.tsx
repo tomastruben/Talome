@@ -1,18 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/components/icons", () => ({
+vi.mock("@/components/icons", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/icons")>()),
   HugeiconsIcon: () => <svg />,
-  Copy01Icon: {},
-  Download01Icon: {},
-  Tick01Icon: {},
-  CheckmarkCircle01Icon: {},
-  HardDriveIcon: {},
-  InformationCircleIcon: {},
-  LinkSquare01Icon: {},
-  Package01Icon: {},
-  Share04Icon: {},
-  Shield01Icon: {},
 }));
 
 vi.mock("@/hooks/use-installed-apps", () => ({

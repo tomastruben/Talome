@@ -8,6 +8,7 @@ import {
   maximizedDesktopBounds,
   orderDesktopDockIds,
   reorderDesktopDockIds,
+  resizeDesktopBounds,
 } from "@/lib/desktop-window-state";
 
 describe("desktop window geometry", () => {
@@ -50,6 +51,19 @@ describe("desktop window geometry", () => {
     });
   });
 
+  it("keeps the bottom-right resize affordance inside the desktop", () => {
+    expect(resizeDesktopBounds(
+      { x: 160, y: 120, width: 1600, height: 1000 },
+      { width: 1189, height: 873 },
+      { width: 520, height: 360 },
+    )).toEqual({
+      x: 160,
+      y: 120,
+      width: 1029,
+      height: 753,
+    });
+  });
+
   it("targets the center of the matching Dock icon when minimizing", () => {
     expect(desktopMinimizeOffset(
       { left: 100, top: 60, width: 1000, height: 700 },
@@ -69,7 +83,7 @@ describe("desktop window geometry", () => {
 
     expect(restore.transform).toEqual([...minimize.transform].reverse());
     expect(restore.opacity).toEqual([...minimize.opacity].reverse());
-    expect(restore.times).toEqual([0, 0.28, 1]);
+    expect(restore.times).toEqual([0, 0.2, 0.68, 1]);
   });
 });
 

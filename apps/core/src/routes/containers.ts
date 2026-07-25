@@ -21,7 +21,7 @@ import { serverError } from "../middleware/request-logger.js";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("containers");
-import type { Container, ServiceStack } from "@talome/types";
+import type { Container, ServiceStack, TalomeNativeSurfaceDescriptor } from "@talome/types";
 
 const containers = new Hono();
 
@@ -97,6 +97,7 @@ function makeStack(
   catalogRow?: { icon: string; iconUrl: string | null; category: string } | undefined,
   matchedApp?: { appId: string; storeSourceId: string } | undefined,
   catalogByKey?: Map<string, CatalogRow>,
+  nativeSurface?: TalomeNativeSurfaceDescriptor,
 ): ServiceStack {
   const primary = pickPrimary(group);
   const runningCount = group.filter((c) => c.status === "running").length;
@@ -136,6 +137,7 @@ function makeStack(
     totalCount: group.length,
     storeId: matchedApp?.storeSourceId,
     appId: matchedApp?.appId,
+    nativeSurface,
     containerIcons,
   };
 }
@@ -196,6 +198,23 @@ function buildStacks(containers: Container[]): ServiceStack[] {
   }
 
   const installedAppIds = new Set(installed.map((a) => a.appId.toLowerCase()));
+  const nativeSpecsByKey = new Map<string, TalomeNativeSurfaceDescriptor>();
+  try {
+    const approvedSpecs = db
+      .select()
+      .from(schema.appSpecs)
+      .where(eq(schema.appSpecs.status, "approved"))
+      .all();
+    for (const spec of approvedSpecs) {
+      nativeSpecsByKey.set(`${spec.storeSourceId}:${spec.appId}`, {
+        schemaVersion: 1,
+        revision: spec.revision,
+        status: "approved",
+      });
+    }
+  } catch {
+    // AppSpecs are additive; older/test schemas can still return normal stacks.
+  }
 
   // ── Step 1: Group ALL containers by compose project ──────────────────────
   const composeGroups = new Map<string, Container[]>();
@@ -249,6 +268,7 @@ function buildStacks(containers: Container[]): ServiceStack[] {
       stacks.push(makeStack(
         matchedApp.appId, stackName,
         "talome", group, catalogRow, matchedApp, catalogByKey,
+        nativeSpecsByKey.get(`${matchedApp.storeSourceId}:${matchedApp.appId}`),
       ));
     } else if (group.length === 1) {
       // Single-container compose project — try catalog heuristic for icon
@@ -274,7 +294,16 @@ function buildStacks(containers: Container[]): ServiceStack[] {
     if (app) {
       const catalogRow = appCatalogMap.get(app.appId);
       const stackName = app.displayName || catalogRow?.name || app.appId;
-      stacks.push(makeStack(app.appId, stackName, "talome", [c], catalogRow, app, catalogByKey));
+      stacks.push(makeStack(
+        app.appId,
+        stackName,
+        "talome",
+        [c],
+        catalogRow,
+        app,
+        catalogByKey,
+        nativeSpecsByKey.get(`${app.storeSourceId}:${app.appId}`),
+      ));
     } else {
       const catalogRow = matchCatalog(c, catalogByKey);
       stacks.push(makeStack(c.id, catalogRow?.name ?? c.name, "standalone", [c], catalogRow));

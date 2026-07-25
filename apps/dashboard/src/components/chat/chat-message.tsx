@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { UIMessage, DynamicToolUIPart, FileUIPart } from "ai";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { UIMessage, DynamicToolUIPart, FileUIPart, ReasoningUIPart } from "ai";
 import { isToolUIPart, getToolName } from "ai";
 import Image from "next/image";
 import {
@@ -35,6 +35,8 @@ import {
   ConfirmationActions,
   ConfirmationAction,
 } from "@/components/ai-elements/confirmation";
+import { ReasoningSummary } from "@/components/ai-elements/reasoning";
+import { extractAssistantEntityReferences } from "@/lib/assistant-entity-references";
 
 interface ChatMessageProps {
   message: UIMessage;
@@ -196,6 +198,23 @@ function BlueprintMarker({ input }: { input: Record<string, unknown> }) {
       label = name ? `Set identity → ${name}` : "Updated identity";
       break;
     }
+    case "research": {
+      const research = input.research as {
+        useCases?: unknown[];
+        githubQueries?: unknown[];
+        libraryNeeds?: unknown[];
+      } | undefined;
+      label = `Planned ${research?.useCases?.length ?? 0} use cases · ${research?.githubQueries?.length ?? 0} GitHub queries · ${research?.libraryNeeds?.length ?? 0} library needs`;
+      break;
+    }
+    case "design": {
+      const design = input.experienceDesign as {
+        workflows?: unknown[];
+        screens?: unknown[];
+      } | undefined;
+      label = `Designed ${design?.workflows?.length ?? 0} workflows · ${design?.screens?.length ?? 0} screens`;
+      break;
+    }
     case "services": {
       const services = input.services as Array<{ name: string; image: string }> | undefined;
       if (services?.length) {
@@ -251,6 +270,20 @@ export function ChatMessage({
     .filter((p): p is { type: "source-url"; sourceId: string; url: string; title?: string } => p.type === "source-url")
     .filter((s, i, arr) => arr.findIndex((x) => x.url === s.url) === i);
 
+  const entityReferences = useMemo(
+    () => extractAssistantEntityReferences(
+      message.parts
+        .filter(isToolUIPart)
+        .map((part) => ({
+          toolName: getToolName(part),
+          input: part.input,
+          output: part.output,
+        }))
+        .filter((result) => result.toolName.length > 0),
+    ),
+    [message.parts],
+  );
+
   const handleCopy = useCallback(async () => {
     if (!textContent) return;
     await navigator.clipboard.writeText(textContent);
@@ -261,10 +294,14 @@ export function ChatMessage({
   // Group consecutive text parts
   type RenderBlock =
     | { kind: "text"; key: string; text: string; toolContextNames: string[] }
+    | { kind: "reasoning"; key: string; part: ReasoningUIPart }
     | { kind: "file"; key: string; part: FileUIPart }
     | { kind: "tool"; key: string; part: DynamicToolUIPart };
 
   const blocks: RenderBlock[] = [];
+  const hasDisplayableReasoning = message.parts.some(
+    (part) => part.type === "reasoning" && part.text.trim().length > 0,
+  );
   let lastToolName: string | null = null;
   for (const part of message.parts) {
     if (part.type === "text") {
@@ -280,6 +317,22 @@ export function ChatMessage({
           toolContextNames: lastToolName ? [lastToolName] : [],
         });
       }
+    } else if (part.type === "reasoning") {
+      // Some providers emit an empty completed reasoning part before the part
+      // containing the displayable summary. Keep empty-only legacy messages
+      // informative, but avoid showing a redundant status row beside a summary.
+      if (
+        hasDisplayableReasoning &&
+        part.state === "done" &&
+        part.text.trim().length === 0
+      ) {
+        continue;
+      }
+      blocks.push({
+        kind: "reasoning",
+        key: `reasoning-${blocks.length}`,
+        part,
+      });
     } else if (part.type === "file") {
       blocks.push({
         kind: "file",
@@ -320,7 +373,11 @@ export function ChatMessage({
         {blocks.map((block) => {
           if (block.kind === "text") {
             return (
-              <MessageResponse key={block.key} toolContextNames={block.toolContextNames}>
+              <MessageResponse
+                key={block.key}
+                toolContextNames={block.toolContextNames}
+                entityReferences={entityReferences}
+              >
                 {block.text}
               </MessageResponse>
             );
@@ -328,6 +385,17 @@ export function ChatMessage({
 
           if (block.kind === "file") {
             return <MessageAttachment key={block.key} part={block.part} />;
+          }
+
+          if (block.kind === "reasoning") {
+            return (
+              <ReasoningSummary
+                key={block.key}
+                text={block.part.text}
+                state={block.part.state}
+                isMessageStreaming={isStreaming}
+              />
+            );
           }
 
           const p = block.part;

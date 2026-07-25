@@ -54,6 +54,20 @@ export function buildCodexCommand(projectRoot: string, resume: boolean): string 
   return `${resolveCodex}; if [ -z "$codex_bin" ]; then echo "Codex CLI not found"; elif command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
 }
 
+export function buildKimiCommand(projectRoot: string, resume: boolean, auto = false): string {
+  const quoted = projectRoot.includes(" ") ? `"${projectRoot}"` : projectRoot;
+  const args = [resume ? "--continue" : "", auto ? "--auto" : ""].filter(Boolean).join(" ");
+  const argString = args ? ` ${args}` : "";
+  const sessionName = resume ? "talome-kimi" : `talome-kimi-${Date.now()}`;
+  const tmuxCommand = `\\"$kimi_bin\\"${argString}`;
+  const tmuxCmd = resume
+    ? `cd ${quoted} && tmux new-session -A -s ${sessionName} "${tmuxCommand}"`
+    : `cd ${quoted} && tmux new-session -s ${sessionName} "${tmuxCommand}"`;
+  const fallback = `cd ${quoted} && "$kimi_bin"${argString}`;
+  const resolveKimi = `kimi_bin="$(command -v kimi 2>/dev/null)"; if [ -z "$kimi_bin" ] && [ -x "$HOME/.kimi-code/bin/kimi" ]; then kimi_bin="$HOME/.kimi-code/bin/kimi"; fi`;
+  return `${resolveKimi}; if [ -z "$kimi_bin" ]; then echo "Kimi Code CLI not found. Install it from platform.kimi.ai/docs/guide/kimi-code-cli"; elif command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
+}
+
 export function TerminalPage() {
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -166,8 +180,12 @@ export function TerminalPage() {
       termRef.current?.sendCommand(buildCodexCommand(projectRoot, resume));
       return;
     }
+    if (agent === "kimi") {
+      termRef.current?.sendCommand(buildKimiCommand(projectRoot, resume, autoMode));
+      return;
+    }
     launchClaudeCode(resume);
-  }, [launchClaudeCode, projectRoot]);
+  }, [autoMode, launchClaudeCode, projectRoot]);
 
   const handleCreateSession = useCallback(async (name?: string) => {
     try {

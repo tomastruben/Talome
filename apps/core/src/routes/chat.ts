@@ -3,6 +3,8 @@ import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { createChatStream } from "../ai/agent.js";
 import { checkDailyCap, getDailyCapUsd, getTodayCostUsd } from "../agent-loop/budget.js";
 import { serverError } from "../middleware/request-logger.js";
+import { getSetting } from "../utils/settings.js";
+import { serializeChatError } from "../ai/chat-error.js";
 
 const chat = new Hono();
 
@@ -12,19 +14,14 @@ const chat = new Hono();
 // Key: conversationId (from last user message id fallback), Value: AbortController
 const activeStreams = new Map<string, AbortController>();
 
-function extractErrorMessage(err: unknown): string {
-  const e = err as any;
-  // Anthropic SDK wraps errors in AI_APICallError — the human-readable message
-  // is in data.error.message (from the API response body).
-  const fromResponseBody = e?.responseBody
-    ? (() => { try { return JSON.parse(e.responseBody)?.error?.message; } catch { return undefined; } })()
-    : undefined;
-  const apiMsg: string | undefined = e?.data?.error?.message ?? fromResponseBody;
-  if (apiMsg) return apiMsg;
-  return e?.message || "Chat request failed";
+function resolveRequestProvider(provider: unknown): string {
+  if (provider === "anthropic" || provider === "openai" || provider === "ollama") return provider;
+  const configured = getSetting("ai_provider");
+  return configured === "openai" || configured === "ollama" ? configured : "anthropic";
 }
 
 chat.post("/", async (c) => {
+  let requestProvider = resolveRequestProvider(undefined);
   try {
     // Enforce daily AI budget cap
     if (!checkDailyCap()) {
@@ -37,6 +34,7 @@ chat.post("/", async (c) => {
     }
 
     const { messages, pageContext, model, provider } = await c.req.json();
+    requestProvider = resolveRequestProvider(provider);
 
     if (!messages || !Array.isArray(messages)) {
       return c.json({ error: "messages array is required" }, 400);
@@ -63,17 +61,18 @@ chat.post("/", async (c) => {
 
     activeStreams.set(streamKey, streamAbort);
 
-    const result = await createChatStream(messages, pageContext ?? undefined, model ?? undefined, streamAbort.signal, provider ?? undefined);
+    const result = await createChatStream(messages, pageContext ?? undefined, model ?? undefined, streamAbort.signal, requestProvider);
 
     // Wrap the result stream so lazy read failures are always translated
     // into protocol-level "error" chunks the client can render.
     const uiStream = createUIMessageStream({
-      onError: (err) => extractErrorMessage(err),
+      onError: (err) => serializeChatError(err, requestProvider),
       execute: ({ writer }) => {
         return writer.merge(
           result.toUIMessageStream({
+            sendReasoning: true,
             sendSources: true,
-            onError: (err) => extractErrorMessage(err),
+            onError: (err) => serializeChatError(err, requestProvider),
           }),
         );
       },
@@ -92,12 +91,15 @@ chat.post("/", async (c) => {
         ? message.split(": ").slice(1).join(": ")
         : "No AI provider configured. Go to Settings → AI Provider to set one up.";
       return c.json(
-        { error: providerMsg, code: "API_KEY_MISSING" },
+        { error: providerMsg, code: "API_KEY_MISSING", provider: requestProvider, retryable: false },
         422
       );
     }
 
-    return serverError(c, err, { message: extractErrorMessage(err), context: { endpoint: "chat" } });
+    return serverError(c, err, {
+      message: serializeChatError(err, requestProvider),
+      context: { endpoint: "chat", provider: requestProvider },
+    });
   }
 });
 

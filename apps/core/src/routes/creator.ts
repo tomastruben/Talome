@@ -12,6 +12,7 @@ import {
   getAnthropicApiKey,
   publishCreatorDraft,
 } from "../creator/orchestrator.js";
+import { validateDesignArtifacts } from "../creator/workspace-executor.js";
 import { writeAuditEntry } from "../db/audit.js";
 import { captureRouteError, serverError } from "../middleware/request-logger.js";
 
@@ -178,20 +179,30 @@ creator.post("/create/complete", async (c) => {
     const manifestPath = join(scaffoldPath, "manifest.json");
     const hasManifest = existsSync(manifestPath);
 
+    const creatorJsonPath = join(workspaceRoot, ".talome-creator", "blueprint.json");
+    let blueprintData: Record<string, unknown> = {};
+    try {
+      blueprintData = JSON.parse(readFileSync(creatorJsonPath, "utf-8"));
+    } catch { /* best effort */ }
+
+    const usesStagedDesignWorkflow = Boolean(
+      blueprintData.research || blueprintData.experienceDesign,
+    );
+    const designValidations = usesStagedDesignWorkflow
+      ? await validateDesignArtifacts(workspaceRoot)
+      : [];
+    const failedDesignValidations = designValidations.filter((check) => check.status === "failed");
+    const workflowError = failedDesignValidations.length > 0
+      ? failedDesignValidations.map((check) => check.details || check.label).join("; ")
+      : undefined;
+
     // Re-publish: copy scaffold files to user-apps install directory
     // This ensures any changes Claude Code made during the interactive session
     // (new files, modified compose, etc.) are reflected in the installed app.
     const { createUserApp } = await import("../stores/creator.js");
     let republishError: string | undefined;
 
-    if (hasCompose || hasManifest) {
-      // Read the creator.json if it exists to get the full input data
-      const creatorJsonPath = join(workspaceRoot, ".talome-creator", "blueprint.json");
-      let blueprintData: Record<string, unknown> = {};
-      try {
-        blueprintData = JSON.parse(readFileSync(creatorJsonPath, "utf-8"));
-      } catch { /* best effort */ }
-
+    if ((hasCompose || hasManifest) && !workflowError) {
       // Read manifest for metadata
       let manifest: Record<string, unknown> = {};
       if (hasManifest) {
@@ -220,6 +231,13 @@ creator.post("/create/complete", async (c) => {
             fileCount: filesGenerated.length,
             entryFiles: [],
             sourceSnapshots: [],
+            designArtifacts: usesStagedDesignWorkflow
+              ? [
+                  ".talome-creator/research/findings.md",
+                  ".talome-creator/design/screen-spec.md",
+                  ".talome-creator/validation/report.md",
+                ]
+              : [],
             generatedWithClaudeCode: true,
           },
           createdAt: new Date().toISOString(),
@@ -236,12 +254,14 @@ creator.post("/create/complete", async (c) => {
     writeAuditEntry("AI: creator_complete", "read", `Validated ${appId}: ${filesGenerated.length} files`);
 
     return c.json({
-      ok: !republishError,
+      ok: !republishError && !workflowError,
       appId,
       filesGenerated,
       fileCount: filesGenerated.length,
       hasCompose,
       hasManifest,
+      designValidations,
+      error: workflowError,
       republishError,
       duration,
     });

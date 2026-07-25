@@ -101,8 +101,13 @@ export function desktopMinimizeOffset(
   };
 }
 
-function windowTransform(x: number, y: number, scale: number): string {
-  return `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+function windowTransform(
+  x: number,
+  y: number,
+  scaleX: number,
+  scaleY = scaleX,
+): string {
+  return `translate3d(${x}px, ${y}px, 0) scale3d(${scaleX}, ${scaleY}, 1)`;
 }
 
 export function desktopWindowMotionKeyframes(
@@ -111,23 +116,48 @@ export function desktopWindowMotionKeyframes(
 ): DesktopWindowMotionKeyframes {
   const minimizeTransforms = [
     windowTransform(0, 0, 1),
-    windowTransform(offset.x * 0.72, offset.y * 0.72, 0.3),
-    windowTransform(offset.x, offset.y, 0.04),
+    windowTransform(offset.x * 0.16, offset.y * 0.12, 0.98, 0.96),
+    windowTransform(offset.x * 0.78, offset.y * 0.76, 0.3, 0.16),
+    windowTransform(offset.x, offset.y, 0.035, 0.018),
   ];
-  const minimizeOpacity = [1, 0.72, 0];
+  const minimizeOpacity = [1, 1, 0.68, 0];
 
   if (direction === "minimize") {
     return {
       transform: minimizeTransforms,
       opacity: minimizeOpacity,
-      times: [0, 0.72, 1],
+      times: [0, 0.24, 0.76, 1],
     };
   }
 
   return {
     transform: [...minimizeTransforms].reverse(),
     opacity: [...minimizeOpacity].reverse(),
-    times: [0, 0.28, 1],
+    times: [0, 0.2, 0.68, 1],
+  };
+}
+
+/**
+ * Resize from the bottom-right without ever letting the resize affordance move
+ * outside the live desktop. This is intentionally separate from window
+ * dragging, where keeping only the titlebar reachable is valid desktop
+ * behavior.
+ */
+export function resizeDesktopBounds(
+  bounds: DesktopBounds,
+  area: DesktopArea,
+  minimum: Pick<DesktopBounds, "width" | "height">,
+): DesktopBounds {
+  const x = Math.max(0, bounds.x);
+  const y = Math.max(0, bounds.y);
+  const maxWidth = Math.max(minimum.width, area.width - x);
+  const maxHeight = Math.max(minimum.height, area.height - y);
+
+  return {
+    x,
+    y,
+    width: Math.min(Math.max(bounds.width, minimum.width), maxWidth),
+    height: Math.min(Math.max(bounds.height, minimum.height), maxHeight),
   };
 }
 

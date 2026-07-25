@@ -27,6 +27,10 @@ import {
   shareStackFile,
   type StackCapsuleResponse,
 } from "@/lib/stack-sharing";
+import {
+  resolveApplicationIcon,
+  resolveApplicationIconUrl,
+} from "@/components/native-app/native-app-icons";
 
 export default function SharePage() {
   const { apps, isLoading } = useInstalledApps();
@@ -529,12 +533,13 @@ function AppSelectorIcon({
 }: {
   app: { iconUrl?: string; icon?: string; name: string };
 }) {
-  const hasImage = app.iconUrl && !app.iconUrl.startsWith("file://");
+  const iconUrl = resolveApplicationIconUrl(app.iconUrl);
+  const fallbackIcon = resolveApplicationIcon(app.icon, app.name);
 
-  if (hasImage) {
+  if (iconUrl) {
     return (
       <Image
-        src={app.iconUrl!}
+        src={iconUrl}
         alt=""
         width={28}
         height={28}
@@ -543,18 +548,10 @@ function AppSelectorIcon({
     );
   }
 
-  if (app.icon && app.icon !== "📦") {
-    return (
-      <div className="size-7 rounded-lg bg-muted/50 flex items-center justify-center shrink-0 text-sm leading-none">
-        {app.icon}
-      </div>
-    );
-  }
-
   return (
     <div className="size-7 rounded-lg bg-muted/50 flex items-center justify-center shrink-0">
       <HugeiconsIcon
-        icon={Package01Icon}
+        icon={fallbackIcon}
         size={14}
         className="text-dim-foreground"
       />

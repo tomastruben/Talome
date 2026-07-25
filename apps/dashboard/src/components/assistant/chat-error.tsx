@@ -4,6 +4,7 @@ import type { MouseEvent, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { HugeiconsIcon, AlertCircleIcon } from "@/components/icons";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+import { parseAssistantError } from "@/lib/assistant-chat-error";
 
 function AssistantDashboardLink({
   href,
@@ -30,33 +31,6 @@ function AssistantDashboardLink({
   );
 }
 
-function getErrorMessageForDisplay(error: Error): string {
-  const e = error as unknown as Record<string, unknown>;
-  const data = e?.data;
-  if (data && typeof data === "object" && data !== null) {
-    const errObj = (data as Record<string, unknown>)?.error;
-    if (
-      errObj &&
-      typeof errObj === "object" &&
-      typeof (errObj as Record<string, unknown>).message === "string"
-    ) {
-      return (errObj as Record<string, unknown>).message as string;
-    }
-  }
-
-  const msg = e?.message ?? "";
-  if (typeof msg === "string" && msg.trim().startsWith("{")) {
-    try {
-      const parsed = JSON.parse(msg) as { error?: { message?: string } };
-      if (parsed?.error?.message) return parsed.error.message;
-    } catch {
-      // ignore malformed JSON and fall through to raw message
-    }
-  }
-
-  return (typeof msg === "string" ? msg : String(msg)) || "Failed to get a response. Please try again.";
-}
-
 export function AssistantChatError({
   error,
   provider = "anthropic",
@@ -66,47 +40,56 @@ export function AssistantChatError({
   provider?: string;
   onDismiss: () => void;
 }) {
-  const displayMessage = getErrorMessageForDisplay(error);
-  const providerLabel = provider === "openai"
+  const parsedError = parseAssistantError(error, provider);
+  const displayMessage = parsedError.message;
+  const errorProvider = parsedError.provider;
+  const providerLabel = errorProvider === "openai"
     ? "OpenAI"
-    : provider === "ollama"
+    : errorProvider === "ollama"
       ? "Ollama"
-      : provider === "anthropic"
+      : errorProvider === "anthropic"
         ? "Anthropic"
-        : provider;
-  const billingUrl = provider === "openai"
+        : errorProvider;
+  const billingUrl = errorProvider === "openai"
     ? "https://platform.openai.com/settings/organization/billing/overview"
-    : provider === "anthropic"
+    : errorProvider === "anthropic"
       ? "https://console.anthropic.com/settings/billing"
       : null;
 
-  const isApiKeyError =
-    displayMessage.includes("API key") ||
-    displayMessage.includes("API_KEY_MISSING");
+  const isAuthenticationError = parsedError.code === "authentication_failed";
+  const isConfigurationError = parsedError.code === "provider_not_configured" || parsedError.code === "api_key_missing";
+  const isCreditError = parsedError.code === "insufficient_credits";
+  const isBudgetError = parsedError.code === "daily_cap_exceeded";
+  const isRateLimitError = parsedError.code === "rate_limited";
 
-  const isCreditError =
-    displayMessage.includes("credit balance is too low") ||
-    displayMessage.includes("CREDIT_BALANCE_TOO_LOW");
-
-  const isBudgetError =
-    displayMessage.includes("Daily AI budget") ||
-    displayMessage.includes("DAILY_CAP_EXCEEDED");
-
-  const title = isApiKeyError
+  const title = isConfigurationError
     ? "No API key configured"
+    : isAuthenticationError
+      ? `${providerLabel} authentication failed`
     : isCreditError
       ? `${providerLabel} credit balance too low`
       : isBudgetError
         ? "Daily AI budget reached"
+        : isRateLimitError
+          ? `${providerLabel} rate limit reached`
         : "Something went wrong";
 
-  const body = isApiKeyError ? (
+  const body = isConfigurationError ? (
     <>
       Add your {providerLabel} API key in{" "}
       <AssistantDashboardLink href="/dashboard/settings">
         Settings
       </AssistantDashboardLink>{" "}
       to start using the assistant.
+    </>
+  ) : isAuthenticationError ? (
+    <>
+      {providerLabel} rejected the configured credentials. Check or replace the
+      API key in{" "}
+      <AssistantDashboardLink href="/dashboard/settings">
+        Settings
+      </AssistantDashboardLink>
+      .
     </>
   ) : isCreditError ? (
     <>
@@ -133,6 +116,8 @@ export function AssistantChatError({
       </AssistantDashboardLink>
       .
     </>
+  ) : isRateLimitError ? (
+    <>The provider is temporarily busy. Wait a moment and try again.</>
   ) : (
     displayMessage
   );

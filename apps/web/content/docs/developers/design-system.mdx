@@ -25,6 +25,20 @@ These principles apply to all UI work -- dashboard pages, generated apps, new co
 
 **Dark mode is the default** -- all UI must look correct in dark mode. There is no light mode toggle. Colors are chosen for dark backgrounds first. This simplifies the design system and matches the typical home server environment (terminals, monitoring dashboards).
 
+### Dark-mode review gate
+
+Dark mode is a release criterion, not a stylistic preference. Before a dashboard change or generated app is marked complete:
+
+- render every primary surface with the real Talome `.dark` class active
+- inspect default, hover, focus, selected, disabled, loading, empty, error, success, and overlay states used by the primary workflow
+- verify normal text reaches WCAG AA 4.5:1 contrast and large text plus essential UI graphics reach 3:1
+- inspect charts and SVGs in the browser: axes, grids, gradients, nodes, links, labels, legends, and tooltips must resolve to visible semantic colors
+- use CSS-safe implementation keys for chart series and SVG paint identifiers; keep human-readable labels separate instead of interpolating spaces into CSS custom-property names or SVG IDs
+- review the full desktop window and every compact/narrow layout the surface supports
+- capture visual evidence and check the browser console after exercising the workflow
+
+Black-on-black data marks, transparent primary data, unresolved CSS variables, missing focus, or unreadable overlays block release even when tests compile and the DOM contains the expected values.
+
 ---
 
 ## Color Palette
@@ -179,7 +193,35 @@ export { UptimeMonitorIcon } from "@hugeicons/core-free-icons";
 
 ## Components
 
-All UI primitives live in `apps/dashboard/src/components/ui/`. They are pre-installed shadcn/ui components. Never recreate them.
+All UI primitives live in `apps/dashboard/src/components/ui/`. They are based on shadcn/ui and owned as Talome source code. Never recreate a primitive that already exists.
+
+### Approved Component Sources
+
+Use this priority order for dashboard work and generated applications:
+
+1. **Existing Talome components** -- reuse a proven Talome component or pattern first.
+2. **shadcn/ui primitives and blocks** -- prefer polished, production-ready shadcn components over bespoke markup. Premium shadcn-compatible blocks may be used when Talome has a valid license.
+3. **Skiper UI, including Pro components** -- use the configured `@skiper-ui` shadcn registry for distinctive, high-quality interactions when a simpler Talome or shadcn component cannot express the experience as well.
+4. **Custom components** -- build a new component only when the approved sources do not provide an appropriate foundation. Promote reusable results into the Talome component registry.
+
+The source library is an implementation accelerator, not the visual authority. After installation, every component becomes a Talome component and must follow this guide.
+
+### Adoption Checklist
+
+Before an imported shadcn block or Skiper UI component is used:
+
+- install or copy its source into the Talome codebase; do not depend on a remotely rendered component
+- replace Lucide and other icon imports with HugeIcons through `@/components/icons`
+- replace raw colors, gradients, shadows, radii, typography, and spacing with Talome semantic tokens and scales
+- reduce motion to Talome's sub-200ms, ease-out interaction model; remove bounce, spring overshoot, decorative parallax, and cursor effects
+- preserve keyboard operation, visible focus, accessible names, reduced-motion behavior, and adequate target sizes
+- verify full desktop, compact window, and narrow/mobile layouts
+- remove demo content, hard-coded data, unnecessary dependencies, and decorative controls
+- record the component source and license when required
+
+Premium does not mean more decoration. Select premium components for interaction quality, craft, and robustness. If the effect competes with the user's task, do not use it.
+
+Skiper UI free components require attribution under Skiper UI's published terms; Pro components require a valid Talome license. Never commit `SKIPER_LICENSE_KEY`, expose it to the browser, or place it in generated app specifications.
 
 ### Available Primitives
 
@@ -209,8 +251,9 @@ Dashboard widgets live in `apps/dashboard/src/components/widgets/`:
 
 ### Rules
 
-- **Never install alternative UI libraries.** No Material UI, no Chakra, no Ant Design.
-- **Extend existing components, don't fork them.** If a shadcn component doesn't do exactly what you need, compose it with other components rather than copying and modifying the source.
+- **Never install a competing runtime UI system.** No Material UI, Chakra, or Ant Design. Approved shadcn-compatible source registries are not competing runtime systems because their code is absorbed into Talome.
+- **Compose before creating.** If a Talome or shadcn component does not do exactly what you need, compose it with other approved components before writing a bespoke primitive.
+- **Curate Skiper UI.** Do not import a component unchanged merely because it looks premium. Adapt it using the adoption checklist and place the reusable result behind a Talome-owned name and API.
 - **Generated app UIs should use these same components.** When the app creation system generates a UI, it should feel like a native Talome page.
 
 ---

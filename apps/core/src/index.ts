@@ -32,6 +32,7 @@ import { setupRoutes } from "./routes/setup.js";
 import { agentLoop as agentLoopRoute } from "./routes/agent-loop.js";
 import { tools as toolsRoute } from "./routes/tools.js";
 import { widgets } from "./routes/widgets.js";
+import { appSpecs } from "./routes/app-specs.js";
 import { community } from "./routes/community.js";
 import { proxy } from "./routes/proxy.js";
 import { mdns as mdnsRoute } from "./routes/mdns.js";
@@ -68,7 +69,7 @@ import { eq } from "drizzle-orm";
 import { startTelegramBot } from "./messaging/telegram.js";
 // discord-bot.js is imported dynamically below to avoid loading discord.js at startup
 import { checkDockerConnection, startPeriodicPrune } from "./docker/client.js";
-import { safeRoute, rateLimit, requireSession, requireRole, requirePermission, requestLogger } from "./middleware/index.js";
+import { safeRoute, rateLimit, requireSession, requireRole, requireAnyPermission, requirePermission, requestLogger } from "./middleware/index.js";
 import { errorTracker } from "./middleware/error-tracker.js";
 import { getRequestId, getRequestStart } from "./middleware/request-logger.js";
 import { randomUUID } from "node:crypto";
@@ -86,6 +87,7 @@ import { randomBytes } from "node:crypto";
 import { DAEMON_PORT } from "./terminal-constants.js";
 import { isDaemonAlive, spawnDaemon, ensureDaemonRunning } from "./terminal-spawn.js";
 import { createLogger } from "./utils/logger.js";
+import { backfillUserAppSpecs } from "./app-specs/backfill.js";
 
 const startupLog = createLogger("startup");
 const shutdownLog = createLogger("shutdown");
@@ -206,6 +208,10 @@ try {
 
 try {
   initializeStores();
+  const nativeBackfillCount = backfillUserAppSpecs();
+  if (nativeBackfillCount > 0) {
+    startupLog.info(`Added native AppSpecs to ${nativeBackfillCount} legacy user app(s)`);
+  }
 } catch (err) {
   startupLog.error("initializeStores failed", err);
   process.exit(1);
@@ -391,7 +397,13 @@ app.use("/api/audiobooks/*", requirePermission("audiobooks"));
 app.use("/api/files/*", requirePermission("files"));
 app.use("/api/automations/*", requirePermission("automations"));
 app.use("/api/apps/*", requirePermission("apps"));
+app.use("/api/app-specs", requirePermission("apps"));
+app.use("/api/app-specs/*", requirePermission("apps"));
 app.use("/api/chat/*", requirePermission("chat"));
+app.use("/api/widgets", requirePermission("dashboard"));
+app.use("/api/widgets/*", requirePermission("dashboard"));
+app.use("/api/audit-log", requireAnyPermission("dashboard", "intelligence"));
+app.use("/api/audit-log/*", requireAnyPermission("dashboard", "intelligence"));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.route("/api/auth", auth);
@@ -423,6 +435,7 @@ app.route("/api/memories", memories);
 app.route("/api/suggestions", suggestionsRoute);
 app.route("/api/integrations", integrations);
 app.route("/api/widgets", widgets);
+app.route("/api/app-specs", appSpecs);
 app.route("/api/community", community);
 app.route("/api/proxy", proxy);
 app.route("/api/mdns", mdnsRoute);

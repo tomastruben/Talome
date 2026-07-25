@@ -26,6 +26,7 @@ import { formatBytes } from "@/lib/format";
 
 interface DesktopControlCenterProps {
   audiobookPlayer: DesktopAudiobookPlayerController;
+  canOpenDashboard: boolean;
   onOpenAudiobooks: () => void;
   onOpenDownloads: () => void;
   onOpenDashboard: () => void;
@@ -166,6 +167,7 @@ function ControlCenterSection({ children }: { children: ReactNode }) {
 
 export function DesktopControlCenter({
   audiobookPlayer,
+  canOpenDashboard,
   onOpenAudiobooks,
   onOpenDownloads,
   onOpenDashboard,
@@ -210,13 +212,15 @@ export function DesktopControlCenter({
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <ControlCenterTile
-          icon={DashboardSquare02Icon}
-          label="Widgets"
-          detail="Customize layout"
-          onClick={onOpenDashboard}
-        />
+      <div className={canOpenDashboard ? "grid grid-cols-2 gap-2" : "grid grid-cols-1 gap-2"}>
+        {canOpenDashboard ? (
+          <ControlCenterTile
+            icon={DashboardSquare02Icon}
+            label="Widgets"
+            detail="Customize layout"
+            onClick={onOpenDashboard}
+          />
+        ) : null}
         <ControlCenterTile
           icon={Image01Icon}
           label="Wallpaper"

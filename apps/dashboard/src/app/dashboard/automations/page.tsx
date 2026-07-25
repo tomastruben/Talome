@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { CORE_URL } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
@@ -101,6 +102,8 @@ function stepSummary(row: AutomationRow): string {
 }
 
 export default function AutomationsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { data, mutate } = useSWR<{ automations: AutomationRow[] }>(
     `${CORE_URL}/api/automations`,
     fetcher,
@@ -123,8 +126,16 @@ export default function AutomationsPage() {
     if (!sheetOpen) setEditAutomation(null);
   }, [sheetOpen]);
 
-  const rows = data?.automations ?? [];
+  const rows = useMemo(() => data?.automations ?? [], [data?.automations]);
   const recentFailures = failuresData?.failures ?? [];
+  const requestedAutomationId = searchParams.get("id");
+
+  useEffect(() => {
+    if (!requestedAutomationId || rows.length === 0) return;
+    if (editAutomation?.id === requestedAutomationId) return;
+    const requested = rows.find((row) => row.id === requestedAutomationId);
+    if (requested) setEditAutomation(requested);
+  }, [editAutomation?.id, requestedAutomationId, rows]);
 
   function openEdit(row: AutomationRow) {
     setEditAutomation(row);
@@ -321,7 +332,13 @@ export default function AutomationsPage() {
         key={editAutomation?.id ?? "new"}
         open={sheetOpen || editAutomation !== null}
         onOpenChange={(v) => {
-          if (!v) { closeSheet(); setEditAutomation(null); }
+          if (!v) {
+            closeSheet();
+            setEditAutomation(null);
+            if (requestedAutomationId) {
+              router.replace("/dashboard/automations", { scroll: false });
+            }
+          }
         }}
         automation={editAutomation}
         onSaved={() => mutate()}

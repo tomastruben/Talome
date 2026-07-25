@@ -3,6 +3,10 @@ import Image from "next/image";
 import Link from "next/link";
 import type { CatalogApp } from "@talome/types";
 import { HugeiconsIcon, Delete02Icon, AiChat02Icon, ArrowUp01Icon } from "@/components/icons";
+import {
+  resolveApplicationIcon,
+  resolveApplicationIconUrl,
+} from "@/components/native-app/native-app-icons";
 
 const SOURCE_LABELS: Record<string, string> = {
   talon: "Talome",
@@ -25,8 +29,9 @@ export function AppCard({ app, onDelete, priority = false, eager = false, hasUpd
 
   const isInstalled = !!app.installed;
   const status = app.installed?.status;
-  const hasRealIcon = isRemoteUrl(app.iconUrl) && !iconFailed;
-  const isUserCreated = app.storeId === "user-apps";
+  const resolvedIconUrl = resolveApplicationIconUrl(app.iconUrl);
+  const hasRealIcon = !!resolvedIconUrl && !iconFailed;
+  const fallbackIcon = resolveApplicationIcon(app.icon, app.name);
   const screenshotCover = (app.screenshots || []).find(isRemoteUrl);
   const coverUrl = !coverFailed ? (isRemoteUrl(app.coverUrl) ? app.coverUrl : screenshotCover) : undefined;
   const categoryLabel = app.category.charAt(0).toUpperCase() + app.category.slice(1);
@@ -96,7 +101,7 @@ export function AppCard({ app, onDelete, priority = false, eager = false, hasUpd
           <div className="app-card-icon">
             {hasRealIcon ? (
               <Image
-                src={app.iconUrl!}
+                src={resolvedIconUrl!}
                 alt=""
                 className="object-cover" fill
                 sizes="42px"
@@ -104,7 +109,9 @@ export function AppCard({ app, onDelete, priority = false, eager = false, hasUpd
                 onError={() => setIconFailed(true)}
               />
             ) : null}
-            <span className={hasRealIcon ? "hidden" : ""}>{app.icon}</span>
+            {!hasRealIcon && (
+              <HugeiconsIcon icon={fallbackIcon} size={20} className="text-dim-foreground" />
+            )}
           </div>
 
           <div className="min-w-0 flex-1">

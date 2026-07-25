@@ -6,6 +6,7 @@ import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { serverError } from "../middleware/request-logger.js";
 import { getSetting } from "../utils/settings.js";
+import { resolveAudioContentType } from "../utils/audio-content-type.js";
 
 const COVER_CACHE_DIR = join(homedir(), ".talome", "cache", "covers");
 const ALLOWED_WIDTHS = [120, 240, 400] as const;
@@ -341,15 +342,39 @@ audiobooks.get("/file/:itemId/:ino", async (c) => {
     });
 
     if (!res.ok && res.status !== 206) {
-      return c.text("Audio file not found", 404);
+      const status = res.status === 416
+        ? 416
+        : res.status === 401 || res.status === 403 || res.status === 404
+          ? res.status
+          : 502;
+      const contentRange = res.headers.get("content-range");
+      const responseHeaders: Record<string, string> = {
+        "Cache-Control": "private, no-store",
+        Vary: "Range",
+      };
+      if (contentRange) responseHeaders["Content-Range"] = contentRange;
+      return c.text(status === 416 ? "Requested audio range is not satisfiable" : "Audio stream unavailable", status, responseHeaders);
     }
 
     const responseHeaders = new Headers();
-    for (const key of ["content-type", "content-length", "content-range", "accept-ranges"]) {
+    for (const key of [
+      "content-length",
+      "content-range",
+      "accept-ranges",
+      "content-disposition",
+      "etag",
+      "last-modified",
+    ]) {
       const val = res.headers.get(key);
       if (val) responseHeaders.set(key, val);
     }
-    responseHeaders.set("Cache-Control", "public, max-age=86400");
+    responseHeaders.set("Content-Type", resolveAudioContentType(res.headers.get("content-type")));
+    responseHeaders.set("Accept-Ranges", res.headers.get("accept-ranges") ?? "bytes");
+    // Partial responses are tied to an authenticated library item and Range.
+    // Let the media element own its buffer instead of allowing Safari or an
+    // intermediary cache to reuse a stale byte range for a later chapter.
+    responseHeaders.set("Cache-Control", "private, no-store");
+    responseHeaders.set("Vary", "Range");
 
     return new Response(res.body, {
       status: res.status,

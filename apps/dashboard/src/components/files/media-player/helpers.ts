@@ -49,15 +49,53 @@ export function langLabel(code: string): string {
     chi: "Chinese", zho: "Chinese", kor: "Korean", ara: "Arabic", hin: "Hindi",
     pol: "Polish", dut: "Dutch", nld: "Dutch", swe: "Swedish", nor: "Norwegian",
     dan: "Danish", fin: "Finnish", tur: "Turkish", tha: "Thai", vie: "Vietnamese",
+    ces: "Czech", cze: "Czech", slk: "Slovak", slo: "Slovak", ukr: "Ukrainian",
+    hun: "Hungarian", ron: "Romanian", rum: "Romanian", heb: "Hebrew",
+    ell: "Greek", gre: "Greek", bul: "Bulgarian", hrv: "Croatian", srp: "Serbian",
     und: "Unknown",
   };
-  return map[code] ?? code.toUpperCase();
+  const normalized = code.trim().toLowerCase().split(/[-_]/, 1)[0] || "und";
+  return map[normalized] ?? normalized.toUpperCase();
 }
 
 export function trackLabel(track: { language: string; title: string; index: number }, fallback: string): string {
-  if (track.title) return track.title;
-  if (track.language && track.language !== "und") return langLabel(track.language);
+  const title = track.title.trim();
+  const language = track.language.trim().toLowerCase();
+  const meaningfulTitle = title && !/^(audio|sound)(handler| track)?$/i.test(title);
+  if (meaningfulTitle && language && language !== "und") {
+    const label = langLabel(language);
+    return title.toLowerCase().includes(label.toLowerCase()) ? title : `${label} · ${title}`;
+  }
+  if (meaningfulTitle) return title;
+  if (language && language !== "und") return langLabel(language);
   return `${fallback} ${track.index + 1}`;
+}
+
+export function channelLabel(channels: number): string {
+  if (channels === 1) return "Mono";
+  if (channels === 2) return "Stereo";
+  if (channels === 6) return "5.1";
+  if (channels === 8) return "7.1";
+  return channels > 0 ? `${channels} ch` : "";
+}
+
+export function defaultAudioTrackIndex(
+  tracks: Array<{ index: number; isDefault?: boolean }>,
+): number {
+  return tracks.find((track) => track.isDefault)?.index ?? tracks[0]?.index ?? 0;
+}
+
+/** Convert a media element's relative HLS time into the movie's absolute time. */
+export function audioSwitchPosition(
+  mode: PlaybackMode,
+  mediaTime: number,
+  hlsOffset: number,
+  fallbackTime = 0,
+): number {
+  const time = Number.isFinite(mediaTime) && mediaTime >= 0
+    ? (mode === "hls" ? hlsOffset + mediaTime : mediaTime)
+    : fallbackTime;
+  return Number.isFinite(time) && time > 0 ? time : 0;
 }
 
 // ── File helpers ─────────────────────────────────────────────────────────
@@ -89,12 +127,15 @@ export interface PlaybackStrategy {
 }
 
 /**
- * Start browser-native containers immediately. Metadata probing and Jellyfin
- * discovery can still upgrade the source, but neither is allowed to gate MP4
- * playback behind an "Analyzing" screen.
+ * Do not guess from the container alone. An MP4 can still carry AC-3, DTS, or
+ * another browser-incompatible track, and mounting it before the codec probe
+ * completes makes fallback depend on which request wins a race. Explicit
+ * direct-play requests remain immediate; normal playback waits for the bounded
+ * local probe and then chooses one deterministic source.
  */
 export function initialPlaybackMode(fileName: string, preferDirect = false): PlaybackMode {
-  return preferDirect || DIRECT_PLAY_EXTS.has(fileExt(fileName)) ? "direct" : "deciding";
+  void fileName;
+  return preferDirect ? "direct" : "deciding";
 }
 
 /** Select the quickest safe local playback path from ffprobe metadata. */

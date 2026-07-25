@@ -51,7 +51,7 @@ const GENERAL_ITEMS: SettingsLink[] = [
 ];
 
 const AI_ITEMS: SettingsLink[] = [
-  { slug: "ai-provider", icon: AiCloudIcon, title: "AI Provider", description: "Anthropic, OpenAI, and Ollama keys" },
+  { slug: "ai-provider", icon: AiCloudIcon, title: "AI Provider", description: "Anthropic, OpenAI, Kimi, and Ollama keys" },
   { slug: "intelligence", icon: AiMagicIcon, title: "Intelligence", description: "Agent loop, auto-remediation, self-improvement", adminOnly: true },
   { slug: "ai-cost", icon: ChartIcon, title: "API Cost", description: "Track spend, set daily caps, view usage breakdown" },
   { slug: "ai-tools", icon: ToolsIcon, title: "AI Tools", description: "Manage built-in and custom tools" },
@@ -95,7 +95,11 @@ function CategoryLabel({ children }: { children: React.ReactNode }) {
 
 function SettingsLinkRow({ item }: { item: SettingsLink }) {
   return (
-    <Link href={`/dashboard/settings/${item.slug}`} className="block">
+    <Link
+      href={`/dashboard/settings/${item.slug}`}
+      data-desktop-navigation="bypass"
+      className="block"
+    >
       <div className="px-4 py-3.5 flex items-center gap-3 hover:bg-muted/30 transition-colors cursor-pointer">
         <div className="size-8 rounded-lg bg-muted/50 flex items-center justify-center shrink-0">
           <HugeiconsIcon icon={item.icon} size={16} className="text-muted-foreground" />

@@ -7,6 +7,12 @@ interface VaultwardenConfig {
   adminToken: string;
 }
 
+function isValidEmail(value: string): boolean {
+  const at = value.indexOf("@");
+  const dot = value.lastIndexOf(".");
+  return at > 0 && dot > at + 1 && dot < value.length - 1 && !/\s/.test(value);
+}
+
 function getVwConfig(): VaultwardenConfig | null {
   const baseUrl = getSetting("vaultwarden_url");
   const adminToken = getSetting("vaultwarden_admin_token");
@@ -68,9 +74,14 @@ export const vaultwardenGetStatusTool = tool({
 export const vaultwardenInviteUserTool = tool({
   description: "Invite a user to join Vaultwarden by email. They will receive an invite link.",
   inputSchema: z.object({
-    email: z.string().email().describe("Email address to invite"),
+    // Keep validation out of the generated JSON Schema: Zod's email regex uses
+    // lookaround, which some model providers reject before the Assistant runs.
+    email: z.string().min(3).max(320).describe("Valid email address to invite"),
   }),
   execute: async ({ email }) => {
+    if (!isValidEmail(email)) {
+      return { success: false, error: "Enter a valid email address." };
+    }
     const result = await vwFetch("/admin/invite", {
       method: "POST",
       body: JSON.stringify({ email }),

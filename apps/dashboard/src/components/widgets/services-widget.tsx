@@ -21,13 +21,19 @@ import { Widget, WidgetHeader } from "./widget";
 import { WidgetList, WidgetListSkeleton, WidgetListState } from "./list-widget";
 import { cn } from "@/lib/utils";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+import {
+  resolveApplicationIcon,
+  resolveApplicationIconUrl,
+} from "@/components/native-app/native-app-icons";
 import type { Container, ServiceStack } from "@talome/types";
 
 // ── Icon with status badge ───────────────────────────────────────────────────
 
-function ServiceIcon({ url, icon, size = "md" }: { url: string; icon?: string; size?: "sm" | "md" }) {
+function ServiceIcon({ url, icon, name, size = "md" }: { url: string; icon?: string; name?: string; size?: "sm" | "md" }) {
   const [failed, setFailed] = useState(false);
-  if (failed) return <span className={size === "sm" ? "text-xs" : "text-sm"}>{icon || "📦"}</span>;
+  const fallbackIcon = resolveApplicationIcon(icon, name);
+  const iconSize = size === "sm" ? 10 : 14;
+  if (failed) return <HugeiconsIcon icon={fallbackIcon} size={iconSize} className="text-dim-foreground" />;
   return (
     <Image
       src={url}
@@ -43,18 +49,22 @@ function ServiceIcon({ url, icon, size = "md" }: { url: string; icon?: string; s
 function StatusIcon({
   iconUrl,
   icon,
+  name,
   fallbackIcon,
   status,
   size = "md",
 }: {
   iconUrl?: string | null;
   icon?: string;
+  name?: string;
   fallbackIcon?: typeof Package01Icon;
   status: "running" | "partial" | "stopped" | string;
   size?: "sm" | "md";
 }) {
-  const realUrl = iconUrl && !iconUrl.startsWith("file://") ? iconUrl : null;
-  const FallbackIcon = fallbackIcon ?? Package01Icon;
+  const realUrl = resolveApplicationIconUrl(iconUrl);
+  const FallbackIcon = icon || name
+    ? resolveApplicationIcon(icon, name)
+    : fallbackIcon ?? Package01Icon;
   const sizeClass = size === "sm" ? "size-5 rounded-md" : "size-7 rounded-lg";
   const iconSize = size === "sm" ? 10 : 14;
   const badgeSize = size === "sm" ? "size-1.5" : "size-2";
@@ -70,9 +80,7 @@ function StatusIcon({
         sizeClass,
       )}>
         {realUrl ? (
-          <ServiceIcon url={realUrl} icon={icon} size={size} />
-        ) : icon && icon !== "📦" ? (
-          <span className={size === "sm" ? "text-xs" : "text-sm"}>{icon}</span>
+          <ServiceIcon url={realUrl} icon={icon} name={name} size={size} />
         ) : (
           <HugeiconsIcon icon={FallbackIcon} size={iconSize} className="text-dim-foreground" />
         )}
@@ -151,6 +159,7 @@ function StackRow({
         <StatusIcon
           iconUrl={stack.iconUrl}
           icon={stack.icon}
+          name={stack.name}
           fallbackIcon={FallbackIcon}
           status={stack.status}
         />
@@ -219,6 +228,7 @@ function StackRow({
                 <StatusIcon
                   iconUrl={ci?.iconUrl}
                   icon={ci?.icon}
+                  name={ci?.name ?? container.name}
                   status={container.status}
                   size="sm"
                 />

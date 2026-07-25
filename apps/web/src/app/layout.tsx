@@ -14,28 +14,29 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://talome.dev"),
   icons: {
     icon: [
       { url: "/icon.svg", type: "image/svg+xml" },
       { url: "/favicon.png", type: "image/png", sizes: "32x32" },
     ],
   },
-  title: "Talome — The Self-Evolving Server",
+  title: "Talome — Your Server, Now a Desktop That Thinks",
   description:
-    "Open-source platform with AI that installs your apps, wires your services, and rewrites its own code to get better. Self-hosting, evolved.",
+    "A self-hosted desktop workspace with AI that installs apps, connects services, fixes problems, and improves the system behind it.",
   openGraph: {
-    title: "Talome — The Self-Evolving Server",
+    title: "Talome — Your Server, Now a Desktop That Thinks",
     description:
-      "Open-source platform with AI that installs your apps, wires your services, and rewrites its own code to get better.",
+      "A self-hosted desktop workspace with AI that installs apps, connects services, fixes problems, and improves the system behind it.",
     type: "website",
     siteName: "Talome",
     images: [{ url: "/og-image.png", width: 1200, height: 630 }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Talome — The Self-Evolving Server",
+    title: "Talome — Your Server, Now a Desktop That Thinks",
     description:
-      "Self-hosting, evolved. AI that manages your server and improves its own code.",
+      "Your server, now a desktop that thinks. Self-hosted apps, files, media, terminals, and AI in one workspace.",
   },
 };
 

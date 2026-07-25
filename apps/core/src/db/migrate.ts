@@ -74,6 +74,45 @@ export function runMigrations() {
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_user_invitations_email ON user_invitations(email)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_user_invitations_expires_at ON user_invitations(expires_at)`);
 
+  // New feature permissions must not silently grant a restricted member
+  // access merely because their older permission JSON predates the feature.
+  // New users still receive the current default set from getDefaultPermissions.
+  const intelligencePermissionMigration = db.get(
+    sql`SELECT version FROM schema_versions WHERE version = 19`,
+  );
+  if (!intelligencePermissionMigration) {
+    const memberRows = db.all(
+      sql`SELECT id, permissions FROM users WHERE role = 'member' AND permissions IS NOT NULL`,
+    ) as Array<{ id: string; permissions: string }>;
+    for (const row of memberRows) {
+      try {
+        const permissions = JSON.parse(row.permissions) as Record<string, unknown>;
+        if (!("intelligence" in permissions)) {
+          permissions.intelligence = false;
+          db.run(sql`UPDATE users SET permissions = ${JSON.stringify(permissions)} WHERE id = ${row.id}`);
+        }
+      } catch {
+        // Preserve malformed legacy data; the existing permission fallback
+        // remains responsible for handling it.
+      }
+    }
+
+    const invitationRows = db.all(
+      sql`SELECT id, permissions FROM user_invitations WHERE role = 'member' AND permissions IS NOT NULL`,
+    ) as Array<{ id: string; permissions: string }>;
+    for (const row of invitationRows) {
+      try {
+        const permissions = JSON.parse(row.permissions) as Record<string, unknown>;
+        if (!("intelligence" in permissions)) {
+          permissions.intelligence = false;
+          db.run(sql`UPDATE user_invitations SET permissions = ${JSON.stringify(permissions)} WHERE id = ${row.id}`);
+        }
+      } catch {
+        // Ignore malformed invitation data; invitation validation will reject it.
+      }
+    }
+  }
+
   // ── Public stack share links ──────────────────────────────────────────────
   db.run(sql`CREATE TABLE IF NOT EXISTS shared_stacks (
     id TEXT PRIMARY KEY,
@@ -397,6 +436,21 @@ export function runMigrations() {
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`);
+
+  db.run(sql`CREATE TABLE IF NOT EXISTS app_specs (
+    id TEXT PRIMARY KEY,
+    app_id TEXT NOT NULL,
+    store_source_id TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    revision INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'draft',
+    spec_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(store_source_id, app_id)
+  )`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_app_specs_status ON app_specs(status)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_app_specs_app ON app_specs(store_source_id, app_id)`);
 
   db.run(sql`CREATE TABLE IF NOT EXISTS evolution_log (
     id TEXT PRIMARY KEY,
@@ -910,6 +964,8 @@ export function runMigrations() {
   recordMigration(15, "Setup loop: setup_runs and setup_attempts for autonomous app configuration");
   recordMigration(16, "Account-scoped UI preferences");
   recordMigration(17, "Family invitations and expiring public stack share links");
+  recordMigration(18, "Native apps: versioned declarative AppSpecs");
+  recordMigration(19, "Members: default legacy Intelligence permission to disabled");
 
   console.log("Database migrations complete");
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildCodexCommand } from "@/components/terminal/terminal-page";
+import { buildCodexCommand, buildKimiCommand } from "@/components/terminal/terminal-page";
 
 describe("buildCodexCommand", () => {
   afterEach(() => {
@@ -27,6 +27,36 @@ describe("buildCodexCommand", () => {
     );
     expect(command).toContain(
       'else cd "/Volumes/Media Hub/dev/Talome" && "$codex_bin" resume --last; fi',
+    );
+  });
+});
+
+describe("buildKimiCommand", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("resolves the native Kimi Code CLI for a new tmux session", () => {
+    vi.spyOn(Date, "now").mockReturnValue(5678);
+
+    const command = buildKimiCommand("/Users/tomas/.talome/server", false);
+
+    expect(command).toContain('kimi_bin="$(command -v kimi 2>/dev/null)"');
+    expect(command).toContain('[ -x "$HOME/.kimi-code/bin/kimi" ]');
+    expect(command).toContain(
+      'tmux new-session -s talome-kimi-5678 "\\"$kimi_bin\\""',
+    );
+    expect(command).toContain('else cd /Users/tomas/.talome/server && "$kimi_bin"; fi');
+  });
+
+  it("continues the native Kimi session and enables auto mode", () => {
+    const command = buildKimiCommand("/Volumes/Media Hub/dev/Talome", true, true);
+
+    expect(command).toContain(
+      'cd "/Volumes/Media Hub/dev/Talome" && tmux new-session -A -s talome-kimi "\\"$kimi_bin\\" --continue --auto"',
+    );
+    expect(command).toContain(
+      'else cd "/Volumes/Media Hub/dev/Talome" && "$kimi_bin" --continue --auto; fi',
     );
   });
 });

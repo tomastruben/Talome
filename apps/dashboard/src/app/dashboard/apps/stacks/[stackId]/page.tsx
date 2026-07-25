@@ -10,12 +10,15 @@ import { pageTitleAtom } from "@/atoms/page-title";
 import { Button } from "@/components/ui/button";
 import {
   HugeiconsIcon,
-  Package01Icon,
   ArrowRight01Icon,
   AiChat02Icon,
   CheckmarkCircle01Icon,
 } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
+import {
+  resolveApplicationIcon,
+  resolveApplicationIconUrl,
+} from "@/components/native-app/native-app-icons";
 import type { StackApp, EnrichedStackApp } from "@talome/types";
 
 /* ── Types ─────────────────────────────────────────────── */
@@ -138,19 +141,21 @@ export default function StackDetailPage() {
             const ports = extractPorts(app.compose);
             const hasLink = !!app.storeId;
             const isInstalled = !!app.installed;
-            const hasIcon = app.iconUrl && !app.iconUrl.startsWith("file://");
+            const iconUrl = resolveApplicationIconUrl(app.iconUrl);
             const envVars = app.configSchema?.envVars ?? [];
             const requiredVars = envVars.filter((v) => v.required && !v.secret);
 
             const content = (
               <div className="px-4 py-3.5 flex items-center gap-3 hover:bg-muted/20 transition-colors">
                 <div className="size-9 rounded-lg bg-muted/50 flex items-center justify-center shrink-0 text-base overflow-hidden relative">
-                  {hasIcon ? (
-                    <Image src={app.iconUrl!} alt="" className="object-cover" fill sizes="36px" />
-                  ) : app.icon ? (
-                    <span>{app.icon}</span>
+                  {iconUrl ? (
+                    <Image src={iconUrl} alt="" className="object-cover" fill sizes="36px" />
                   ) : (
-                    <HugeiconsIcon icon={Package01Icon} size={16} className="text-muted-foreground" />
+                    <HugeiconsIcon
+                      icon={resolveApplicationIcon(app.icon, app.name)}
+                      size={16}
+                      className="text-muted-foreground"
+                    />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">

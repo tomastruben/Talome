@@ -159,6 +159,13 @@ describe("allTools registration", () => {
     expect(toolNames).toContain("design_app_blueprint");
   });
 
+  it.each(["list_native_apps", "inspect_native_app", "run_native_app_action"])(
+    "has native application tool: %s",
+    (toolName) => {
+      expect(toolNames).toContain(toolName);
+    },
+  );
+
   it("every tool has an execute function", () => {
     for (const [name, toolDef] of Object.entries(getAllRegisteredTools())) {
       expect(typeof (toolDef as Record<string, unknown>).execute, `${name}.execute`).toBe("function");

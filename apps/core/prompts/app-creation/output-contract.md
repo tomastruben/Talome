@@ -2,6 +2,9 @@
 
 Expected output set:
 
+- `.talome-creator/research/findings.md` with verified source and library decisions
+- `.talome-creator/design/screen-spec.md` with research-resolved workflows and screens
+- `.talome-creator/validation/report.md` with rendered and functional evidence
 - `manifest.json`
 - `docker-compose.yml`
 - creator metadata describing blueprint, validations, and provenance

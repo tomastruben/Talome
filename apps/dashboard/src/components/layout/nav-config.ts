@@ -44,7 +44,7 @@ export const contentNav: NavItem[] = [
 /** Operations — managing what runs */
 export const operationsNav: NavItem[] = [
   { title: "Automations", url: "/dashboard/automations", icon: FlashIcon, permission: "automations" },
-  { title: "Intelligence", url: "/dashboard/intelligence", icon: AiMagicIcon },
+  { title: "Intelligence", url: "/dashboard/intelligence", icon: AiMagicIcon, permission: "intelligence" },
   { title: "Bug Hunt", url: "/dashboard/bug-hunt", icon: Bug01Icon, adminOnly: true, action: "bug-hunt" },
 ];
 

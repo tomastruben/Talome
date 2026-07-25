@@ -3,15 +3,20 @@ import type { IconSvgElement } from "@/components/icons";
 // ── Track info from probe / Jellyfin ────────────────────────────────────
 
 export interface AudioTrackInfo {
+  /** Zero-based audio ordinal used by ffmpeg's `0:a:N` selector. */
   index: number;
+  /** Original container/Jellyfin stream index, useful for diagnostics only. */
+  streamIndex?: number;
   codec: string;
   language: string;
   title: string;
   channels: number;
+  isDefault?: boolean;
 }
 
 export interface SubtitleTrackInfo {
   index: number;
+  streamIndex?: number;
   codec: string;
   language: string;
   title: string;

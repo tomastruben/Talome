@@ -1,32 +1,41 @@
+"use client";
+
 import Link from "next/link";
+import { useReducedMotion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { HeroHeader } from "./header";
 import { InstallCommand } from "./install-command";
 import { HelixBg } from "./helix-bg";
 
 export default function HeroSection() {
+  const reduceMotion = useReducedMotion();
+
   return (
     <>
       <HeroHeader />
       <main className="overflow-x-hidden">
         <section className="relative">
           <div className="relative z-10 mx-auto max-w-7xl px-6 pb-24 pt-44 text-center lg:px-12 lg:pt-56 lg:pb-32">
-            <div className="mb-8">
-              <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-primary">Public Alpha</span>
+            <div className="mb-8 flex flex-wrap items-center justify-center gap-2">
+              <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-primary">
+                Desktop mode
+              </span>
+              <span className="rounded-full border border-border/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                Public alpha
+              </span>
             </div>
 
             <h1 className="gradient-heading mx-auto max-w-4xl text-balance text-5xl font-medium leading-[1.06] tracking-tight md:text-6xl lg:text-7xl">
-              Install apps. Fix problems.
+              Your server, now a desktop
               <br />
-              Improve its own code.
+              that thinks.
             </h1>
 
             <p className="mx-auto mt-8 max-w-2xl text-balance text-lg leading-relaxed text-muted-foreground">
-              A reasoning system that lives on your machine. 219 tools,
-              17 deep integrations, autonomous monitoring, and — we checked
-              twice — the ability to rewrite its own source code.
-              Your hardware. Your house. Still a bit of a weird sentence
-              to type.
+              Apps, files, media, terminals, and AI working side by side in one
+              spatial workspace. Talome installs, connects, diagnoses, and
+              improves the system behind it. Your hardware. Your data. Your
+              desktop.
             </p>
 
             <div className="mt-12 space-y-6">
@@ -56,9 +65,9 @@ export default function HeroSection() {
 
             <div className="relative mx-auto mt-24 max-w-4xl lg:mt-28">
               <video
-                autoPlay
+                autoPlay={!reduceMotion}
                 muted
-                loop
+                loop={!reduceMotion}
                 playsInline
                 preload="metadata"
                 poster="/hero-poster.jpg"

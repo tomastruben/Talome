@@ -66,6 +66,9 @@ import {
   formatTime,
   getVolumeIcon,
   trackLabel,
+  channelLabel,
+  defaultAudioTrackIndex,
+  audioSwitchPosition,
   chooseLocalPlaybackStrategy,
   initialPlaybackMode,
   isSafari,
@@ -123,6 +126,14 @@ interface ProbeResponse extends PlaybackProbe {
   subtitle?: SubtitleTrackInfo[];
 }
 
+interface AudioSwitchState {
+  from: number;
+  to: number;
+  position: number;
+  wasPlaying: boolean;
+  rollbackAttempted: boolean;
+}
+
 // ── MediaSlider (from extracted module) ──────────────────────────────────
 import { MediaSlider } from "./media-player/media-slider";
 
@@ -142,7 +153,6 @@ export function VideoPlayer({
   onPrevious,
   nextLabel,
   previousLabel,
-  preferOriginal,
   preferDirect,
 }: VideoPlayerProps) {
   // ── Assistant (for "Ask Talome" on error) ──────────────────────────────
@@ -177,8 +187,11 @@ export function VideoPlayer({
   const [hlsSeekOffset, setHlsSeekOffset] = useState(0);
   const hlsStartedAt = useRef(0);
   const hlsHashRef = useRef<string | null>(null);
+  const hlsClientIdRef = useRef("");
   const [hlsRetry, setHlsRetry] = useState(0);
-  const hlsRetryCount = useRef(0);
+  const localHlsRetryCount = useRef(0);
+  const jellyfinHlsRetryCount = useRef(0);
+  const localHlsRetryPending = useRef(false);
 
   // ── Transmux state ─────────────────────────────────────────────────────
   const [transmuxSrc, setTransmuxSrc] = useState<string | null>(null);
@@ -194,6 +207,12 @@ export function VideoPlayer({
   const [selectedSub, setSelectedSub] = useState<number | null>(null);
   const [subVttText, setSubVttText] = useState<string | null>(null);
   const [subBlobUrl, setSubBlobUrl] = useState<string | null>(null);
+  const selectedAudioRef = useRef(selectedAudio);
+  const audioSelectionTouchedRef = useRef(false);
+  const localProbeReadyRef = useRef(false);
+  const audioTrackPathRef = useRef("");
+  const audioSwitchRef = useRef<AudioSwitchState | null>(null);
+  selectedAudioRef.current = selectedAudio;
 
   // ── Speed ──────────────────────────────────────────────────────────────
   const [speed, setSpeed] = useState(() => loadSpeed());
@@ -256,87 +275,84 @@ export function VideoPlayer({
   // ── Probe file for tracks (all browsers) ──────────────────────────────
   useEffect(() => {
     if (!filePath) return;
+    if (audioTrackPathRef.current !== filePath) {
+      audioTrackPathRef.current = filePath;
+      audioSelectionTouchedRef.current = false;
+      localProbeReadyRef.current = false;
+      audioSwitchRef.current = null;
+      setAudioTracks([]);
+      setSelectedAudio(0);
+    }
+    if (!hlsClientIdRef.current) {
+      hlsClientIdRef.current = window.crypto.randomUUID?.()
+        ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
     let cancelled = false;
 
     void (async () => {
+      const applyAudioTracks = (tracks: AudioTrackInfo[] | undefined, authoritative: boolean) => {
+        if (!tracks?.length) return;
+        if (!authoritative && localProbeReadyRef.current) return;
+        if (authoritative) localProbeReadyRef.current = true;
+        setAudioTracks(tracks);
+        if (!audioSelectionTouchedRef.current) {
+          setSelectedAudio(defaultAudioTrackIndex(tracks));
+        }
+      };
+
+      const applyJellyfinMetadata = (jf: JellyfinPlaybackResponse | null) => {
+        if (!jf?.available || cancelled) return;
+        jfSessionRef.current = {
+          jellyfinBaseUrl: jf.jellyfinBaseUrl,
+          apiKey: jf.apiKey,
+          itemId: jf.itemId,
+          mediaSourceId: jf.mediaSourceId,
+          playSessionId: jf.playSessionId,
+        };
+        setHasJfSession(true);
+        applyAudioTracks(jf.audioTracks, false);
+        if (jf.subtitleTracks?.length) {
+          setSubtitleTracks(jf.subtitleTracks.filter((s) => s.isTextBased));
+        }
+        if ((jf.duration ?? 0) > 0) setDuration(jf.duration ?? 0);
+        if ((jf.resumePositionTicks ?? 0) > 0) {
+          setResumePosition((jf.resumePositionTicks ?? 0) / 10_000_000);
+        }
+        if (jf.chapters?.length) setChapters(jf.chapters);
+        if (jf.directPlayUrl) jfDirectPlayUrl.current = jf.directPlayUrl;
+        if (jf.transcodeUrl) jfTranscodeUrl.current = jf.transcodeUrl;
+        if (jf.transcodeQualities?.length) setJfQualities(jf.transcodeQualities);
+        if (jf.trickplay) setTrickplay(jf.trickplay);
+      };
+
+      const jellyfinPromise: Promise<JellyfinPlaybackResponse | null> =
+        isMediaLibrary && !preferDirect
+          ? fetchJsonWithDeadline<JellyfinPlaybackResponse>(
+              `${apiBase}/jellyfin-playback`,
+              {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path: filePath }),
+              },
+              3_500,
+            )
+              .then(({ response, data }) => response.ok ? data : null)
+              .catch(() => null)
+          : Promise.resolve(null);
+
+      // Jellyfin enriches resume/tracks and gives us an independent fallback,
+      // but it must not race an already-starting local source. A slow or flaky
+      // Jellyfin lookup used to replace the video URL mid-start, making the same
+      // movie work or fail depending on response timing.
+      void jellyfinPromise.then(applyJellyfinMetadata);
+
       try {
-        // For media library items (movies/TV), use Jellyfin PlaybackInfo.
-        // Skip for file-browser items (audiobooks, raw files).
-        // When preferDirect is set, skip Jellyfin entirely and use Talome's stream.
         if (preferDirect) {
           setPlaybackMode("direct");
           setHlsReady(true);
+          setError(false);
           return;
-        }
-        if (isMediaLibrary) {
-          try {
-            const { response: jfRes, data: jf } = await fetchJsonWithDeadline<JellyfinPlaybackResponse>(
-              `${apiBase}/jellyfin-playback`, {
-              method: "POST",
-              credentials: "include",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ path: filePath }),
-            }, 1_500);
-            if (jfRes.ok && !cancelled) {
-              if (jf.available) {
-                // Store session info for progress reporting
-                jfSessionRef.current = {
-                  jellyfinBaseUrl: jf.jellyfinBaseUrl,
-                  apiKey: jf.apiKey,
-                  itemId: jf.itemId,
-                  mediaSourceId: jf.mediaSourceId,
-                  playSessionId: jf.playSessionId,
-                };
-                setHasJfSession(true);
-
-                // Set tracks from Jellyfin MediaStreams
-                if (jf.audioTracks?.length) setAudioTracks(jf.audioTracks);
-                if (jf.subtitleTracks?.length) setSubtitleTracks(
-                  jf.subtitleTracks.filter((s: { isTextBased: boolean }) => s.isTextBased),
-                );
-                if ((jf.duration ?? 0) > 0) setDuration(jf.duration ?? 0);
-
-                // Resume position from Jellyfin
-                if ((jf.resumePositionTicks ?? 0) > 0) {
-                  setResumePosition((jf.resumePositionTicks ?? 0) / 10_000_000);
-                }
-
-                // Chapters from Jellyfin
-                if (jf.chapters?.length) {
-                  setChapters(jf.chapters);
-                }
-
-                // Store both URLs for quality selector
-                if (jf.directPlayUrl) jfDirectPlayUrl.current = jf.directPlayUrl;
-                if (jf.transcodeUrl) jfTranscodeUrl.current = jf.transcodeUrl;
-                if (jf.transcodeQualities?.length) setJfQualities(jf.transcodeQualities);
-
-                // Trickplay data from backend response
-                if (jf.trickplay) {
-                  setTrickplay(jf.trickplay);
-                }
-
-                const useDirectPlay = (jf.playMethod === "DirectPlay" || preferOriginal) && jf.directPlayUrl;
-                if (useDirectPlay) {
-                  setJellyfinSrc(jf.directPlayUrl ?? null);
-                  setPlaybackMode("jellyfin");
-                  setCurrentQuality(-2);
-                  setHlsReady(true);
-                } else if (jf.transcodeUrl) {
-                  setHlsSrc(jf.transcodeUrl ?? null);
-                  setPlaybackMode("jellyfin-hls");
-                  // Select the first Jellyfin quality preset if available, otherwise default
-                  setCurrentQuality(jf.transcodeQualities?.length ? 100 : -1);
-                } else {
-                  // Neither direct play nor transcode available — fall through to Talome probe
-                }
-
-                if (useDirectPlay || jf.transcodeUrl) {
-                  return; // Jellyfin handles playback — skip Talome pipeline
-                }
-              }
-            }
-          } catch { /* Jellyfin unavailable — fall through to Talome pipeline */ }
         }
 
         const { response: res, data } = await fetchJsonWithDeadline<ProbeResponse>(
@@ -347,14 +363,27 @@ export function VideoPlayer({
         if (!res.ok || cancelled) {
           // Fail open: a missing probe must never strand playback in "Analyzing".
           if (!cancelled) {
-            const fallback = initialPlaybackMode(fileName, preferDirect);
-            setPlaybackMode(fallback === "deciding" ? "hls" : fallback);
-            setHlsReady(fallback === "direct");
+            const jf = await jellyfinPromise;
+            if (cancelled) return;
+            if (jf?.available && jf.playMethod === "DirectPlay" && jf.directPlayUrl) {
+              setJellyfinSrc(jf.directPlayUrl);
+              setPlaybackMode("jellyfin");
+              setCurrentQuality(-2);
+              setHlsReady(true);
+            } else if (jf?.available && jf.transcodeUrl) {
+              setHlsSrc(jf.transcodeUrl);
+              setPlaybackMode("jellyfin-hls");
+              setCurrentQuality(jf.transcodeQualities?.length ? 100 : -1);
+            } else {
+              const fallback = initialPlaybackMode(fileName, preferDirect);
+              setPlaybackMode(fallback === "deciding" ? "hls" : fallback);
+              setHlsReady(fallback === "direct");
+            }
           }
           return;
         }
         if (cancelled) return;
-        if (data.audio) setAudioTracks(data.audio);
+        applyAudioTracks(data.audio, true);
         if (data.subtitle) setSubtitleTracks(data.subtitle.filter((s: SubtitleTrackInfo) => s.textBased));
         if ((data.duration ?? 0) > 0) setDuration(data.duration ?? 0);
 
@@ -367,6 +396,7 @@ export function VideoPlayer({
           setPlaybackMode(strategy.mode);
           setHlsReady(strategy.ready);
           setProbedVideoCodec(data.videoCodec ?? "");
+          setError(false);
 
           // Queue for permanent optimization so it direct-plays next time.
           if (strategy.needsOptimization) {
@@ -388,7 +418,7 @@ export function VideoPlayer({
     })();
 
     return () => { cancelled = true; };
-  }, [filePath, fileName, apiBase, baseUrl, isMediaLibrary, preferDirect, preferOriginal]);
+  }, [filePath, fileName, apiBase, baseUrl, isMediaLibrary, preferDirect]);
 
   // ── Stop current transmux job (fire-and-forget) ───────────────────────
   const stopCurrentTransmux = useCallback(() => {
@@ -399,7 +429,7 @@ export function VideoPlayer({
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hash }),
+      body: JSON.stringify({ hash, clientId: hlsClientIdRef.current }),
     }).catch(() => {});
   }, [apiBase]);
 
@@ -462,9 +492,59 @@ export function VideoPlayer({
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hash }),
+      body: JSON.stringify({ hash, clientId: hlsClientIdRef.current }),
     }).catch(() => {});
   }, [apiBase]);
+
+  const retryLocalHlsOrFail = useCallback(async () => {
+    if (localHlsRetryPending.current) return;
+    localHlsRetryPending.current = true;
+
+    const hash = hlsHashRef.current;
+    hlsHashRef.current = null;
+    if (hash) {
+      await fetch(`${apiBase}/hls-stop`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hash, clientId: hlsClientIdRef.current, force: true }),
+      }).catch(() => {});
+    }
+
+    if (localHlsRetryCount.current < 2) {
+      localHlsRetryCount.current += 1;
+      setError(false);
+      setHlsRetry((n) => n + 1);
+      return;
+    }
+
+    const switching = audioSwitchRef.current;
+    if (
+      switching
+      && selectedAudioRef.current === switching.to
+      && !switching.rollbackAttempted
+    ) {
+      switching.rollbackAttempted = true;
+      localHlsRetryCount.current = 0;
+      localHlsRetryPending.current = false;
+      setError(false);
+      setHlsSeekOffset(switching.position);
+      setSelectedAudio(switching.from);
+      setHlsRetry((n) => n + 1);
+      return;
+    }
+
+    localHlsRetryPending.current = false;
+    audioSwitchRef.current = null;
+    setError(true);
+  }, [apiBase]);
+
+  useEffect(() => {
+    localHlsRetryCount.current = 0;
+    jellyfinHlsRetryCount.current = 0;
+    localHlsRetryPending.current = false;
+    setError(false);
+  }, [filePath]);
 
   // ── HLS keep-alive ping ───────────────────────────────────────────────
   useEffect(() => {
@@ -518,7 +598,6 @@ export function VideoPlayer({
         body: JSON.stringify({ ItemId: itemId, MediaSourceId: mediaSourceId, PlaySessionId: playSessionId, PositionTicks: ticks }),
       }).catch(() => {});
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playbackMode]);
 
   // ── Clean up HLS job on true unmount ──────────────────────────────────
@@ -528,18 +607,18 @@ export function VideoPlayer({
     return () => {
       const capturedHash = hlsHashRef.current;
       const capturedApi = apiBaseRef.current;
+      const capturedClientId = hlsClientIdRef.current;
       setTimeout(() => {
         if (capturedHash && capturedHash !== hlsHashRef.current) {
           void fetch(`${capturedApi}/hls-stop`, {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ hash: capturedHash }),
+            body: JSON.stringify({ hash: capturedHash, clientId: capturedClientId }),
           }).catch(() => {});
         }
       }, 100);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Start HLS conversion, poll for first segment ─────────────────────
@@ -549,6 +628,8 @@ export function VideoPlayer({
     if (!filePath) { setError(true); return; }
 
     let cancelled = false;
+    localHlsRetryPending.current = false;
+    setError(false);
     setHlsReady(false);
     setHlsSrc(null);
 
@@ -556,42 +637,58 @@ export function VideoPlayer({
       try {
         const isHevc = probedVideoCodec === "hevc" || probedVideoCodec === "h265";
         const needsTranscode = (isHevc || !["h264", "hevc", "h265"].includes(probedVideoCodec)) ? "&transcodeVideo=1" : "";
-        const { response: startRes, data: startData } = await fetchJsonWithDeadline<{ hash: string; duration?: number }>(
-          `${apiBase}/hls-start?path=${encodeURIComponent(filePath)}&audioTrack=${selectedAudio}&seekTo=${hlsSeekOffset}${needsTranscode}`,
+        const { response: startRes, data: startData } = await fetchJsonWithDeadline<{ hash: string; duration?: number; selectedAudio?: number }>(
+          `${apiBase}/hls-start?path=${encodeURIComponent(filePath)}&audioTrack=${selectedAudio}&seekTo=${hlsSeekOffset}&clientId=${encodeURIComponent(hlsClientIdRef.current)}${needsTranscode}`,
           { credentials: "include" },
           8_000,
         );
-        if (!startRes.ok) { setError(true); return; }
+        if (!startRes.ok) { await retryLocalHlsOrFail(); return; }
         const { hash, duration: srcDuration } = startData;
         if (cancelled) return;
+
+        if (
+          Number.isInteger(startData.selectedAudio)
+          && startData.selectedAudio !== selectedAudioRef.current
+        ) {
+          setSelectedAudio(startData.selectedAudio ?? 0);
+        }
 
         hlsHashRef.current = hash;
         if ((srcDuration ?? 0) > 0) setDuration(srcDuration ?? 0);
         hlsStartedAt.current = Date.now();
 
         const playlistUrl = `${apiBase}/hls/${hash}/playlist.m3u8`;
-        const deadline = Date.now() + 15_000;
+        const deadline = Date.now() + 30_000;
         while (!cancelled && Date.now() < deadline) {
           try {
-            const res = await fetch(playlistUrl, { credentials: "include", method: "HEAD" });
-            if (res.ok) {
+            const controller = new AbortController();
+            const timeout = window.setTimeout(() => controller.abort(), 4_500);
+            const res = await fetch(playlistUrl, {
+              credentials: "include",
+              cache: "no-store",
+              signal: controller.signal,
+            }).finally(() => window.clearTimeout(timeout));
+            const playlist = res.ok ? await res.text() : "";
+            if (res.ok && playlist.startsWith("#EXTM3U")) {
               setHlsSrc(playlistUrl);
               setHlsReady(true);
+              setError(false);
+              localHlsRetryCount.current = 0;
               return;
             }
           } catch { /* not ready yet */ }
           await new Promise((r) => setTimeout(r, 300));
         }
-        if (!cancelled) setError(true);
+        if (!cancelled) await retryLocalHlsOrFail();
       } catch {
-        if (!cancelled) setError(true);
+        if (!cancelled) await retryLocalHlsOrFail();
       }
     };
 
     void init();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hlsRequired, filePath, selectedAudio, hlsSeekOffset, apiBase, hlsRetry]);
+  }, [hlsRequired, filePath, selectedAudio, hlsSeekOffset, apiBase, hlsRetry, retryLocalHlsOrFail]);
 
   // ── Fetch raw VTT text when subtitle selection changes ────────────────
   useEffect(() => {
@@ -925,46 +1022,46 @@ export function VideoPlayer({
     // Auto-cascade through all playback modes before showing the error screen.
     // The user should never have to pick a technical fallback — we try everything.
     if (playbackMode === "direct" || playbackMode === "direct-mkv") {
-      // Direct failed → use a streaming transcode. Never wait for a complete
-      // movie-sized transmux before showing the first frame.
-      if (jfTranscodeUrl.current) {
-        setHlsSrc(jfTranscodeUrl.current);
-        setPlaybackMode("jellyfin-hls");
-        return;
-      }
+      setError(false);
+      // Direct failed → use Talome's local HLS first. Jellyfin discovery is
+      // optional metadata/fallback and must not make playback depend on whether
+      // its slower request happened to finish before the browser's media error.
       setPlaybackMode("hls");
       return;
     }
     if (playbackMode === "jellyfin" && jfTranscodeUrl.current) {
       // Jellyfin direct play failed → try Jellyfin transcode
+      setError(false);
       setHlsSrc(jfTranscodeUrl.current);
       setPlaybackMode("jellyfin-hls");
       return;
     }
-    if (playbackMode === "jellyfin-hls" && hlsRetryCount.current < 1) {
+    if (playbackMode === "jellyfin-hls" && jellyfinHlsRetryCount.current < 1) {
       // Jellyfin HLS failed → retry once, then fall through to local HLS
-      hlsRetryCount.current += 1;
+      jellyfinHlsRetryCount.current += 1;
+      setError(false);
       setHlsRetry((n) => n + 1);
       return;
     }
     if (playbackMode === "jellyfin-hls") {
       // Jellyfin HLS exhausted → try Talome's local transcode
+      setError(false);
       setPlaybackMode("hls");
       return;
     }
     if (playbackMode === "transmux") {
       // Transmux failed → try local HLS
+      setError(false);
       setPlaybackMode("hls");
       return;
     }
-    if (hlsRequired && hlsRetryCount.current < 1) {
-      hlsRetryCount.current += 1;
-      setHlsRetry((n) => n + 1);
+    if (playbackMode === "hls") {
+      void retryLocalHlsOrFail();
       return;
     }
     // Everything failed — show the error screen
     setError(true);
-  }, [hlsRequired, playbackMode]);
+  }, [playbackMode, retryLocalHlsOrFail]);
 
   // ── Picture-in-Picture toggle ─────────────────────────────────────────
   const togglePiP = useCallback(async () => {
@@ -1056,27 +1153,35 @@ export function VideoPlayer({
 
   // ── Audio track switch ────────────────────────────────────────────────
   const handleAudioSwitch = useCallback((index: number) => {
-    if (index === selectedAudio) return;
-
-    if (!hlsRequired) {
-      const v = videoRef.current;
-      if (v) {
-        const tracks = (v as HTMLVideoElement & { audioTracks?: ArrayLike<{ enabled: boolean }> }).audioTracks;
-        if (tracks && tracks.length > 1) {
-          for (let i = 0; i < tracks.length; i++) {
-            tracks[i].enabled = i === index;
-          }
-        }
-      }
-      setSelectedAudio(index);
-      return;
-    }
+    if (index === selectedAudio || !audioTracks.some((track) => track.index === index)) return;
 
     const v = videoRef.current;
-    const pos = v ? hlsSeekOffset + (v.currentTime ?? 0) : hlsSeekOffset;
+    const pos = audioSwitchPosition(
+      playbackMode,
+      v?.currentTime ?? Number.NaN,
+      hlsSeekOffset,
+      currentTime,
+    );
+    audioSelectionTouchedRef.current = true;
+    audioSwitchRef.current = {
+      from: selectedAudio,
+      to: index,
+      position: pos,
+      wasPlaying: v ? !v.paused : playing,
+      rollbackAttempted: false,
+    };
+    localHlsRetryCount.current = 0;
+    localHlsRetryPending.current = false;
+    setError(false);
+    setHlsReady(false);
+    setCurrentQuality(-3);
     setHlsSeekOffset(pos);
     setSelectedAudio(index);
-  }, [selectedAudio, hlsRequired, hlsSeekOffset]);
+    // A language change always uses Talome's deterministic HLS selector. The
+    // browser audioTracks API is non-standard, and Jellyfin's HLS URL is bound
+    // to the original track unless an AudioStreamIndex is negotiated again.
+    setPlaybackMode("hls");
+  }, [audioTracks, selectedAudio, playbackMode, hlsSeekOffset, currentTime, playing]);
 
   // ── Resume from beginning ─────────────────────────────────────────────
   const startFromBeginning = useCallback(() => {
@@ -1093,10 +1198,22 @@ export function VideoPlayer({
   const handleCanPlay = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
+    // A later source can recover after an earlier native/HLS failure. Clear the
+    // stale terminal error as soon as the browser confirms playable media.
+    setError(false);
+    localHlsRetryCount.current = 0;
+    jellyfinHlsRetryCount.current = 0;
     if (resumePosition && !resumeApplied.current) {
       resumeApplied.current = true;
       v.currentTime = resumePosition;
       setCurrentTime(resumePosition);
+    }
+    const switching = audioSwitchRef.current;
+    if (switching) {
+      audioSwitchRef.current = null;
+      if (switching.wasPlaying && v.paused) v.play().catch(() => {});
+      if (!switching.wasPlaying && !v.paused) v.pause();
+      return;
     }
     // Ensure the video is actually playing — browsers may silently block
     // autoplay or stall when the src changes (e.g. Talome stream → Jellyfin URL).
@@ -1207,7 +1324,7 @@ export function VideoPlayer({
       setQualityLevels([]);
       setCurrentQuality(-1);
     };
-  }, [hlsRequired, hlsSrc, nativeHls, handleError, playbackMode]);
+  }, [hlsRequired, hlsSrc, nativeHls, handleError, playbackMode, hlsRetry]);
 
   // ═══════════════════════════════════════════════════════════════════════
   // KEYBOARD NAVIGATION
@@ -1396,6 +1513,9 @@ export function VideoPlayer({
   // LOADING / ERROR STATES
   // ═══════════════════════════════════════════════════════════════════════
 
+  const selectedAudioTrack = audioTracks.find((track) => track.index === selectedAudio) ?? audioTracks[0];
+  const defaultAudio = defaultAudioTrackIndex(audioTracks);
+  const isSwitchingAudio = audioSwitchRef.current !== null;
   const isProcessing = !error && (playbackMode === "deciding" || (playbackMode === "hls" && !hlsReady) || (playbackMode === "transmux" && !transmuxReady));
   const handleCancelProcessing = useCallback(() => {
     if (playbackMode === "transmux") stopCurrentTransmux();
@@ -1411,7 +1531,8 @@ export function VideoPlayer({
 
   if (isProcessing) {
     const hasProgress = playbackMode === "transmux" && transmuxProgress > 0;
-    const loadingMessage = playbackMode === "deciding" ? "Analyzing" :
+    const loadingMessage = isSwitchingAudio ? "Switching audio" :
+      playbackMode === "deciding" ? "Analyzing" :
       playbackMode === "transmux" ? "Preparing" :
       hlsSeekOffset > 0 ? `Seeking to ${formatTime(hlsSeekOffset)}` :
       "Preparing";
@@ -1439,7 +1560,7 @@ export function VideoPlayer({
           )}
         </div>
         <p className="text-sm text-white/25">
-          {loadingMessage}{audioTracks.length > 1 && selectedAudio > 0 ? ` · ${trackLabel(audioTracks[selectedAudio] ?? audioTracks[0], "Audio")}` : ""}
+          {loadingMessage}{isSwitchingAudio && selectedAudioTrack ? ` · ${trackLabel(selectedAudioTrack, "Audio")}` : ""}
         </p>
         <button
           onClick={handleCancelProcessing}
@@ -1505,8 +1626,11 @@ export function VideoPlayer({
           <button
             onClick={() => {
               setError(false);
-              setPlaybackMode("deciding");
-              hlsRetryCount.current = 0;
+              localHlsRetryCount.current = 0;
+              jellyfinHlsRetryCount.current = 0;
+              localHlsRetryPending.current = false;
+              setPlaybackMode("hls");
+              setHlsRetry((n) => n + 1);
             }}
             className={cn("text-white/20 hover:text-white/40 transition-colors", cinemaMode ? "text-sm" : "text-xs")}
           >
@@ -1598,7 +1722,7 @@ export function VideoPlayer({
         onPlay={() => setPlaying(true)}
         onPause={() => { setPlaying(false); setBuffering(false); }}
         onWaiting={() => { if (!videoRef.current?.paused) setBuffering(true); }}
-        onPlaying={() => setBuffering(false)}
+        onPlaying={() => { setBuffering(false); setError(false); }}
         onCanPlay={handleCanPlay}
         onEnded={() => {
           setPlaying(false);
@@ -1746,7 +1870,7 @@ export function VideoPlayer({
                       )}
                       {!cinemaMode && audioTracks.length > 1 && (
                         <span className="text-white/30 text-lg">
-                          {trackLabel(audioTracks[selectedAudio] ?? audioTracks[0], "Audio")}
+                          {selectedAudioTrack ? trackLabel(selectedAudioTrack, "Audio") : "Audio"}
                         </span>
                       )}
                       {!cinemaMode && selectedSub !== null && subtitleTracks.length > 0 && (
@@ -1772,8 +1896,8 @@ export function VideoPlayer({
                       <DropdownMenuTrigger asChild>
                         <button className="flex items-center gap-2.5 px-5 py-2.5 rounded-lg bg-black/50 hover:bg-black/70 transition-colors text-base text-white/70 hover:text-white">
                           <HugeiconsIcon icon={LanguageSkillIcon} size={20} />
-                          {trackLabel(audioTracks[selectedAudio] ?? audioTracks[0], "Audio")}
-                          {(audioTracks[selectedAudio]?.channels ?? 0) >= 6 && (
+                          {selectedAudioTrack ? trackLabel(selectedAudioTrack, "Audio") : "Audio"}
+                          {(selectedAudioTrack?.channels ?? 0) >= 6 && (
                             <span className="text-white/40 text-sm">5.1</span>
                           )}
                         </button>
@@ -1788,7 +1912,7 @@ export function VideoPlayer({
                               {trackLabel(track, "Audio")}
                               {track.channels > 0 && (
                                 <span className="ml-2 text-muted-foreground">
-                                  {track.channels >= 6 ? "5.1" : track.channels >= 8 ? "7.1" : `${track.channels}.0`}
+                                  {channelLabel(track.channels)}
                                 </span>
                               )}
                             </DropdownMenuRadioItem>
@@ -2068,7 +2192,7 @@ export function VideoPlayer({
                 {!cinemaMode && audioTracks.length > 1 && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button className={cn("flex items-center justify-center transition-colors", btnSizeSm, selectedAudio > 0 ? "text-white/90" : "text-white/50 hover:text-white")}>
+                      <button className={cn("flex items-center justify-center transition-colors", btnSizeSm, selectedAudio !== defaultAudio ? "text-white/90" : "text-white/50 hover:text-white")}>
                         <HugeiconsIcon icon={LanguageSkillIcon} size={iconSm} />
                       </button>
                     </DropdownMenuTrigger>
@@ -2077,7 +2201,7 @@ export function VideoPlayer({
                         {audioTracks.map((track) => (
                           <DropdownMenuRadioItem key={track.index} value={String(track.index)}>
                             {trackLabel(track, "Audio")}
-                            {track.channels > 0 && <span className="ml-1 text-muted-foreground">{track.channels >= 6 ? "5.1" : track.channels >= 8 ? "7.1" : `${track.channels}.0`}</span>}
+                            {track.channels > 0 && <span className="ml-1 text-muted-foreground">{channelLabel(track.channels)}</span>}
                           </DropdownMenuRadioItem>
                         ))}
                       </DropdownMenuRadioGroup>
@@ -2177,7 +2301,7 @@ export function VideoPlayer({
                         {audioTracks.map((track) => (
                           <DropdownMenuRadioItem key={track.index} value={String(track.index)}>
                             {trackLabel(track, "Audio")}
-                            {track.channels > 0 && <span className="ml-1 text-muted-foreground">{track.channels >= 6 ? "5.1" : `${track.channels}.0`}</span>}
+                            {track.channels > 0 && <span className="ml-1 text-muted-foreground">{channelLabel(track.channels)}</span>}
                           </DropdownMenuRadioItem>
                         ))}
                       </DropdownMenuRadioGroup>

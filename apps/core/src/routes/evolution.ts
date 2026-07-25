@@ -331,17 +331,18 @@ const TERMINAL_DAEMON_PORT = Number(process.env.TERMINAL_DAEMON_PORT) || 4001;
 
 // ── Bug Hunt — lightweight model for augmentation ────────────────────────────
 
-type AiProvider = "anthropic" | "openai" | "ollama";
+type AiProvider = "anthropic" | "openai" | "kimi" | "ollama";
 
 const LIGHTWEIGHT_MODELS: Record<AiProvider, string> = {
   anthropic: "claude-haiku-4-5-20251001",
   openai: "gpt-4o-mini",
+  kimi: "kimi-k3",
   ollama: "",
 };
 
 function getActiveProvider(): AiProvider {
   const stored = getSetting("ai_provider");
-  if (stored === "anthropic" || stored === "openai" || stored === "ollama") return stored;
+  if (stored === "anthropic" || stored === "openai" || stored === "kimi" || stored === "ollama") return stored;
   return "anthropic";
 }
 
@@ -360,6 +361,18 @@ function createLightweightModel() {
       const apiKey = getSetting("openai_key") || process.env.OPENAI_API_KEY;
       if (!apiKey) return null;
       return { model: createOpenAI({ apiKey })(modelId), modelId };
+    }
+    case "kimi": {
+      const apiKey = getSetting("kimi_key") || process.env.MOONSHOT_API_KEY;
+      if (!apiKey) return null;
+      return {
+        model: createOpenAI({
+          name: "moonshotai",
+          baseURL: "https://api.moonshot.ai/v1",
+          apiKey,
+        }).chat(modelId),
+        modelId,
+      };
     }
     case "ollama": {
       const url = getSetting("ollama_url");

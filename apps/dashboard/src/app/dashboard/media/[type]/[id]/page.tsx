@@ -68,6 +68,10 @@ import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { cn } from "@/lib/utils";
 import useSWR from "swr";
 import type { DownloadQueueItem } from "@talome/types";
+import {
+  getDownloadDisplayStatus,
+  getDownloadHealthFacts,
+} from "@/lib/download-status";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -219,8 +223,12 @@ function DownloadProgressCard({
 }) {
   const pct = Math.round((item.progress ?? 0) * 100);
   const isActive = item.status === "downloading" || (item.dlspeed ?? 0) > 0;
-  const isFailed = item.status === "failed" || item.status === "warning";
+  const displayStatus = getDownloadDisplayStatus(item);
+  const isFailed = displayStatus === "failed";
+  const isStalled = displayStatus === "stalled";
+  const isWarning = displayStatus === "warning";
   const isCompleted = item.status === "completed" || pct >= 100;
+  const healthFacts = isStalled ? getDownloadHealthFacts(item) : [];
 
   return (
     <div className="space-y-2">
@@ -229,9 +237,23 @@ function DownloadProgressCard({
         <div className="flex items-center gap-1.5 shrink-0">
           <span className={cn(
             "text-xs tabular-nums",
-            isFailed ? "text-destructive" : isCompleted ? "text-status-healthy" : "text-muted-foreground",
+            isFailed
+              ? "text-destructive"
+              : isStalled || isWarning
+                ? "text-status-warning"
+                : isCompleted
+                  ? "text-status-healthy"
+                  : "text-muted-foreground",
           )}>
-            {isFailed ? "Failed" : isCompleted ? "Complete" : `${pct}%`}
+            {isFailed
+              ? "Failed"
+              : isStalled
+                ? "Stalled"
+                : isWarning
+                  ? "Warning"
+                  : isCompleted
+                    ? "Complete"
+                    : `${pct}%`}
           </span>
           {onRemove && (
             <Tooltip>
@@ -256,6 +278,7 @@ function DownloadProgressCard({
         className={cn(
           "h-1",
           isFailed && "[&>[data-slot=progress-indicator]]:bg-destructive",
+          (isStalled || isWarning) && "[&>[data-slot=progress-indicator]]:bg-status-warning",
           isCompleted && "[&>[data-slot=progress-indicator]]:bg-status-healthy",
         )}
       />
@@ -275,6 +298,16 @@ function DownloadProgressCard({
 
       {isFailed && item.errorMessage && (
         <p className="text-xs text-destructive/80">{item.errorMessage}</p>
+      )}
+
+      {(isStalled || isWarning) && item.errorMessage && (
+        <p className="text-xs text-status-warning/90">{item.errorMessage}</p>
+      )}
+
+      {healthFacts.length > 0 && (
+        <p className="text-[11px] text-muted-foreground tabular-nums">
+          {healthFacts.join(" · ")}
+        </p>
       )}
     </div>
   );
@@ -484,6 +517,7 @@ export default function MediaDetailPage() {
         title: item.title,
         filePath: item.filePath,
         fileName,
+        artworkUrl: resolvePosterUrl(item.poster, 240) ?? undefined,
         preferOriginal: selectedPreQuality === "original",
         preferDirect: selectedPreQuality === "direct",
       }, window.location.origin);

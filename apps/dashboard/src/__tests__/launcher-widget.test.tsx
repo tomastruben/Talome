@@ -72,6 +72,7 @@ describe("LauncherWidget", () => {
       container: jellyfinContainer,
     }));
     expect(mocks.quickLookOpen).not.toHaveBeenCalled();
+    expect(screen.queryByText("🎬")).not.toBeInTheDocument();
   });
 
   it("keeps Quick Look as the default in classic mode", () => {

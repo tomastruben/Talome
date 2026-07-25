@@ -136,11 +136,6 @@ const WALLPAPER_PRESETS: readonly WallpaperPreset[] = [
     url: "/wallpapers/generated/talome-11.jpg",
   },
   {
-    id: "midnight-botanica",
-    name: "Midnight Botanica",
-    url: "/wallpapers/generated/talome-12.jpg",
-  },
-  {
     id: "liquid-glass",
     name: "Liquid Glass",
     url: "/wallpapers/generated/talome-13.jpg",
@@ -154,11 +149,6 @@ const WALLPAPER_PRESETS: readonly WallpaperPreset[] = [
     id: "bauhaus-horizon",
     name: "Bauhaus Horizon",
     url: "/wallpapers/generated/talome-15.jpg",
-  },
-  {
-    id: "deep-nebula",
-    name: "Deep Nebula",
-    url: "/wallpapers/generated/talome-17.jpg",
   },
   {
     id: "desert-observatory",
@@ -289,6 +279,141 @@ const WALLPAPER_PRESETS: readonly WallpaperPreset[] = [
     id: "sage-contours",
     name: "Sage Contours",
     url: "/wallpapers/generated/talome-46.jpg",
+  },
+  {
+    id: "mineral-veil",
+    name: "Mineral Veil",
+    url: "/wallpapers/generated/talome-47.jpg",
+  },
+  {
+    id: "porcelain-current",
+    name: "Porcelain Current",
+    url: "/wallpapers/generated/talome-48.jpg",
+  },
+  {
+    id: "quiet-fjord",
+    name: "Quiet Fjord",
+    url: "/wallpapers/generated/talome-49.jpg",
+  },
+  {
+    id: "desert-mirror",
+    name: "Desert Mirror",
+    url: "/wallpapers/generated/talome-50.jpg",
+  },
+  {
+    id: "ring-garden",
+    name: "Ring Garden",
+    url: "/wallpapers/generated/talome-51.jpg",
+  },
+  {
+    id: "twin-moons",
+    name: "Twin Moons",
+    url: "/wallpapers/generated/talome-52.jpg",
+  },
+  {
+    id: "azure-bloom",
+    name: "Azure Bloom",
+    url: "/wallpapers/generated/talome-53.jpg",
+  },
+  {
+    id: "violet-core",
+    name: "Violet Core",
+    url: "/wallpapers/generated/talome-54.jpg",
+  },
+  {
+    id: "arctic-ember",
+    name: "Arctic Ember",
+    url: "/wallpapers/generated/talome-55.jpg",
+  },
+  {
+    id: "teal-halo",
+    name: "Teal Halo",
+    url: "/wallpapers/generated/talome-56.jpg",
+  },
+  {
+    id: "silver-tempest",
+    name: "Silver Tempest",
+    url: "/wallpapers/generated/talome-57.jpg",
+  },
+  {
+    id: "porcelain-helix",
+    name: "Porcelain Helix",
+    url: "/wallpapers/generated/talome-63.jpg",
+  },
+  {
+    id: "mist-genome",
+    name: "Mist Genome",
+    url: "/wallpapers/generated/talome-64.jpg",
+  },
+  {
+    id: "coral-strand",
+    name: "Coral Strand",
+    url: "/wallpapers/generated/talome-65.jpg",
+  },
+  {
+    id: "dusk-ribbon",
+    name: "Dusk Ribbon",
+    url: "/wallpapers/generated/talome-66.jpg",
+  },
+  {
+    id: "silver-horizon",
+    name: "Silver Horizon",
+    url: "/wallpapers/generated/talome-67.jpg",
+  },
+  {
+    id: "copper-singularity",
+    name: "Copper Singularity",
+    url: "/wallpapers/generated/talome-68.jpg",
+  },
+  {
+    id: "polar-thread",
+    name: "Polar Thread",
+    url: "/wallpapers/generated/talome-69.jpg",
+  },
+  {
+    id: "distant-quasar",
+    name: "Distant Quasar",
+    url: "/wallpapers/generated/talome-70.jpg",
+  },
+  {
+    id: "gravity-veil",
+    name: "Gravity Veil",
+    url: "/wallpapers/generated/talome-71.jpg",
+  },
+  {
+    id: "obsidian-halo",
+    name: "Obsidian Halo",
+    url: "/wallpapers/generated/talome-72.jpg",
+  },
+  {
+    id: "blue-shift",
+    name: "Blue Shift",
+    url: "/wallpapers/generated/talome-73.jpg",
+  },
+  {
+    id: "quiet-horizon",
+    name: "Quiet Horizon",
+    url: "/wallpapers/generated/talome-74.jpg",
+  },
+  {
+    id: "pearl-event",
+    name: "Pearl Event",
+    url: "/wallpapers/generated/talome-75.jpg",
+  },
+  {
+    id: "violet-horizon",
+    name: "Violet Horizon",
+    url: "/wallpapers/generated/talome-76.jpg",
+  },
+  {
+    id: "amber-drift",
+    name: "Amber Drift",
+    url: "/wallpapers/generated/talome-77.jpg",
+  },
+  {
+    id: "whispered-lens",
+    name: "Whispered Lens",
+    url: "/wallpapers/generated/talome-78.jpg",
   },
 ];
 

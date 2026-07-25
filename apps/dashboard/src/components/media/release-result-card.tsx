@@ -55,7 +55,9 @@ export function ReleaseResultCard({
   onAction: () => void;
 }) {
   const seeders = release.seeders ?? 0;
-  const isRejected = release.rejected === true;
+  const isRejected = release.rejected === true
+    || release.downloadAllowed === false
+    || (release.rejections?.length ?? 0) > 0;
   const rejectionReason = release.rejections?.[0];
   // Always allow download — the user is on the media's page, so we know the target.
   // Radarr's downloadAllowed=false is just a parsing warning, not a hard block.
@@ -75,6 +77,7 @@ export function ReleaseResultCard({
       "flex items-center gap-2 rounded-md border px-2.5 py-2 transition-colors",
       isQueued ? "border-primary/20 bg-primary/5"
         : isSubmitted ? "border-status-healthy/20 bg-status-healthy/5"
+        : isRejected ? "border-status-warning/20 bg-status-warning/[0.035] hover:border-status-warning/35"
         : "border-border/30 hover:border-border/50",
     )}>
       {/* Content */}
@@ -101,6 +104,12 @@ export function ReleaseResultCard({
             </span>
           )}
         </div>
+        {isRejected && (
+          <p className="mt-1 truncate text-[11px] leading-tight text-status-warning/80">
+            <span className="font-medium">Outside profile</span>
+            {rejectionReason ? ` · ${rejectionReason}` : " · Review before downloading"}
+          </p>
+        )}
       </div>
 
       {/* Queue progress */}

@@ -21,8 +21,9 @@ import {
   resolveMediaFilePath,
 } from "../utils/media-paths.js";
 import {
-  probeFileAsync, startHls, hlsOutDirByHash, stopHls, touchJob, hasFfmpeg,
+  probeFileAsync, startHls, hlsOutDirByHash, stopHls, releaseHls, touchJob, hasFfmpeg,
   buildStreamResponse, startTransmux, stopTransmux, transmuxJobs, TRANSMUX_ROOT,
+  resolveAudioTrackIndex,
 } from "./files.js";
 import { parseContainerFormat } from "../utils/media-format.js";
 import {
@@ -180,6 +181,12 @@ interface QBitTorrent {
   upspeed: number;
   state: string;
   eta: number;
+  num_seeds?: number;
+  num_leechs?: number;
+  num_complete?: number;
+  num_incomplete?: number;
+  availability?: number;
+  added_on?: number;
 }
 
 interface ArrRelease {
@@ -434,7 +441,14 @@ async function fetchMovieTitle(movieId: string): Promise<string> {
   }
 }
 
-async function serviceGet(service: string, path: string): Promise<unknown> {
+const DEFAULT_SERVICE_GET_TIMEOUT_MS = 4_000;
+const RELEASE_SEARCH_TIMEOUT_MS = 60_000;
+
+async function serviceGet(
+  service: string,
+  path: string,
+  options?: { timeoutMs?: number },
+): Promise<unknown> {
   const baseUrl = getServiceUrl(service);
   const apiKey = getApiKey(service);
   if (!baseUrl) throw new Error(`${service} URL not configured`);
@@ -442,7 +456,7 @@ async function serviceGet(service: string, path: string): Promise<unknown> {
   const url = `${baseUrl}/api/v3${path}`;
   const res = await fetch(url, {
     headers: apiKey ? { "X-Api-Key": apiKey } : {},
-    signal: AbortSignal.timeout(4_000),
+    signal: AbortSignal.timeout(options?.timeoutMs ?? DEFAULT_SERVICE_GET_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`${service} API ${res.status}: ${res.statusText}`);
   return res.json();
@@ -926,6 +940,12 @@ media.get("/downloads", async (c) => {
           upspeed: t.upspeed,
           state: t.state,
           eta: t.eta,
+          connectedSeeds: t.num_seeds ?? 0,
+          connectedLeechers: t.num_leechs ?? 0,
+          swarmSeeds: t.num_complete ?? 0,
+          swarmLeechers: t.num_incomplete ?? 0,
+          availability: t.availability ?? null,
+          addedOn: t.added_on ?? null,
         }))
       : [];
 
@@ -971,6 +991,13 @@ media.get("/downloads", async (c) => {
             ? torrent.progress
             : size > 0 ? (size - (q.sizeleft ?? 0)) / size : 0,
           dlspeed: torrent?.dlspeed ?? 0,
+          torrentState: torrent?.state ?? null,
+          connectedSeeds: torrent?.connectedSeeds ?? 0,
+          connectedLeechers: torrent?.connectedLeechers ?? 0,
+          swarmSeeds: torrent?.swarmSeeds ?? 0,
+          swarmLeechers: torrent?.swarmLeechers ?? 0,
+          availability: torrent?.availability ?? null,
+          addedOn: torrent?.addedOn ?? null,
           eta: torrent
             ? torrent.eta
             : q.estimatedCompletionTime
@@ -1252,7 +1279,15 @@ media.get("/releases", async (c) => {
       }
     }
 
-    const raw = await serviceGet(app, `/release?${params.toString()}`);
+    // Interactive Arr searches fan out to every enabled indexer and commonly
+    // take longer than a regular status request. Keep the short default for
+    // ordinary API calls, but give this user-initiated search the same kind of
+    // budget as the Arr applications themselves.
+    const raw = await serviceGet(
+      app,
+      `/release?${params.toString()}`,
+      { timeoutMs: RELEASE_SEARCH_TIMEOUT_MS },
+    );
     const allReleases = (raw ?? []) as ArrRelease[];
 
     // ── Two-pass filtering: strict match first, title fallback second ──
@@ -1321,6 +1356,15 @@ media.get("/releases", async (c) => {
       filterMethod = "unfiltered";
     }
 
+    // A targeted Arr search may return useful candidates that its parser could
+    // not associate with the requested title. Never dead-end when that happens:
+    // surface the raw candidates as best-available alternatives and retain the
+    // filter metadata so the UI can explain the fallback.
+    if (!showAll && filtered.length === 0 && allReleases.length > 0) {
+      filtered = allReleases;
+      filterMethod = "best-available-fallback";
+    }
+
     const releases = filtered
       .map((r) => {
         const sizeBytes = Number(r.size ?? 0);
@@ -1378,7 +1422,11 @@ media.get("/releases", async (c) => {
       maxSizeGb,
       releases,
       recommendation: releases[0] ?? null,
-      fallbackLevel: releases.length > 0 ? "preferred-or-best-available" : "none",
+      fallbackLevel: filterMethod === "best-available-fallback"
+        ? "outside-title-filter"
+        : releases.length > 0
+          ? "preferred-or-best-available"
+          : "none",
       filterInfo: {
         totalFromIndexer: allReleases.length,
         afterFilter: releases.length,
@@ -1386,6 +1434,15 @@ media.get("/releases", async (c) => {
       },
     });
   } catch (err: unknown) {
+    if (
+      err instanceof Error
+      && (err.name === "TimeoutError" || /aborted due to timeout/i.test(err.message))
+    ) {
+      return c.json({
+        error: "Release search timed out while waiting for indexers. Try again; a slow or unavailable indexer may be delaying Sonarr.",
+        releases: [],
+      }, 504);
+    }
     return serverError(c, err, { context: { endpoint: "media/releases" }, extra: { releases: [] } });
   }
 });
@@ -2355,12 +2412,14 @@ media.get("/hls-start", async (c) => {
   if (!(await authorizeMediaPath(hostPath))) return c.json({ error: "Access denied" }, 403);
   if (!hasFfmpeg()) return serverError(c, "ffmpeg not available");
 
-  const audioTrack = parseInt(c.req.query("audioTrack") ?? "0", 10);
+  const requestedAudioTrack = parseInt(c.req.query("audioTrack") ?? "0", 10);
   const seekTo = parseFloat(c.req.query("seekTo") ?? "0");
   const transcodeVideo = c.req.query("transcodeVideo") === "1";
   const probe = await probeFileAsync(hostPath);
-  const hash = startHls(hostPath, audioTrack, seekTo, probe.videoCodec, transcodeVideo, probe.videoColorTransfer ?? "", probe.videoColorPrimaries ?? "", probe.videoColorSpace ?? "");
-  return c.json({ hash, ...probe });
+  const audioTrack = resolveAudioTrackIndex(probe.audio, requestedAudioTrack);
+  const clientId = (c.req.query("clientId") ?? "").slice(0, 128);
+  const hash = startHls(hostPath, audioTrack, seekTo, probe.videoCodec, transcodeVideo, probe.videoColorTransfer ?? "", probe.videoColorPrimaries ?? "", probe.videoColorSpace ?? "", clientId);
+  return c.json({ hash, selectedAudio: audioTrack, ...probe });
 });
 
 media.get("/hls/:hash/:file", async (c) => {
@@ -2415,9 +2474,12 @@ media.get("/hls/:hash/:file", async (c) => {
 
 /** POST /hls-stop — kill ffmpeg and clean up HLS files. */
 media.post("/hls-stop", async (c) => {
-  const body = await c.req.json<{ hash: string }>().catch(() => ({ hash: "" }));
+  const body: { hash: string; clientId?: string; force?: boolean } = await c.req
+    .json<{ hash: string; clientId?: string; force?: boolean }>()
+    .catch(() => ({ hash: "" }));
   if (!body.hash) return c.json({ error: "hash required" }, 400);
-  await stopHls(body.hash);
+  if (body.force) await stopHls(body.hash);
+  else releaseHls(body.hash, body.clientId?.slice(0, 128));
   return c.json({ ok: true });
 });
 
@@ -2619,7 +2681,10 @@ media.post("/jellyfin-playback", async (c) => {
   };
 
   const jfHeaders = { "X-Emby-Token": jellyfinKey };
-  const jellyfinDeadline = Date.now() + 1_200;
+  // This lookup now runs in parallel with Talome's local codec probe, so a
+  // brief Jellyfin slowdown no longer delays first-frame playback. Give the
+  // metadata/fallback path enough time to survive normal container wakeups.
+  const jellyfinDeadline = Date.now() + 3_000;
   const jellyfinFetch = (input: string, init: RequestInit = {}) => {
     const remaining = jellyfinDeadline - Date.now();
     if (remaining <= 0) return Promise.reject(new Error("Jellyfin playback lookup timed out"));
@@ -2876,8 +2941,9 @@ media.post("/jellyfin-playback", async (c) => {
     // Extract audio and subtitle tracks from MediaStreams
     const audioTracks = (source.MediaStreams ?? [])
       .filter((s) => s.Type === "Audio")
-      .map((s) => ({
-        index: s.Index,
+      .map((s, index) => ({
+        index,
+        streamIndex: s.Index,
         codec: s.Codec,
         language: s.Language ?? "und",
         title: s.DisplayTitle ?? s.Title ?? "",
@@ -2887,8 +2953,9 @@ media.post("/jellyfin-playback", async (c) => {
 
     const subtitleTracks = (source.MediaStreams ?? [])
       .filter((s) => s.Type === "Subtitle")
-      .map((s) => ({
-        index: s.Index,
+      .map((s, index) => ({
+        index,
+        streamIndex: s.Index,
         codec: s.Codec,
         language: s.Language ?? "und",
         title: s.DisplayTitle ?? s.Title ?? "",

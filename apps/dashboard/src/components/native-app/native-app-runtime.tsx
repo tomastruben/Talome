@@ -1,0 +1,317 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useSetAtom } from "jotai";
+import useSWR from "swr";
+import { toast } from "sonner";
+import type { TalomeAppAction, TalomeAppSpec, TalomeDataSource } from "@talome/types";
+import { Add01Icon, AiMagicIcon, HugeiconsIcon } from "@/components/icons";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
+import { ErrorState } from "@/components/ui/empty-state";
+import { CORE_URL } from "@/lib/constants";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+import { cn } from "@/lib/utils";
+import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
+import { pageTitleAtom } from "@/atoms/page-title";
+import { useConfirmAction } from "@/hooks/use-confirm-action";
+import { NativeAppBlockRenderer } from "./native-app-blocks";
+import { resolveNativeAppIcon } from "./native-app-icons";
+
+interface StoredAppSpecResponse {
+  appId: string;
+  storeId: string;
+  revision: number;
+  status: "draft" | "approved" | "disabled";
+  spec: TalomeAppSpec;
+}
+
+interface NativeDataState {
+  values: Record<string, unknown>;
+  errors: Record<string, string>;
+}
+
+const SPAN_CLASSES = {
+  1: "lg:col-span-1",
+  2: "lg:col-span-2",
+  3: "lg:col-span-3",
+  4: "lg:col-span-4",
+} as const;
+
+async function fetchSpec(url: string): Promise<StoredAppSpecResponse> {
+  const response = await fetch(url, { credentials: "include" });
+  if (!response.ok) throw new Error(response.status === 404 ? "Native experience not found" : "Unable to load native experience");
+  return response.json();
+}
+
+async function fetchSource(
+  storeId: string,
+  appId: string,
+  source: TalomeDataSource,
+): Promise<unknown> {
+  if (source.kind === "static") return source.value;
+  const response = await fetch(
+    `${CORE_URL}/api/app-specs/${encodeURIComponent(storeId)}/${encodeURIComponent(appId)}/data/${encodeURIComponent(source.id)}`,
+    { credentials: "include" },
+  );
+  const body = await response.json().catch(() => ({})) as { data?: unknown; error?: string };
+  if (!response.ok) throw new Error(body.error || `Unable to load ${source.id}`);
+  return body.data;
+}
+
+async function fetchAllSources(
+  storeId: string,
+  appId: string,
+  sources: TalomeDataSource[],
+): Promise<NativeDataState> {
+  const results = await Promise.allSettled(
+    sources.map(async (source) => [source.id, await fetchSource(storeId, appId, source)] as const),
+  );
+  const values: Record<string, unknown> = {};
+  const errors: Record<string, string> = {};
+  results.forEach((result, index) => {
+    const source = sources[index];
+    if (result.status === "fulfilled") values[result.value[0]] = result.value[1];
+    else errors[source.id] = result.reason instanceof Error ? result.reason.message : String(result.reason);
+  });
+  return { values, errors };
+}
+
+function refreshInterval(sources: TalomeDataSource[]) {
+  const intervals = sources.flatMap((source) => {
+    if (source.kind === "static") return [];
+    return [source.refreshMs ?? 30_000];
+  });
+  return intervals.length ? Math.min(...intervals) : 0;
+}
+
+export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: string }) {
+  const router = useRouter();
+  const setPageTitle = useSetAtom(pageTitleAtom);
+  const setDesktopActions = useSetAtom(desktopAppActionsAtom);
+  const [pendingActionId, setPendingActionId] = useState<string>();
+  const [selectedSurfaceId, setSelectedSurfaceId] = useState<string>();
+  const { confirmAction, ConfirmDialog } = useConfirmAction(false);
+  const specUrl = `${CORE_URL}/api/app-specs/${encodeURIComponent(storeId)}/${encodeURIComponent(appId)}`;
+  const { data: stored, error: specError, isLoading: specLoading, mutate: refreshSpec } = useSWR(
+    specUrl,
+    fetchSpec,
+    { revalidateOnFocus: false },
+  );
+  const spec = stored?.spec;
+  const dataKey = spec ? ["native-app-data", storeId, appId, stored.revision] as const : null;
+  const {
+    data: nativeData,
+    isLoading: dataLoading,
+    mutate: refreshData,
+  } = useSWR(
+    dataKey,
+    () => fetchAllSources(storeId, appId, spec!.dataSources),
+    {
+      refreshInterval: spec ? refreshInterval(spec.dataSources) : 0,
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    },
+  );
+
+  const openAssistant = useCallback((prompt: string) => {
+    const params = new URLSearchParams({
+      prompt,
+      from: `/dashboard/native-apps/${storeId}/${appId}`,
+    });
+    const href = `/dashboard/assistant?${params.toString()}`;
+    if (!requestDesktopNavigation(href)) router.push(href);
+  }, [appId, router, storeId]);
+
+  useEffect(() => {
+    setPageTitle(spec?.name ?? null);
+    if (!spec) return () => setPageTitle(null);
+    setDesktopActions([
+      {
+        id: "native-app-assistant",
+        label: `Ask about ${spec.name}`,
+        onSelect: () => openAssistant(
+          `${spec.assistant.context}\n\nReview the current app state and recommend the next best action.`,
+        ),
+      },
+    ]);
+    return () => {
+      setPageTitle(null);
+      setDesktopActions([]);
+    };
+  }, [openAssistant, setDesktopActions, setPageTitle, spec]);
+
+  const runAction = useCallback(async (
+    action: TalomeAppAction,
+    values: Record<string, string | number | boolean> = {},
+  ) => {
+    if (!spec) return;
+    const hasMissingRequiredInput = action.input?.some((field) => (
+      field.required && (values[field.id] === undefined || values[field.id] === "")
+    ));
+    if (action.input?.length && hasMissingRequiredInput) {
+      const fieldList = action.input.map((field) => `${field.label}${field.required ? " (required)" : ""}`).join(", ");
+      openAssistant(
+        `${spec.assistant.context}\n\nI want to run “${action.label}”. Collect these inputs from me if needed: ${fieldList}. Then use inspect_native_app and run_native_app_action.`,
+      );
+      return;
+    }
+
+    const confirmation = "confirmation" in action ? action.confirmation : undefined;
+    if (confirmation) {
+      const confirmed = await confirmAction({
+        title: action.label,
+        description: confirmation,
+        confirmLabel: action.label,
+        variant: "destructive" in action && action.destructive ? "destructive" : "default",
+      });
+      if (!confirmed) return;
+    }
+
+    setPendingActionId(action.id);
+    try {
+      const response = await fetch(
+        `${CORE_URL}/api/app-specs/${encodeURIComponent(storeId)}/${encodeURIComponent(appId)}/actions/${encodeURIComponent(action.id)}`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirmed: Boolean(confirmation), values }),
+        },
+      );
+      const result = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        kind?: "assistant" | "result";
+        prompt?: string;
+        error?: string;
+      };
+      if (!response.ok || !result.ok) throw new Error(result.error || `${action.label} failed`);
+      if (result.kind === "assistant" && result.prompt) openAssistant(result.prompt);
+      else {
+        toast.success(`${action.label} completed`);
+        await refreshData();
+      }
+    } catch (error) {
+      toast.error(`${action.label} failed`, {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setPendingActionId(undefined);
+    }
+  }, [appId, confirmAction, openAssistant, refreshData, spec, storeId]);
+
+  const dataErrors = useMemo(() => Object.entries(nativeData?.errors ?? {}), [nativeData?.errors]);
+
+  if (specLoading) {
+    return (
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-6">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-4 w-96 max-w-full" />
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-48 w-full" />)}
+        </div>
+      </div>
+    );
+  }
+
+  if (specError || !spec) {
+    return (
+      <div className="mx-auto w-full max-w-3xl p-6">
+        <ErrorState
+          title="Native experience unavailable"
+          description={specError instanceof Error ? specError.message : "This application does not have an approved AppSpec."}
+          onRetry={() => void refreshSpec()}
+        />
+      </div>
+    );
+  }
+
+  const activeSurface = spec.surfaces.find((surface) => surface.id === selectedSurfaceId) ?? spec.surfaces[0];
+  const primaryAction = activeSurface.primaryActionId
+    ? spec.actions.find((action) => action.id === activeSurface.primaryActionId)
+    : undefined;
+  const appIcon = resolveNativeAppIcon(spec.icon);
+
+  const renderSurface = (surface: TalomeAppSpec["surfaces"][number]) => (
+    <div className="flex flex-col gap-6 pt-1">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+        {surface.blocks.map((block) => (
+          <div
+            key={block.id}
+            className={cn("min-w-0 md:col-span-2", SPAN_CLASSES[block.span ?? 2])}
+          >
+            <NativeAppBlockRenderer
+              block={block}
+              data={nativeData?.values ?? {}}
+              actions={spec.actions}
+              pendingActionId={pendingActionId}
+              onAction={runAction}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="mx-auto flex w-full max-w-screen-2xl flex-col gap-6 p-6 pb-16">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-center gap-4">
+          <div className="flex size-20 shrink-0 items-center justify-center rounded-2xl border bg-card shadow-sm">
+            <HugeiconsIcon icon={appIcon} size={50} className="text-foreground" aria-hidden />
+          </div>
+          <div className="min-w-0">
+            <h1 className="truncate text-3xl font-medium tracking-tight">{spec.name}</h1>
+            <p className="mt-2 max-w-3xl whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{spec.description}</p>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {primaryAction ? (
+            <Button disabled={Boolean(pendingActionId)} onClick={() => runAction(primaryAction)}>
+              <HugeiconsIcon icon={Add01Icon} size={16} data-icon="inline-start" />
+              {pendingActionId === primaryAction.id ? "Working…" : primaryAction.label}
+            </Button>
+          ) : null}
+          <Button
+            variant="outline"
+            onClick={() => openAssistant(`${spec.assistant.context}\n\nHelp me with ${spec.name}.`)}
+          >
+            <HugeiconsIcon icon={AiMagicIcon} size={16} data-icon="inline-start" />
+            Ask Talome
+          </Button>
+        </div>
+      </header>
+
+      {dataErrors.length ? (
+        <Alert variant="destructive">
+          <AlertTitle>Some app data is unavailable</AlertTitle>
+          <AlertDescription>
+            {dataErrors.map(([sourceId, message]) => `${sourceId}: ${message}`).join(" · ")}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {dataLoading && !nativeData ? (
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-48 w-full" />)}
+        </div>
+      ) : spec.surfaces.length === 1 ? renderSurface(spec.surfaces[0]) : (
+        <Tabs value={activeSurface.id} onValueChange={setSelectedSurfaceId}>
+          <TabsList variant="underline">
+            {spec.surfaces.map((surface) => (
+              <TabsTab key={surface.id} value={surface.id}>{surface.title}</TabsTab>
+            ))}
+          </TabsList>
+          {spec.surfaces.map((surface) => (
+            <TabsPanel key={surface.id} value={surface.id}>{renderSurface(surface)}</TabsPanel>
+          ))}
+        </Tabs>
+      )}
+
+      <ConfirmDialog />
+    </div>
+  );
+}

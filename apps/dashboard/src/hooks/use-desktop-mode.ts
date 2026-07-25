@@ -2,8 +2,42 @@
 
 import { useSyncExternalStore } from "react";
 
-export const DESKTOP_MODE_MEDIA_QUERY =
-  "(min-width: 1024px) and (hover: hover) and (pointer: fine)";
+const ANY_HOVER_MEDIA_QUERY = "(any-hover: hover)";
+const ANY_FINE_POINTER_MEDIA_QUERY = "(any-pointer: fine)";
+
+export interface DesktopModeEnvironment {
+  width: number;
+  height: number;
+  hasHoverCapablePointer: boolean;
+  hasFinePointer: boolean;
+}
+
+/**
+ * Desktop mode needs both enough canvas and a desktop-like pointing device.
+ * `any-hover`/`any-pointer` intentionally include secondary inputs, which lets
+ * iPadOS opt in when a trackpad, mouse, or hover-capable Apple Pencil is present
+ * without exposing the mode on touch-only phones and tablets.
+ */
+export function canUseDesktopMode({
+  width,
+  height,
+  hasHoverCapablePointer,
+  hasFinePointer,
+}: DesktopModeEnvironment) {
+  const hasDesktopCanvas = width >= 700 && height >= 600;
+  const hasDesktopInput = hasHoverCapablePointer || hasFinePointer;
+  return hasDesktopCanvas && hasDesktopInput;
+}
+
+export function isDesktopModeAvailableNow() {
+  if (typeof window === "undefined") return false;
+  return canUseDesktopMode({
+    width: window.innerWidth,
+    height: window.innerHeight,
+    hasHoverCapablePointer: window.matchMedia(ANY_HOVER_MEDIA_QUERY).matches,
+    hasFinePointer: window.matchMedia(ANY_FINE_POINTER_MEDIA_QUERY).matches,
+  });
+}
 
 export type DashboardModePreference = "classic" | "desktop";
 
@@ -56,13 +90,26 @@ export async function persistDashboardModePreference(
 }
 
 function subscribe(onStoreChange: () => void) {
-  const mediaQuery = window.matchMedia(DESKTOP_MODE_MEDIA_QUERY);
-  mediaQuery.addEventListener("change", onStoreChange);
-  return () => mediaQuery.removeEventListener("change", onStoreChange);
+  const mediaQueries = [
+    ANY_HOVER_MEDIA_QUERY,
+    ANY_FINE_POINTER_MEDIA_QUERY,
+  ].map((query) => window.matchMedia(query));
+  mediaQueries.forEach((mediaQuery) => {
+    mediaQuery.addEventListener("change", onStoreChange);
+  });
+  window.addEventListener("resize", onStoreChange);
+  window.visualViewport?.addEventListener("resize", onStoreChange);
+  return () => {
+    mediaQueries.forEach((mediaQuery) => {
+      mediaQuery.removeEventListener("change", onStoreChange);
+    });
+    window.removeEventListener("resize", onStoreChange);
+    window.visualViewport?.removeEventListener("resize", onStoreChange);
+  };
 }
 
 function getSnapshot() {
-  return window.matchMedia(DESKTOP_MODE_MEDIA_QUERY).matches;
+  return isDesktopModeAvailableNow();
 }
 
 function getServerSnapshot() {

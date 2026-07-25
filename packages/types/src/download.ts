@@ -13,6 +13,16 @@ export interface DownloadQueueItem {
   progress?: number;
   dlspeed?: number;
   eta?: number | null;
+  /** qBittorrent state correlated by downloadId (for example stalledDL). */
+  torrentState?: string | null;
+  connectedSeeds?: number;
+  connectedLeechers?: number;
+  swarmSeeds?: number;
+  swarmLeechers?: number;
+  /** qBittorrent availability, where 1 means one complete copy is available. */
+  availability?: number | null;
+  /** Unix timestamp, in seconds, when qBittorrent added the torrent. */
+  addedOn?: number | null;
   poster?: string | null;
   errorMessage?: string | null;
   statusMessages?: string[];
@@ -27,6 +37,12 @@ export interface DownloadTorrent {
   upspeed: number;
   state: string;
   eta: number;
+  connectedSeeds?: number;
+  connectedLeechers?: number;
+  swarmSeeds?: number;
+  swarmLeechers?: number;
+  availability?: number | null;
+  addedOn?: number | null;
   poster?: string | null;
 }
 

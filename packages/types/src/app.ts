@@ -106,6 +106,8 @@ export interface AppManifest {
   defaultUsername?: string;
   defaultPassword?: string;
   webPort?: number;
+  /** Present when Talome can render this app with its native AppSpec runtime. */
+  nativeSurface?: import("./app-spec.ts").TalomeNativeSurfaceDescriptor;
 }
 
 export type InstalledAppStatus = "installing" | "running" | "stopped" | "error" | "updating" | "unknown";

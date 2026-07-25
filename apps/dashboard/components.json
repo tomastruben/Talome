@@ -23,6 +23,7 @@
     "@skiper-ui": "https://skiper-ui.com/registry/{name}.json",
     "@kibo-ui": "https://www.kibo-ui.com/r/{name}.json",
     "@coss": "https://coss.com/ui/r/{name}.json",
-    "@rigidui": "https://rigidui.com/r/{name}.json"
+    "@rigidui": "https://rigidui.com/r/{name}.json",
+    "@evilcharts": "https://evilcharts.com/r/{name}.json"
   }
 }

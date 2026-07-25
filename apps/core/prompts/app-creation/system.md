@@ -14,7 +14,9 @@ Required outputs:
 - no TODO placeholders unless the user explicitly asked for a partial scaffold
 
 Hard rules:
+- complete research and screen-design gates before writing application UI
 - prefer proven building blocks over inventing everything from scratch
 - keep naming stable across compose, manifest, workspace, and exported files
 - do not output decorative demo code disconnected from the user request
 - optimize for a successful first run, then for fast second-pass tweaks
+- do not claim completion until the rendered primary workflow and evidence artifacts pass validation

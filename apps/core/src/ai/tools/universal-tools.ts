@@ -92,6 +92,63 @@ function buildUrl(base: string, path: string, auth: AuthStyle): string {
   return url;
 }
 
+export interface AppApiRequest {
+  appId: string;
+  method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  path: string;
+  body?: unknown;
+  timeoutMs?: number;
+}
+
+/**
+ * Shared credential-safe app API executor. Declarative AppSpecs and the AI
+ * tool both use this function so auth behavior cannot drift between them.
+ */
+export async function executeAppApiRequest({
+  appId,
+  method = "GET",
+  path,
+  body,
+  timeoutMs = 8_000,
+}: AppApiRequest) {
+  const conn = resolveAppConnection(appId);
+  if ("error" in conn) return { success: false as const, error: conn.error, hint: conn.hint };
+
+  const url = buildUrl(conn.baseUrl, path, conn.auth);
+  const headers = buildHeaders(conn.auth);
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined && method !== "GET" ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(Math.min(Math.max(timeoutMs, 500), 30_000)),
+    });
+
+    const contentType = res.headers.get("content-type") ?? "";
+    const data = contentType.includes("application/json")
+      ? await res.json()
+      : await res.text();
+
+    if (!res.ok) {
+      return {
+        success: false as const,
+        statusCode: res.status,
+        error: typeof data === "string" ? data.slice(0, 2_000) : JSON.stringify(data).slice(0, 2_000),
+        appId,
+      };
+    }
+
+    return { success: true as const, statusCode: res.status, data, appId };
+  } catch (err: unknown) {
+    return {
+      success: false as const,
+      error: err instanceof Error ? err.message : String(err),
+      appId,
+    };
+  }
+}
+
 // ── app_api_call ─────────────────────────────────────────────────────────────
 
 export const appApiCallTool = tool({
@@ -107,44 +164,7 @@ After calling: Report the status code and key data. If the call failed, suggest 
     body: z.unknown().optional().describe("Request body for POST/PUT/PATCH"),
     timeoutMs: z.number().default(8000).describe("Request timeout in milliseconds"),
   }),
-  execute: async ({ appId, method, path, body, timeoutMs }) => {
-    const conn = resolveAppConnection(appId);
-    if ("error" in conn) return { success: false, error: conn.error, hint: conn.hint };
-
-    const url = buildUrl(conn.baseUrl, path, conn.auth);
-    const headers = buildHeaders(conn.auth);
-
-    try {
-      const res = await fetch(url, {
-        method,
-        headers,
-        body: body && method !== "GET" ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-
-      const contentType = res.headers.get("content-type") ?? "";
-      const data = contentType.includes("application/json")
-        ? await res.json()
-        : await res.text();
-
-      if (!res.ok) {
-        return {
-          success: false,
-          statusCode: res.status,
-          error: typeof data === "string" ? data : JSON.stringify(data).slice(0, 500),
-          appId,
-        };
-      }
-
-      return { success: true, statusCode: res.status, data, appId };
-    } catch (err: unknown) {
-      return {
-        success: false,
-        error: err instanceof Error ? err.message : String(err),
-        appId,
-      };
-    }
-  },
+  execute: executeAppApiRequest,
 });
 
 // ── discover_app_api ─────────────────────────────────────────────────────────

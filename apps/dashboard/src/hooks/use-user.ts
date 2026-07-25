@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import useSWR from "swr";
 import type { UserPermissions, FeaturePermission } from "@talome/types";
 
@@ -39,11 +40,11 @@ export function useUser() {
 
   const isAdmin = data?.role === "admin";
 
-  function hasPermission(feature: FeaturePermission): boolean {
+  const hasPermission = useCallback((feature: FeaturePermission): boolean => {
     if (isAdmin) return true;
     if (!data?.permissions) return true;
     return data.permissions[feature] !== false;
-  }
+  }, [data?.permissions, isAdmin]);
 
   return {
     user: data,

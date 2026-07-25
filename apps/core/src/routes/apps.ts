@@ -13,7 +13,7 @@ import {
   updateApp,
 } from "../stores/lifecycle.js";
 import { installProgress, emitProgress, type InstallProgressEvent } from "../stores/install-emitter.js";
-import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus } from "@talome/types";
+import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus, TalomeNativeSurfaceDescriptor } from "@talome/types";
 import { listContainers } from "../docker/client.js";
 import os from "node:os";
 
@@ -117,8 +117,27 @@ function enrichWithInstallStatus(manifest: AppManifest): CatalogApp {
     .where(eq(schema.installedApps.appId, manifest.id))
     .get();
 
+  let nativeSurface: TalomeNativeSurfaceDescriptor | undefined;
+  try {
+    const spec = db
+      .select()
+      .from(schema.appSpecs)
+      .where(and(
+        eq(schema.appSpecs.storeSourceId, manifest.storeId),
+        eq(schema.appSpecs.appId, manifest.id),
+        eq(schema.appSpecs.status, "approved"),
+      ))
+      .get();
+    if (spec) {
+      nativeSurface = { schemaVersion: 1, revision: spec.revision, status: "approved" };
+    }
+  } catch {
+    // Optional additive schema for test/legacy databases.
+  }
+
   return {
     ...manifest,
+    nativeSurface,
     installed: installed ? rowToInstalledApp(installed) : null,
   };
 }
