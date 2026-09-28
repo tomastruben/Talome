@@ -13,6 +13,8 @@ const m = vi.hoisted(() => ({
   generateText: vi.fn(),
   writeNotification: vi.fn(),
   listContainers: vi.fn(),
+  isClaudeCodeAvailable: vi.fn(async () => false),
+  spawnClaudeStreaming: vi.fn(),
 }));
 
 vi.mock("@ai-sdk/anthropic", () => ({ createAnthropic: m.createAnthropic }));
@@ -31,8 +33,8 @@ vi.mock("../db/notifications.js", () => ({ writeNotification: m.writeNotificatio
 vi.mock("../db/audit.js", () => ({ writeAuditEntry: vi.fn() }));
 vi.mock("../docker/client.js", () => ({ listContainers: m.listContainers }));
 vi.mock("../ai/claude-process.js", () => ({
-  isClaudeCodeAvailable: vi.fn(async () => false),
-  spawnClaudeStreaming: vi.fn(),
+  isClaudeCodeAvailable: m.isClaudeCodeAvailable,
+  spawnClaudeStreaming: m.spawnClaudeStreaming,
 }));
 // Remediation tool definitions are irrelevant here — stub them out.
 vi.mock("../ai/tools/docker-tools.js", () => ({ listContainersTool: {}, getContainerLogsTool: {}, restartContainerTool: {}, checkServiceHealthTool: {} }));
@@ -51,7 +53,12 @@ import { runMigrations } from "../db/migrate.js";
 import { setSetting } from "../utils/settings.js";
 import { isEncrypted } from "../utils/crypto.js";
 import { triageEvents } from "../agent-loop/triage.js";
-import { remediateEvent, finalizeRemediation, classifyRemediationOutcome } from "../agent-loop/remediation.js";
+import {
+  remediateEvent,
+  finalizeRemediation,
+  classifyRemediationOutcome,
+  extractToolCallsFromChunk,
+} from "../agent-loop/remediation.js";
 import { verifyPendingRemediations, registerOutcomeProbe } from "../agent-loop/outcome-tracker.js";
 import type { SystemEvent } from "../agent-loop/types.js";
 
@@ -100,6 +107,7 @@ beforeEach(() => {
   db.delete(schema.systemEvents).run();
   m.createAnthropic.mockImplementation(() => (model: string) => ({ model }));
   setSetting("anthropic_key", PLAINTEXT_KEY);
+  m.isClaudeCodeAvailable.mockResolvedValue(false);
 });
 
 describe("anthropic_key decryption", () => {
@@ -198,5 +206,32 @@ describe("remediation status semantics", () => {
     } finally {
       unregister();
     }
+  });
+});
+
+describe("Claude Code remediation path", () => {
+  it("parses tool-use chunks (leading newline, MCP-namespaced names)", () => {
+    expect(extractToolCallsFromChunk('\n[mcp__talome__restart_container] {"name":"sonarr"}\n')).toEqual(["restart_container"]);
+    expect(extractToolCallsFromChunk("\n[get_container_logs] {}\n\n[mcp__talome__rollback_update] {}\n")).toEqual(["get_container_logs", "rollback_update"]);
+    expect(extractToolCallsFromChunk("Looking at the logs now.")).toEqual([]);
+  });
+
+  it("a write tool used via Claude Code is pending_verification ('attempted', not 'diagnosed')", async () => {
+    m.isClaudeCodeAvailable.mockResolvedValue(true);
+    m.spawnClaudeStreaming.mockImplementation(async (_prompt: string, _cwd: string, onData: (chunk: string) => void) => {
+      onData("Investigating sonarr.");
+      onData('\n[mcp__talome__get_container_logs] {"name":"sonarr"}\n');
+      onData('\n[mcp__talome__restart_container] {"name":"sonarr"}\n');
+      return { code: 0, stdout: "Restarted sonarr. Confidence: high" };
+    });
+    const event = makeEvent({ source: "sonarr-claude-code" });
+    persistEvent(event);
+
+    const result = await remediateEvent(event, { eventId: event.id, verdict: "act", reason: "down" }, 10, true);
+    expect(m.spawnClaudeStreaming).toHaveBeenCalled();
+    expect(result.outcome).toBe("pending_verification");
+    expect(remediationFor(event.id)?.outcome).toBe("pending_verification");
+    expect(notificationTitles()).toContain("Agent attempted fix: sonarr-claude-code");
+    expect(notificationTitles().some((t) => t.startsWith("Agent diagnosed"))).toBe(false);
   });
 });

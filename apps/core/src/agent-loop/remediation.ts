@@ -116,6 +116,25 @@ function parseConfidence(text: string): number {
 }
 
 /**
+ * Tool calls in a spawnClaudeStreaming chunk. Tool uses are emitted as
+ * "\n[<name>] <input json>\n", and Talome's MCP tools arrive namespaced as
+ * `mcp__<server>__<tool>` — normalized to the bare tool name so they match
+ * WRITE_TOOLS.
+ */
+export function extractToolCallsFromChunk(chunk: string): string[] {
+  const names: string[] = [];
+  for (const match of chunk.matchAll(/^[ \t]*\[([A-Za-z0-9_.:-]+)\]/gm)) {
+    names.push(normalizeToolName(match[1]));
+  }
+  return names;
+}
+
+export function normalizeToolName(name: string): string {
+  const mcp = /^mcp__.+?__(.+)$/.exec(name);
+  return mcp ? mcp[1] : name;
+}
+
+/**
  * Outcome semantics for a finished remediation run:
  *  - a write tool ran → "pending_verification": the agent ATTEMPTED a fix. It is
  *    only reported as fixed once the outcome tracker verifies it; otherwise the
@@ -123,7 +142,7 @@ function parseConfidence(text: string): number {
  *  - diagnosis only → "pending": the tracker still checks whether the issue persists.
  */
 export function classifyRemediationOutcome(toolsUsed: string[]): { tookAction: boolean; outcome: RemediationOutcome } {
-  const tookAction = toolsUsed.some((t) => WRITE_TOOLS.has(t));
+  const tookAction = toolsUsed.some((t) => WRITE_TOOLS.has(normalizeToolName(t)));
   return { tookAction, outcome: tookAction ? "pending_verification" : "pending" };
 }
 
@@ -153,7 +172,7 @@ export function finalizeRemediation(
     JSON.stringify({ eventId: event.id, toolsUsed }),
   );
 
-  const rolledBack = toolsUsed.includes("rollback_update");
+  const rolledBack = toolsUsed.some((t) => normalizeToolName(t) === "rollback_update");
   const actionLabel = rolledBack
     ? "Rolled back + diagnosed"
     : tookAction ? "Restarted + diagnosed" : "Diagnosis only";
@@ -341,9 +360,7 @@ ${buildEventPrompt(event, triage, autoRemediate)}`;
     prompt,
     PROJECT_ROOT,
     (chunk) => {
-      // Capture MCP tool calls from stream output: [tool_name] ...
-      const match = chunk.match(/^\[(\w+)\]/);
-      if (match) toolsUsed.push(match[1]);
+      toolsUsed.push(...extractToolCallsFromChunk(chunk));
     },
   );
 

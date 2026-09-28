@@ -37,6 +37,8 @@ import {
   type AutomationStep,
 } from "../automation/engine.js";
 import { currentActor } from "../ops/operations.js";
+import { executedStepRuns } from "../automation/step-run-view.js";
+import { automations as automationsRoute } from "../routes/automations.js";
 
 function stepRows(runId: string) {
   return db
@@ -184,6 +186,37 @@ describe("automation run durability", () => {
     expect(running.error).toContain("Interrupted");
     const done = db.select().from(schema.automationRuns).where(eq(schema.automationRuns.id, "r-done")).get()!;
     expect(done.status).toBe("succeeded");
-    expect(stepRows("r-running").map((r) => r.status)).toEqual(["interrupted", "interrupted"]);
+    expect(stepRows("r-running").map((r) => r.status)).toEqual(["interrupted", "skipped"]);
+  });
+});
+
+describe("run history readers (legacy success-based view)", () => {
+  it("lists executed steps only, in step order", () => {
+    const rows = [
+      { id: "c", status: "skipped", stepIndex: 2, startedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "b", status: "failed", stepIndex: 1, startedAt: "2026-01-01T00:00:02.000Z" },
+      { id: "a", status: "succeeded", stepIndex: 0, startedAt: "2026-01-01T00:00:01.000Z" },
+      { id: "p", status: "pending", stepIndex: 3, startedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "legacy", status: null, stepIndex: null, startedAt: "2025-01-01T00:00:00.000Z" },
+    ];
+    expect(executedStepRuns(rows).map((r) => r.id)).toEqual(["a", "b", "legacy"]);
+  });
+
+  it("GET /:id/runs does not show never-executed steps as failures", async () => {
+    m.failExecute.mockRejectedValue(new Error("tool exploded"));
+    addAutomation("a6", [
+      { id: "s1", type: "notify", level: "info", title: "first" },
+      { id: "s2", type: "tool_action", toolName: "fail_tool", approvalPolicy: "auto" },
+      { id: "s3", type: "notify", level: "info", title: "never" },
+      { id: "s4", type: "notify", level: "info", title: "never either" },
+    ]);
+    await fireTrigger("test_trigger");
+
+    const res = await automationsRoute.request("/a6/runs");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { runs: { stepRuns: { stepId: string; success: boolean }[] }[] };
+    const steps = body.runs[0].stepRuns;
+    expect(steps.map((s) => s.stepId)).toEqual(["s1", "s2"]);
+    expect(steps.map((s) => s.success)).toEqual([true, false]);
   });
 });

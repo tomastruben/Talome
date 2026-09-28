@@ -69,7 +69,9 @@ import { tmpdir } from "node:os";
 import { eq, desc } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
-import { updateApp, restartApp, rollbackUpdate } from "../stores/lifecycle.js";
+import { updateApp, restartApp, rollbackUpdate, bulkAction, syncOverrideImageRefs } from "../stores/lifecycle.js";
+import { decryptSetting, isEncrypted } from "../utils/crypto.js";
+import { deleteUserApp } from "../stores/creator.js";
 import {
   getOperation,
   listOperationSteps,
@@ -95,8 +97,12 @@ const BASELINE: ServiceImageState[] = [{
   status: "running",
 }];
 
-const healthy = { healthy: true, reason: "ok", containers: [], checks: 3, elapsedMs: 10 };
-const unhealthy = { healthy: false, reason: "Container sonarr is restarting", containers: [], checks: 40, elapsedMs: 120_000 };
+/** What the containers run after a successful pull + recreate. */
+const AFTER: ServiceImageState[] = [{ ...BASELINE[0], containerId: "c0ffee000002", imageId: "sha256:" + "e".repeat(64) }];
+
+const healthy = { healthy: true, verdict: "healthy", reason: "ok", containers: [], checks: 3, elapsedMs: 10 };
+const unhealthy = { healthy: false, verdict: "unhealthy", reason: "Container sonarr restarted 3 time(s) during verification (restart loop)", containers: [], checks: 40, elapsedMs: 120_000 };
+const inconclusive = { healthy: false, verdict: "inconclusive", reason: "Container sonarr healthcheck is starting", containers: [], checks: 40, elapsedMs: 120_000 };
 
 function commands(): string[] {
   return m.run.mock.calls.map((c) => String(c[0]));
@@ -153,7 +159,9 @@ beforeEach(() => {
   }).run();
 
   m.run.mockResolvedValue({ stdout: "", stderr: "" });
-  m.captureServiceImages.mockResolvedValue(BASELINE);
+  // First capture = pre-update baseline, later ones = after recreate.
+  m.captureServiceImages.mockReset();
+  m.captureServiceImages.mockResolvedValueOnce(BASELINE).mockResolvedValue(AFTER);
   m.probeHttp.mockResolvedValue({ port: 8989, ok: true, status: 200 });
   m.restoreServiceImages.mockResolvedValue([{ service: "sonarr", restored: true, method: "tag" }]);
   m.takePreUpdateBackup.mockResolvedValue({ attempted: true, success: true, backupFile: "/backups/sonarr/pre-update.tar.gz" });
@@ -194,7 +202,7 @@ describe("safe update pipeline", () => {
 
     const result = await updateApp(APP_ID, { actor: "user:alice" });
 
-    expect(result).toMatchObject({ success: true, verified: true });
+    expect(result).toMatchObject({ success: true, verified: true, outcome: "updated" });
     const pullCall = m.run.mock.calls.findIndex((c) => String(c[0]).includes(" pull"));
     const upCall = m.run.mock.calls.findIndex((c) => String(c[0]).includes(" up -d"));
     expect(pullCall).toBeGreaterThanOrEqual(0);
@@ -206,7 +214,9 @@ describe("safe update pipeline", () => {
     const snapshot = db.select().from(schema.updateSnapshots).get()!;
     expect(snapshot.previousCompose).toBe(ORIGINAL_COMPOSE);
     expect(JSON.parse(snapshot.previousImages!)).toEqual(BASELINE);
-    expect(JSON.parse(snapshot.previousEnv!)).toEqual({ TZ: "UTC" });
+    // Env overrides may hold secrets: encrypted at rest in the snapshot.
+    expect(isEncrypted(snapshot.previousEnv!)).toBe(true);
+    expect(JSON.parse(decryptSetting(snapshot.previousEnv!))).toEqual({ TZ: "UTC" });
     expect(snapshot.backupPath).toBe("/backups/sonarr/pre-update.tar.gz");
     expect(snapshot.newVersion).toBe("4.1.0");
 
@@ -251,7 +261,8 @@ describe("safe update pipeline", () => {
 
     expect(result.success).toBe(false);
     expect(result.rolledBack).toBe(true);
-    expect(result.error).toContain("Container sonarr is restarting");
+    expect(result.error).toContain("restart loop");
+    expect(result.outcome).toBe("rolled_back");
     expect(result.error).toContain("Rolled back to version 4.0.0");
 
     // Rollback restored images + compose and recreated
@@ -310,6 +321,123 @@ describe("safe update pipeline", () => {
     expect(m.writeNotification).toHaveBeenCalledWith("critical", expect.stringContaining("could not be rolled back"), expect.any(String), APP_ID);
   });
 
+  it("a slow start (healthcheck still starting) is NOT rolled back — reported unverified", async () => {
+    m.verifyAppHealth.mockResolvedValue(inconclusive);
+    const result = await updateApp(APP_ID);
+
+    expect(result).toMatchObject({ success: true, verified: false, outcome: "unverified" });
+    expect(result.warning).toContain("not rolled back automatically");
+    expect(m.restoreServiceImages).not.toHaveBeenCalled();
+    expect(commands().some((c) => c.includes("--force-recreate"))).toBe(false);
+    expect(m.verifyAppHealth).toHaveBeenCalledTimes(1);
+
+    const row = installedRow()!;
+    expect(row.version).toBe("4.1.0");
+    expect(row.status).toBe("running");
+    // Snapshot kept so the user can still roll back manually
+    expect(db.select().from(schema.updateSnapshots).get()?.rolledBack).toBe(false);
+    const op = getOperation(result.operationId!)!;
+    expect(op.status).toBe("succeeded");
+    expect(op.detail?.outcome).toBe("unverified");
+    expect(m.writeNotification).toHaveBeenCalledWith("warning", "Sonarr updated, not yet verified", expect.any(String), APP_ID);
+  });
+
+  it("does not claim an update or bump the version when no image changed", async () => {
+    m.verifyAppHealth.mockResolvedValue(healthy);
+    m.captureServiceImages.mockReset();
+    m.captureServiceImages.mockResolvedValue(BASELINE);
+
+    const result = await updateApp(APP_ID);
+    expect(result).toMatchObject({ success: true, outcome: "no_change" });
+    expect(installedRow()!.version).toBe("4.0.0");
+    expect(db.select().from(schema.updateSnapshots).all()).toHaveLength(0);
+    expect(m.writeNotification).not.toHaveBeenCalledWith("info", "Sonarr updated", expect.anything(), APP_ID);
+    expect(m.writeNotification).toHaveBeenCalledWith("info", "Sonarr unchanged", expect.stringContaining("still runs version 4.0.0"), APP_ID);
+    expect(getOperation(result.operationId!)!.detail?.outcome).toBe("no_change");
+  });
+
+  it("a rollback whose images could not be restored is reported as failed, not rolled back", async () => {
+    m.verifyAppHealth.mockResolvedValueOnce(unhealthy).mockResolvedValueOnce(healthy);
+    m.restoreServiceImages.mockResolvedValue([{ service: "sonarr", restored: false, error: "Previous image is no longer available" }]);
+
+    const result = await updateApp(APP_ID);
+    expect(result).toMatchObject({ success: false, rolledBack: false, outcome: "failed" });
+    expect(result.error).toContain("not the previous images");
+    const op = getOperation(result.operationId!)!;
+    expect(op.status).toBe("failed");
+    expect(db.select().from(schema.updateSnapshots).get()?.rolledBack).toBe(false);
+    expect(m.writeNotification).not.toHaveBeenCalledWith("warning", "Update of Sonarr rolled back", expect.anything(), APP_ID);
+    expect(m.writeNotification).toHaveBeenCalledWith("critical", expect.stringContaining("could not be rolled back"), expect.stringContaining("newer images"), APP_ID);
+  });
+
+  it("without an image baseline there is no automatic rollback (and no false 'restored' claim)", async () => {
+    m.captureServiceImages.mockReset();
+    m.captureServiceImages.mockResolvedValueOnce([]).mockResolvedValue(AFTER);
+    m.verifyAppHealth.mockResolvedValue(unhealthy);
+
+    const result = await updateApp(APP_ID);
+    expect(result).toMatchObject({ success: false, rolledBack: false, outcome: "failed" });
+    expect(result.error).toContain("Automatic rollback is unavailable");
+    expect(m.restoreServiceImages).not.toHaveBeenCalled();
+    expect(commands().some((c) => c.includes("--force-recreate"))).toBe(false);
+    expect(getOperation(result.operationId!)!.status).toBe("failed");
+  });
+
+  it("aborts without touching the app when current images cannot be read", async () => {
+    m.captureServiceImages.mockReset();
+    m.captureServiceImages.mockRejectedValue(new Error("docker socket timeout"));
+
+    const result = await updateApp(APP_ID);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Update aborted");
+    expect(m.run).not.toHaveBeenCalled();
+    expect(installedRow()!.status).toBe("running");
+    expect(db.select().from(schema.updateSnapshots).all()).toHaveLength(0);
+  });
+
+  it("moves the override compose's frozen image refs to the catalog's (and restores them if the pull fails)", async () => {
+    const overridePath = join(composeDir, "override.yml");
+    const overrideCompose = "services:\n  sonarr:\n    image: linuxserver/sonarr:4\n    ports:\n      - 18989:8989\n";
+    writeFileSync(overridePath, overrideCompose);
+    writeFileSync(composePath, "services:\n  sonarr:\n    image: linuxserver/sonarr:4.1\n");
+    db.update(schema.installedApps).set({ overrideComposePath: overridePath }).where(eq(schema.installedApps.appId, APP_ID)).run();
+
+    m.run.mockImplementation(async (cmd: string) => {
+      if (cmd.includes(" pull")) {
+        // The pull already sees the new ref
+        expect(readFileSync(overridePath, "utf-8")).toContain("linuxserver/sonarr:4.1");
+        throw Object.assign(new Error("pull failed"), { stderr: "timeout" });
+      }
+      return { stdout: "", stderr: "" };
+    });
+    const failed = await updateApp(APP_ID);
+    expect(failed.success).toBe(false);
+    expect(readFileSync(overridePath, "utf-8")).toBe(overrideCompose);
+
+    m.run.mockResolvedValue({ stdout: "", stderr: "" });
+    m.captureServiceImages.mockReset();
+    m.captureServiceImages.mockResolvedValueOnce(BASELINE).mockResolvedValue(AFTER);
+    m.verifyAppHealth.mockResolvedValue(healthy);
+    const ok = await updateApp(APP_ID);
+    expect(ok.outcome).toBe("updated");
+    const after = readFileSync(overridePath, "utf-8");
+    expect(after).toContain("linuxserver/sonarr:4.1");
+    expect(after).toContain("18989:8989"); // user edits kept
+    expect(getOperation(ok.operationId!)!.detail?.imageRefChanges).toEqual([
+      { service: "sonarr", from: "linuxserver/sonarr:4", to: "linuxserver/sonarr:4.1" },
+    ]);
+  });
+
+  it("syncOverrideImageRefs leaves services missing from the catalog alone", () => {
+    const o = join(composeDir, "o2.yml");
+    const cat = join(composeDir, "c2.yml");
+    writeFileSync(o, "services:\n  app:\n    image: a:1\n  sidecar:\n    image: s:1\n");
+    writeFileSync(cat, "services:\n  app:\n    image: a:2\n");
+    expect(syncOverrideImageRefs(o, cat)).toEqual([{ service: "app", from: "a:1", to: "a:2" }]);
+    expect(readFileSync(o, "utf-8")).toContain("s:1");
+    expect(syncOverrideImageRefs(cat, cat)).toEqual([]);
+  });
+
   it("records a skipped backup when the update policy disables it", async () => {
     m.isPreUpdateBackupEnabled.mockReturnValue(false);
     m.verifyAppHealth.mockResolvedValue(healthy);
@@ -344,6 +472,28 @@ describe("lifecycle entry points use the per-app operation lock", () => {
     await held;
   });
 
+  it("deleteUserApp keeps the catalog entry when uninstall is refused by a running operation", async () => {
+    db.insert(schema.storeSources).values({ id: "user-apps", name: "User apps", type: "talome" }).onConflictDoNothing().run();
+    db.insert(schema.appCatalog).values({
+      appId: APP_ID, storeSourceId: "user-apps", name: "Sonarr (mine)", version: "1", source: "talome", composePath,
+    }).run();
+
+    let release!: () => void;
+    const held = withAppOperation(APP_ID, "update", "system", () => new Promise<{ success: boolean }>((r) => {
+      release = () => r({ success: true });
+    }));
+    await new Promise((r) => setTimeout(r, 5));
+
+    const result = await deleteUserApp(APP_ID);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("update operation");
+    const userCatalog = db.select().from(schema.appCatalog).all().filter((r) => r.storeSourceId === "user-apps");
+    expect(userCatalog).toHaveLength(1);
+
+    release();
+    await held;
+  });
+
   it("manual rollback restores the latest snapshot as a journaled rollback operation", async () => {
     m.verifyAppHealth.mockResolvedValue(healthy);
     await updateApp(APP_ID);
@@ -358,5 +508,48 @@ describe("lifecycle entry points use the per-app operation lock", () => {
     expect(op.actor).toBe("assistant");
     expect(op.status).toBe("succeeded");
     expect(installedRow()!.version).toBe("4.0.0");
+  });
+
+  it("a manual rollback that ends unhealthy is journaled as failed", async () => {
+    m.verifyAppHealth.mockResolvedValue(healthy);
+    await updateApp(APP_ID);
+    m.verifyAppHealth.mockResolvedValue(unhealthy);
+
+    const result = await rollbackUpdate(APP_ID);
+    expect(result.verified).toBe(false);
+    expect(getOperation(result.operationId!)!.status).toBe("failed");
+    expect(installedRow()!.status).toBe("error");
+  });
+});
+
+describe("dependency auto-start under the fail-fast lock", () => {
+  it("bulk-starting a stopped app together with its stopped dependency succeeds (waits instead of conflicting)", async () => {
+    const depCompose = join(composeDir, "qbt.yml");
+    writeFileSync(depCompose, "services:\n  qbittorrent:\n    image: qbt:1\n");
+    db.update(schema.appCatalog).set({ dependencies: JSON.stringify(["qbittorrent"]) }).where(eq(schema.appCatalog.appId, APP_ID)).run();
+    db.insert(schema.appCatalog).values({
+      appId: "qbittorrent", storeSourceId: STORE_ID, name: "qBittorrent", version: "1", source: "talome", composePath: depCompose,
+    }).run();
+    const now = new Date().toISOString();
+    db.insert(schema.installedApps).values({
+      appId: "qbittorrent", storeSourceId: STORE_ID, status: "stopped", envConfig: "{}", containerIds: "[]",
+      version: "1", overrideComposePath: depCompose, installedAt: now, updatedAt: now,
+    }).run();
+    db.update(schema.installedApps).set({ status: "stopped" }).where(eq(schema.installedApps.appId, APP_ID)).run();
+    // Make the dependency's own start take a moment
+    m.run.mockImplementation(async (cmd: string) => {
+      if (cmd.includes("qbt.yml") && cmd.includes(" up -d")) await new Promise((r) => setTimeout(r, 30));
+      return { stdout: "", stderr: "" };
+    });
+
+    const results = await bulkAction([APP_ID, "qbittorrent"], "start");
+    expect(results).toEqual([
+      expect.objectContaining({ appId: APP_ID, success: true }),
+      expect.objectContaining({ appId: "qbittorrent", success: true }),
+    ]);
+    // The dependency was started once (by the bulk), not restarted by sonarr's start
+    expect(commands().filter((c) => c.includes("qbt.yml") && c.includes(" up -d"))).toHaveLength(1);
+    const qbt = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, "qbittorrent")).get();
+    expect(qbt?.status).toBe("running");
   });
 });

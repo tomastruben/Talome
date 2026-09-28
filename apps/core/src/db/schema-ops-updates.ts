@@ -26,6 +26,8 @@ export const appOperations = sqliteTable("app_operations", {
   finishedAt: text("finished_at"),
   /** PID of the Talome process running it (server or MCP stdio) — for cross-process locking/recovery */
   ownerPid: integer("owner_pid"),
+  /** Hostname of the owning process — a PID is only meaningful within the same host/PID namespace */
+  ownerHost: text("owner_host"),
 });
 
 /** Ordered step/progress history for an operation (one row per transition). */

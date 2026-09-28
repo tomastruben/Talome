@@ -37,6 +37,7 @@ export function runOpsUpdatesMigrations(): void {
     finished_at TEXT
   )`);
   addColumnIfMissing("app_operations", "owner_pid", "INTEGER");
+  addColumnIfMissing("app_operations", "owner_host", "TEXT");
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_app_operations_app_started ON app_operations(app_id, started_at)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_app_operations_status ON app_operations(status)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_app_operations_idempotency ON app_operations(idempotency_key)`);

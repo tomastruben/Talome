@@ -11,9 +11,10 @@ import {
   stopApp,
   restartApp,
   updateApp,
+  withAppMaintenance,
 } from "../stores/lifecycle.js";
 import { installProgress, emitProgress, type InstallProgressEvent } from "../stores/install-emitter.js";
-import { listAppOperations } from "../ops/operations.js";
+import { listAppOperations, hasLiveOperation } from "../ops/operations.js";
 import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus } from "@talome/types";
 import { listContainers } from "../docker/client.js";
 import os from "node:os";
@@ -358,14 +359,17 @@ apps.post("/:storeId/:appId/install", async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const { env, volumeMounts } = parsed.data;
 
-  emitProgress(appId, { stage: "queued", message: "Preparing..." });
+  // Don't reset the progress of an install that is already running (double-click, second tab).
+  if (!hasLiveOperation(appId)) emitProgress(appId, { stage: "queued", message: "Preparing..." });
 
   const result = await installApp(appId, storeId, env, volumeMounts, (stage, message) => {
     emitProgress(appId, { stage: stage as InstallProgressEvent["stage"], message });
   }, { actor: actorFor(c) });
 
   if (!result.success) {
-    if (result.conflict) emitProgress(appId, { stage: "error", message: result.error ?? "Another operation is running" });
+    // On a conflict, do NOT emit into the per-app progress channel: the running
+    // install's own progress stream would treat "error" as terminal. The 409
+    // carries the running operationId (see /api/operations/stream).
     return operationError(c, result);
   }
 
@@ -518,32 +522,41 @@ apps.patch("/:storeId/:appId", async (c) => {
     const { readFile, writeFile, mkdir } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const { parse: parseYaml, stringify: stringifyYaml } = await import("yaml");
+    const targetCompose = composePath;
 
-    const content = await readFile(composePath, "utf-8");
-    const doc = parseYaml(content) as Record<string, unknown>;
-    const services = doc.services as Record<string, Record<string, unknown>> | undefined;
-    if (!services) return c.json({ error: "No services in compose file" }, 400);
+    // Journaled "configure" operation under the per-app lock: a compose edit
+    // must not interleave with an update whose rollback would overwrite it.
+    const edit = await withAppMaintenance(appId, "configure", async (ctx) => {
+      ctx.step("edit_ports", 50, "Updating port mappings");
+      const content = await readFile(targetCompose, "utf-8");
+      const doc = parseYaml(content) as Record<string, unknown>;
+      const services = doc.services as Record<string, Record<string, unknown>> | undefined;
+      if (!services) return { success: false, error: "No services in compose file", changed: false };
 
-    // Apply port changes across all services
-    let changed = false;
-    for (const service of Object.values(services)) {
-      if (!Array.isArray(service.ports)) continue;
-      service.ports = (service.ports as string[]).map((p: string) => {
-        const [, container] = p.split(":");
-        const newHost = ports[container];
-        if (newHost !== undefined) { changed = true; return `${newHost}:${container}`; }
-        return p;
-      });
-    }
+      // Apply port changes across all services
+      let changed = false;
+      for (const service of Object.values(services)) {
+        if (!Array.isArray(service.ports)) continue;
+        service.ports = (service.ports as string[]).map((p: string) => {
+          const [, container] = p.split(":");
+          const newHost = ports[container];
+          if (newHost !== undefined) { changed = true; return `${newHost}:${container}`; }
+          return p;
+        });
+      }
 
-    if (changed) {
-      const BACKUP_DIR = join(process.env.HOME || "/tmp", ".talome", "backups", "compose");
-      await mkdir(BACKUP_DIR, { recursive: true });
-      const ts = new Date().toISOString().replace(/[:.]/g, "-");
-      await writeFile(join(BACKUP_DIR, `${appId}-${ts}.yml.bak`), content, "utf-8");
-      await writeFile(composePath, stringifyYaml(doc), "utf-8");
-      portMessage = "Port mappings updated. Restart the app to apply.";
-    }
+      if (changed) {
+        const BACKUP_DIR = join(process.env.HOME || "/tmp", ".talome", "backups", "compose");
+        await mkdir(BACKUP_DIR, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        await writeFile(join(BACKUP_DIR, `${appId}-${ts}.yml.bak`), content, "utf-8");
+        await writeFile(targetCompose, stringifyYaml(doc), "utf-8");
+      }
+      return { success: true, changed };
+    }, { actor: actorFor(c) });
+
+    if (!edit.success) return operationError(c, edit);
+    if (edit.changed) portMessage = "Port mappings updated. Restart the app to apply.";
   }
 
   return c.json({ ok: true, portMessage });

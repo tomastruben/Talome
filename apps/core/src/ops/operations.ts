@@ -13,6 +13,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { z } from "zod";
 import { and, desc, eq, gt, inArray, asc } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
@@ -186,6 +187,8 @@ export function emitOperationEvent(event: OperationEvent): void {
 // ── In-process per-app mutex ─────────────────────────────────────────────────
 
 const activeOps = new Map<string, RunningOperationInfo>();
+/** Settles when the in-process operation on the app finishes (never rejects). */
+const activeCompletions = new Map<string, Promise<void>>();
 
 export function getActiveOperation(appId: string): RunningOperationInfo | null {
   return activeOps.get(appId) ?? null;
@@ -268,6 +271,8 @@ export const HEARTBEAT_INTERVAL_MS = 15_000;
 /** An active row from another process counts as live while its heartbeat is newer than this. */
 export const HEARTBEAT_STALE_MS = 90_000;
 
+export const OWNER_HOST = hostname();
+
 export function isPidAlive(pid: number | null | undefined): boolean {
   if (!pid || !Number.isInteger(pid) || pid <= 0) return false;
   if (pid === process.pid) return true;
@@ -277,6 +282,25 @@ export function isPidAlive(pid: number | null | undefined): boolean {
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+/**
+ * Is a journal row owned by another process still genuinely running?
+ *
+ * The heartbeat must be fresh. A PID is only checked when the owner ran on this
+ * host (legacy rows without a host are assumed local): across PID namespaces
+ * — e.g. the server in a container and the MCP stdio process on the host —
+ * `kill(pid, 0)` says nothing, so heartbeat freshness alone decides.
+ */
+export function isForeignOwnerLive(
+  row: { ownerPid: number | null; ownerHost?: string | null; heartbeatAt: string | null; updatedAt: string },
+  now: number = Date.now(),
+  staleMs: number = HEARTBEAT_STALE_MS,
+): boolean {
+  const heartbeat = Date.parse(row.heartbeatAt ?? row.updatedAt);
+  if (!Number.isFinite(heartbeat) || now - heartbeat >= staleMs) return false;
+  const sameHost = !row.ownerHost || row.ownerHost === OWNER_HOST;
+  return sameHost ? isPidAlive(row.ownerPid) : true;
 }
 
 let schemaEnsured = false;
@@ -306,7 +330,8 @@ interface JournalInsert {
  */
 function insertJournalRowOnce(row: JournalInsert): RunningOperationInfo | null {
   return db.transaction((tx) => {
-    const freshSince = new Date(Date.now() - HEARTBEAT_STALE_MS).toISOString();
+    const now = Date.now();
+    const freshSince = new Date(now - HEARTBEAT_STALE_MS).toISOString();
     const others = tx
       .select()
       .from(schema.appOperations)
@@ -316,14 +341,14 @@ function insertJournalRowOnce(row: JournalInsert): RunningOperationInfo | null {
         gt(schema.appOperations.heartbeatAt, freshSince),
       ))
       .all()
-      .filter((o) => o.ownerPid !== process.pid && isPidAlive(o.ownerPid));
+      .filter((o) => !isOwnRow(o) && isForeignOwnerLive(o, now));
     const blocking = others[0];
     if (blocking) {
       return {
         id: blocking.id,
         appId: blocking.appId,
         kind: toKind(blocking.kind),
-        actor: `${blocking.actor} (process ${blocking.ownerPid})`,
+        actor: `${blocking.actor} (process ${blocking.ownerPid}${blocking.ownerHost && blocking.ownerHost !== OWNER_HOST ? ` on ${blocking.ownerHost}` : ""})`,
         step: blocking.step,
         progress: blocking.progress,
         startedAt: blocking.startedAt,
@@ -347,6 +372,7 @@ function insertJournalRowOnce(row: JournalInsert): RunningOperationInfo | null {
         heartbeatAt: row.startedAt,
         finishedAt: null,
         ownerPid: process.pid,
+        ownerHost: OWNER_HOST,
       })
       .run();
     tx.insert(schema.appOperationEvents)
@@ -354,6 +380,11 @@ function insertJournalRowOnce(row: JournalInsert): RunningOperationInfo | null {
       .run();
     return null;
   }, { behavior: "immediate" });
+}
+
+/** Row written by this very process (same PID on the same host). */
+function isOwnRow(row: { ownerPid: number | null; ownerHost?: string | null }): boolean {
+  return row.ownerPid === process.pid && (!row.ownerHost || row.ownerHost === OWNER_HOST);
 }
 
 function isMissingSchemaError(err: unknown): boolean {
@@ -395,6 +426,9 @@ export async function withAppOperation<T>(
   const startedAt = new Date().toISOString();
   const info: RunningOperationInfo = { id, appId, kind, actor, step: "starting", progress: 0, startedAt };
   activeOps.set(appId, info);
+  let settle!: () => void;
+  const completion = new Promise<void>((resolve) => { settle = resolve; });
+  activeCompletions.set(appId, completion);
 
   let detail: Record<string, unknown> = { ...(opts.detail ?? {}) };
   const outcome: { override: { status: TerminalOperationStatus; error?: string } | null } = { override: null };
@@ -422,6 +456,8 @@ export async function withAppOperation<T>(
     if (otherProcessOp) throw new OperationConflictError(appId, kind, otherProcessOp);
   } catch (err) {
     activeOps.delete(appId);
+    activeCompletions.delete(appId);
+    settle();
     throw err;
   }
 
@@ -491,6 +527,81 @@ export async function withAppOperation<T>(
   } finally {
     clearInterval(heartbeat);
     if (activeOps.get(appId)?.id === id) activeOps.delete(appId);
+    if (activeCompletions.get(appId) === completion) activeCompletions.delete(appId);
+    settle();
+  }
+}
+
+// ── Waiting on another operation ──────────────────────────────────────────────
+// Entry points fail fast on conflicts. Internal callers that genuinely depend
+// on another app's operation (e.g. auto-starting a dependency that a parallel
+// bulk start is already starting) wait for it instead.
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Live operation on the app owned by another process (fresh heartbeat), if any. */
+function findForeignLiveOperation(appId: string): OperationRow | null {
+  const now = Date.now();
+  const freshSince = new Date(now - HEARTBEAT_STALE_MS).toISOString();
+  const rows = db
+    .select()
+    .from(schema.appOperations)
+    .where(and(
+      eq(schema.appOperations.appId, appId),
+      inArray(schema.appOperations.status, ACTIVE_OPERATION_STATUSES),
+      gt(schema.appOperations.heartbeatAt, freshSince),
+    ))
+    .all();
+  return rows.find((r) => !isOwnRow(r) && isForeignOwnerLive(r, now)) ?? null;
+}
+
+/**
+ * True when an operation on the app is genuinely in progress — in this process,
+ * or in another live process (fresh heartbeat). Recovery uses this so it never
+ * rewrites the status of an app that is mid-install/update.
+ */
+export function hasLiveOperation(appId: string): boolean {
+  if (activeOps.has(appId)) return true;
+  try {
+    return findForeignLiveOperation(appId) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait until no operation is running on the app (in this process or another
+ * live one). Resolves true when the app is free, false on timeout.
+ */
+export async function waitForAppOperation(
+  appId: string,
+  opts: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<boolean> {
+  const deadline = Date.now() + (opts.timeoutMs ?? 15 * 60_000);
+  const pollMs = opts.pollMs ?? 1_000;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return !hasLiveOperation(appId);
+    const local = activeCompletions.get(appId);
+    if (local) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        local,
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, remaining); }),
+      ]);
+      if (timer) clearTimeout(timer);
+      continue;
+    }
+    let foreign: OperationRow | null = null;
+    try {
+      foreign = findForeignLiveOperation(appId);
+    } catch {
+      foreign = null;
+    }
+    if (!foreign) return true;
+    await sleep(Math.min(pollMs, remaining));
   }
 }
 
@@ -598,4 +709,5 @@ export function patchOperationDetail(id: string, patch: Record<string, unknown>)
 /** Test-only: clear the in-process mutex table. */
 export function __resetActiveOperationsForTests(): void {
   activeOps.clear();
+  activeCompletions.clear();
 }

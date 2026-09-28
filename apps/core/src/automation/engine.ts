@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { db, schema } from "../db/index.js";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { writeAuditEntry } from "../db/audit.js";
 import { writeNotification } from "../db/notifications.js";
 import { restartContainer } from "../docker/client.js";
@@ -540,7 +540,12 @@ export function markInterruptedAutomationRuns(): number {
     .run();
   db.update(schema.automationStepRuns)
     .set({ status: "interrupted", success: false, error: "Interrupted by server restart", finishedAt: at })
-    .where(inArray(schema.automationStepRuns.status, ["running", "pending"]))
+    .where(eq(schema.automationStepRuns.status, "running"))
+    .run();
+  // Steps that never started were not interrupted — they were skipped.
+  db.update(schema.automationStepRuns)
+    .set({ status: "skipped", finishedAt: at })
+    .where(eq(schema.automationStepRuns.status, "pending"))
     .run();
   return runs.changes;
 }

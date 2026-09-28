@@ -26,7 +26,13 @@ const backupToolResultSchema = z.object({
   error: z.string().optional(),
 });
 
-/** Update policy default mirrors GET /api/updates/policies/:appId (preBackup: true). */
+/**
+ * Opt-in: only an explicit update policy with preBackup enables it (matches
+ * GET /api/updates/policies/:appId, whose default is preBackup: false).
+ * Pre-update archives are full config-volume tarballs with no retention yet,
+ * so taking one on every (bulk) update by default could fill the disk that
+ * also holds Talome's database.
+ */
 export function isPreUpdateBackupEnabled(appId: string): boolean {
   try {
     const policy = db
@@ -34,9 +40,9 @@ export function isPreUpdateBackupEnabled(appId: string): boolean {
       .from(schema.appUpdatePolicies)
       .where(eq(schema.appUpdatePolicies.appId, appId))
       .get();
-    return policy?.preBackup ?? true;
+    return policy?.preBackup ?? false;
   } catch {
-    return true;
+    return false;
   }
 }
 

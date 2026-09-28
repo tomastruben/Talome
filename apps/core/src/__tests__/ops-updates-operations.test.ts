@@ -11,9 +11,10 @@ const { mockListContainers, mockMarkInterruptedAutomationRuns } = vi.hoisted(() 
   mockMarkInterruptedAutomationRuns: vi.fn(() => 0),
 }));
 
+// Probes list containers straight from the Docker API (raw shape).
 vi.mock("../docker/client.js", () => ({
-  listContainers: mockListContainers,
-  docker: { getContainer: vi.fn(), getImage: vi.fn() },
+  listContainers: vi.fn(async () => []),
+  docker: { listContainers: mockListContainers, getContainer: vi.fn(), getImage: vi.fn() },
 }));
 
 vi.mock("../automation/engine.js", () => ({
@@ -34,6 +35,9 @@ import {
   runWithActor,
   currentActor,
   __resetActiveOperationsForTests,
+  waitForAppOperation,
+  hasLiveOperation,
+  OWNER_HOST,
   type OperationEvent,
 } from "../ops/operations.js";
 import { recoverOperationsOnBoot, markInterruptedOperations } from "../ops/recovery.js";
@@ -90,6 +94,37 @@ describe("withAppOperation — per-app lock", () => {
 
     // Lock released after completion
     await expect(withAppOperation("sonarr", "restart", "user", async () => ({ success: true }))).resolves.toEqual({ success: true });
+  });
+
+  it("waitForAppOperation resolves when the running operation finishes", async () => {
+    const gate = deferred();
+    const first = withAppOperation("qbittorrent", "start", "user", async () => {
+      await gate.promise;
+      return { success: true };
+    });
+    expect(hasLiveOperation("qbittorrent")).toBe(true);
+    let waited = false;
+    const waiter = waitForAppOperation("qbittorrent", { timeoutMs: 5_000 }).then((free) => {
+      waited = true;
+      return free;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(waited).toBe(false);
+    gate.resolve();
+    await first;
+    await expect(waiter).resolves.toBe(true);
+    expect(hasLiveOperation("qbittorrent")).toBe(false);
+  });
+
+  it("waitForAppOperation gives up after its timeout", async () => {
+    const gate = deferred();
+    const first = withAppOperation("slow", "update", "user", async () => {
+      await gate.promise;
+      return { success: true };
+    });
+    await expect(waitForAppOperation("slow", { timeoutMs: 20 })).resolves.toBe(false);
+    gate.resolve();
+    await first;
   });
 
   it("releases the lock when the operation throws", async () => {
@@ -216,13 +251,14 @@ function insertRunningOp(
   appId: string,
   kind: string,
   status = "running",
-  owner: { pid?: number | null; heartbeatAgoMs?: number } = {},
+  owner: { pid?: number | null; heartbeatAgoMs?: number; host?: string | null } = {},
 ) {
   const at = new Date(Date.now() - 60_000).toISOString();
   const heartbeat = new Date(Date.now() - (owner.heartbeatAgoMs ?? 60_000)).toISOString();
   db.insert(schema.appOperations).values({
     id, appId, kind, actor: "mcp", status, step: "pull", progress: 30,
     startedAt: at, updatedAt: at, heartbeatAt: heartbeat, ownerPid: owner.pid ?? null,
+    ownerHost: owner.host ?? null,
   }).run();
 }
 
@@ -248,7 +284,7 @@ describe("cross-process coordination (MCP stdio shares the database)", () => {
     expect(getOperation("op-live")!.status).toBe("running");
   });
 
-  it("records the owning pid on new operations", async () => {
+  it("records the owning pid and host on new operations", async () => {
     let opId = "";
     await withAppOperation("owned", "start", "user", async (ctx) => {
       opId = ctx.id;
@@ -256,6 +292,20 @@ describe("cross-process coordination (MCP stdio shares the database)", () => {
     });
     const row = db.select().from(schema.appOperations).where(eq(schema.appOperations.id, opId)).get();
     expect(row?.ownerPid).toBe(process.pid);
+    expect(row?.ownerHost).toBe(OWNER_HOST);
+  });
+
+  it("across hosts / PID namespaces only the heartbeat counts (PID not checked)", async () => {
+    // Owner PID is meaningless here (another namespace) but it keeps heartbeating.
+    insertRunningOp("op-container", "bazarr", "update", "running", { pid: 2 ** 22 + 777, heartbeatAgoMs: 1_000, host: "talome-container" });
+    await expect(withAppOperation("bazarr", "restart", "user", async () => ({ success: true })))
+      .rejects.toThrow(/update operation \(op-container\).*on talome-container/);
+    expect(markInterruptedOperations().map((o) => o.id)).not.toContain("op-container");
+    expect(hasLiveOperation("bazarr")).toBe(true);
+
+    // Once its heartbeat goes stale it no longer blocks.
+    insertRunningOp("op-gone", "prowlarr", "update", "running", { pid: 1, heartbeatAgoMs: 10 * 60_000, host: "talome-container" });
+    await expect(withAppOperation("prowlarr", "restart", "user", async () => ({ success: true }))).resolves.toBeTruthy();
   });
 });
 
@@ -287,7 +337,7 @@ describe("boot recovery", () => {
       installedAt: now, updatedAt: now,
     }).run();
     mockListContainers.mockResolvedValue([
-      { id: "aaa111", name: "sonarr", image: "linuxserver/sonarr:4", status: "running", ports: [], created: now, labels: {} },
+      { Id: "aaa111", Names: ["/sonarr"], Image: "linuxserver/sonarr:4", State: "running", Labels: {} },
     ]);
 
     const result = recoverOperationsOnBoot({ delayMs: 0, sweeper: false });
@@ -309,6 +359,36 @@ describe("boot recovery", () => {
     // Stuck install with no journaled op and no containers → error (not silently "installing" forever)
     const stuck = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, "stuck")).get();
     expect(stuck?.status).toBe("error");
+  });
+
+  it("never rewrites the status of an app whose install/update is running right now", async () => {
+    insertRunningOp("op-old", "radarr", "update");
+    const now = new Date().toISOString();
+    db.insert(schema.installedApps).values({
+      appId: "radarr", storeSourceId: "store", status: "updating", installedAt: now, updatedAt: now,
+    }).run();
+    db.insert(schema.installedApps).values({
+      appId: "fresh", storeSourceId: "store", status: "installing", installedAt: now, updatedAt: now,
+    }).run();
+    mockListContainers.mockResolvedValue([]);
+
+    const gateRadarr = deferred();
+    const gateFresh = deferred();
+    const recovery = recoverOperationsOnBoot({ delayMs: 20, sweeper: false });
+    // New operations start between boot marking and the delayed reconcile.
+    const radarrOp = withAppOperation("radarr", "update", "user", async () => { await gateRadarr.promise; return { success: true }; });
+    const freshOp = withAppOperation("fresh", "install", "user", async () => { await gateFresh.promise; return { success: true }; });
+
+    const findings = await recovery.reconciled;
+    const status = (id: string) => db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, id)).get()?.status;
+    expect(status("radarr")).toBe("updating");
+    expect(status("fresh")).toBe("installing");
+    expect(findings.find((f) => f.appId === "radarr")?.note).toContain("Another operation on this app is now running");
+    expect(findings.some((f) => f.appId === "fresh")).toBe(false);
+
+    gateRadarr.resolve();
+    gateFresh.resolve();
+    await Promise.all([radarrOp, freshOp]);
   });
 
   it("records a reconcile error when Docker is unavailable and leaves status alone", async () => {

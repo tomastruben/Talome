@@ -19,8 +19,10 @@ import { findAppContainers } from "./docker-probe.js";
 import {
   ACTIVE_OPERATION_STATUSES,
   HEARTBEAT_STALE_MS,
+  OWNER_HOST,
   emitOperationEvent,
-  isPidAlive,
+  hasLiveOperation,
+  isForeignOwnerLive,
   listActiveOperationsInProcess,
   patchOperationDetail,
   rowToOperation,
@@ -37,14 +39,14 @@ type OperationRow = typeof schema.appOperations.$inferSelect;
 /**
  * An active row is still genuinely running when it is owned by this process's
  * in-memory lock table, or by another live process (e.g. the MCP stdio server)
- * whose heartbeat is fresh.
+ * whose heartbeat is fresh. Across hosts / PID namespaces only the heartbeat
+ * counts (see isForeignOwnerLive).
  */
 function isStillRunning(row: OperationRow, now: number, staleMs: number): boolean {
   if (listActiveOperationsInProcess().some((op) => op.id === row.id)) return true;
-  if (row.ownerPid === process.pid) return false; // ours, but not in the lock table → orphaned
-  const heartbeat = Date.parse(row.heartbeatAt ?? row.updatedAt);
-  const fresh = Number.isFinite(heartbeat) && now - heartbeat < staleMs;
-  return fresh && isPidAlive(row.ownerPid);
+  const ownRow = row.ownerPid === process.pid && (!row.ownerHost || row.ownerHost === OWNER_HOST);
+  if (ownRow) return false; // ours, but not in the lock table → orphaned
+  return isForeignOwnerLive(row, now, staleMs);
 }
 
 /**
@@ -149,7 +151,10 @@ async function reconcileApp(
   finding.containers = containers.map((c) => ({ name: c.name, status: c.status, image: c.image }));
   const observed = observedStatus(containers);
 
-  if (installed && TRANSIENT_APP_STATUSES.includes(installed.status)) {
+  // A new install/update may have started since the interrupted one was marked
+  // (boot delay, sweeper): its transient status is accurate — leave it alone.
+  const liveOperation = hasLiveOperation(appId);
+  if (installed && TRANSIENT_APP_STATUSES.includes(installed.status) && !liveOperation) {
     db.update(schema.installedApps)
       .set({
         status: observed,
@@ -179,6 +184,7 @@ async function reconcileApp(
   } else if (op?.kind === "install" && containers.length === 0) {
     parts.push("The install did not finish. Uninstall and install the app again.");
   }
+  if (liveOperation) parts.push("Another operation on this app is now running, so its status was left to that operation.");
   parts.push("Nothing was re-run automatically.");
   finding.note = parts.join(" ");
   return finding;
@@ -234,6 +240,8 @@ export async function reconcileInterruptedOperations(ops: OperationRecord[]): Pr
       .all();
     for (const row of stuck) {
       if (handled.has(row.appId)) continue;
+      // Legitimately installing/updating right now — not stuck.
+      if (hasLiveOperation(row.appId)) continue;
       findings.push(await reconcileApp(row.appId, null));
     }
   } catch (err) {
