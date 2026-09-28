@@ -84,7 +84,7 @@ describe("on-demand core split", () => {
 
   it("trims the always-on base to essential ops tools", () => {
     const base = baseToolNames();
-    expect(getBaseDomainNames()).toEqual(["core", "setup"]);
+    expect(getBaseDomainNames()).toEqual(["core", "setup", "verification"]);
     expect(base.length).toBeLessThan(60);
     for (const name of ["list_containers", "restart_container", "get_container_logs", "install_app", "search_apps", "get_app_config", "remember", "recall", "set_setting", "track_issue", "run_shell"]) {
       expect(base).toContain(name);
@@ -107,8 +107,8 @@ describe("on-demand core split", () => {
 
 describe("deterministic ordering", () => {
   it("orders base domains first, then domain name, then tool name — independent of input order", () => {
-    const a = getOrderedDomainTools(["media", "arr", "core", "setup", "automations"]).map(([n]) => n);
-    const b = getOrderedDomainTools(["automations", "setup", "core", "arr", "media"]).map(([n]) => n);
+    const a = getOrderedDomainTools(["media", "arr", "core", "setup", "verification", "automations"]).map(([n]) => n);
+    const b = getOrderedDomainTools(["automations", "verification", "setup", "core", "arr", "media"]).map(([n]) => n);
     expect(a).toEqual(b);
 
     const base = baseToolNames();

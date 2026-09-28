@@ -239,3 +239,87 @@ export const APP_REGISTRY: Record<string, AppCapabilities> = {
 export function getAppCapabilities(appId: string): AppCapabilities | undefined {
   return APP_REGISTRY[appId.toLowerCase()];
 }
+
+/**
+ * Apps Talome can talk to through saved settings, deliberately kept OUT of
+ * APP_REGISTRY. Registry membership opts an app into health scoring,
+ * scheduled setup runs, auto-configure, wiring detectors and app_api_call's
+ * registry auth — all of which assume Talome can discover the API key. These
+ * apps need a user-created key, so they would score as "missing settings"
+ * forever and re-trigger the setup loop. Outcome verification reads their
+ * connection details via getConnectableApp().
+ */
+export const SETTINGS_ONLY_APPS: Record<string, AppCapabilities> = {
+  jellyseerr: {
+    id: "jellyseerr",
+    name: "Jellyseerr",
+    category: "media",
+    apiBaseSettingKey: "jellyseerr_url",
+    apiKeySettingKey: "jellyseerr_api_key",
+    healthEndpoint: "/api/v1/status",
+    configEndpoints: {},
+    commonPorts: [5055],
+    dockerServiceName: "jellyseerr",
+    setupGuideUrl: "https://docs.jellyseerr.dev",
+    talomeToolPrefix: "overseerr_",
+    relatesTo: ["jellyfin", "sonarr", "radarr"],
+    apiKeyDiscoveryMethod: "user",
+    setupDependsOn: ["jellyfin", "sonarr", "radarr"],
+  },
+  immich: {
+    id: "immich",
+    name: "Immich",
+    category: "media",
+    apiBaseSettingKey: "immich_url",
+    apiKeySettingKey: "immich_api_key",
+    healthEndpoint: "/api/server/ping",
+    configEndpoints: {},
+    commonPorts: [2283],
+    dockerServiceName: "immich",
+    setupGuideUrl: "https://immich.app/docs",
+    talomeToolPrefix: "immich_",
+    relatesTo: [],
+    apiKeyDiscoveryMethod: "user",
+    setupDependsOn: [],
+  },
+};
+
+/** Registry entry, or a settings-only app, for code that only needs connection details. */
+export function getConnectableApp(appId: string): AppCapabilities | undefined {
+  const id = appId.toLowerCase();
+  if (Object.hasOwn(APP_REGISTRY, id)) return APP_REGISTRY[id];
+  if (Object.hasOwn(SETTINGS_ONLY_APPS, id)) return SETTINGS_ONLY_APPS[id];
+  return undefined;
+}
+
+export type AppAuthScheme = "x-api-key" | "mediabrowser" | "bearer" | "qbt-cookie" | "query" | "none";
+
+/**
+ * How each known app expects its stored credential. Mirrors AUTH_PATTERNS in
+ * ai/tools/universal-tools.ts (which should adopt this map); apps not listed
+ * there use the convention fallback (X-Api-Key), which matches what is listed here.
+ */
+export const APP_AUTH_SCHEMES: Record<string, AppAuthScheme> = {
+  sonarr: "x-api-key",
+  radarr: "x-api-key",
+  readarr: "x-api-key",
+  prowlarr: "x-api-key",
+  overseerr: "x-api-key",
+  jellyseerr: "x-api-key",
+  immich: "x-api-key",
+  jellyfin: "mediabrowser",
+  audiobookshelf: "bearer",
+  homeassistant: "bearer",
+  vaultwarden: "bearer",
+  pihole: "query",
+  qbittorrent: "qbt-cookie",
+};
+
+/**
+ * Apps that share another app's API and may be configured through its
+ * settings — Jellyseerr is an Overseerr fork, and the overseerr_* tools
+ * (and settings) are used for both.
+ */
+export const APP_SETTINGS_FALLBACK: Record<string, string> = {
+  jellyseerr: "overseerr",
+};

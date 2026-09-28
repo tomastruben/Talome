@@ -7,6 +7,7 @@ import { runTrustMigrations } from "./migrations/trust.js";
 import { runBackupsMigrations } from "./migrations/backups.js";
 import { runStoreCompatMigrations } from "./migrations/store-compat.js";
 import { runAiChatMigrations } from "./migrations/ai-chat.js";
+import { runOutcomeProbesMigrations } from "./migrations/outcome-probes.js";
 
 function recordMigration(version: number, description: string) {
   db.run(sql`INSERT OR IGNORE INTO schema_versions (version, applied_at, description) VALUES (${version}, datetime('now'), ${description})`);
@@ -869,6 +870,7 @@ export function runMigrations() {
   runBackupsMigrations();
   runStoreCompatMigrations();
   runAiChatMigrations();
+  runOutcomeProbesMigrations();
 
   // ── Record schema versions ─────────────────────────────────────────────
   recordMigration(1, "Initial schema: users, conversations, messages, settings, audit_log");
@@ -892,6 +894,7 @@ export function runMigrations() {
   recordMigration(18, "Backups: methods, manifests, verification, per-app config, destinations, restores, GFS retention");
   recordMigration(19, "Store compat: app_catalog.umbrel_meta, store_sources.last_parsed_rev, app_install_options, catalog store index");
   recordMigration(21, "AI chat: conversation_tool_domains for per-conversation tool routing");
+  recordMigration(22, "Outcome probes: verification_results for semantic app/stack verification");
 
   console.log("Database migrations complete");
 }
