@@ -1,84 +1,104 @@
 /**
- * Tool Execution Gateway — enforces security mode on tool calls.
+ * Tool Execution Gateway — adapts AI SDK tools to the execution service.
  *
- * Wraps each tool's execute function with security checks based on the
- * system-wide `security_mode` setting:
+ * Every tool handed to the chat model is wrapped so its execute() goes through
+ * `executeTool()` (ai/execution.ts), which applies the system-wide
+ * `security_mode`, server-issued approvals, and audit:
  *
  * - "permissive": all tools execute freely (power user)
- * - "cautious": destructive tools require `confirmed: true` in params (default)
+ * - "cautious": destructive tools require a server-issued approval (default).
+ *   The model can no longer approve itself with `confirmed: true`; it receives
+ *   an `approval_required` result and retries with `approval_id` once the
+ *   owner approved in Settings -> Approvals.
  * - "locked": only read-tier tools execute; modify/destructive return error
  */
 
 import type { Tool } from "ai";
-import { getSetting } from "../utils/settings.js";
-import { writeAuditEntry } from "../db/audit.js";
+import {
+  DASHBOARD_CHAT_ACTOR,
+  acceptsApprovalArg,
+  approvalIdArgSchema,
+  executeTool,
+  getSecurityMode,
+  type Actor,
+  type ExecuteToolResult,
+  type ExecutionSource,
+  type SecurityMode,
+} from "./execution.js";
 
-export type SecurityMode = "permissive" | "cautious" | "locked";
+export { getSecurityMode, type SecurityMode };
 
-const VALID_MODES = new Set<SecurityMode>(["permissive", "cautious", "locked"]);
+type ToolTier = "read" | "modify" | "destructive";
 
-/** Read the current security mode from settings. Defaults to "cautious". */
-export function getSecurityMode(): SecurityMode {
-  const raw = getSetting("security_mode");
-  if (raw && VALID_MODES.has(raw as SecurityMode)) return raw as SecurityMode;
-  return "cautious";
+/**
+ * Add the reserved `approval_id` argument to a Zod object input schema so it
+ * survives validation. Non-Zod schemas are returned unchanged.
+ */
+export function withApprovalArg(inputSchema: unknown): unknown {
+  const schema = inputSchema as { extend?: (shape: Record<string, unknown>) => unknown; _zod?: unknown } | undefined;
+  if (!schema || typeof schema.extend !== "function" || !("_zod" in schema)) return inputSchema;
+  try {
+    return schema.extend({ approval_id: approvalIdArgSchema });
+  } catch {
+    return inputSchema;
+  }
 }
 
 /**
- * Wrap a tool with security gateway checks.
- * Returns a new tool with the same schema but a guarded execute function.
+ * Map an execution result back to what the chat model and UI already expect:
+ * the raw tool output, `{ error }` for blocks, a structured approval request,
+ * and a rethrow when the tool itself threw (AI SDK turns it into a tool error).
+ */
+export function toChatToolResult(r: ExecuteToolResult): unknown {
+  switch (r.outcome) {
+    case "success":
+      return r.result;
+    case "error":
+      if (r.thrown !== undefined) throw r.thrown;
+      return r.result ?? { error: r.error?.message ?? "Tool failed" };
+    case "approval_required":
+      return { ...r.approval, error: r.approval?.instructions };
+    case "blocked":
+    default:
+      return { error: r.error?.hint ? `${r.error.message} ${r.error.hint}` : (r.error?.message ?? "Blocked") };
+  }
+}
+
+/**
+ * Wrap a tool so every call runs through the execution service.
+ * Returns a new tool with the same schema (plus `approval_id` where an
+ * approval may be required) and a guarded execute function.
  */
 export function gateToolExecution(
   toolDef: Tool,
   toolName: string,
-  tier: "read" | "modify" | "destructive",
+  tier: ToolTier,
   mode: SecurityMode,
+  actor: Actor = DASHBOARD_CHAT_ACTOR,
+  source: ExecutionSource = "chat",
 ): Tool {
-  // Permissive mode: pass through unchanged
-  if (mode === "permissive") return toolDef;
+  const original = (toolDef as { execute?: unknown }).execute;
+  if (typeof original !== "function") return toolDef;
 
-  // Read-tier tools always pass in all modes
-  if (tier === "read") return toolDef;
+  const inputSchema = acceptsApprovalArg(toolName, tier)
+    ? withApprovalArg((toolDef as { inputSchema?: unknown }).inputSchema)
+    : (toolDef as { inputSchema?: unknown }).inputSchema;
 
-  // Locked mode: block all modify/destructive tools
-  if (mode === "locked") {
-    return {
-      ...toolDef,
-      execute: async () => {
-        writeAuditEntry(
-          `BLOCKED (locked mode): ${toolName}`,
-          tier,
-          "Security mode is set to locked — only read operations are allowed.",
-          false,
-        );
-        return {
-          error: `This action is blocked. Security mode is set to "locked" — only read operations are allowed. An admin can change this in Settings > Security.`,
-        };
-      },
-    } as Tool;
-  }
-
-  // Cautious mode: destructive tools require confirmed:true
-  if (mode === "cautious" && tier === "destructive") {
-    const original = toolDef as Tool & { execute: (args: Record<string, unknown>) => Promise<unknown> };
-    return {
-      ...toolDef,
-      execute: async (args: Record<string, unknown>) => {
-        if (!args.confirmed) {
-          writeAuditEntry(
-            `NEEDS CONFIRMATION: ${toolName}`,
-            tier,
-            JSON.stringify(args).slice(0, 500),
-            false,
-          );
-          return {
-            error: `This is a destructive action. Please confirm by calling this tool again with confirmed: true. Security mode is "cautious" — destructive operations require explicit confirmation.`,
-          };
-        }
-        return original.execute(args);
-      },
-    } as Tool;
-  }
-
-  return toolDef;
+  return {
+    ...toolDef,
+    inputSchema,
+    execute: async (args: unknown, options: unknown) => {
+      const result = await executeTool({
+        actor,
+        source,
+        toolName,
+        args,
+        tool: toolDef,
+        baseTier: tier,
+        mode,
+        toolCallOptions: options,
+      });
+      return toChatToolResult(result);
+    },
+  } as Tool;
 }

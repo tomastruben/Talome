@@ -1,7 +1,6 @@
 import { generateObject } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { eq } from "drizzle-orm";
-import { db, schema } from "../db/index.js";
+import { getSetting } from "../utils/settings.js";
 import { createUserApp } from "../stores/creator.js";
 import {
   AppBlueprintSchema,
@@ -18,17 +17,9 @@ function summarizeReferenceContent(content: string): string {
   return content.split("\n").slice(0, 40).join("\n").slice(0, 1800);
 }
 
+/** anthropic_key is encrypted at rest — getSetting() decrypts it. */
 export function getAnthropicApiKey(): string | undefined {
-  try {
-    const row = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, "anthropic_key"))
-      .get();
-    return row?.value || process.env.ANTHROPIC_API_KEY;
-  } catch {
-    return process.env.ANTHROPIC_API_KEY;
-  }
+  return getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
 }
 
 function buildBlueprintPrompt(

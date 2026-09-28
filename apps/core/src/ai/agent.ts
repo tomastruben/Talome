@@ -1194,10 +1194,32 @@ function getResolvedSystemPrompt(pageContext?: string): string {
 }
 
 // ── Tool access ─────────────────────────────────────────────────────────────
-// activeTools: only tools from configured domains — used by MCP server + dashboard chat
+// getActiveDomainTools(): tools from currently configured domains, evaluated on
+// every call (MCP builds its view per HTTP request / stdio sync tick).
 // getAllRegisteredTools(): full set — only for builtin-name registration
 
-export const activeTools = getActiveRegisteredTools();
+type ActiveToolMap = ReturnType<typeof getActiveRegisteredTools>;
+
+/** Tools from domains whose apps are configured right now (settings cached ~10s). */
+export function getActiveDomainTools(): ActiveToolMap {
+  return getActiveRegisteredTools();
+}
+
+/**
+ * @deprecated Use getActiveDomainTools(). Kept for existing importers: a live
+ * view (not a module-init snapshot, which also queried the DB before
+ * migrations ran) that re-evaluates the configured domains on each access.
+ */
+export const activeTools: ActiveToolMap = new Proxy({} as ActiveToolMap, {
+  get: (_target, key) => (typeof key === "string" ? getActiveRegisteredTools()[key] : undefined),
+  has: (_target, key) => typeof key === "string" && key in getActiveRegisteredTools(),
+  ownKeys: () => Reflect.ownKeys(getActiveRegisteredTools()),
+  getOwnPropertyDescriptor: (_target, key) => {
+    if (typeof key !== "string") return undefined;
+    const tools = getActiveRegisteredTools();
+    return key in tools ? { value: tools[key], enumerable: true, configurable: true, writable: false } : undefined;
+  },
+});
 
 // Register built-in tool names so custom tools cannot shadow them (needs full set)
 setBuiltinToolNames(Object.keys(getAllRegisteredTools()));

@@ -21,6 +21,7 @@ import { notificationChannels } from "./routes/notification-channels.js";
 import { memories } from "./routes/memories.js";
 import { integrations } from "./routes/integrations.js";
 import { mcp } from "./routes/mcp.js";
+import { approvals } from "./routes/approvals.js";
 import { setupTerminal } from "./routes/terminal.js";
 import { automations } from "./routes/automations.js";
 import { auth } from "./routes/auth.js";
@@ -384,6 +385,7 @@ app.use("/api/users/*", requireRole("admin"));
 app.use("/api/settings/*", requireRole("admin"));
 app.use("/api/evolution/*", requireRole("admin"));
 app.use("/api/stores/*", requireRole("admin"));
+app.use("/api/approvals/*", requireRole("admin"));
 
 // ── Feature-level permission guards ─────────────────────────────────────────
 app.use("/api/media/*", requirePermission("media"));
@@ -412,6 +414,7 @@ app.use("/api/auth/*", rateLimit(10, 60_000));
 app.use("/api/webhooks/*", rateLimit(30, 60_000));
 
 app.route("/api/audit-log", auditLog);
+app.route("/api/approvals", approvals);
 app.route("/api/settings", settings);
 app.route("/api/media", media);
 app.route("/api/metrics", metricsRoute);

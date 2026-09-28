@@ -121,8 +121,22 @@ function verifyBearerToken(authHeader: string | null | undefined): boolean {
   const raw = authHeader.slice(7).trim();
   if (!raw) return false;
   const hash = hashToken(raw);
-  const row = sqlite.prepare("SELECT id FROM mcp_tokens WHERE token_hash = ?").get(hash) as { id: string } | undefined;
-  return !!row;
+  // A terminal is a shell: only live (not revoked/expired) tokens granted the
+  // destructive tier may open one. Columns come from db/migrations/trust.ts;
+  // before that migration ran, fall back to the original existence check.
+  let row: { id: string; scopes?: string | null; expires_at?: string | null; revoked_at?: string | null } | undefined;
+  try {
+    row = sqlite.prepare("SELECT id, scopes, expires_at, revoked_at FROM mcp_tokens WHERE token_hash = ?").get(hash) as typeof row;
+  } catch {
+    return !!sqlite.prepare("SELECT id FROM mcp_tokens WHERE token_hash = ?").get(hash);
+  }
+  if (!row || row.revoked_at) return false;
+  if (row.expires_at && !(Date.parse(row.expires_at) > Date.now())) return false;
+  try {
+    return (JSON.parse(row.scopes ?? "null") as { maxTier?: string } | null)?.maxTier === "destructive";
+  } catch {
+    return false;
+  }
 }
 
 // ── Ephemeral auth tokens (in-memory, 60s TTL) ────────────────────────────────

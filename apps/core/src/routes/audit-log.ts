@@ -1,16 +1,38 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import { db, schema } from "../db/index.js";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, type SQL } from "drizzle-orm";
 
 const auditLog = new Hono();
 
+// Entries include actor (actorKind/actorId/actorLabel), source, toolName,
+// outcome and durationMs when written by the execution service (null on
+// older rows). `details` holds a redacted, truncated args preview.
+const listQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+  actorKind: z.string().max(32).optional(),
+  actorId: z.string().max(128).optional(),
+  source: z.string().max(32).optional(),
+  outcome: z.enum(["success", "error", "blocked", "approval_required"]).optional(),
+  tool: z.string().max(128).optional(),
+});
+
 auditLog.get("/", (c) => {
   try {
+    const parsed = listQuerySchema.safeParse(c.req.query());
+    const q = parsed.success ? parsed.data : {};
+    const filters: SQL[] = [];
+    if (q.actorKind) filters.push(eq(schema.auditLog.actorKind, q.actorKind));
+    if (q.actorId) filters.push(eq(schema.auditLog.actorId, q.actorId));
+    if (q.source) filters.push(eq(schema.auditLog.source, q.source));
+    if (q.outcome) filters.push(eq(schema.auditLog.outcome, q.outcome));
+    if (q.tool) filters.push(eq(schema.auditLog.toolName, q.tool));
     const entries = db
       .select()
       .from(schema.auditLog)
+      .where(filters.length > 0 ? and(...filters) : undefined)
       .orderBy(desc(schema.auditLog.id))
-      .limit(100)
+      .limit(q.limit ?? 100)
       .all();
     return c.json(entries);
   } catch (err) {

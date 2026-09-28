@@ -41,6 +41,14 @@ export const auditLog = sqliteTable("audit_log", {
   tier: text("tier", { enum: ["read", "modify", "destructive"] }).notNull(),
   approved: integer("approved", { mode: "boolean" }).notNull().default(true),
   details: text("details").notNull().default(""),
+  // ── Trust columns (migration: db/migrations/trust.ts) ──
+  actorKind: text("actor_kind"),
+  actorId: text("actor_id"),
+  actorLabel: text("actor_label"),
+  source: text("source"),
+  toolName: text("tool_name"),
+  outcome: text("outcome"),
+  durationMs: integer("duration_ms"),
 });
 
 export const settings = sqliteTable("settings", {
@@ -136,6 +144,13 @@ export const mcpTokens = sqliteTable("mcp_tokens", {
   tokenHash: text("token_hash").notNull(),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   lastUsedAt: text("last_used_at"),
+  // ── Trust columns (migration: db/migrations/trust.ts) ──
+  /** JSON-serialized TokenScopes (approval/grants.ts). NULL = read-only. */
+  scopes: text("scopes"),
+  expiresAt: text("expires_at"),
+  revokedAt: text("revoked_at"),
+  /** 1 = token predates per-token grants and was migrated to full access */
+  legacy: integer("legacy", { mode: "boolean" }).notNull().default(false),
 });
 
 export const memories = sqliteTable("memories", {
@@ -555,3 +570,5 @@ export const communitySubmissions = sqliteTable("community_submissions", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
   publishedAt: text("published_at"),
 });
+
+export * from "./schema-trust.js";
