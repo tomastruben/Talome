@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { CORE_URL, getHostUrl } from "@/lib/constants";
+import { isTransitionalInstallStatus, useAdaptiveInterval, POLL_ACTIVE_MS, POLL_IDLE_MS } from "@/lib/polling";
 import { talomePost, talomeDelete, talomePatch } from "@/hooks/use-talome-api";
 import { Streamdown } from "streamdown";
 import { PillIndicator } from "@/components/kibo-ui/pill";
@@ -192,6 +193,9 @@ const SOURCE_LABELS: Record<string, string> = {
   "user-created": "My Apps",
 };
 
+/** Keep polling fast this long after an action finishes so the UI settles. */
+const ACTION_GRACE_MS = 20_000;
+
 type InstallStage = "queued" | "pulling" | "creating" | "starting" | "running" | "error";
 
 const STAGE_LABELS: Record<InstallStage, string> = {
@@ -268,19 +272,32 @@ export default function AppDetailPage() {
   const quickLook = useQuickLook();
   const sseRef = useRef<EventSource | null>(null);
 
-  // Fetch service stacks to find containers for this app
-  const { data: stacks } = useSWR<ServiceStack[]>(
-    `${CORE_URL}/api/containers?grouped=true`,
-    fetcher,
-    { refreshInterval: 5000, revalidateOnFocus: false },
+  // Poll fast (5s) only while an action / install is in flight (plus a short
+  // grace window to catch the settled state); otherwise every 30s.
+  const actionInFlight =
+    !!actionLoading || (installStage !== null && installStage !== "running" && installStage !== "error");
+  const actionPollMs = useAdaptiveInterval(actionInFlight, {
+    fast: POLL_ACTIVE_MS,
+    slow: POLL_IDLE_MS,
+    graceMs: ACTION_GRACE_MS,
+  });
+
+  // Stable refreshInterval functions: SWR restarts its poll timer whenever
+  // the function identity changes, so inline closures would starve polling
+  // while SSE progress / editor state re-renders the page.
+  const appRefreshInterval = useCallback(
+    (data: CatalogApp | undefined) => {
+      if (!data?.installed) return 0;
+      return isTransitionalInstallStatus(data.installed.status) ? POLL_ACTIVE_MS : actionPollMs;
+    },
+    [actionPollMs],
   );
-  const appStack = stacks?.find((s) => s.appId === appId || s.id === appId);
 
   const { data: app, isLoading, mutate } = useSWR<CatalogApp>(
     storeId && appId ? `${CORE_URL}/api/apps/${storeId}/${appId}` : null,
     fetcher,
     {
-      refreshInterval: (data) => (data?.installed ? 5000 : 0),
+      refreshInterval: appRefreshInterval,
       onSuccess: (data) => {
         if (!data.installed && Object.keys(envValues).length === 0) {
           const defaults: Record<string, string> = {};
@@ -293,6 +310,26 @@ export default function AppDetailPage() {
       revalidateOnFocus: false,
     },
   );
+
+  // Fetch service stacks to find containers for this app
+  const appTransitional = isTransitionalInstallStatus(app?.installed?.status);
+  const stacksRefreshInterval = useCallback(
+    (data: ServiceStack[] | undefined) => {
+      const stack = data?.find((s) => s.appId === appId || s.id === appId);
+      const containersSettling = stack?.containers.some((c) => c.status === "restarting") ?? false;
+      return appTransitional || containersSettling ? POLL_ACTIVE_MS : actionPollMs;
+    },
+    [appId, appTransitional, actionPollMs],
+  );
+  const { data: stacks } = useSWR<ServiceStack[]>(
+    `${CORE_URL}/api/containers?grouped=true`,
+    fetcher,
+    {
+      refreshInterval: stacksRefreshInterval,
+      revalidateOnFocus: false,
+    },
+  );
+  const appStack = stacks?.find((s) => s.appId === appId || s.id === appId);
 
   // Fetch available update info for this app
   const { data: updateInfo, mutate: mutateUpdateInfo } = useSWR<{

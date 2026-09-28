@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { getDirectCoreUrl } from "@/lib/constants";
+import { hasInProgressJobs, pickPollInterval, useVisibleInterval } from "@/lib/polling";
 import { formatBytes } from "@/lib/format";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -126,9 +127,10 @@ export function MediaPlayerSection() {
   useEffect(() => { void fetchHealth(optConfig?.mediaTypes); }, [fetchHealth, optConfig?.mediaTypes]);
   useEffect(() => {
     void fetchOptJobs();
-    const interval = setInterval(() => void fetchOptJobs(), 3000);
-    return () => clearInterval(interval);
   }, [fetchOptJobs]);
+  // 3s while a job is running/queued (or a scan is starting), 30s otherwise;
+  // paused while the tab is hidden.
+  useVisibleInterval(fetchOptJobs, pickPollInterval(scanning || hasInProgressJobs(optJobs)));
 
   // Filter jobs by selected media type using tagged root paths
   const mediaFilter = optConfig?.mediaTypes ?? "all";

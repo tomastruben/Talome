@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CORE_URL, getTerminalDaemonHttpUrl } from "@/lib/constants";
+import { useVisibleInterval } from "@/lib/polling";
 
 export type SessionCategory = "user" | "system";
 
@@ -202,11 +203,10 @@ export function useTerminalSessions({
   useEffect(() => {
     if (!enabled || !persistent) return;
     void refreshSessions();
-    const interval = window.setInterval(() => {
-      void refreshSessions();
-    }, 15000);
-    return () => window.clearInterval(interval);
   }, [enabled, persistent, refreshSessions]);
+  // Refresh the session list every 15s while visible (paused when hidden).
+  const pollSessions = useCallback(() => { void refreshSessions(); }, [refreshSessions]);
+  useVisibleInterval(pollSessions, enabled && persistent ? 15_000 : null);
 
   const selectedSession = useMemo(() => {
     if (!selectedSessionId) return undefined;

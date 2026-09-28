@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { getDirectCoreUrl } from "@/lib/constants";
+import { optimizationJobsRefreshInterval } from "@/lib/polling";
 import { toast } from "sonner";
 import useSWR from "swr";
 import type { SeasonData, EpisodeData } from "./media-detail-sheet";
@@ -79,7 +80,8 @@ export function EpisodeBrowser({
   const { data: jobsData, mutate: mutateJobs } = useSWR<{ jobs: Array<{ sourcePath: string; status: string; progress: number }> }>(
     `${getDirectCoreUrl()}/api/optimization/jobs?status=running,queued,completed`,
     (url: string) => fetch(url, { credentials: "include" }).then(r => r.json()),
-    { refreshInterval: 3000 },
+    // 3s while a job is running/queued, 30s when idle
+    { refreshInterval: optimizationJobsRefreshInterval },
   );
 
   const jobByBasename = useMemo(() => {

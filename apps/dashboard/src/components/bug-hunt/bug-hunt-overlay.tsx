@@ -171,39 +171,21 @@ export function BugHuntOverlay() {
   }, [capturedCtx, captureContext]);
 
   // ── Global keyboard shortcut: Cmd+Shift+X ─────────────────────────
-
-  const bugHuntMethods = useBugHunt();
-  const bugHuntRef = useRef(bugHuntMethods);
-  bugHuntRef.current = bugHuntMethods;
+  // While closed, the shortcut is handled by BugHuntLauncher (which also
+  // lazy-loads this overlay); while open it re-captures the screenshot.
 
   useEffect(() => {
+    if (!isOpen) return;
     async function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "x") {
         e.preventDefault();
-
-        if (isOpen) {
-          await captureScreenshot();
-          return;
-        }
-
-        // Capture BEFORE opening so overlay isn't in the screenshot
-        let screenshotData: string | null = null;
-        try {
-          const target = document.querySelector("main") as HTMLElement | null ?? document.body;
-          const toPngFn = await loadToPng();
-          screenshotData = await toPngFn(target, { quality: 0.8, pixelRatio: 1 });
-        } catch {
-          // Silent fail — screenshot is optional
-        }
-
-        const ctx = captureContext();
-        bugHuntRef.current.open({ screenshot: screenshotData ?? undefined, context: ctx });
+        await captureScreenshot();
       }
     }
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, captureContext, captureScreenshot]);
+  }, [isOpen, captureScreenshot]);
 
   // ── Manual screenshot upload ───────────────────────────────────────
 

@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR from "swr";
 import { CORE_URL, resolvePosterUrl } from "@/lib/constants";
+import { optimizationJobsRefreshInterval } from "@/lib/polling";
 import { SearchField } from "@/components/ui/search-field";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -63,6 +64,7 @@ import { ReleaseSearchPanel } from "@/components/media/release-search-panel";
 import { RequestsTab, type OverseerrRequest } from "@/components/media/requests-tab";
 import { WatchlistSection, type PlexWatchlistItem } from "@/components/media/watching-tab";
 import { useCinemaBrowser } from "@/components/media/cinema-browser-context";
+import { preloadCinemaBrowser } from "@/components/media/cinema-browser-launcher";
 import { Projector01Icon } from "@/components/icons";
 import { useSetAtom } from "jotai";
 import { pageActionAtom } from "@/atoms/page-action";
@@ -818,7 +820,8 @@ function MediaPageInner({
   const { data: optJobsData } = useSWR<{ jobs: Array<{ sourcePath: string; status: string; progress: number }> }>(
     `${CORE_URL}/api/optimization/jobs?status=running,queued,completed`,
     fetcher,
-    { refreshInterval: 3000 }
+    // 3s while a job is running/queued, 30s when idle
+    { refreshInterval: optimizationJobsRefreshInterval }
   );
   const stemOf = (p: string) => {
     const name = p.split("/").pop() ?? "";
@@ -1245,6 +1248,8 @@ function MediaPageInner({
           size="sm"
           className="hidden md:inline-flex h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
           onClick={() => cinemaBrowser.open(tab as "movies" | "tv")}
+          onPointerEnter={preloadCinemaBrowser}
+          onFocus={preloadCinemaBrowser}
         >
           <HugeiconsIcon icon={Projector01Icon} size={14} />
           Cinema

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { useAtomValue } from "jotai";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
@@ -8,27 +8,31 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { SiteHeader } from "@/components/layout/site-header";
 import { MediaDetailProvider } from "@/components/media/media-detail-context";
 import { AssistantProvider } from "@/components/assistant/assistant-context";
-import { CommandPalette } from "@/components/assistant/command-palette";
+import { CommandPaletteLauncher } from "@/components/assistant/command-palette-launcher";
 import { WidgetEditProvider } from "@/components/widgets/widget-edit-context";
 import { AutomationProvider } from "@/components/automations/automation-context";
 import { SystemHealthBanner } from "@/components/system-health-banner";
 import { QuickLookProvider } from "@/components/quick-look/quick-look-context";
 import { QuickLookModal } from "@/components/quick-look/quick-look";
 import { BugHuntProvider } from "@/components/bug-hunt/bug-hunt-context";
-import { BugHuntOverlay } from "@/components/bug-hunt/bug-hunt-overlay";
+import { BugHuntLauncher } from "@/components/bug-hunt/bug-hunt-launcher";
 import { CinemaBrowserProvider } from "@/components/media/cinema-browser-context";
-import { CinemaBrowserOverlay } from "@/components/media/cinema-browser";
+import { CinemaBrowserLauncher } from "@/components/media/cinema-browser-launcher";
 import { NotificationToastBridge } from "@/components/notifications/notification-toast-bridge";
 import { hideShellHeaderAtom } from "@/atoms/shell";
 import { registerServiceWorker } from "@/lib/register-sw";
 import { GlobalAudioPlayer } from "@/components/audiobooks/global-audio-player";
 import { useUser } from "@/hooks/use-user";
 
+const subscribeNoop = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
+
 export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false);
   const router = useRouter();
   const { user, isLoading: userLoading } = useUser();
-  useEffect(() => setMounted(true), []);
+  // true only on the client after hydration (false during SSR and hydration)
+  const mounted = useSyncExternalStore(subscribeNoop, getClientSnapshot, getServerSnapshot);
   useEffect(() => { registerServiceWorker(); }, []);
 
   // Client-side auth guard: redirect to login if user session is invalid.
@@ -49,11 +53,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         <CinemaBrowserProvider>
         <WidgetEditProvider>
           <AutomationProvider>
-          {mounted && <CommandPalette />}
+          {/* Heavy overlays are code-split: each launcher is tiny and loads its
+              overlay on first use (the palette is also preloaded when idle). */}
+          {mounted && <CommandPaletteLauncher />}
           <NotificationToastBridge />
           <QuickLookModal />
-          <BugHuntOverlay />
-          <CinemaBrowserOverlay />
+          <BugHuntLauncher />
+          <CinemaBrowserLauncher />
           <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
             <a
               href="#main-content"

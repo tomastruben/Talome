@@ -118,23 +118,77 @@ function assistantPromptUrl(n: AppNotification): string {
   return `/dashboard/assistant?prompt=${encodeURIComponent(prompt)}`;
 }
 
-export function useNotifications() {
+/** Poll cadence of the notification list (the only polled notification key). */
+export const NOTIFICATIONS_POLL_MS = 15_000;
+/**
+ * Safety refresh for the unread count. The count is normally refreshed when
+ * the polled list changes; this cheap poll also catches changes outside the
+ * top-N list (read/dismissed on another device, bulk cleanup).
+ */
+export const NOTIFICATIONS_COUNT_SAFETY_MS = 60_000;
+export const NOTIFICATIONS_MUTE_POLL_MS = 60_000;
+
+/**
+ * Signature of the fields that affect the unread count. When it changes
+ * between two list polls, the count is refetched — so the count endpoint no
+ * longer needs its own 15s poll.
+ */
+export function notificationListSignature(list: AppNotification[] | undefined): string {
+  if (!Array.isArray(list)) return "";
+  return list.map((n) => `${n.id}:${n.read ? 1 : 0}`).join(",");
+}
+
+export interface UseNotificationsOptions {
+  /**
+   * Exactly one mounted instance (NotificationToastBridge in the dashboard
+   * shell) owns polling; every other consumer reads the shared SWR cache and
+   * never starts timers of its own. Default false.
+   */
+  poll?: boolean;
+}
+
+export function getNotificationSWROptions(poll: boolean) {
+  return {
+    list: { refreshInterval: poll ? NOTIFICATIONS_POLL_MS : 0 },
+    count: {
+      refreshInterval: poll ? NOTIFICATIONS_COUNT_SAFETY_MS : 0,
+      revalidateOnFocus: false,
+    },
+    mute: { refreshInterval: poll ? NOTIFICATIONS_MUTE_POLL_MS : 0 },
+  } as const;
+}
+
+export function useNotifications(options: UseNotificationsOptions = {}) {
+  const { poll = false } = options;
+  const swrOptions = getNotificationSWROptions(poll);
+  const lastSignatureRef = useRef<string | null>(null);
+
   const { data, isLoading } = useSWR<AppNotification[]>(
     LIST_KEY,
     fetcher,
-    { refreshInterval: 15000 }
+    {
+      ...swrOptions.list,
+      onSuccess: (list) => {
+        if (!poll) return;
+        const signature = notificationListSignature(list);
+        const previous = lastSignatureRef.current;
+        lastSignatureRef.current = signature;
+        // New / read / dismissed notifications → refresh the unread count.
+        if (previous !== null && previous !== signature) void mutate(COUNT_KEY);
+      },
+    }
   );
 
   const { data: countData } = useSWR<{ count: number }>(
     COUNT_KEY,
     fetcher,
-    { refreshInterval: 15000 }
+    swrOptions.count
   );
 
   const { data: muteData } = useSWR<{ muted: boolean }>(
     MUTE_KEY,
     fetcher,
-    { refreshInterval: 60000 }
+    swrOptions.mute
   );
 
   // Prevent rapid-fire dismiss calls for the same ID

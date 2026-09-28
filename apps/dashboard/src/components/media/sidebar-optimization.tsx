@@ -12,7 +12,31 @@ import {
 import { SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDirectCoreUrl } from "@/lib/constants";
+import { pickPollInterval, useVisibleInterval } from "@/lib/polling";
 import type { OptimizationJob, OptimizationConfig } from "@talome/types";
+
+/** Running + queued jobs, or null when the server is unreachable / errors. */
+async function loadActiveJobs(apiBase: string): Promise<OptimizationJob[] | null> {
+  try {
+    const res = await fetch(`${apiBase}/api/optimization/jobs?status=running,queued`, { credentials: "include" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { jobs?: OptimizationJob[] };
+    return data.jobs ?? [];
+  } catch {
+    return null; // server may not be running
+  }
+}
+
+/** Optimization config, or null when unavailable. */
+async function loadConfig(apiBase: string): Promise<OptimizationConfig | null> {
+  try {
+    const res = await fetch(`${apiBase}/api/optimization/config`, { credentials: "include" });
+    if (!res.ok) return null;
+    return (await res.json()) as OptimizationConfig;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Compact optimization status widget in the sidebar footer.
@@ -28,37 +52,45 @@ export function SidebarOptimization() {
   const apiBase = getDirectCoreUrl();
 
   const fetchJobs = useCallback(async () => {
-    try {
-      const res = await fetch(`${apiBase}/api/optimization/jobs?status=running,queued`, { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        setJobs(data.jobs ?? []);
-      }
-    } catch { /* server may not be running */ }
+    const next = await loadActiveJobs(apiBase);
+    if (next) setJobs(next);
   }, [apiBase]);
 
   const fetchConfig = useCallback(async () => {
-    try {
-      const res = await fetch(`${apiBase}/api/optimization/config`, { credentials: "include" });
-      if (res.ok) setConfig(await res.json());
-    } catch { /* ignore */ }
+    const next = await loadConfig(apiBase);
+    if (next) setConfig(next);
   }, [apiBase]);
 
   const running = jobs.filter(j => j.status === "running");
   const queued = jobs.filter(j => j.status === "queued");
   const totalActive = running.length + queued.length;
 
+  // Initial load; state is only set from the async results.
   useEffect(() => {
-    void fetchJobs();
-    void fetchConfig();
-    const interval = setInterval(() => { void fetchJobs(); void fetchConfig(); }, 3000);
-    return () => clearInterval(interval);
-  }, [fetchJobs, fetchConfig]);
+    let cancelled = false;
+    void loadActiveJobs(apiBase).then((next) => {
+      if (!cancelled && next) setJobs(next);
+    });
+    void loadConfig(apiBase).then((next) => {
+      if (!cancelled && next) setConfig(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase]);
 
-  // Reset dismissed when new jobs appear
-  useEffect(() => {
-    if (totalActive > 0 && dismissed) setDismissed(false);
-  }, [totalActive, dismissed]);
+  // Mounted on every page: poll every 3s only while conversions are active,
+  // every 30s otherwise; paused while the tab is hidden.
+  const hasActiveJobs = totalActive > 0;
+  const pollTick = useCallback(() => {
+    void fetchJobs();
+    // Pause state only matters while the widget is visible (jobs active).
+    if (hasActiveJobs) void fetchConfig();
+  }, [fetchJobs, fetchConfig, hasActiveJobs]);
+  useVisibleInterval(pollTick, pickPollInterval(hasActiveJobs));
+
+  // Reset dismissed when new jobs appear (adjusted during render, no effect pass)
+  if (totalActive > 0 && dismissed) setDismissed(false);
 
   const avgProgress = running.length > 0
     ? running.reduce((s, j) => s + j.progress, 0) / running.length
