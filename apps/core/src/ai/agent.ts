@@ -1,5 +1,5 @@
 import { streamText, generateText, convertToModelMessages, stepCountIs } from "ai";
-import type { UIMessage, SystemModelMessage, LanguageModel } from "ai";
+import type { UIMessage, LanguageModel, Tool } from "ai";
 import { createAnthropic, anthropic as anthropicProvider } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { AiProvider } from "../routes/ai-models.js";
@@ -300,17 +300,28 @@ import {
 import { writeAuditEntry } from "../db/audit.js";
 import { db, schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
-import { getTopMemories } from "../db/memories.js";
 import { saveScreenshots } from "./claude-runner.js";
 import {
   registerDomain,
+  registerDomainWithOnDemandGroups,
   getAllRegisteredTools,
   getActiveRegisteredTools,
-  getToolsForMessage,
+  getActiveDomainNames,
+  getBaseDomainNames,
+  getOrderedDomainTools,
   getAllTiers,
+  type OnDemandGroup,
 } from "./tool-registry.js";
+import {
+  DISCOVER_TOOLS_NAME,
+  createDiscoverToolsTool,
+  createToolRoutingSession,
+  deriveConversationKey,
+  type ToolRoutingSession,
+} from "./tool-discovery.js";
+import { applyMessageCacheBreakpoints, buildSystemMessages, withToolCacheBreakpoint } from "./prompt-cache.js";
+import { getCachedFeatureStackStatus, getCachedTopMemories } from "./chat-context-cache.js";
 import { gateToolExecution, getSecurityMode } from "./tool-gateway.js";
-import { getFeatureStackStatus } from "../stacks/feature-stacks.js";
 
 // getSetting imported from ../utils/settings.js
 
@@ -319,9 +330,90 @@ function getAnthropicApiKey(): string | undefined {
 }
 
 // ── Domain registrations ────────────────────────────────────────────────────
-// Core tools — always available (no settingsKeys required)
+// Core tools — always available (no settingsKeys required). Chat sends only the
+// essential ops subset on every turn; the groups in CORE_ON_DEMAND_GROUPS
+// (below) are split into their own on-demand domains. MCP and automations
+// still see every core tool.
 
-registerDomain({
+/**
+ * Core tools that chat loads on demand instead of on every turn. They remain
+ * registered (MCP, automations, audit tiers and the settings tool list are
+ * unchanged); chat adds a group when the conversation mentions its keywords,
+ * uses one of its tools, or the model calls discover_tools. The always-on core
+ * keeps the everyday ops surface: containers, logs, apps (install/update/
+ * lifecycle), app config/compose, integrations/wiring, backups, remember/recall,
+ * settings, issue tracking, docs and shell.
+ */
+const CORE_ON_DEMAND_GROUPS: OnDemandGroup[] = [
+  {
+    name: "docker-admin",
+    summary: "Docker images and networks: list images, prune, create/remove networks, connect/disconnect containers",
+    keywords: ["image", "network", "prune", "dangling", "bridge", "subnet", "docker network", "docker image"],
+    tools: ["list_images", "list_networks", "prune_resources", "create_network", "connect_container_to_network", "disconnect_container", "remove_network"],
+  },
+  {
+    name: "storage",
+    summary: "Disks and space: SMART health, storage breakdown, reclaimable space, Docker/HLS cleanup, watched-media analysis",
+    keywords: ["storage", "disk", "drive", "space", "smart status", "smartctl", "cleanup", "clean up", "reclaim", "free up", "hls", "hdd", "ssd", "nvme", "raid", "disk full"],
+    tools: ["get_smart_status", "cleanup_docker", "get_storage_breakdown", "get_reclaimable_space", "analyze_watched_media", "cleanup_hls_cache"],
+  },
+  {
+    name: "monitoring",
+    summary: "Metrics history and trends, GPU status, deep service health analysis",
+    keywords: ["history", "trend", "metric", "gpu", "graph", "over time", "yesterday", "last week", "last hour", "slow", "performance", "spike", "nvidia", "uptime", "cpu load", "load average"],
+    tools: ["get_metrics_history", "get_gpu_status", "analyze_service_health"],
+  },
+  {
+    name: "app-management",
+    summary: "App stores, dependencies, bulk actions and updates, update policy, rollbacks, app groups, resource limits, image upgrades",
+    keywords: ["app store", "stores", "store source", "add store", "dependency", "dependencies", "bulk", "all apps", "every app", "rollback", "roll back", "downgrade", "update policy", "auto-update", "auto update", "update all", "group", "resource limit", "limit", "upgrade image", "image tag", "pin version", "umbrel", "casaos"],
+    tools: ["add_store", "check_dependencies", "bulk_app_action", "bulk_update_apps", "rollback_update", "set_update_policy", "update_all_apps", "list_groups", "create_group", "update_group", "delete_group", "group_action", "set_resource_limits", "upgrade_app_image"],
+  },
+  {
+    name: "memory-admin",
+    summary: "Manage stored memories: list, edit, forget",
+    keywords: ["memory", "memories", "forget", "what do you know", "about me"],
+    tools: ["forget", "update_memory", "list_memories"],
+  },
+  {
+    name: "widgets",
+    summary: "Dashboard widgets: list, create and update widget manifests",
+    keywords: ["widget", "dashboard", "tile"],
+    tools: ["list_widgets", "create_widget_manifest", "update_widget_manifest"],
+  },
+  {
+    name: "automations",
+    summary: "Scheduled and event automations: list, create, update, delete, runs, cron validation",
+    keywords: ["automation", "automate", "schedule", "cron", "every day", "every night", "every hour", "every week", "daily", "nightly", "weekly", "hourly", "recurring", "trigger", "routine"],
+    tools: ["list_automations", "create_automation", "update_automation", "delete_automation", "get_automation_runs", "validate_cron", "list_automation_safe_tools"],
+  },
+  {
+    name: "notifications",
+    summary: "Notifications and channels: send, read, add/remove/test channels (Telegram, Discord, ntfy, webhooks, email)",
+    keywords: ["notification", "notify", "alert", "channel", "telegram", "discord", "slack", "ntfy", "pushover", "gotify", "webhook", "email"],
+    tools: ["send_notification", "get_notifications", "list_notification_channels", "add_notification_channel", "remove_notification_channel", "test_notification_channel"],
+  },
+  {
+    name: "files",
+    summary: "User files on drives: browse, read, rename, delete, create folders, file info",
+    keywords: ["file", "folder", "directory", "directories", "rename", "browse", "path", "mkdir"],
+    tools: ["browse_files", "read_user_file", "delete_file", "rename_file", "create_directory", "get_file_info"],
+  },
+  {
+    name: "self-improvement",
+    summary: "Talome's own source code: read code, plan/apply/rollback changes, change history, issues, custom tools",
+    keywords: ["code", "source code", "codebase", "bug", "feature", "improve", "self-improve", "fix yourself", "implement", "refactor", "redesign", "custom tool", "list issues", "tracked issues", "evolution", "roadmap", "apply_change", "plan_change"],
+    tools: ["plan_change", "apply_change", "rollback_change", "list_changes", "list_issues", "read_file", "list_directory", "rollback_file", "create_tool", "reload_tools", "list_custom_tools"],
+  },
+  {
+    name: "app-creator",
+    summary: "Design a new custom self-hosted app blueprint (design_app_blueprint)",
+    keywords: ["blueprint", "scaffold", "create app", "create an app", "build app", "build an app", "build me", "new app", "custom app", "make an app", "my own app", "design an app", "app idea"],
+    tools: ["design_app_blueprint"],
+  },
+];
+
+registerDomainWithOnDemandGroups({
   name: "core",
   settingsKeys: [],
   tools: {
@@ -606,7 +698,7 @@ registerDomain({
     web_search: "search",
     query_docs: "search",
   },
-});
+}, CORE_ON_DEMAND_GROUPS);
 
 // Media tools — loaded when any of sonarr/radarr are configured
 registerDomain({
@@ -934,6 +1026,9 @@ registerDomain({
 registerDomain({
   name: "mdns",
   settingsKeys: [],
+  onDemand: true,
+  summary: "Local DNS via CoreDNS/mDNS: appname.talome.local hostnames with HTTPS",
+  keywords: ["mdns", "local dns", "dns", "hostname", "talome.local", ".local", "bonjour", "avahi", "coredns", "local domain", "https", "lan"],
   tools: {
     mdns_status: mdnsStatusTool,
     mdns_enable: mdnsEnableTool,
@@ -1001,6 +1096,9 @@ The app store aggregates apps from multiple sources:
 - User-created apps
 
 You can search across all stores, install/uninstall apps, start/stop/restart running apps, update them, and add new store sources.
+
+## Tool Loading
+To stay fast, your tool list holds the core tools plus the tool domains this conversation has touched. Other tools — including some named in these instructions — load on demand. If a tool you need is not in your list, call discover_tools with a keyword, capability or the exact tool name first; the matching tools are callable from your next step. Never tell the user something is impossible, or ask them to do it manually, before checking discover_tools.
 
 ## Zero-Config Apps
 You can configure installed apps directly using your tools — never tell the user to open a config file, navigate to an app's settings page, or manually set anything. Do it for them. When the user installs a media stack, automatically wire it together: add root folders, connect download clients, sync indexers, and link apps to each other. For apps that use config files (e.g. Home Assistant configuration.yaml, qBittorrent settings.conf), use read_app_config_file and write_app_config_file.
@@ -1235,18 +1333,25 @@ function summarizeToolArgs(toolName: string, args: Record<string, unknown>): str
   }
 }
 
-/**
- * Returns tools for dashboard chat — only domains whose apps are configured,
- * plus custom tools, minus explicitly disabled tools.
- */
-function getActiveTools(message?: string) {
-  const domainTools = message ? getToolsForMessage(message) : getActiveRegisteredTools();
-  const customTools = getCustomTools();
-  const mergedTools = { ...domainTools, ...customTools };
-
+function getDisabledTools(): Set<string> {
   const disabledToolsRaw = getSetting("disabled_tools");
-  const disabledTools = new Set<string>(disabledToolsRaw ? JSON.parse(disabledToolsRaw) : []);
+  if (!disabledToolsRaw) return new Set();
+  try {
+    const parsed: unknown = JSON.parse(disabledToolsRaw);
+    return new Set(Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
 
+/**
+ * Returns every tool of the configured domains plus custom tools, minus
+ * explicitly disabled tools, wrapped by the security gateway. Used by
+ * automations; chat narrows this per conversation via getChatToolset().
+ */
+function getActiveTools() {
+  const mergedTools = { ...getActiveRegisteredTools(), ...getCustomTools() };
+  const disabledTools = getDisabledTools();
   const mode = getSecurityMode();
 
   return Object.fromEntries(
@@ -1254,6 +1359,65 @@ function getActiveTools(message?: string) {
       .filter(([name]) => !disabledTools.has(name))
       .map(([name, t]) => [name, gateToolExecution(t, name, TOOL_TIERS[name] ?? "read", mode)])
   );
+}
+
+interface ChatToolset {
+  /** All callable tools, in deterministic order (base domains, domain, name; custom; discover_tools; provider tools). */
+  tools: Record<string, Tool>;
+  /** Names the model sees on the current step — re-read each step so discover_tools takes effect immediately. */
+  activeToolNames: () => string[];
+}
+
+/**
+ * Chat toolset for one request. `tools` holds every configured tool so calls
+ * from earlier turns and approvals keep executing; the model only sees
+ * `activeToolNames()` — the conversation's routed domains, custom tools and
+ * discover_tools. For Anthropic the last base tool carries a cache breakpoint
+ * so the shared base prefix stays cached when a conversation adds domains.
+ */
+function getChatToolset(session: ToolRoutingSession, isAnthropic: boolean): ChatToolset {
+  const disabledTools = getDisabledTools();
+  const mode = getSecurityMode();
+  const gate = (name: string, t: Tool) => gateToolExecution(t, name, TOOL_TIERS[name] ?? "read", mode);
+
+  const tools: Record<string, Tool> = {};
+  for (const [name, t] of getOrderedDomainTools(getActiveDomainNames())) {
+    if (!disabledTools.has(name)) tools[name] = gate(name, t);
+  }
+  const baseToolNames = new Set(getOrderedDomainTools(getBaseDomainNames()).map(([name]) => name));
+  const lastBaseTool = Object.keys(tools).filter((name) => baseToolNames.has(name)).at(-1);
+
+  const customTools = getCustomTools();
+  const customNames = Object.keys(customTools).filter((name) => !disabledTools.has(name)).sort();
+  for (const name of customNames) {
+    delete tools[name]; // custom tools keep their previous precedence over built-ins
+    tools[name] = gate(name, customTools[name]);
+  }
+
+  delete tools[DISCOVER_TOOLS_NAME];
+  tools[DISCOVER_TOOLS_NAME] = createDiscoverToolsTool(session);
+
+  const providerToolNames: string[] = [];
+  if (isAnthropic) {
+    tools.web_search = anthropicProvider.tools.webSearch_20250305({ maxUses: 2 });
+    providerToolNames.push("web_search");
+  }
+
+  return {
+    tools: isAnthropic ? withToolCacheBreakpoint(tools, lastBaseTool) : tools,
+    activeToolNames: () => {
+      const routed = session.toolNames().filter((name) => name in tools && !customNames.includes(name));
+      return [...routed, ...customNames, DISCOVER_TOOLS_NAME, ...providerToolNames];
+    },
+  };
+}
+
+/** Text of a UI message's text parts. */
+function uiMessageText(message: UIMessage | undefined): string {
+  return message?.parts
+    ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join(" ") ?? "";
 }
 
 const ANTHROPIC_MODEL_MAP: Record<string, string> = {
@@ -1322,7 +1486,23 @@ function createModelInstance(provider: AiProvider, modelId: string): LanguageMod
   }
 }
 
-export async function createChatStream(messages: UIMessage[], pageContext?: string, modelHint?: string, abortSignal?: AbortSignal, providerHint?: string) {
+/** Setup/config phrasing that pulls the setup guide into the conversation's context. */
+const SETUP_GUIDE_KEYWORDS = ["setup", "configure", "connect", "wire", "api key", "not working",
+  "can't connect", "troubleshoot", "install", "settings", "port", "how do i", "set up"];
+
+export interface ChatStreamOptions {
+  /** Stable conversation id; defaults to the first message id. Keys per-conversation tool routing. */
+  conversationId?: string;
+}
+
+export async function createChatStream(
+  messages: UIMessage[],
+  pageContext?: string,
+  modelHint?: string,
+  abortSignal?: AbortSignal,
+  providerHint?: string,
+  options: ChatStreamOptions = {},
+) {
   const provider = (providerHint === "anthropic" || providerHint === "openai" || providerHint === "ollama")
     ? providerHint
     : getActiveProvider();
@@ -1331,23 +1511,11 @@ export async function createChatStream(messages: UIMessage[], pageContext?: stri
   const isAnthropic = provider === "anthropic";
   const modelMessages = await convertToModelMessages(messages);
 
-  // Build system messages with prompt caching:
-  // Part 1 (cached): static system prompt — stable across requests within a session
-  // Part 2 (uncached): dynamic content — memories, page context, visual context
+  // System prompt layout (prompt caching, Anthropic only):
+  //   [static prompt — cache breakpoint] [dynamic context — memories, setup status, page context]
+  // Dynamic parts come from short-lived caches and are conversation-monotonic,
+  // so they stay byte-identical between turns and the cached history prefix holds.
   const staticSystemPrompt = getSystemPrompt();
-  const systemMessages: SystemModelMessage[] = [
-    {
-      role: "system",
-      content: staticSystemPrompt,
-      ...(isAnthropic ? {
-        providerOptions: {
-          anthropic: { cacheControl: { type: "ephemeral" } },
-        },
-      } : {}),
-    },
-  ];
-
-  // Build dynamic system content
   const dynamicParts: string[] = [];
   if (pageContext) {
     dynamicParts.push(`## Current context\n${pageContext}`);
@@ -1355,7 +1523,7 @@ export async function createChatStream(messages: UIMessage[], pageContext?: stri
 
   const memoryEnabled = getSetting("memory_enabled") !== "false";
   if (memoryEnabled) {
-    const topMemories = await getTopMemories(10);
+    const topMemories = await getCachedTopMemories(10);
     if (topMemories.length > 0) {
       dynamicParts.push(
         "## What I know about you\n" +
@@ -1365,7 +1533,7 @@ export async function createChatStream(messages: UIMessage[], pageContext?: stri
   }
 
   // ── Onboarding & stack awareness ──
-  const stackStatus = await getFeatureStackStatus();
+  const stackStatus = await getCachedFeatureStackStatus();
   const incompleteStacks = stackStatus.filter(s => s.readiness < 1);
   const securityMode = getSecurityMode();
 
@@ -1384,18 +1552,19 @@ When the user asks about setting up services, or when you notice they're trying 
 Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive actions require confirmation and shell commands are restricted to a safe allowlist." : securityMode === "locked" ? "Only read operations are allowed." : "Full access mode — the user accepts all risks."}`);
   }
 
-  // Extract last user message text for intelligent tool routing
+  // Per-conversation tool routing: base domains + domains this conversation
+  // touched (keywords, prior tool use, discover_tools). Grows monotonically.
   const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
-  const lastUserText = lastUserMessage?.parts
-    ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
-    .map((p) => p.text)
-    .join(" ") ?? "";
-  const activeTools = getActiveTools(lastUserText || undefined);
+  const session = createToolRoutingSession({
+    conversationKey: deriveConversationKey(options.conversationId, messages),
+    messages,
+  });
+  const toolset = getChatToolset(session, isAnthropic);
 
-  // Inject domain knowledge when user asks about setup, configuration, or troubleshooting
-  const setupKeywords = ["setup", "configure", "connect", "wire", "api key", "not working",
-    "can't connect", "troubleshoot", "install", "settings", "port", "how do i", "set up"];
-  if (setupKeywords.some((kw) => lastUserText.toLowerCase().includes(kw))) {
+  // Inject domain knowledge once the conversation is about setup, configuration,
+  // or troubleshooting — and keep it for the rest of the conversation.
+  const userTexts = messages.filter((m) => m.role === "user").map((m) => uiMessageText(m).toLowerCase());
+  if (userTexts.some((text) => SETUP_GUIDE_KEYWORDS.some((kw) => text.includes(kw)))) {
     const { getSetupGuide } = await import("./knowledge/setup-guide.js");
     dynamicParts.push(getSetupGuide());
   }
@@ -1423,24 +1592,24 @@ Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive
     }
   }
 
-  if (dynamicParts.length > 0) {
-    systemMessages.push({
-      role: "system",
-      content: dynamicParts.join("\n\n"),
-    });
-  }
+  const systemMessages = buildSystemMessages({
+    staticPrompt: staticSystemPrompt,
+    dynamicParts,
+    cache: isAnthropic,
+  });
 
   const { logAiUsage } = await import("../agent-loop/budget.js");
-
-  const tools = isAnthropic
-    ? { ...activeTools, web_search: anthropicProvider.tools.webSearch_20250305({ maxUses: 2 }) }
-    : activeTools;
 
   return streamText({
     model,
     system: systemMessages,
     messages: modelMessages,
-    tools,
+    tools: toolset.tools,
+    activeTools: toolset.activeToolNames(),
+    prepareStep: ({ messages: stepMessages }) => ({
+      activeTools: toolset.activeToolNames(),
+      ...(isAnthropic ? { messages: applyMessageCacheBreakpoints(stepMessages) } : {}),
+    }),
     abortSignal,
     stopWhen: stepCountIs(10),
     onStepFinish: ({ toolCalls, toolResults }) => {

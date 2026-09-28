@@ -1,0 +1,260 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { UIMessage } from "ai";
+
+// Configured apps for this suite: a typical media stack. Plex is NOT configured.
+const { settingsRows } = vi.hoisted(() => ({
+  settingsRows: ["sonarr_url", "radarr_url", "prowlarr_url", "qbittorrent_url", "jellyfin_url", "overseerr_url"].map(
+    (key) => ({ key, value: "http://localhost" }),
+  ),
+}));
+
+vi.mock("../db/index.js", () => {
+  const from = () => ({
+    where: () => ({ get: () => null, all: () => [] }),
+    all: () => settingsRows,
+    orderBy: () => ({ limit: () => ({ all: () => [] }) }),
+  });
+  return {
+    db: { select: () => ({ from }) },
+    schema: { settings: { key: "key" }, installedApps: { appId: "app_id" }, mcpTokens: {}, memories: {} },
+  };
+});
+vi.mock("../db/audit.js", () => ({ writeAuditEntry: vi.fn() }));
+vi.mock("../db/memories.js", () => ({ getTopMemories: vi.fn().mockResolvedValue([]) }));
+
+import {
+  getActiveRegisteredTools,
+  getAllRegisteredTools,
+  getAllToolMeta,
+  getAllDomains,
+  getBaseDomainNames,
+  getDomain,
+  getOrderedDomainTools,
+  getToolsForMessage,
+  textMatchesKeyword,
+} from "../ai/tool-registry.js";
+import {
+  createDiscoverToolsTool,
+  createToolRoutingSession,
+  deriveConversationKey,
+  resetToolRoutingState,
+} from "../ai/tool-discovery.js";
+import "../ai/agent.js";
+
+function userMessage(id: string, text: string): UIMessage {
+  return { id, role: "user", parts: [{ type: "text", text }] };
+}
+
+function assistantMessage(id: string, parts: unknown[]): UIMessage {
+  return { id, role: "assistant", parts } as UIMessage;
+}
+
+async function runDiscover(session: ReturnType<typeof createToolRoutingSession>, input: { query?: string; domain?: string }) {
+  const discover = createDiscoverToolsTool(session);
+  const execute = discover.execute as (args: typeof input, opts: unknown) => Promise<Record<string, unknown>>;
+  return execute(input, { toolCallId: "t1", messages: [] });
+}
+
+const baseToolNames = () => getOrderedDomainTools(getBaseDomainNames()).map(([name]) => name);
+
+beforeEach(() => {
+  resetToolRoutingState();
+});
+
+describe("on-demand core split", () => {
+  it("keeps every tool registered with its tier and category", () => {
+    const all = getAllRegisteredTools();
+    expect(Object.keys(all).length).toBeGreaterThan(200);
+    const meta = new Map(getAllToolMeta().map((m) => [m.name, m]));
+    expect(meta.get("create_automation")).toMatchObject({ category: "automations", tier: "modify" });
+    expect(meta.get("list_images")).toMatchObject({ category: "docker", tier: "read" });
+    expect(meta.get("apply_change")).toMatchObject({ category: "self-improvement", tier: "destructive" });
+    expect(meta.get("mdns_enable")).toMatchObject({ category: "networking" });
+  });
+
+  it("keeps on-demand groups active for MCP / automations", () => {
+    const active = getActiveRegisteredTools();
+    for (const name of ["create_automation", "list_images", "browse_files", "design_app_blueprint", "mdns_status"]) {
+      expect(active).toHaveProperty(name);
+    }
+  });
+
+  it("trims the always-on base to essential ops tools", () => {
+    const base = baseToolNames();
+    expect(getBaseDomainNames()).toEqual(["core", "setup"]);
+    expect(base.length).toBeLessThan(60);
+    for (const name of ["list_containers", "restart_container", "get_container_logs", "install_app", "search_apps", "get_app_config", "remember", "recall", "set_setting", "track_issue", "run_shell"]) {
+      expect(base).toContain(name);
+    }
+    for (const name of ["create_automation", "apply_change", "design_app_blueprint", "list_images", "browse_files", "mdns_enable"]) {
+      expect(base).not.toContain(name);
+    }
+  });
+
+  it("never registers a tool name in two domains", () => {
+    const seen = new Map<string, string>();
+    for (const domain of getAllDomains()) {
+      for (const name of Object.keys(domain.tools)) {
+        expect(seen.get(name), `${name} in ${domain.name} and ${seen.get(name)}`).toBeUndefined();
+        seen.set(name, domain.name);
+      }
+    }
+  });
+});
+
+describe("deterministic ordering", () => {
+  it("orders base domains first, then domain name, then tool name — independent of input order", () => {
+    const a = getOrderedDomainTools(["media", "arr", "core", "setup", "automations"]).map(([n]) => n);
+    const b = getOrderedDomainTools(["automations", "setup", "core", "arr", "media"]).map(([n]) => n);
+    expect(a).toEqual(b);
+
+    const base = baseToolNames();
+    expect(a.slice(0, base.length)).toEqual(base);
+
+    const coreNames = Object.keys(getDomain("core")?.tools ?? {}).sort();
+    expect(a.slice(0, coreNames.length)).toEqual(coreNames);
+
+    const rest = a.slice(base.length);
+    const domainOf = (name: string) => getAllDomains().find((d) => name in d.tools)?.name ?? "";
+    const restDomains = rest.map(domainOf);
+    expect(restDomains).toEqual([...restDomains].sort());
+  });
+
+  it("returns identical tool lists for the same conversation on repeated calls", () => {
+    const messages = [userMessage("u1", "add Dune to my movies")];
+    const first = createToolRoutingSession({ messages }).toolNames();
+    const second = createToolRoutingSession({ messages }).toolNames();
+    expect(second).toEqual(first);
+  });
+});
+
+describe("no catch-all fallback", () => {
+  it("returns only the base set for a message that matches no domain", () => {
+    const names = Object.keys(getToolsForMessage("hey, thanks!"));
+    expect(names).toEqual(baseToolNames());
+    expect(names.length).toBeLessThan(Object.keys(getActiveRegisteredTools()).length / 2);
+  });
+
+  it("adds only the matching domains", () => {
+    const names = Object.keys(getToolsForMessage("my torrents are slow"));
+    expect(names).toContain("qbt_list_torrents");
+    expect(names).not.toContain("arr_get_status");
+    expect(names).not.toContain("create_automation");
+  });
+
+  it("does not load unconfigured app domains", () => {
+    expect(Object.keys(getToolsForMessage("what is on deck in plex"))).not.toContain("plex_get_on_deck");
+  });
+});
+
+describe("keyword matching", () => {
+  it("matches whole words with common suffixes only", () => {
+    expect(textMatchesKeyword("add two movies", "movie")).toBe(true);
+    expect(textMatchesKeyword("it keeps streaming badly", "stream")).toBe(true);
+    expect(textMatchesKeyword("highlight the row", "light")).toBe(false);
+    expect(textMatchesKeyword("show recent activity", "tv")).toBe(false);
+    expect(textMatchesKeyword("Set up Home Assistant", "home assistant")).toBe(true);
+  });
+});
+
+describe("monotonic per-conversation domain set", () => {
+  it("keeps a domain for the rest of the conversation once added", () => {
+    const turn1 = [userMessage("u1", "add Dune Part Two to my movies")];
+    const s1 = createToolRoutingSession({ conversationKey: "k1", messages: turn1 });
+    expect(s1.domains.has("media")).toBe(true);
+
+    const turn2 = [
+      ...turn1,
+      assistantMessage("a1", [{ type: "text", text: "Added." }]),
+      userMessage("u2", "now restart the gateway container"),
+    ];
+    const s2 = createToolRoutingSession({ conversationKey: "k1", messages: turn2 });
+    expect(s2.domains.has("media")).toBe(true);
+    // Every tool from turn 1 is still there, in the same relative order.
+    const names2 = s2.toolNames();
+    expect(names2.filter((n) => s1.toolNames().includes(n))).toEqual(s1.toolNames());
+  });
+
+  it("re-derives domains from tools used earlier in the history (survives restarts)", () => {
+    const messages = [
+      userMessage("u1", "why is it slow?"),
+      assistantMessage("a1", [
+        { type: "tool-qbt_list_torrents", toolCallId: "c1", state: "output-available", input: {}, output: { torrents: [] } },
+        { type: "text", text: "Two torrents are stalled." },
+      ]),
+      userMessage("u2", "ok thanks"),
+    ];
+    const session = createToolRoutingSession({ messages });
+    expect(session.domains.has("qbittorrent")).toBe(true);
+  });
+
+  it("derives the conversation key from an explicit id, else the first message id", () => {
+    const messages = [userMessage("first", "hi")];
+    expect(deriveConversationKey("conv-1", messages)).toBe("c:conv-1");
+    expect(deriveConversationKey(undefined, messages)).toBe("m:first");
+    expect(deriveConversationKey(42, [])).toBeUndefined();
+  });
+});
+
+describe("discover_tools", () => {
+  it("activates matching domains for the current request and later turns", async () => {
+    const messages = [userMessage("u1", "can you help me with something?")];
+    const session = createToolRoutingSession({ conversationKey: "conv-a", messages });
+    expect(session.toolNames()).not.toContain("create_automation");
+
+    const result = await runDiscover(session, { query: "automation" });
+    expect(result.activatedDomains).toContain("automations");
+    expect(session.toolNames()).toContain("create_automation");
+    expect((result.tools as Array<{ name: string }>).map((t) => t.name)).toContain("create_automation");
+
+    // Next turn: plain-text history (no tool parts), same conversation key → still loaded.
+    const next = createToolRoutingSession({
+      conversationKey: "conv-a",
+      messages: [...messages, assistantMessage("a1", [{ type: "text", text: "Sure." }]), userMessage("u2", "do it")],
+    });
+    expect(next.toolNames()).toContain("create_automation");
+
+    // A different conversation does not inherit it.
+    const other = createToolRoutingSession({ conversationKey: "conv-b", messages: [userMessage("x", "hello")] });
+    expect(other.toolNames()).not.toContain("create_automation");
+  });
+
+  it("recovers activations from a stored discover_tools result in the history", () => {
+    const messages = [
+      userMessage("u1", "help"),
+      assistantMessage("a1", [
+        { type: "tool-discover_tools", toolCallId: "d1", state: "output-available", input: { query: "widget" }, output: { activatedDomains: ["widgets"] } },
+      ]),
+      userMessage("u2", "go on"),
+    ];
+    expect(createToolRoutingSession({ messages }).toolNames()).toContain("create_widget_manifest");
+  });
+
+  it("loads a domain by exact tool name or domain name", async () => {
+    const session = createToolRoutingSession({ messages: [userMessage("u1", "hi")] });
+    const byName = await runDiscover(session, { query: "design_app_blueprint" });
+    expect(byName.activatedDomains).toEqual(["app-creator"]);
+
+    const byDomain = await runDiscover(session, { domain: "docker-admin" });
+    expect(byDomain.activatedDomains).toEqual(["docker-admin"]);
+    expect(session.toolNames()).toContain("list_networks");
+  });
+
+  it("reports unconfigured app domains instead of loading them", async () => {
+    const session = createToolRoutingSession({ messages: [userMessage("u1", "hi")] });
+    const result = await runDiscover(session, { query: "plex on deck" });
+    expect(result.activatedDomains).not.toContain("plex");
+    expect(result.unconfigured).toEqual(expect.arrayContaining([expect.objectContaining({ domain: "plex", needsAnyOfSettings: ["plex_url"] })]));
+    expect(session.toolNames()).not.toContain("plex_get_on_deck");
+  });
+
+  it("activates at most three domains per call and lists domains when nothing matches", async () => {
+    const session = createToolRoutingSession({ messages: [userMessage("u1", "hi")] });
+    const broad = await runDiscover(session, { query: "list" });
+    expect((broad.activatedDomains as string[]).length).toBeLessThanOrEqual(3);
+
+    const none = await runDiscover(session, { query: "zzzqqq" });
+    expect(none.activatedDomains).toEqual([]);
+    expect(Array.isArray(none.availableDomains)).toBe(true);
+  });
+});
