@@ -73,18 +73,20 @@ function AppsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [sourceCache, setSourceCache] = useState<Record<string, CatalogApp[]>>({});
-  const [sourceLoading, setSourceLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [tab, setTab] = useState<Tab>(searchParams.get("tab") || "all");
   const [hoveredStackIndex, setHoveredStackIndex] = useState<number | null>(null);
-  const [visibleCount, setVisibleCount] = useState(PAGE_CHUNK);
+  // Paging is keyed by the active filters so a filter change resets the visible
+  // window during render instead of via a setState-in-effect round trip.
+  const filterKey = `${tab}\u0000${category}\u0000${search}`;
+  const [paging, setPaging] = useState({ key: filterKey, count: PAGE_CHUNK });
+  const visibleCount = paging.key === filterKey ? paging.count : PAGE_CHUNK;
   const loadSentinelRef = useRef<HTMLDivElement | null>(null);
 
   const changeTab = useCallback((newTab: string) => {
     setTab(newTab);
     setCategory("all");
-    setVisibleCount(PAGE_CHUNK);
     const params = new URLSearchParams(window.location.search);
     if (newTab === "all") {
       params.delete("tab");
@@ -165,7 +167,6 @@ function AppsPageContent() {
     if (sourceCache[tab]) return;
 
     let cancelled = false;
-    setSourceLoading(true);
     fetch(`${CORE_URL}/api/apps?limit=2000&source=${encodeURIComponent(tab)}`)
       .then(async (r) => {
         if (!r.ok) throw new Error("Failed to load source apps");
@@ -178,9 +179,6 @@ function AppsPageContent() {
       .catch(() => {
         if (cancelled) return;
         setSourceCache((prev) => ({ ...prev, [tab]: [] }));
-      })
-      .finally(() => {
-        if (!cancelled) setSourceLoading(false);
       });
 
     return () => {
@@ -225,14 +223,12 @@ function AppsPageContent() {
     });
   }, [currentApps, search, category]);
 
-  // Reset visible count when filters change
-  useEffect(() => {
-    setVisibleCount(PAGE_CHUNK);
-  }, [search, category, tab]);
-
   const loadNextChunk = useCallback(() => {
-    setVisibleCount((current) => Math.min(current + PAGE_CHUNK, filtered.length));
-  }, [filtered.length]);
+    setPaging((prev) => {
+      const current = prev.key === filterKey ? prev.count : PAGE_CHUNK;
+      return { key: filterKey, count: Math.min(current + PAGE_CHUNK, filtered.length) };
+    });
+  }, [filterKey, filtered.length]);
 
   useAutoLoadSentinel({
     targetRef: loadSentinelRef,
@@ -245,7 +241,8 @@ function AppsPageContent() {
 
   const totalInstalled = installedApps.length;
   const hasSourceCache = tab === "all" || tab === "installed" || !!sourceCache[tab];
-  const showSourceLoading = !isInstalled && !loading && !hasSourceCache && sourceLoading;
+  // The source-tab fetch is in flight exactly while that tab has no cached result.
+  const showSourceLoading = !isInstalled && !loading && !hasSourceCache;
   const leftFadeOpacity = hoveredStackIndex === 0 ? 0 : hoveredStackIndex === null ? 1 : 0.72;
   const rightFadeOpacity = hoveredStackIndex === stacks.length - 1 ? 0 : hoveredStackIndex === null ? 1 : 0.72;
 

@@ -208,6 +208,8 @@ function FormatStatRow({ container, filePath, codec, audioCodec }: {
 }) {
   const format = container ?? deriveContainerFromPath(filePath);
   const [optimizing, setOptimizing] = useState(false);
+  const [prioritizing, setPrioritizing] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   // Poll for optimization job status for this specific file
   const { data: jobsData, mutate: mutateJobs } = useSWR<{ jobs: Array<{ id: string; sourcePath: string; targetPath?: string; status: string; progress: number; priority: number; error?: string | null }> }>(
@@ -271,9 +273,6 @@ function FormatStatRow({ container, filePath, codec, audioCodec }: {
       </div>
     );
   }
-
-  const [prioritizing, setPrioritizing] = useState(false);
-  const [starting, setStarting] = useState(false);
 
   const handlePrioritize = async () => {
     if (!fileJob?.id || prioritizing) return;

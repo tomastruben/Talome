@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -380,18 +380,17 @@ export function SiteHeader() {
     ? segments[activeDrilldown.slugIndex]
     : null;
 
-  // Track drilldown direction for header animation
-  const prevDrilldownState = useRef({ isSub: false, slug: null as string | null });
-  const drilldownDir = useRef(0);
-  if (activeDrilldown) {
-    const prev = prevDrilldownState.current;
-    if (isDrilldownSub !== prev.isSub) {
-      drilldownDir.current = isDrilldownSub ? 1 : -1;
-    } else if (isDrilldownSub && drilldownSlug !== prev.slug) {
-      drilldownDir.current = 0; // section switch — crossfade
-    }
-    prevDrilldownState.current = { isSub: isDrilldownSub, slug: drilldownSlug };
+  // Track drilldown direction for header animation. Adjusted during render
+  // (React's "store previous props in state" pattern) so the first committed
+  // frame already carries the right direction.
+  const [drilldownNav, setDrilldownNav] = useState({ isSub: false, slug: null as string | null, dir: 0 });
+  if (activeDrilldown && (isDrilldownSub !== drilldownNav.isSub || drilldownSlug !== drilldownNav.slug)) {
+    const dir = isDrilldownSub !== drilldownNav.isSub
+      ? (isDrilldownSub ? 1 : -1)
+      : isDrilldownSub ? 0 : drilldownNav.dir; // section switch — crossfade
+    setDrilldownNav({ isSub: isDrilldownSub, slug: drilldownSlug, dir });
   }
+  const drilldownDir = drilldownNav.dir;
 
   const inConversation = messages.length > 0 || activeId !== null;
   const title = activeId ? conversations.find((c) => c.id === activeId)?.title : undefined;
@@ -402,14 +401,14 @@ export function SiteHeader() {
   // Atom-based drilldown: any page can set pageTitleAtom + pageBackAtom
   // to get the same animated back-button + title as URL-based drilldowns.
   const hasAtomDrilldown = !activeDrilldown && !isAssistant && !!pageBack;
-  const prevAtomDrilldown = useRef({ active: false, title: null as string | null });
-  const atomDrilldownDir = useRef(0);
-  if (hasAtomDrilldown !== prevAtomDrilldown.current.active) {
-    atomDrilldownDir.current = hasAtomDrilldown ? 1 : -1;
-  } else if (hasAtomDrilldown && dynamicTitle !== prevAtomDrilldown.current.title) {
-    atomDrilldownDir.current = 0;
+  const [atomNav, setAtomNav] = useState({ active: false, title: null as string | null, dir: 0 });
+  if (hasAtomDrilldown !== atomNav.active || dynamicTitle !== atomNav.title) {
+    const dir = hasAtomDrilldown !== atomNav.active
+      ? (hasAtomDrilldown ? 1 : -1)
+      : hasAtomDrilldown ? 0 : atomNav.dir;
+    setAtomNav({ active: hasAtomDrilldown, title: dynamicTitle, dir });
   }
-  prevAtomDrilldown.current = { active: hasAtomDrilldown, title: dynamicTitle };
+  const atomDrilldownDir = atomNav.dir;
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-1.5 bg-background/75 px-4 backdrop-blur-sm">
@@ -487,10 +486,10 @@ export function SiteHeader() {
             )}
           </motion.div>
           <div className="grid [&>*]:col-start-1 [&>*]:row-start-1 items-center min-w-0 overflow-hidden">
-            <AnimatePresence initial={false} custom={drilldownDir.current}>
+            <AnimatePresence initial={false} custom={drilldownDir}>
               <motion.span
                 key={drilldownSlug ?? "root"}
-                custom={drilldownDir.current}
+                custom={drilldownDir}
                 variants={titleSlideVariants}
                 initial="enter"
                 animate="center"
@@ -531,10 +530,10 @@ export function SiteHeader() {
             </Button>
           </motion.div>
           <div className="grid [&>*]:col-start-1 [&>*]:row-start-1 items-center min-w-0 overflow-hidden">
-            <AnimatePresence initial={false} custom={atomDrilldownDir.current}>
+            <AnimatePresence initial={false} custom={atomDrilldownDir}>
               <motion.span
                 key={dynamicTitle ?? "root"}
-                custom={atomDrilldownDir.current}
+                custom={atomDrilldownDir}
                 variants={titleSlideVariants}
                 initial="enter"
                 animate="center"

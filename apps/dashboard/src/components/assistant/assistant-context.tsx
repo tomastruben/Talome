@@ -8,6 +8,7 @@ import {
   useRef,
   useEffect,
   useMemo,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { useChat } from "@ai-sdk/react";
@@ -168,25 +169,103 @@ function idempotencyKey(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Options for every configured provider — active provider first. */
+function buildModelOptions(config: AiModelsResponse): ModelOption[] {
+  const allOptions: ModelOption[] = [];
+  const activeFirst = [
+    ...config.providers.filter((p) => p.provider === config.activeProvider),
+    ...config.providers.filter((p) => p.provider !== config.activeProvider),
+  ];
+  const usableProviders = activeFirst.filter((pp) => pp.configured && pp.models.length > 0).length;
+  for (const p of activeFirst) {
+    if (!p.configured || p.models.length === 0) continue;
+    const label = PROVIDER_LABELS[p.provider] ?? p.provider;
+    for (const m of p.models) {
+      // Prefix name with provider when showing cross-provider options
+      const name = usableProviders > 1 ? `${label} ${m.name}` : m.name;
+      allOptions.push({ id: m.id, name, provider: p.provider });
+    }
+  }
+  return allOptions;
+}
+
+// ── Auto mode (persisted in localStorage, shared with other surfaces) ────────
+
+const AUTO_MODE_KEY = "talome-auto-mode";
+const autoModeListeners = new Set<() => void>();
+let autoModeFallback = false;
+
+function readAutoMode(): boolean {
+  try {
+    return localStorage.getItem(AUTO_MODE_KEY) === "true";
+  } catch {
+    return autoModeFallback;
+  }
+}
+
+function writeAutoMode(enabled: boolean): void {
+  autoModeFallback = enabled;
+  try { localStorage.setItem(AUTO_MODE_KEY, String(enabled)); } catch { /* noop */ }
+  for (const listener of autoModeListeners) listener();
+}
+
+function subscribeAutoMode(listener: () => void): () => void {
+  autoModeListeners.add(listener);
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === AUTO_MODE_KEY) listener();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    autoModeListeners.delete(listener);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
+// Server render and hydration see `false`; the stored value applies right after.
+const getAutoModeServerSnapshot = () => false;
+
+interface ChatRequestBody {
+  model: ChatModel;
+  provider: string;
+}
+
+/**
+ * Builds the chat transport together with the per-request body it sends.
+ * The body lives in this closure (not a React ref) so it can be read lazily
+ * at request time — including automatic resends — while effects keep it in
+ * sync with the selected model/provider.
+ */
+function createChatRequest(initial: ChatRequestBody) {
+  let body: ChatRequestBody = { ...initial };
+  const transport = new DefaultChatTransport({
+    api: `${getDirectCoreUrl()}/api/chat`,
+    credentials: "include",
+    body: () => ({ ...body }),
+  });
+  return {
+    transport,
+    update(patch: Partial<ChatRequestBody>) {
+      body = { ...body, ...patch };
+    },
+  };
+}
+
 export function AssistantProvider({ children }: { children: ReactNode }) {
   const [activeId, setActiveIdState] = useState<string | null>(null);
   const activeIdRef = useRef(activeId);
-  const [model, setModel] = useState<ChatModel>("");
-  const modelRef = useRef<ChatModel>(model);
-  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
-  const [activeProvider, setActiveProvider] = useState("anthropic");
-  const providerRef = useRef(activeProvider);
+  // The user's explicit pick; the effective model is derived below once the
+  // server's model config is known.
+  const [selectedModel, setModel] = useState<ChatModel>("");
+  // Created once: useChat only reads the transport when it creates its Chat
+  // instance; the request body is kept current by the effects below.
+  const [chatRequest] = useState(() =>
+    createChatRequest({ model: "", provider: "anthropic" })
+  );
 
   // Auto mode: skip confirmation dialogs
-  const [autoMode, setAutoModeState] = useState(false);
+  const autoMode = useSyncExternalStore(subscribeAutoMode, readAutoMode, getAutoModeServerSnapshot);
   const setAutoMode = useCallback((enabled: boolean) => {
-    setAutoModeState(enabled);
-    try { localStorage.setItem("talome-auto-mode", String(enabled)); } catch { /* noop */ }
-  }, []);
-
-  // Sync autoMode from localStorage after hydration
-  useEffect(() => {
-    try { setAutoModeState(localStorage.getItem("talome-auto-mode") === "true"); } catch { /* noop */ }
+    writeAutoMode(enabled);
   }, []);
 
   // Submission mutex — prevents double-sends during network latency
@@ -200,48 +279,31 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     { revalidateOnFocus: false },
   );
 
-  useEffect(() => {
-    if (!modelsConfig?.providers) return;
-    setActiveProvider(modelsConfig.activeProvider);
-
-    // Build options from ALL configured providers — active provider first
-    const allOptions: ModelOption[] = [];
-    const activeFirst = [
-      ...modelsConfig.providers.filter((p) => p.provider === modelsConfig.activeProvider),
-      ...modelsConfig.providers.filter((p) => p.provider !== modelsConfig.activeProvider),
-    ];
-    for (const p of activeFirst) {
-      if (!p.configured || p.models.length === 0) continue;
-      const label = PROVIDER_LABELS[p.provider] ?? p.provider;
-      for (const m of p.models) {
-        // Prefix name with provider when showing cross-provider options
-        const name = activeFirst.filter((pp) => pp.configured && pp.models.length > 0).length > 1
-          ? `${label} ${m.name}`
-          : m.name;
-        allOptions.push({ id: m.id, name, provider: p.provider });
-      }
-    }
-    setModelOptions(allOptions);
-
-    // Only set model if not already set or if it's not in the new options
-    if (!model || !allOptions.some((o) => o.id === model)) {
-      setModel(modelsConfig.activeModel);
-    }
-  }, [modelsConfig]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hasModelsConfig = !!modelsConfig?.providers;
+  const activeProvider = hasModelsConfig ? modelsConfig.activeProvider : "anthropic";
+  const modelOptions = useMemo(
+    () => (modelsConfig?.providers ? buildModelOptions(modelsConfig) : []),
+    [modelsConfig],
+  );
+  // Keep the user's pick while it is offered; otherwise use the server's active model.
+  const model: ChatModel =
+    hasModelsConfig && !(selectedModel && modelOptions.some((o) => o.id === selectedModel))
+      ? modelsConfig.activeModel
+      : selectedModel;
 
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
 
   useEffect(() => {
-    modelRef.current = model;
-  }, [model]);
+    chatRequest.update({ model });
+  }, [chatRequest, model]);
 
   useEffect(() => {
     // Track current provider for the selected model
     const opt = modelOptions.find((o) => o.id === model);
-    if (opt) providerRef.current = opt.provider;
-  }, [model, modelOptions]);
+    if (opt) chatRequest.update({ provider: opt.provider });
+  }, [chatRequest, model, modelOptions]);
 
   // Holds a reference to the CommandPalette's open-in-chat-mode function,
   // registered once the palette mounts.
@@ -282,11 +344,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     error,
     clearError,
   } = useChat({
-    transport: new DefaultChatTransport({
-      api: `${getDirectCoreUrl()}/api/chat`,
-      credentials: "include",
-      body: () => ({ model: modelRef.current, provider: providerRef.current }),
-    }),
+    transport: chatRequest.transport,
     onFinish: ({ message }) => {
       retryCountRef.current = 0;
       submittingRef.current = false;

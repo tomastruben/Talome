@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { useAtomValue } from "jotai";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
@@ -24,11 +24,15 @@ import { registerServiceWorker } from "@/lib/register-sw";
 import { GlobalAudioPlayer } from "@/components/audiobooks/global-audio-player";
 import { useUser } from "@/hooks/use-user";
 
+const subscribeNoop = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
+
 export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false);
   const router = useRouter();
   const { user, isLoading: userLoading } = useUser();
-  useEffect(() => setMounted(true), []);
+  // true only on the client after hydration (false during SSR and hydration)
+  const mounted = useSyncExternalStore(subscribeNoop, getClientSnapshot, getServerSnapshot);
   useEffect(() => { registerServiceWorker(); }, []);
 
   // Client-side auth guard: redirect to login if user session is invalid.
