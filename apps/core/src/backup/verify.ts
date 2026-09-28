@@ -173,6 +173,16 @@ export async function verifyBackup(backupId: string, opts: VerifyOptions = {}): 
       checks.push({ name: "manifest", ok: true, detail: "legacy backup without manifest — checksums unavailable" });
     }
 
+    if (manifest && manifest.unreadable.length > 0) {
+      // The archive can't bring back what was never captured — report it honestly
+      const sample = manifest.unreadable.slice(0, 3).join(", ");
+      add(
+        "backup complete",
+        false,
+        `${manifest.unreadable.length} path(s) were unreadable when the backup was made and are missing from it (${sample}${manifest.unreadable.length > 3 ? ", …" : ""})`,
+      );
+    }
+
     if (manifest?.archive) {
       const sha = await sha256File(located.archive);
       add("archive checksum", sha === manifest.archive.sha256, sha === manifest.archive.sha256 ? undefined : "archive was modified or corrupted");

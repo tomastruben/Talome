@@ -67,3 +67,28 @@ export interface RestoreRun {
   error: string | null;
   detail: { health?: { healthy: boolean; detail: string }; warnings?: string[] } | null;
 }
+
+export interface BackupDestination {
+  id: string;
+  name: string;
+  type: "local" | "rclone";
+  target: string;
+  remoteType: string | null;
+  enabled: boolean;
+  createdAt: string;
+  hasCredentials: boolean;
+}
+
+export interface BackupSchedule {
+  id: string;
+  app_id: string | null;
+  cron: string;
+  enabled: number;
+  retention_days: number;
+  destination_id: string | null;
+  keep_last: number | null;
+  keep_daily: number | null;
+  keep_weekly: number | null;
+  keep_monthly: number | null;
+  last_run_at: string | null;
+}

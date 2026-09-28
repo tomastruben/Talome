@@ -70,6 +70,16 @@ export function runBackupsMigrations(): void {
     detail TEXT
   )`);
 
+  // Pending work that must be undone if the server stops mid-operation
+  // (containers stopped by a backup, directory swaps made by a restore).
+  db.run(sql`CREATE TABLE IF NOT EXISTS backup_recovery (
+    id TEXT PRIMARY KEY,
+    app_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    state TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
+
   // ── Indexes ────────────────────────────────────────────────────────────
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_backups_app_status ON backups(app_id, status, completed_at)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_backups_schedule_id ON backups(schedule_id)`);

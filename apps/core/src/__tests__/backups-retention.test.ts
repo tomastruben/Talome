@@ -70,6 +70,11 @@ describe("cron helpers", () => {
     expect(cronMatches("0 2 * * *", d)).toBe(false);
     expect(cronMatches("30 1-3 * * 1", d)).toBe(true);
     expect(cronMatches("30 2 * * 0,6", d)).toBe(false);
+    // steps on ranges and on a start value (what schedule validation accepts)
+    expect(cronMatches("0-30/5 * * * *", d)).toBe(true);
+    expect(cronMatches("0-30/7 * * * *", d)).toBe(false);
+    expect(cronMatches("10/10 * * * *", d)).toBe(true);
+    expect(cronMatches("5/10 * * * *", d)).toBe(false);
   });
 
   it("estimates the interval between runs", () => {

@@ -12,6 +12,7 @@ import { getSetting, setSetting } from "./utils/settings.js";
 import { db } from "./db/index.js";
 import { sql } from "drizzle-orm";
 import { runScheduledBackup, runBackupMaintenance, isContainerInBackupWindow, type ScheduleRow } from "./backup/index.js";
+import { cronMatches } from "./backup/cron.js";
 import { createLogger } from "./utils/logger.js";
 
 const log = createLogger("monitor");
@@ -330,38 +331,8 @@ async function persistMetrics() {
 // ── Backup scheduler ──────────────────────────────────────────────────────────
 
 function cronMatchesNow(cron: string): boolean {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  const [minExpr, hourExpr, domExpr, monExpr, dowExpr] = parts;
-  const now = new Date();
-  const min = now.getMinutes();
-  const hour = now.getHours();
-  const dom = now.getDate();
-  const mon = now.getMonth() + 1;
-  const dow = now.getDay();
-
-  function matches(expr: string, value: number): boolean {
-    if (expr === "*") return true;
-    if (expr.startsWith("*/")) {
-      const step = parseInt(expr.slice(2), 10);
-      return step > 0 && value % step === 0;
-    }
-    return expr.split(",").some((part) => {
-      if (part.includes("-")) {
-        const [lo, hi] = part.split("-").map(Number);
-        return value >= lo && value <= hi;
-      }
-      return parseInt(part, 10) === value;
-    });
-  }
-
-  return (
-    matches(minExpr, min) &&
-    matches(hourExpr, hour) &&
-    matches(domExpr, dom) &&
-    matches(monExpr, mon) &&
-    matches(dowExpr, dow)
-  );
+  // Same dialect as schedule validation and stale-backup thresholds (lists, ranges, steps)
+  return cronMatches(cron, new Date());
 }
 
 async function executeScheduledBackup(appId: string, schedule: ScheduleRow) {

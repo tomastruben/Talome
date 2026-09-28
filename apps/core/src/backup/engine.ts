@@ -35,15 +35,18 @@ import { copyToDestination, getDestination, legacyCloudTargetDestination, delete
 import { REDIS_BGSAVE, REDIS_PERSISTENCE_INFO, dumpCommand, parseRedisPersistence, validateSqlDump } from "./dumps.js";
 import { errorMessage, getBackupRoot, getTalomeVersion, isWithin, sha256File, timestampSlug } from "./fs-utils.js";
 import { compileExcludePatterns } from "./glob.js";
-import { acquireAppOperation, markContainersInMaintenance, releaseAppMaintenance } from "./state.js";
+import { acquireAppOperation, activeIds, getAppOperation, markContainersInMaintenance, releaseAppMaintenance } from "./state.js";
 import {
+  clearRecoveryRecord,
   deleteBackupRow,
   getAppBackupConfig,
   getBackupRow,
+  getRestoreRow,
   insertRunningBackup,
   markBackupCompleted,
   markBackupFailed,
   appendBackupWarning,
+  saveRecoveryRecord,
   setBackupDestination,
 } from "./store.js";
 import { TarGzWriter } from "./tar.js";
@@ -91,6 +94,8 @@ export interface InternalBackupOptions extends CreateAppBackupOptions {
   includeDbData?: boolean;
   /** On success, leave containers stopped by the stop method stopped */
   leaveStopped?: boolean;
+  /** Treat `volumes` as the exact selection — an empty list archives no volumes */
+  exactVolumes?: boolean;
   signal?: AbortSignal;
   onStage?: (stage: string) => void;
 }
@@ -222,8 +227,8 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
   const allBind = bindVolumes(ctx.compose);
   const explicit = opts.volumes ?? config.includeVolumes;
   let selected: ComposeVolume[];
-  if (explicit && explicit.length > 0) {
-    const wanted = new Set(explicit);
+  if ((explicit && explicit.length > 0) || (opts.exactVolumes && opts.volumes)) {
+    const wanted = new Set(explicit ?? []);
     selected = allBind.filter((v) => wanted.has(v.hostPath!));
   } else {
     selected = allBind.filter((v) => v.type === "config");
@@ -394,28 +399,41 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
 
     checkCancelled();
 
-    // ── Stop (stop method) ────────────────────────────────────────────────
-    if (method === "stop" && running.length > 0) {
-      setStage("pausing");
-      for (const c of sortForStop(running, ctx)) {
-        checkCancelled();
-        markContainersInMaintenance(appId, [c.id, c.name]);
-        await stopContainerGracefully(c.id);
-        stoppedByUs.push(c);
-      }
-    }
-
-    // ── Archive ───────────────────────────────────────────────────────────
-    setStage("archiving");
+    // ── Stop + archive ────────────────────────────────────────────────────
+    // Everything from the first stop to the end of archiving runs inside one
+    // try/finally, so containers stopped here are ALWAYS started again —
+    // whether a stop fails, the user cancels while pausing, or archiving fails.
     const files: ManifestFile[] = [];
     const symlinks: BackupManifest["symlinks"] = [];
     const volumes: ManifestVolume[] = [];
+    const unreadable: string[] = [];
     const matcher = compileExcludePatterns(opts.ignoreExcludes ? [] : config.excludePatterns);
-    const composeContent = await readFile(ctx.composePath);
     let completedAt = "";
-    let manifest: BackupManifest;
+    let manifest: BackupManifest | null = null;
+    let archived = false;
+    let maintenanceMarked = false;
 
     try {
+      if (method === "stop" && running.length > 0) {
+        setStage("pausing");
+        for (const c of sortForStop(running, ctx)) {
+          checkCancelled();
+          markContainersInMaintenance(appId, [c.id, c.name]);
+          maintenanceMarked = true;
+          // Tracked before the stop call: a stop that fails half-way is restarted too
+          stoppedByUs.push(c);
+          saveRecoveryRecord(backupId, appId, "backup", { containers: stoppedByUs.map((x) => ({ id: x.id, name: x.name })) });
+          await stopContainerGracefully(c.id);
+        }
+      }
+
+      setStage("archiving");
+      const composeContent = await readFile(ctx.composePath);
+      // Paths archived on their own (nested volumes) or replaced by a dump are
+      // skipped when walking a parent volume.
+      const separatelyHandled = new Set<string>(selected.map((v) => v.hostPath!));
+      if (method === "dump" && !opts.includeDbData) for (const p of dbDataPaths) separatelyHandled.add(p);
+
       writer = new TarGzWriter(partialPath);
       const w = writer;
       for (const [index, v] of selected.entries()) {
@@ -429,11 +447,13 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
             const abs = join(hostPath, rel);
             // Never archive the backup root itself (e.g. an app mounting $HOME)
             if (isWithin(root, abs)) return true;
+            if (separatelyHandled.has(abs)) return true;
             return matcher(rel, isDir, appRelative(ctx, abs));
           },
           onFile: (f) => files.push({ path: f.name, size: f.size, sha256: f.sha256, mode: f.mode }),
           onSymlink: (name, target) => symlinks.push({ path: name, target }),
           onWarning: (m) => warnings.push(`${v.raw}: ${m}`),
+          onSkipped: (rel) => unreadable.push(rel ? `${prefix}/${rel}` : prefix),
         });
         volumes.push({
           key,
@@ -459,6 +479,13 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
       const composeAdded = await w.addBuffer(composeArchivePath, composeContent, 0o644);
       files.push({ path: composeAdded.name, size: composeAdded.size, sha256: composeAdded.sha256, mode: 0o644 });
 
+      if (unreadable.length > 0) {
+        warnings.push(
+          `Backup is incomplete: ${unreadable.length} unreadable path(s) were not captured (e.g. ${unreadable[0]}). ` +
+            "A restore keeps these paths from the current data.",
+        );
+      }
+
       completedAt = new Date().toISOString();
       manifest = {
         formatVersion: MANIFEST_FORMAT_VERSION,
@@ -480,17 +507,19 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
         excludePatterns: matcher.patterns,
         files,
         symlinks,
+        unreadable,
         totals: { files: files.length, bytes: files.reduce((n, f) => n + f.size, 0) },
         warnings: [...warnings],
       };
       await w.addBuffer(`${ARCHIVE_META_DIR}/${MANIFEST_FILE_NAME}`, Buffer.from(JSON.stringify(manifest, null, 2)), 0o600);
       await w.close();
       writer = null;
+      archived = true;
     } finally {
-      // Always bring back what we stopped — even when archiving failed
+      // Always bring back what we stopped — even when stopping or archiving failed
       if (stoppedByUs.length > 0) {
-        const ok = !signal?.aborted && writer === null;
-        if (ok && opts.leaveStopped) {
+        if (archived && !signal?.aborted && opts.leaveStopped) {
+          // The caller (restore) takes over and records these containers itself
           leftStopped = stoppedByUs;
         } else {
           setStage("resuming");
@@ -498,6 +527,9 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
           releaseAppMaintenance(appId);
         }
         stoppedByUs = [];
+        clearRecoveryRecord(backupId);
+      } else if (maintenanceMarked) {
+        releaseAppMaintenance(appId);
       }
     }
 
@@ -508,7 +540,7 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
     if (archiveStat.size === 0) throw new Error("Backup archive is empty");
     const archiveSha = await sha256File(archivePath);
     const external: BackupManifest = {
-      ...manifest!,
+      ...(manifest as BackupManifest),
       archive: { file: ARCHIVE_FILE_NAME, sizeBytes: archiveStat.size, sha256: archiveSha },
     };
     await writeFile(manifestPath, JSON.stringify(external, null, 2), { mode: 0o600 });
@@ -542,6 +574,11 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
         ? legacyCloudTargetDestination(opts.cloudTarget)
         : null;
     if (opts.destinationId && !destination) warnings.push("Destination no longer exists — backup kept locally only");
+    if (!opts.destinationId && opts.cloudTarget && !destination) {
+      const msg = "Schedule cloud target is not allowed (use a configured rclone remote or an absolute path) — backup kept locally only";
+      warnings.push(msg);
+      appendBackupWarning(backupId, msg);
+    }
     if (destination && destination.enabled) {
       setStage("uploading");
       const copy = await copyToDestination(destination, backupDir, appId, dirName);
@@ -617,11 +654,28 @@ export async function restartContainers(appId: string, stopped: AppContainer[]):
 
 // ── Deletion ────────────────────────────────────────────────────────────────
 
+/** True while a backup is the source of a running restore or verification. */
+export function isBackupInUse(row: { id: string; app_id: string | null; verify_status: string | null }): boolean {
+  const active = activeIds();
+  if (active.verifies.has(row.id) || row.verify_status === "running") return true;
+  if (!row.app_id) return false;
+  const op = getAppOperation(row.app_id);
+  if (!op || op.kind !== "restore") return false;
+  // The restore's source backup is looked up through its recorded row
+  try {
+    const restore = getRestoreRow(op.id);
+    return !restore || restore.backup_id === row.id;
+  } catch {
+    return true;
+  }
+}
+
 /** Delete a backup (local files, destination copy, DB row). Never throws. */
 export async function deleteBackup(id: string): Promise<{ ok: boolean; error?: string }> {
   const row = getBackupRow(id);
   if (!row) return { ok: false, error: "Backup not found" };
   if (row.status === "running") return { ok: false, error: "Cannot delete a running backup" };
+  if (isBackupInUse(row)) return { ok: false, error: "Backup is being verified or restored — try again when that finishes" };
   const root = getBackupRoot();
   try {
     if (row.manifest_path) {

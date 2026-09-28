@@ -28,6 +28,8 @@ export interface ContainerState {
   restartCount: number;
   image: string;
   imageId: string | null;
+  /** Exit code of the last run (meaningful when the container has exited) */
+  exitCode: number | null;
 }
 
 export interface ExecResult {
@@ -106,6 +108,7 @@ export async function getContainerState(id: string): Promise<ContainerState> {
     restartCount: (info as typeof info & { RestartCount?: number }).RestartCount ?? 0,
     image: info.Config?.Image ?? "",
     imageId: info.Image ?? null,
+    exitCode: typeof state.ExitCode === "number" ? state.ExitCode : null,
   };
 }
 

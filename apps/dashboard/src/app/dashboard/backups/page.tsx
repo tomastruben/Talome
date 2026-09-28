@@ -42,6 +42,7 @@ import type { AppBackupOverview } from "./_lib/types";
 import { VerificationBadge } from "./_components/verification-badge";
 import { RestoreDialog } from "./_components/restore-dialog";
 import { BackupSettingsSheet } from "./_components/backup-settings-sheet";
+import { StorageSheet } from "./_components/storage-sheet";
 
 const fetcher = (url: string) =>
   fetch(url).then((r) => {
@@ -126,6 +127,7 @@ function RowSkeleton() {
 export default function BackupsPage() {
   const [restoreApp, setRestoreApp] = useState<AppBackupOverview | null>(null);
   const [settingsApp, setSettingsApp] = useState<AppBackupOverview | null>(null);
+  const [storageOpen, setStorageOpen] = useState(false);
   // Backups whose verification this page started: backupId → app name (for the result toast)
   const pendingVerify = useRef(new Map<string, string>());
 
@@ -182,6 +184,7 @@ export default function BackupsPage() {
   const protectedCount = apps.filter((a) => a.lastSuccessfulBackup).length;
   const verifiedCount = apps.filter((a) => verificationState(a.lastSuccessfulBackup) === "verified").length;
   const attention = apps.filter(needsAttention);
+  const appNames = useMemo(() => Object.fromEntries(apps.map((a) => [a.appId, a.name])), [apps]);
   const sorted = useMemo(
     () =>
       [...apps].sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)) || a.name.localeCompare(b.name)),
@@ -208,8 +211,8 @@ export default function BackupsPage() {
               )}
             </p>
           )}
-          <Button variant="ghost" size="sm" className="sm:ml-auto text-muted-foreground" asChild>
-            <Link href="/dashboard/settings/backups">Schedules</Link>
+          <Button variant="ghost" size="sm" className="sm:ml-auto text-muted-foreground" onClick={() => setStorageOpen(true)}>
+            Storage &amp; retention
           </Button>
         </div>
 
@@ -339,6 +342,7 @@ export default function BackupsPage() {
 
       <RestoreDialog app={restoreApp} onOpenChange={(open) => !open && setRestoreApp(null)} onFinished={refresh} />
       <BackupSettingsSheet app={settingsApp} onOpenChange={(open) => !open && setSettingsApp(null)} onSaved={refresh} />
+      <StorageSheet open={storageOpen} onOpenChange={setStorageOpen} appNames={appNames} />
     </TooltipProvider>
   );
 }

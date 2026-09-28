@@ -6,6 +6,9 @@ import {
   defaultRestoreChoice,
   stageLabel,
   formatBytes,
+  parseCredentials,
+  parseKeepCount,
+  retentionSummary,
 } from "./backup-status";
 import type { AppBackupOverview, BackupSummary } from "./types";
 
@@ -85,5 +88,30 @@ describe("backup status helpers", () => {
     expect(stageLabel("safety-backup")).toBe("Saving current data");
     expect(formatBytes(1_500_000)).toBe("1.5 MB");
     expect(formatBytes(null)).toBe("—");
+  });
+});
+
+describe("storage & retention helpers", () => {
+  it("parses rclone credentials as key=value lines", () => {
+    expect(parseCredentials("access_key_id=AKIA\nsecret_access_key = abc=def\n\n# comment")).toEqual({
+      ok: true,
+      credentials: { access_key_id: "AKIA", secret_access_key: "abc=def" },
+    });
+    expect(parseCredentials("no equals sign").ok).toBe(false);
+    expect(parseCredentials("bad key=1").ok).toBe(false);
+  });
+
+  it("parses keep counts", () => {
+    expect(parseKeepCount("")).toBeNull();
+    expect(parseKeepCount(" 7 ")).toBe(7);
+    expect(parseKeepCount("-1")).toBeUndefined();
+    expect(parseKeepCount("2.5")).toBeUndefined();
+    expect(parseKeepCount("5000")).toBeUndefined();
+  });
+
+  it("summarises retention", () => {
+    const base = { keep_last: null, keep_daily: null, keep_weekly: null, keep_monthly: null, retention_days: 30 };
+    expect(retentionSummary(base)).toBe("Keep 30 days");
+    expect(retentionSummary({ ...base, keep_last: 3, keep_weekly: 4 })).toBe("Keep last 3, 4 weekly");
   });
 });

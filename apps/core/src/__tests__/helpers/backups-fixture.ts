@@ -52,12 +52,18 @@ export interface FakeContainer {
   image: string;
   /** When set, the container never reaches a healthy running state after start */
   crashOnStart?: boolean;
+  /** One-shot container: exits with this code right after being started */
+  oneShotExitCode?: number;
 }
 
 export const dockerState = {
   containers: [] as FakeContainer[],
   events: [] as string[],
   failStartIds: new Set<string>(),
+  failStopIds: new Set<string>(),
+  /** Called before each stop (e.g. to cancel a backup mid-way) */
+  onStop: null as ((id: string) => void) | null,
+  loadStderr: "",
   dumps: new Map<string, string>(),
 };
 
@@ -65,6 +71,9 @@ export function resetDocker(containers: Array<Omit<FakeContainer, "status"> & { 
   dockerState.containers = containers.map((c) => ({ status: "running", ...c }));
   dockerState.events = [];
   dockerState.failStartIds = new Set();
+  dockerState.failStopIds = new Set();
+  dockerState.onStop = null;
+  dockerState.loadStderr = "";
   dockerState.dumps = new Map();
 }
 
@@ -78,7 +87,9 @@ export function dockerOpsMock() {
       dockerState.containers.map((c) => ({ id: c.id, name: c.name, service: c.service, status: c.status, image: c.image })),
     ),
     stopContainerGracefully: vi.fn(async (id: string) => {
+      dockerState.onStop?.(id);
       dockerState.events.push(`stop:${id}`);
+      if (dockerState.failStopIds.has(id)) throw new Error("stop timeout");
       const c = find(id);
       if (c) c.status = "exited";
     }),
@@ -86,7 +97,7 @@ export function dockerOpsMock() {
       dockerState.events.push(`start:${id}`);
       if (dockerState.failStartIds.has(id)) throw new Error("start failed");
       const c = find(id);
-      if (c) c.status = "running";
+      if (c) c.status = c.oneShotExitCode !== undefined ? "exited" : "running";
     }),
     getContainerState: vi.fn(async (id: string) => {
       const c = find(id);
@@ -100,6 +111,7 @@ export function dockerOpsMock() {
         restartCount: c?.crashOnStart ? 5 : 0,
         image: c?.image ?? "",
         imageId: `sha256:${id}`,
+        exitCode: c?.status === "exited" ? (c.oneShotExitCode ?? 137) : null,
       };
     }),
     getImageDigests: vi.fn(async (imageId: string) => [`example/app@${imageId}`]),
@@ -110,7 +122,7 @@ export function dockerOpsMock() {
         return { exitCode: 0, stdout: `rdb_bgsave_in_progress:0\r\nrdb_last_bgsave_status:ok\r\nrdb_last_save_time:${now}\r\n`, stderr: "" };
       }
       dockerState.events.push(`exec:${joined.includes("BGSAVE") ? "bgsave" : joined.includes("psql") ? "psql" : joined.includes("pg_isready") ? "ready" : "other"}`);
-      return { exitCode: 0, stdout: "", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: joined.includes("psql") ? dockerState.loadStderr : "" };
     }),
     execToFile: vi.fn(async (id: string, _cmd: string[], outPath: string) => {
       const c = find(id);
@@ -127,12 +139,12 @@ export function dockerOpsMock() {
     composeUp: vi.fn(async (opts: { services?: string[] }) => {
       dockerState.events.push(`composeUp:${(opts.services ?? []).join(",")}`);
       for (const c of dockerState.containers) {
-        if (!opts.services || opts.services.includes(c.service)) c.status = "running";
+        if (!opts.services || opts.services.includes(c.service)) c.status = c.oneShotExitCode !== undefined ? "exited" : "running";
       }
     }),
     startAppViaLifecycle: vi.fn(async () => {
       dockerState.events.push("startApp");
-      for (const c of dockerState.containers) c.status = "running";
+      for (const c of dockerState.containers) c.status = c.oneShotExitCode !== undefined ? "exited" : "running";
       return { success: true };
     }),
   };

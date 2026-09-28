@@ -111,6 +111,43 @@ describe("backups routes", () => {
     expect(await patched.json()).toMatchObject({ enabled: 0, keep_last: 5, keep_daily: 7, keep_weekly: 4 });
   });
 
+  it("rejects schedule cloud targets that could exfiltrate data or carry credentials", async () => {
+    for (const cloudTarget of [":sftp,host=attacker.example,user=x,pass=y:/loot", ":s3:bucket", "b2,key=abc:bucket", "relative/dir"]) {
+      const res = await admin.request("/api/backups/schedules", json({ cron: "0 3 * * *", appId: null, cloudTarget }));
+      expect(res.status).toBe(400);
+    }
+    const ok = await admin.request("/api/backups/schedules", json({ cron: "0 3 * * *", appId: "routeapp", cloudTarget: "b2:bucket/talome" }));
+    expect(ok.status).toBe(201);
+  });
+
+  it("keeps reads open but makes every mutating endpoint admin-only", async () => {
+    const id = (await (await admin.request("/api/backups/apps/routeapp")).json()).backups[0].id as string;
+    expect((await member.request("/api/backups/apps")).status).toBe(200);
+    expect((await member.request("/api/backups/schedules")).status).toBe(200);
+    expect((await member.request(`/api/backups/${id}/verification`)).status).toBe(200);
+
+    const put = (body: unknown) => ({ method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const patch = (body: unknown) => ({ method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const attempts: Array<[string, RequestInit]> = [
+      ["/api/backups/schedules", json({ cron: "* * * * *", appId: null, cloudTarget: "/tmp/loot" })],
+      ["/api/backups/schedules/any", patch({ keepLast: 1 })],
+      ["/api/backups/schedules/any", { method: "DELETE" }],
+      ["/api/backups/trigger", json({ appId: "routeapp", method: "stop" })],
+      ["/api/backups/apps/routeapp/config", put({ excludePatterns: ["**"] })],
+      [`/api/backups/${id}`, { method: "DELETE" }],
+      [`/api/backups/${id}/verify`, { method: "POST" }],
+      [`/api/backups/${id}/cancel`, { method: "POST" }],
+      ["/api/backups/destinations", json({ name: "x", type: "local", target: "/tmp/x" })],
+    ];
+    for (const [path, init] of attempts) {
+      expect({ path, status: (await member.request(path, init)).status }).toEqual({ path, status: 403 });
+    }
+    // nothing changed
+    const cfg = await (await admin.request("/api/backups/apps/routeapp/config")).json();
+    expect(cfg.excludePatterns).toEqual(["cache/"]);
+    expect((await admin.request(`/api/backups/${id}/verification`)).status).toBe(200);
+  });
+
   it("deletes backups through the engine", async () => {
     const id = (await (await admin.request("/api/backups/apps/routeapp")).json()).backups[0].id;
     expect((await admin.request(`/api/backups/${id}`, { method: "DELETE" })).status).toBe(200);

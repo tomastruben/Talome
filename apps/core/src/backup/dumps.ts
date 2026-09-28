@@ -31,7 +31,7 @@ export function dumpCommand(engine: Exclude<DbEngine, "redis">): string[] {
       "D=mysqldump; command -v mariadb-dump >/dev/null 2>&1 && D=mariadb-dump",
       "DBS=$($C -u\"$U\" -N -B -e 'SHOW DATABASES' | grep -Ev '^(information_schema|performance_schema|mysql|sys)$' | tr '\\n' ' ')",
       'if [ -z "$DBS" ]; then echo "no databases to dump" >&2; exit 3; fi',
-      'exec $D -u"$U" --single-transaction --quick --routines --events --triggers --databases $DBS',
+      'exec $D -u"$U" --single-transaction --quick --routines --events --triggers --add-drop-database --databases $DBS',
     ].join("; "),
   ];
 }
@@ -68,6 +68,24 @@ export function loadCommand(engine: Exclude<DbEngine, "redis">, pathInContainer:
       `$C -u"$U" < ${quoted}`,
     ].join("; "),
   ];
+}
+
+/**
+ * Errors that a dump load always produces and that do not affect the data:
+ * pg_dumpall --clean tries to drop/re-create the role it is connected as.
+ */
+const BENIGN_LOAD_ERRORS: RegExp[] = [
+  /current user cannot be dropped/i,
+  /role "[^"]+" already exists/i,
+  /database "(postgres|template[01])" already exists/i,
+];
+
+/** Error lines from a dump load that indicate the load did not fully apply. */
+export function significantLoadErrors(stderr: string): string[] {
+  return stderr
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => /ERROR/.test(l) && !BENIGN_LOAD_ERRORS.some((re) => re.test(l)));
 }
 
 const REDIS_AUTH = 'if [ -n "${REDIS_PASSWORD:-}" ]; then export REDISCLI_AUTH="$REDIS_PASSWORD"; fi';

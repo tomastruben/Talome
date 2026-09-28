@@ -109,6 +109,8 @@ export const backupManifestSchema = z.object({
   excludePatterns: z.array(z.string()),
   files: z.array(manifestFileSchema),
   symlinks: z.array(z.object({ path: z.string(), target: z.string() })),
+  /** Archive paths (volumes/<key>/<rel>) that were unreadable and are NOT in the archive */
+  unreadable: z.array(z.string()).default([]),
   totals: z.object({ files: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() }),
   warnings: z.array(z.string()),
   /** Present in the external manifest.json only */

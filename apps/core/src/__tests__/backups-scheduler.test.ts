@@ -66,6 +66,21 @@ describe("maintenance checks", () => {
     expect(scheduler.findStaleBackups(new Date()).map((a) => a.appId)).not.toContain("newsched");
   });
 
+  it("verifies the backup the dashboard shows, not a newer safety backup", async () => {
+    const now = new Date();
+    const t1 = new Date(now.getTime() - 3 * 3600_000).toISOString();
+    const t2 = new Date(now.getTime() - 2 * 3600_000).toISOString();
+    db.run(sql`INSERT INTO backups (id, app_id, status, started_at, completed_at, triggered_by, manifest_path, purpose)
+      VALUES ('p-sched', 'purposeapp', 'completed', ${t1}, ${t1}, 'schedule', '/x/manifest.json', 'schedule')`);
+    db.run(sql`INSERT INTO backups (id, app_id, status, started_at, completed_at, triggered_by, manifest_path, purpose)
+      VALUES ('p-safety', 'purposeapp', 'completed', ${t2}, ${t2}, 'manual', '/x/manifest.json', 'pre-update')`);
+    // A verified safety backup doesn't reset the weekly timer either
+    setVerifyState("p-safety", "verified", now.toISOString(), "{}");
+    const due = scheduler.findBackupsDueForVerification(now);
+    expect(due).toContain("p-sched");
+    expect(due).not.toContain("p-safety");
+  });
+
   it("selects the newest backup per app for weekly verification", async () => {
     const now = new Date();
     const old = new Date(now.getTime() - 2 * 3600_000).toISOString();

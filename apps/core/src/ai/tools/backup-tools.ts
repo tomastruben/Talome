@@ -28,6 +28,18 @@ import {
 } from "../../backup/index.js";
 import { bindVolumes, resolveAppContext } from "../../backup/compose.js";
 import { getBackupRoot } from "../../backup/fs-utils.js";
+import { ARCHIVE_FILE_NAME, ARCHIVE_META_DIR, MANIFEST_FILE_NAME } from "../../backup/types.js";
+
+/** Top-level members of archives made by the current backup engine (relative paths). */
+const ENGINE_ARCHIVE_PREFIXES = [`${ARCHIVE_META_DIR}/`, "volumes/", "compose/", "dumps/"];
+
+/**
+ * True when a file looks like an archive made by the current backup engine
+ * (which must be restored by backup id, never extracted to "/").
+ */
+export function isEngineArchivePath(archivePath: string): boolean {
+  return basename(archivePath) === ARCHIVE_FILE_NAME || existsSync(join(dirname(archivePath), MANIFEST_FILE_NAME));
+}
 
 const LEGACY_BACKUP_BASE = join(process.env.HOME || "/tmp", ".talome", "backups", "apps");
 
@@ -72,6 +84,9 @@ async function validateTarSafety(archivePath: string): Promise<{ safe: boolean; 
     const listing = await execPromise(`tar -tzf "${archivePath}"`, { timeout: 60_000 });
     const entries = listing.split("\n").filter(Boolean);
     for (const entry of entries) {
+      if (ENGINE_ARCHIVE_PREFIXES.some((p) => entry === p.slice(0, -1) || entry.startsWith(p))) {
+        return { safe: false, reason: "This is a backup made by the current backup engine — restore it by backupId" };
+      }
       if (entry.startsWith("/")) {
         return { safe: false, reason: `Archive contains absolute path entry: "${entry}"` };
       }
@@ -287,6 +302,12 @@ After calling: Report what was restored, the backup date, the health check resul
     }
     if (!existsSync(legacyPath)) {
       return { success: false, error: `Backup file not found: ${legacyPath}` };
+    }
+    if (isEngineArchivePath(legacyPath)) {
+      return {
+        success: false,
+        error: "This archive was made by the current backup engine and has no matching backup record for this app. Restore it with backupId (list backups by calling restore_app with only appId).",
+      };
     }
     const composePath = getInstalledAppComposePath(appId);
     if (!composePath) {

@@ -15,7 +15,9 @@ function fieldMatches(expr: string, value: number): boolean {
       const [lo, hi] = rangePart.split("-").map(Number);
       return value >= lo && value <= hi && (value - lo) % step === 0;
     }
-    return parseInt(rangePart, 10) === value;
+    const start = parseInt(rangePart, 10);
+    // "5/15" = every 15 starting at 5
+    return stepPart ? value >= start && (value - start) % step === 0 : start === value;
   });
 }
 

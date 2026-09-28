@@ -177,6 +177,8 @@ export interface WalkOptions {
   onFile?: (file: AddedFile) => void;
   onSymlink?: (name: string, target: string) => void;
   onWarning?: (message: string) => void;
+  /** A file or directory (relative path, "" = the root) that could not be read and is missing from the archive */
+  onSkipped?: (relPath: string) => void;
   signal?: AbortSignal;
 }
 
@@ -333,6 +335,7 @@ export class TarGzWriter {
         names = (await readdir(abs)).sort();
       } catch (err) {
         warn(`Could not read directory ${rel || "."}: ${err instanceof Error ? err.message : String(err)}`);
+        opts.onSkipped?.(rel);
         continue;
       }
       const subdirs: Array<{ abs: string; rel: string }> = [];
@@ -355,6 +358,7 @@ export class TarGzWriter {
             await fh.close();
           } catch (err) {
             warn(`Unreadable file skipped: ${childRel} (${err instanceof Error ? err.message : String(err)})`);
+            opts.onSkipped?.(childRel);
             continue;
           }
         }

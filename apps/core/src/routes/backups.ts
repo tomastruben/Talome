@@ -34,11 +34,21 @@ import {
   createDestinationSchema,
   deleteDestination,
   getDestination,
+  validateLegacyCloudTarget,
   listDestinations,
   testDestination,
 } from "../backup/destinations.js";
 
 export const backups = new Hono();
+
+// Reads are open to every signed-in user. Anything that changes backups,
+// schedules, destinations or per-app settings — or stops apps — is admin-only.
+const adminOnly = requireRole("admin");
+backups.use("*", async (c, next) => {
+  const method = c.req.method;
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
+  return adminOnly(c, next);
+});
 
 /**
  * Self-backup endpoints — for Talome's own SQLite database.
@@ -146,13 +156,19 @@ backups.post("/schedules", async (c) => {
   if (!body.success) return c.json({ error: body.error.flatten() }, 400);
   if (!isValidCron(body.data.cron)) return c.json({ error: "Invalid cron expression (5 fields)" }, 400);
   if (body.data.destinationId && !getDestination(body.data.destinationId)) return c.json({ error: "Destination not found" }, 400);
+  let cloudTarget: string | null = null;
+  if (body.data.cloudTarget) {
+    const v = validateLegacyCloudTarget(body.data.cloudTarget);
+    if (!v.ok) return c.json({ error: v.error }, 400);
+    cloudTarget = v.target;
+  }
 
   const id = randomUUID();
   const now = new Date().toISOString();
-  const { appId, cron, cloudTarget, retentionDays, destinationId, keepLast, keepDaily, keepWeekly, keepMonthly } = body.data;
+  const { appId, cron, retentionDays, destinationId, keepLast, keepDaily, keepWeekly, keepMonthly } = body.data;
 
   db.run(sql`INSERT INTO backup_schedules (id, app_id, cron, cloud_target, retention_days, created_at, destination_id, keep_last, keep_daily, keep_weekly, keep_monthly)
-    VALUES (${id}, ${appId ?? null}, ${cron}, ${cloudTarget ?? null}, ${retentionDays}, ${now}, ${destinationId ?? null}, ${keepLast ?? null}, ${keepDaily ?? null}, ${keepWeekly ?? null}, ${keepMonthly ?? null})`);
+    VALUES (${id}, ${appId ?? null}, ${cron}, ${cloudTarget}, ${retentionDays}, ${now}, ${destinationId ?? null}, ${keepLast ?? null}, ${keepDaily ?? null}, ${keepWeekly ?? null}, ${keepMonthly ?? null})`);
 
   return c.json({ id, cron, retentionDays }, 201);
 });
@@ -326,8 +342,8 @@ backups.post("/destinations", requireRole("admin"), async (c) => {
 });
 
 backups.delete("/destinations/:id", requireRole("admin"), (c) => {
-  const ok = deleteDestination(c.req.param("id"));
-  if (!ok) return c.json({ error: "Destination not found" }, 404);
+  const r = deleteDestination(c.req.param("id"));
+  if (!r.ok) return c.json({ error: r.error }, r.notFound ? 404 : 409);
   return c.json({ ok: true });
 });
 

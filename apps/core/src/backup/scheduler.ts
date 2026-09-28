@@ -4,7 +4,8 @@
  *  - runScheduledBackup: back up one app for a schedule, then apply the
  *    schedule's retention policy (keep-last + GFS, or retention_days)
  *  - runBackupMaintenance (self-throttled, called every monitor tick):
- *      · recover rows left "running" by a restart
+ *      · recover work left pending by a restart (stopped containers,
+ *        half-swapped restores) and rows left "running"
  *      · weekly verification of the newest backup of every app
  *      · alert when an app with a schedule has no successful backup for
  *        longer than max(24h, schedule interval) + 1h grace
@@ -18,6 +19,7 @@ import { getSetting, setSetting } from "../utils/settings.js";
 import { createLogger } from "../utils/logger.js";
 import { maxCronIntervalMs } from "./cron.js";
 import { createAppBackup, deleteBackup } from "./engine.js";
+import { recoverPendingOperations } from "./recovery.js";
 import { applyRetentionPolicy, hasGfsRules } from "./retention.js";
 import { activeIds } from "./state.js";
 import { listCompletedBackups, recoverInterruptedOperations, type BackupRow } from "./store.js";
@@ -153,14 +155,21 @@ export function findStaleBackups(now = new Date()): StaleBackupAlert[] {
   return out;
 }
 
-/** The newest completed backup per app whose app hasn't been verified in a week. */
+/**
+ * The newest manual/scheduled backup per app (the one the dashboard shows)
+ * when none of the app's manual/scheduled backups was verified within a week.
+ * Safety backups (pre-update, pre-restore) neither count nor reset the timer.
+ */
 export function findBackupsDueForVerification(now = new Date()): string[] {
   const rows = db.all(sql`
     SELECT b.id, b.app_id, b.completed_at, b.verify_status,
-      (SELECT MAX(v.verified_at) FROM backups v WHERE v.app_id = b.app_id AND v.verify_status IN ('verified', 'failed')) AS last_verified
+      (SELECT MAX(v.verified_at) FROM backups v WHERE v.app_id = b.app_id AND v.verify_status IN ('verified', 'failed')
+        AND (v.purpose IS NULL OR v.purpose IN ('manual', 'schedule'))) AS last_verified
     FROM backups b
     WHERE b.status = 'completed' AND b.app_id IS NOT NULL AND b.manifest_path IS NOT NULL
-      AND b.completed_at = (SELECT MAX(c.completed_at) FROM backups c WHERE c.app_id = b.app_id AND c.status = 'completed' AND c.manifest_path IS NOT NULL)
+      AND (b.purpose IS NULL OR b.purpose IN ('manual', 'schedule'))
+      AND b.completed_at = (SELECT MAX(c.completed_at) FROM backups c WHERE c.app_id = b.app_id AND c.status = 'completed'
+        AND c.manifest_path IS NOT NULL AND (c.purpose IS NULL OR c.purpose IN ('manual', 'schedule')))
   `) as Array<{ id: string; app_id: string; completed_at: string | null; verify_status: string | null; last_verified: string | null }>;
   return rows
     .filter((r) => {
@@ -198,6 +207,8 @@ export async function runBackupMaintenance(now = new Date(), force = false): Pro
   if (!recovered) {
     recovered = true;
     try {
+      // Undo half-finished work first (restart stopped apps, put data back)
+      await recoverPendingOperations(activeIds());
       const n = recoverInterruptedOperations(activeIds());
       if (n > 0) log.warn(`marked ${n} interrupted backup/restore operation(s) as failed`);
     } catch (err) {

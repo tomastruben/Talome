@@ -110,3 +110,42 @@ export function defaultRestoreChoice<T extends BackupSummary>(backups: T[]): T |
   const list = restorableBackups(backups).filter((b) => b.purpose !== "pre-restore");
   return list.find((b) => b.verifyStatus === "verified") ?? list[0] ?? null;
 }
+
+/** Parse "key=value" lines into rclone backend parameters. Returns an error for malformed lines. */
+export function parseCredentials(text: string): { ok: true; credentials: Record<string, string> } | { ok: false; error: string } {
+  const credentials: Record<string, string> = {};
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    const key = eq > 0 ? line.slice(0, eq).trim() : "";
+    if (!/^[a-z0-9_]{1,64}$/i.test(key)) return { ok: false, error: `Use key=value on each line (problem: "${line.slice(0, 40)}")` };
+    credentials[key] = line.slice(eq + 1).trim();
+  }
+  return { ok: true, credentials };
+}
+
+/** Parse a keep-count field: blank = not set, otherwise a whole number 0–1000. */
+export function parseKeepCount(value: string): number | null | undefined {
+  const v = value.trim();
+  if (v === "") return null;
+  if (!/^\d+$/.test(v)) return undefined;
+  const n = Number(v);
+  return n <= 1000 ? n : undefined;
+}
+
+/** One-line summary of a schedule's retention policy. */
+export function retentionSummary(s: {
+  keep_last: number | null;
+  keep_daily: number | null;
+  keep_weekly: number | null;
+  keep_monthly: number | null;
+  retention_days: number;
+}): string {
+  const parts: string[] = [];
+  if (s.keep_last) parts.push(`last ${s.keep_last}`);
+  if (s.keep_daily) parts.push(`${s.keep_daily} daily`);
+  if (s.keep_weekly) parts.push(`${s.keep_weekly} weekly`);
+  if (s.keep_monthly) parts.push(`${s.keep_monthly} monthly`);
+  return parts.length > 0 ? `Keep ${parts.join(", ")}` : `Keep ${s.retention_days} days`;
+}

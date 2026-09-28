@@ -224,3 +224,71 @@ export function recoverInterruptedOperations(active: { backups: Set<string>; res
   }
   return recovered;
 }
+
+// ── Crash recovery records ──────────────────────────────────────────────────
+
+export interface RecoverySwap {
+  hostPath: string;
+  old: string;
+  existed: boolean;
+  carried: string[];
+}
+
+export interface RecoveryState {
+  /** Containers stopped on purpose that must be started again */
+  containers?: Array<{ id: string; name: string }>;
+  /** Directory swaps made by a restore (undone on recovery) */
+  swaps?: RecoverySwap[];
+  /** Start the app through the lifecycle after recovery (it was running) */
+  restartApp?: boolean;
+  /** Data was changed in place — only the safety backup can undo it */
+  inPlace?: boolean;
+  safetyBackupId?: string | null;
+}
+
+export interface RecoveryRecord {
+  id: string;
+  appId: string;
+  kind: "backup" | "restore";
+  state: RecoveryState;
+  updatedAt: string;
+}
+
+/** Persist pending work for an operation. Best effort — never throws. */
+export function saveRecoveryRecord(id: string, appId: string, kind: RecoveryRecord["kind"], state: RecoveryState): void {
+  try {
+    const json = JSON.stringify(state);
+    const now = new Date().toISOString();
+    db.run(sql`INSERT INTO backup_recovery (id, app_id, kind, state, updated_at) VALUES (${id}, ${appId}, ${kind}, ${json}, ${now})
+      ON CONFLICT(id) DO UPDATE SET state = ${json}, updated_at = ${now}`);
+  } catch {
+    // recovery bookkeeping must never break the operation itself
+  }
+}
+
+export function clearRecoveryRecord(id: string): void {
+  try {
+    db.run(sql`DELETE FROM backup_recovery WHERE id = ${id}`);
+  } catch {
+    // ignore
+  }
+}
+
+export function listRecoveryRecords(): RecoveryRecord[] {
+  const rows = db.all(sql`SELECT * FROM backup_recovery ORDER BY updated_at ASC`) as Array<{
+    id: string;
+    app_id: string;
+    kind: string;
+    state: string;
+    updated_at: string;
+  }>;
+  return rows.map((r) => {
+    let state: RecoveryState = {};
+    try {
+      state = JSON.parse(r.state) as RecoveryState;
+    } catch {
+      // unreadable state — treated as empty
+    }
+    return { id: r.id, appId: r.app_id, kind: r.kind === "restore" ? "restore" : "backup", state, updatedAt: r.updated_at };
+  });
+}

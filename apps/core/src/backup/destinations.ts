@@ -7,16 +7,22 @@
  *              rclone.conf ("b2:bucket/talome"), or a Talome-managed remote
  *              whose credentials are stored encrypted in settings and passed
  *              to rclone via RCLONE_CONFIG_* environment variables.
+ *              Copies uploaded through rclone are encrypted (offsite-crypto.ts).
+ *
+ * rclone paths must name a configured remote: on-the-fly remotes
+ * (":s3,key=…:bucket") and connection strings ("remote,param=value:") are
+ * rejected because they would put credentials on the command line.
  */
 
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, rm, writeFile, unlink } from "node:fs/promises";
+import { cp, mkdir, readdir, rm, writeFile, unlink } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import { getSetting, setSetting } from "../utils/settings.js";
 import { errorMessage, getBackupRoot, isWithin } from "./fs-utils.js";
+import { ENCRYPTED_SUFFIX, decryptFile, encryptFile } from "./offsite-crypto.js";
 import { rcloneCopyFrom, rcloneExists, rclonePurge, rcloneSync, runRclone } from "./rclone.js";
 
 export interface BackupDestination {
@@ -34,6 +40,40 @@ export interface PublicBackupDestination extends BackupDestination {
 }
 
 const PARAM_KEY = /^[a-z0-9_]{1,64}$/i;
+/** rclone remote names: letters, digits, "_", "-", ".", "+", "@" and spaces (not first) */
+const REMOTE_NAME = /^[A-Za-z0-9_+@][A-Za-z0-9_.+@ -]*$/;
+
+/**
+ * Validate an rclone path that refers to a remote configured in rclone.conf
+ * ("b2:bucket/dir"). Rejects on-the-fly remotes and connection strings, which
+ * carry backend parameters (often credentials) inside the path.
+ */
+export function validateRcloneRemotePath(target: string): string | null {
+  if (target.startsWith("-")) return "Invalid target";
+  const idx = target.indexOf(":");
+  if (idx <= 0) return "Use remote:path with a remote configured in rclone";
+  const name = target.slice(0, idx);
+  if (!REMOTE_NAME.test(name)) {
+    return "On-the-fly rclone remotes and connection strings are not allowed — create a destination with credentials instead";
+  }
+  return null;
+}
+
+/**
+ * Validate a legacy schedule `cloud_target`: an absolute local directory
+ * outside the backup root, or a configured rclone remote path.
+ */
+export function validateLegacyCloudTarget(cloudTarget: string): { ok: true; target: string } | { ok: false; error: string } {
+  const t = cloudTarget.trim();
+  if (!t) return { ok: false, error: "Empty cloud target" };
+  if (isAbsolute(t)) {
+    const resolved = resolve(t);
+    if (isWithin(getBackupRoot(), resolved)) return { ok: false, error: "A cloud target cannot be inside the local backup directory" };
+    return { ok: true, target: resolved };
+  }
+  const err = validateRcloneRemotePath(t);
+  return err ? { ok: false, error: err } : { ok: true, target: t };
+}
 
 export const createDestinationSchema = z
   .object({
@@ -55,8 +95,9 @@ export const createDestinationSchema = z
     if (v.type === "local" && !isAbsolute(v.target)) {
       ctx.addIssue({ code: "custom", message: "Local destinations need an absolute path", path: ["target"] });
     }
-    if (v.type === "rclone" && !v.remoteType && !v.target.includes(":")) {
-      ctx.addIssue({ code: "custom", message: "Use remote:path for an existing rclone remote, or set remoteType", path: ["target"] });
+    if (v.type === "rclone" && !v.remoteType) {
+      const err = v.target.includes(":") ? validateRcloneRemotePath(v.target) : "Use remote:path for an existing rclone remote, or set remoteType";
+      if (err) ctx.addIssue({ code: "custom", message: err, path: ["target"] });
     }
     if (v.type === "local" && (v.remoteType || v.credentials)) {
       ctx.addIssue({ code: "custom", message: "Local destinations take no credentials", path: ["credentials"] });
@@ -119,12 +160,24 @@ export function createDestination(input: CreateDestinationInput): { ok: true; de
   return { ok: true, destination: { ...destination, hasCredentials: !!input.credentials && Object.keys(input.credentials).length > 0 } };
 }
 
-export function deleteDestination(id: string): boolean {
+/**
+ * Delete a destination. Refused while backups or schedules still reference it
+ * (their remote copies could no longer be verified, fetched or purged).
+ */
+export function deleteDestination(id: string): { ok: true } | { ok: false; notFound?: boolean; error: string } {
   const existing = getDestination(id);
-  if (!existing) return false;
+  if (!existing) return { ok: false, notFound: true, error: "Destination not found" };
+  const backups = (db.get(sql`SELECT COUNT(*) AS n FROM backups WHERE destination_id = ${id}`) as { n: number } | undefined)?.n ?? 0;
+  const schedules = (db.get(sql`SELECT COUNT(*) AS n FROM backup_schedules WHERE destination_id = ${id}`) as { n: number } | undefined)?.n ?? 0;
+  if (backups > 0 || schedules > 0) {
+    return {
+      ok: false,
+      error: `Destination is still used by ${backups} backup(s) and ${schedules} schedule(s) — delete those backups or change the schedules first`,
+    };
+  }
   db.run(sql`DELETE FROM backup_destinations WHERE id = ${id}`);
   db.run(sql`DELETE FROM settings WHERE key = ${secretKey(id)}`);
-  return true;
+  return { ok: true };
 }
 
 /** Name of the Talome-managed rclone remote for a destination. */
@@ -159,13 +212,18 @@ export function buildRcloneTarget(dest: Pick<BackupDestination, "id" | "type" | 
   return { root: `${remote}:${dest.target.replace(/^\/+/, "").replace(/\/+$/, "")}`, env };
 }
 
-/** Destination used by a legacy `cloud_target` string on a schedule. */
-export function legacyCloudTargetDestination(cloudTarget: string): BackupDestination {
+/**
+ * Destination used by a legacy `cloud_target` string on a schedule, or null
+ * when the target is not allowed (see validateLegacyCloudTarget).
+ */
+export function legacyCloudTargetDestination(cloudTarget: string): BackupDestination | null {
+  const v = validateLegacyCloudTarget(cloudTarget);
+  if (!v.ok) return null;
   return {
     id: "legacy",
-    name: cloudTarget,
-    type: cloudTarget.startsWith("/") ? "local" : "rclone",
-    target: cloudTarget,
+    name: v.target,
+    type: isAbsolute(v.target) ? "local" : "rclone",
+    target: v.target,
     remoteType: null,
     enabled: true,
     createdAt: new Date(0).toISOString(),
@@ -193,8 +251,20 @@ export async function copyToDestination(
     }
     const { root, env } = buildRcloneTarget(dest);
     const location = joinRemote(root, appId, dirName);
-    const r = await rcloneSync(localBackupDir, location, { env });
-    return r.success ? { ok: true, location } : { ok: false, error: r.error ?? "rclone copy failed" };
+    // Encrypt every file into a staging dir; only ciphertext leaves the machine
+    const staging = join(getBackupRoot(), ".upload", `${appId}-${dirName}-${randomUUID().slice(0, 8)}`);
+    try {
+      await mkdir(staging, { recursive: true, mode: 0o700 });
+      const entries = await readdir(localBackupDir, { withFileTypes: true });
+      for (const e of entries) {
+        if (!e.isFile()) continue;
+        await encryptFile(join(localBackupDir, e.name), join(staging, `${e.name}${ENCRYPTED_SUFFIX}`));
+      }
+      const r = await rcloneSync(staging, location, { env });
+      return r.success ? { ok: true, location } : { ok: false, error: r.error ?? "rclone copy failed" };
+    } finally {
+      await rm(staging, { recursive: true, force: true }).catch(() => {});
+    }
   } catch (err) {
     return { ok: false, error: errorMessage(err) };
   }
@@ -228,7 +298,15 @@ export async function fetchFromDestination(dest: BackupDestination, location: st
     }
     const { env } = buildRcloneTarget(dest);
     const r = await rcloneCopyFrom(location, localDir, { env });
-    return { ok: r.success, error: r.error };
+    if (!r.success) return { ok: false, error: r.error };
+    // Copies made by this version are encrypted — decrypt them in place
+    for (const name of await readdir(localDir)) {
+      if (!name.endsWith(ENCRYPTED_SUFFIX)) continue;
+      const enc = join(localDir, name);
+      await decryptFile(enc, join(localDir, name.slice(0, -ENCRYPTED_SUFFIX.length)));
+      await rm(enc, { force: true });
+    }
+    return { ok: true };
   } catch (err) {
     return { ok: false, error: errorMessage(err) };
   }

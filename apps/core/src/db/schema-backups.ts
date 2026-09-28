@@ -51,3 +51,17 @@ export const backupRestores = sqliteTable("backup_restores", {
   /** JSON detail: health check results, warnings */
   detail: text("detail"),
 });
+
+// ── Crash recovery ──────────────────────────────────────────────────────────
+// Work in progress that must be undone when the server stops mid-operation:
+// containers stopped by a backup, directory swaps made by a restore.
+
+export const backupRecovery = sqliteTable("backup_recovery", {
+  /** Backup or restore id */
+  id: text("id").primaryKey(),
+  appId: text("app_id").notNull(),
+  kind: text("kind", { enum: ["backup", "restore"] }).notNull(),
+  /** JSON RecoveryState (see backup/store.ts) */
+  state: text("state").notNull(),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
