@@ -4,7 +4,7 @@ import { writeNotification } from "../db/notifications.js";
 import { serverError, recordGracefulError } from "../middleware/request-logger.js";
 
 const log = createLogger("media");
-import sharp from "sharp";
+import { loadSharp } from "../platform/lazy-modules.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -309,6 +309,43 @@ const ALLOWED_BACKDROP_WIDTHS = [400, 780, 1280] as const;
 
 const media = new Hono();
 
+// ── Library cache ─────────────────────────────────────────────────────────
+// /library pulls the full Sonarr /series and Radarr /movie lists (can be
+// several MB for large libraries). Cache the mapped payload server-side and
+// share one upstream fetch between concurrent requests. Any mutating request
+// handled by this router (add, delete, grab, webhook, ...) invalidates it.
+
+const LIBRARY_CACHE_TTL_MS = 60_000;
+/** Shorter TTL when Sonarr/Radarr failed, so recovery shows up quickly. */
+const LIBRARY_CACHE_PARTIAL_TTL_MS = 10_000;
+
+let libraryCache: { key: string; at: number; ttl: number; payload: unknown } | null = null;
+let libraryInflight: { key: string; generation: number; promise: Promise<unknown> } | null = null;
+let libraryGeneration = 0;
+
+/** Drop the cached library payload (after any library mutation). */
+export function invalidateLibraryCache(): void {
+  libraryGeneration++;
+  libraryCache = null;
+}
+
+/** Cache key covers the configured endpoints so a settings change is never served stale data. */
+function libraryCacheKey(): string {
+  const parts = ["sonarr", "radarr"].map((svc) => `${getServiceUrl(svc)}|${getApiKey(svc)}`);
+  return createHash("sha256").update(parts.join("\n")).digest("hex");
+}
+
+/** Playback/heartbeat endpoints that POST frequently but never change the library. */
+const NON_LIBRARY_MUTATION_PATH = /\/(hls-|transmux|jellyfin-playback|plex\/)/;
+
+media.use("*", async (c, next) => {
+  await next();
+  const method = c.req.method;
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return;
+  if (NON_LIBRARY_MUTATION_PATH.test(c.req.path)) return;
+  invalidateLibraryCache();
+});
+
 function getServiceUrl(service: string): string {
   const custom = getSetting(`${service}_url`);
   if (custom) return custom;
@@ -515,7 +552,7 @@ media.get("/poster", async (c) => {
       });
       if (!res.ok) return c.text("Not found", 404);
       const buf = Buffer.from(await res.arrayBuffer());
-      const resized = await sharp(buf)
+      const resized = await (await loadSharp())(buf)
         .resize(width ?? 240, undefined, { fit: "inside", withoutEnlargement: true })
         .webp({ quality: 80 })
         .toBuffer();
@@ -551,7 +588,7 @@ media.get("/poster", async (c) => {
       const res = await plexFetch(path, plex.token, plex.baseUrl);
       if (!res.ok) return c.text("Not found", 404);
       const buf = Buffer.from(await res.arrayBuffer());
-      const resized = await sharp(buf)
+      const resized = await (await loadSharp())(buf)
         .resize(width ?? 240, undefined, { fit: "inside", withoutEnlargement: true })
         .webp({ quality: 80 })
         .toBuffer();
@@ -648,7 +685,7 @@ media.get("/poster", async (c) => {
     }
 
     // Resize to requested width, convert to webp for best compression
-    const resized = await sharp(buf)
+    const resized = await (await loadSharp())(buf)
       .resize(width, undefined, { fit: "inside", withoutEnlargement: true })
       .webp({ quality: 80 })
       .toBuffer();
@@ -730,7 +767,7 @@ media.get("/backdrop", async (c) => {
       });
     }
 
-    const resized = await sharp(buf)
+    const resized = await (await loadSharp())(buf)
       .resize(width, undefined, { fit: "inside", withoutEnlargement: true })
       .webp({ quality: 82 })
       .toBuffer();
@@ -760,66 +797,99 @@ async function qbitGet(path: string): Promise<unknown> {
 
 media.get("/library", async (c) => {
   try {
-    const [series, movies] = await Promise.allSettled([
-      serviceGet("sonarr", "/series"),
-      serviceGet("radarr", "/movie"),
-    ]);
+    const key = libraryCacheKey();
+    const now = Date.now();
+    if (libraryCache && libraryCache.key === key && now - libraryCache.at < libraryCache.ttl) {
+      return c.json(libraryCache.payload);
+    }
+    if (!libraryInflight || libraryInflight.key !== key || libraryInflight.generation !== libraryGeneration) {
+      const generation = libraryGeneration;
+      const promise = buildLibraryPayload()
+        .then(({ payload, complete }) => {
+          // Don't cache a result that raced with a mutation.
+          if (generation === libraryGeneration) {
+            libraryCache = {
+              key,
+              at: Date.now(),
+              ttl: complete ? LIBRARY_CACHE_TTL_MS : LIBRARY_CACHE_PARTIAL_TTL_MS,
+              payload,
+            };
+          }
+          return payload;
+        })
+        .finally(() => {
+          if (libraryInflight?.promise === promise) libraryInflight = null;
+        });
+      libraryInflight = { key, generation, promise };
+    }
+    return c.json(await libraryInflight.promise);
+  } catch (err: unknown) {
+    return serverError(c, err, { context: { endpoint: "media/library" }, extra: { tv: [], movies: [], sonarrAvailable: false, radarrAvailable: false, totals: { tvShows: 0, movies: 0 } } });
+  }
+});
 
-    const tvShows = series.status === "fulfilled"
-      ? (series.value as SonarrSeries[]).map((s) => ({
-          id: s.id,
-          title: s.title,
-          year: s.year,
-          tvdbId: s.tvdbId ?? null,
-          type: "tv" as const,
-          status: s.status,
-          seasonCount: extractSeasonCount(s),
-          episodeCount: s.statistics?.episodeCount ?? 0,
-          sizeOnDisk: s.statistics?.sizeOnDisk ?? 0,
-          poster: posterUrl("sonarr", s.images ?? []),
-          backdrop: backdropUrl("sonarr", s.images ?? []),
-          monitored: s.monitored,
-          added: s.added,
-          overview: s.overview ?? "",
-          genres: s.genres ?? [],
-          rating: s.ratings?.value ?? null,
-          network: s.network ?? null,
-          runtime: s.runtime ?? null,
-        }))
-      : [];
+async function buildLibraryPayload(): Promise<{ payload: unknown; complete: boolean }> {
+  const [series, movies] = await Promise.allSettled([
+    serviceGet("sonarr", "/series"),
+    serviceGet("radarr", "/movie"),
+  ]);
 
-    const movieList = movies.status === "fulfilled"
-      ? (movies.value as RadarrMovie[]).map((m) => ({
-          id: m.id,
-          title: m.title,
-          year: m.year,
-          tmdbId: m.tmdbId ?? null,
-          type: "movie" as const,
-          status: m.status,
-          hasFile: m.hasFile,
-          sizeOnDisk: m.sizeOnDisk ?? 0,
-          poster: posterUrl("radarr", m.images ?? []),
-          backdrop: backdropUrl("radarr", m.images ?? []),
-          monitored: m.monitored,
-          runtime: m.runtime ?? null,
-          added: m.added,
-          overview: m.overview ?? "",
-          genres: m.genres ?? [],
-          rating: m.ratings?.tmdb?.value ?? m.ratings?.value ?? null,
-          studio: m.studio ?? null,
-          filePath: m.movieFile?.path ?? null,
-          quality: m.movieFile ? {
-            name: m.movieFile.quality?.quality?.name ?? null,
-            resolution: m.movieFile.quality?.quality?.resolution ?? null,
-            codec: m.movieFile.mediaInfo?.videoCodec ?? null,
-            audioCodec: m.movieFile.mediaInfo?.audioCodec ?? null,
-            runtime: m.movieFile.mediaInfo?.runTime ?? null,
-            container: m.movieFile.mediaInfo?.containerFormat ?? null,
-          } : null,
-        }))
-      : [];
+  const tvShows = series.status === "fulfilled"
+    ? (series.value as SonarrSeries[]).map((s) => ({
+        id: s.id,
+        title: s.title,
+        year: s.year,
+        tvdbId: s.tvdbId ?? null,
+        type: "tv" as const,
+        status: s.status,
+        seasonCount: extractSeasonCount(s),
+        episodeCount: s.statistics?.episodeCount ?? 0,
+        sizeOnDisk: s.statistics?.sizeOnDisk ?? 0,
+        poster: posterUrl("sonarr", s.images ?? []),
+        backdrop: backdropUrl("sonarr", s.images ?? []),
+        monitored: s.monitored,
+        added: s.added,
+        overview: s.overview ?? "",
+        genres: s.genres ?? [],
+        rating: s.ratings?.value ?? null,
+        network: s.network ?? null,
+        runtime: s.runtime ?? null,
+      }))
+    : [];
 
-    return c.json({
+  const movieList = movies.status === "fulfilled"
+    ? (movies.value as RadarrMovie[]).map((m) => ({
+        id: m.id,
+        title: m.title,
+        year: m.year,
+        tmdbId: m.tmdbId ?? null,
+        type: "movie" as const,
+        status: m.status,
+        hasFile: m.hasFile,
+        sizeOnDisk: m.sizeOnDisk ?? 0,
+        poster: posterUrl("radarr", m.images ?? []),
+        backdrop: backdropUrl("radarr", m.images ?? []),
+        monitored: m.monitored,
+        runtime: m.runtime ?? null,
+        added: m.added,
+        overview: m.overview ?? "",
+        genres: m.genres ?? [],
+        rating: m.ratings?.tmdb?.value ?? m.ratings?.value ?? null,
+        studio: m.studio ?? null,
+        filePath: m.movieFile?.path ?? null,
+        quality: m.movieFile ? {
+          name: m.movieFile.quality?.quality?.name ?? null,
+          resolution: m.movieFile.quality?.quality?.resolution ?? null,
+          codec: m.movieFile.mediaInfo?.videoCodec ?? null,
+          audioCodec: m.movieFile.mediaInfo?.audioCodec ?? null,
+          runtime: m.movieFile.mediaInfo?.runTime ?? null,
+          container: m.movieFile.mediaInfo?.containerFormat ?? null,
+        } : null,
+      }))
+    : [];
+
+  return {
+    payload: {
       tv: tvShows,
       movies: movieList,
       sonarrAvailable: series.status === "fulfilled",
@@ -828,11 +898,10 @@ media.get("/library", async (c) => {
         tvShows: tvShows.length,
         movies: movieList.length,
       },
-    });
-  } catch (err: unknown) {
-    return serverError(c, err, { context: { endpoint: "media/library" }, extra: { tv: [], movies: [], sonarrAvailable: false, radarrAvailable: false, totals: { tvShows: 0, movies: 0 } } });
-  }
-});
+    },
+    complete: series.status === "fulfilled" && movies.status === "fulfilled",
+  };
+}
 
 // ── Episodes for a series (grouped by season) ────────────────────────────────
 

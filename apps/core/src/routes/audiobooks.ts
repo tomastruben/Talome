@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import sharp from "sharp";
+import { loadSharp } from "../platform/lazy-modules.js";
 import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, basename } from "node:path";
@@ -278,7 +278,7 @@ audiobooks.get("/cover", async (c) => {
     });
     if (!res.ok) return c.text("Not found", 404);
     const buf = Buffer.from(await res.arrayBuffer());
-    const resized = await sharp(buf)
+    const resized = await (await loadSharp())(buf)
       .resize(width ?? 240, undefined, { fit: "inside", withoutEnlargement: true })
       .webp({ quality: 80 })
       .toBuffer();
