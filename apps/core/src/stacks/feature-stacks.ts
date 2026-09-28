@@ -194,7 +194,8 @@ const ALT_CONFIG_KEYS: Record<string, string> = {
  */
 async function buildContainerSet(): Promise<Set<string>> {
   try {
-    const containers = await listContainers();
+    // Called on every chat turn — a few-seconds-old list is plenty here.
+    const containers = await listContainers({ cached: true });
     const names = new Set<string>();
     for (const c of containers) {
       names.add(c.name);

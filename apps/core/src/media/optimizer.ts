@@ -831,23 +831,46 @@ function cleanupOldJobs(): void {
     AND completed_at IS NOT NULL AND completed_at < ${cutoff}`);
 }
 
-// Run recovery on module load (server restart) — defer to allow migrations to complete
-setTimeout(() => {
-  try {
-    recoverOrphanedJobs();
-    scheduleProcessQueue();
-  } catch {
-    // Table may not exist on first boot — migrations haven't run yet
+// ── Startup recovery + process watchdog ─────────────────────────────────
+// Started from the server's startup sequence (via startAutoOptimize), not at
+// import: importing this module (e.g. from the MCP server process) must not
+// spawn timers or touch the DB before migrations ran.
+
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startOptimizerWatchdog(): void {
+  if (watchdogTimer) return; // idempotent
+
+  // Run recovery once after boot (server restart) — defer to allow migrations to complete
+  const recoveryTimer = setTimeout(() => {
+    try {
+      recoverOrphanedJobs();
+      scheduleProcessQueue();
+    } catch {
+      // Table may not exist on first boot — migrations haven't run yet
+    }
+  }, 2_000);
+  recoveryTimer.unref?.();
+
+  // Detect dead ffmpeg every 60s + auto-cleanup
+  watchdogTimer = setInterval(() => {
+    try {
+      const recovered = recoverOrphanedJobs();
+      if (recovered > 0) scheduleProcessQueue();
+      cleanupOldJobs();
+    } catch {
+      // Transient DB error — try again next tick
+    }
+  }, 60_000);
+  watchdogTimer.unref?.();
+}
+
+export function stopOptimizerWatchdog(): void {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
   }
-}, 2_000);
-
-// ── Process watchdog — detect dead ffmpeg every 60s + auto-cleanup ───────
-
-setInterval(() => {
-  const recovered = recoverOrphanedJobs();
-  if (recovered > 0) scheduleProcessQueue();
-  cleanupOldJobs();
-}, 60_000);
+}
 
 /** Priority threshold for user-initiated "Convert Now" jobs that bypass pause. */
 const CONVERT_NOW_PRIORITY = 10;
@@ -1658,6 +1681,9 @@ export function getScanEntriesByBasenames(basenames: string[]): Record<string, {
 let autoOptimizeTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startAutoOptimize(): void {
+  // The job watchdog runs regardless of the auto-optimize setting — manual
+  // "Convert" jobs need orphan recovery too.
+  startOptimizerWatchdog();
   if (autoOptimizeTimer) return;
   const config = getOptimizationConfig();
   if (!config.autoOptimize) return;

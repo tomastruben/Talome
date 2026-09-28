@@ -183,30 +183,39 @@ export async function stopDns(): Promise<void> {
 let lastKnownIp: string | null = null;
 
 export function startIpMonitor(baseDomain: string, intervalMs = 60_000): () => void {
+  // getServerLanIp() reads os.networkInterfaces() (a cheap syscall, no
+  // child process), so polling it every minute is fine.
   lastKnownIp = getServerLanIp();
+  let reloading = false;
 
   const timer = setInterval(async () => {
+    if (reloading) return; // previous reload still talking to Docker
     const currentIp = getServerLanIp();
     if (lastKnownIp && currentIp !== lastKnownIp) {
+      reloading = true;
       console.log(`[dns] IP changed: ${lastKnownIp} -> ${currentIp}`);
       lastKnownIp = currentIp;
 
-      // Regenerate zone file with new IP
-      const zoneFilePath = join(DNS_DIR, `db.${baseDomain}`);
-      writeFileSync(zoneFilePath, generateZoneFile(baseDomain, currentIp));
-
-      // Reload CoreDNS
       try {
+        // Regenerate zone file with new IP
+        const zoneFilePath = join(DNS_DIR, `db.${baseDomain}`);
+        writeFileSync(zoneFilePath, generateZoneFile(baseDomain, currentIp));
+
+        // Reload CoreDNS
         const container = docker.getContainer(DNS_CONTAINER_NAME);
         const info = await container.inspect();
         if (info.State.Running) {
           await container.kill({ signal: "SIGUSR1" });
         }
       } catch {
-        // Container not running
+        // Zone dir missing or container not running
+      } finally {
+        reloading = false;
       }
     }
   }, intervalMs);
+  // Background housekeeping must never keep the process alive on shutdown.
+  timer.unref?.();
 
   return () => clearInterval(timer);
 }

@@ -1,4 +1,11 @@
-import { listContainers, getSystemStats, checkInterContainerConnectivity, type ContainerPair } from "./docker/client.js";
+import {
+  listContainers,
+  getSystemStats,
+  checkInterContainerConnectivity,
+  runWithContainerListCache,
+  type ContainerPair,
+} from "./docker/client.js";
+import { startRetentionScheduler } from "./db/retention.js";
 import { verifyTalomeNetworkAttachments } from "./docker/talome-network.js";
 import { writeAuditEntry } from "./db/audit.js";
 import { writeNotification } from "./db/notifications.js";
@@ -62,7 +69,8 @@ function persistTimestamp(key: string): void {
 
 async function checkContainerHealth() {
   try {
-    const containers = await listContainers();
+    // Shared with the other checks in this tick (one docker ps per minute).
+    const containers = await listContainers({ cached: true });
     const currentStates = new Map<string, string>();
     const stoppedNames: string[] = [];
 
@@ -474,15 +482,30 @@ async function repairNetworkAttachments() {
   }
 }
 
+let checksRunning = false;
+
 async function runChecks() {
+  // A slow tick (Docker hiccup, wedged df) must not stack up overlapping runs.
+  if (checksRunning) return;
+  checksRunning = true;
+  try {
+    await runChecksOnce();
+  } finally {
+    checksRunning = false;
+  }
+}
+
+async function runChecksOnce() {
   await Promise.allSettled([
     checkContainerHealth(),
     checkDiskUsage(),
     checkMetricThresholds(),
-    refreshAppStatuses(),
+    // Read-only consumers of `docker ps`: let them share the cached list
+    // with checkContainerHealth instead of each doing their own round-trip.
+    runWithContainerListCache(() => refreshAppStatuses()),
     persistMetrics(),
     checkBackupSchedules(),
-    repairNetworkAttachments(),
+    runWithContainerListCache(() => repairNetworkAttachments()),
   ]);
   // Non-async, runs on its own 6h cadence internally
   maybeCheckUpdates();
@@ -495,7 +518,12 @@ async function runChecks() {
 }
 
 export function startMonitor(intervalMs = 60_000) {
-  runChecks();
-  const timer = setInterval(runChecks, intervalMs);
-  return () => clearInterval(timer);
+  void runChecks();
+  const timer = setInterval(() => void runChecks(), intervalMs);
+  // Daily pruning of unbounded log/event tables (first pass a few minutes after boot).
+  const stopRetention = startRetentionScheduler();
+  return () => {
+    clearInterval(timer);
+    stopRetention();
+  };
 }
