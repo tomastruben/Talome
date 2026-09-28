@@ -55,6 +55,7 @@ import { health as healthRoute } from "./routes/health.js";
 import { diagnostics as diagnosticsRoute } from "./routes/diagnostics.js";
 import { search as searchRoute } from "./routes/search.js";
 import { supervisor as supervisorRoute } from "./routes/supervisor.js";
+import { verification as verificationRoute } from "./routes/verification.js";
 import { startAutomationCron, stopAutomationCron } from "./automation/cron.js";
 import { startMonitor } from "./monitor.js";
 import { startAgentLoop } from "./agent-loop/index.js";
@@ -443,6 +444,7 @@ app.route("/api/audiobooks", audiobooksRoute);
 app.route("/api/audible", audibleRoute);
 app.route("/api/search", searchRoute);
 app.route("/api/supervisor", supervisorRoute);
+app.route("/api/verification", verificationRoute);
 
 // Rate-limit MCP endpoint: 60 requests per 60 seconds per IP
 app.use("/api/mcp/*", rateLimit(60, 60_000));

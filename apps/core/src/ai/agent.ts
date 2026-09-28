@@ -608,6 +608,16 @@ registerDomain({
   },
 });
 
+// Outcome verification — always available ("verified working", not just "container running")
+import { verifyAppOutcomeTool } from "./tools/verification-tools.js";
+registerDomain({
+  name: "verification",
+  settingsKeys: [],
+  tools: { verify_app_outcome: verifyAppOutcomeTool },
+  tiers: { verify_app_outcome: "read" },
+  categories: { verify_app_outcome: "integration" },
+});
+
 // Media tools — loaded when any of sonarr/radarr are configured
 registerDomain({
   name: "media",
