@@ -174,6 +174,9 @@ export const automationRuns = sqliteTable("automation_runs", {
   error: text("error"),
   actionsRun: integer("actions_run").notNull().default(0),
   resultSummary: text("result_summary"),
+  /** running | succeeded | failed | interrupted (null on legacy rows) */
+  status: text("status"),
+  finishedAt: text("finished_at"),
 });
 
 export const automationStepRuns = sqliteTable("automation_step_runs", {
@@ -188,6 +191,12 @@ export const automationStepRuns = sqliteTable("automation_step_runs", {
   output: text("output"),
   error: text("error"),
   blocked: integer("blocked", { mode: "boolean" }).notNull().default(false),
+  /** pending | running | succeeded | failed | blocked | skipped | interrupted */
+  status: text("status"),
+  stepIndex: integer("step_index"),
+  /** `${runId}:${stepIndex}` — guards against executing the same step twice */
+  idempotencyKey: text("idempotency_key"),
+  finishedAt: text("finished_at"),
 });
 
 export const widgetManifests = sqliteTable("widget_manifests", {
@@ -453,6 +462,13 @@ export const updateSnapshots = sqliteTable("update_snapshots", {
   newVersion: text("new_version"),
   rolledBack: integer("rolled_back", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  /** JSON env overrides at snapshot time */
+  previousEnv: text("previous_env"),
+  /** JSON ServiceImageState[] — per-service image ref, image id and repo digest */
+  previousImages: text("previous_images"),
+  operationId: text("operation_id"),
+  backupPath: text("backup_path"),
+  rollbackReason: text("rollback_reason"),
 });
 
 // ── Library Operations (file reorg audit/rollback log) ───────────────────────
@@ -555,3 +571,5 @@ export const communitySubmissions = sqliteTable("community_submissions", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
   publishedAt: text("published_at"),
 });
+
+export * from "./schema-ops-updates.js";

@@ -7,9 +7,11 @@ import { eq, and } from "drizzle-orm";
 import { checkBudget, logAiUsage, shouldRunService } from "./budget.js";
 import { writeNotification } from "../db/notifications.js";
 import { writeAuditEntry } from "../db/audit.js";
+import { getSetting } from "../utils/settings.js";
 import { isClaudeCodeAvailable, spawnClaudeStreaming } from "../ai/claude-process.js";
 import { resolve } from "node:path";
-import type { SystemEvent, TriageResult, RemediationResult } from "./types.js";
+import type { SystemEvent, TriageResult, RemediationResult, RemediationOutcome } from "./types.js";
+import { runWithActor } from "../ops/operations.js";
 
 // Import tool definitions for the remediation agent to use
 import { listContainersTool, getContainerLogsTool, restartContainerTool, checkServiceHealthTool } from "../ai/tools/docker-tools.js";
@@ -22,17 +24,9 @@ import { cleanupDockerTool } from "../ai/tools/storage-tools.js";
 import { searchContainerLogsTool } from "../ai/tools/log-tools.js";
 import { rollbackUpdateTool, checkDependenciesTool } from "../ai/tools/app-tools.js";
 
+/** anthropic_key is encrypted at rest — getSetting() decrypts it. */
 function getApiKey(): string | undefined {
-  try {
-    const row = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, "anthropic_key"))
-      .get();
-    return row?.value || process.env.ANTHROPIC_API_KEY;
-  } catch {
-    return process.env.ANTHROPIC_API_KEY;
-  }
+  return getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
 }
 
 function getModel(): string {
@@ -121,25 +115,40 @@ function parseConfidence(text: string): number {
   return 0.5;
 }
 
+/**
+ * Outcome semantics for a finished remediation run:
+ *  - a write tool ran → "pending_verification": the agent ATTEMPTED a fix. It is
+ *    only reported as fixed once the outcome tracker verifies it; otherwise the
+ *    user is told "attempted, not verified".
+ *  - diagnosis only → "pending": the tracker still checks whether the issue persists.
+ */
+export function classifyRemediationOutcome(toolsUsed: string[]): { tookAction: boolean; outcome: RemediationOutcome } {
+  const tookAction = toolsUsed.some((t) => WRITE_TOOLS.has(t));
+  return { tookAction, outcome: tookAction ? "pending_verification" : "pending" };
+}
+
 /** Common post-processing: notifications, audit, DB persistence */
-function finalizeRemediation(
+export function finalizeRemediation(
   event: SystemEvent,
   responseText: string,
   toolsUsed: string[],
   model: string,
 ): RemediationResult {
   const confidence = parseConfidence(responseText);
-  const tookAction = toolsUsed.some((t) => WRITE_TOOLS.has(t));
+  const { tookAction, outcome } = classifyRemediationOutcome(toolsUsed);
 
+  // Never announce "fixed" here — only the outcome tracker may, after verifying.
   writeNotification(
-    tookAction ? "warning" : "info",
-    `Agent ${tookAction ? "fixed" : "diagnosed"}: ${event.source}`,
-    responseText.slice(0, 1200),
+    "info",
+    tookAction ? `Agent attempted fix: ${event.source}` : `Agent diagnosed: ${event.source}`,
+    tookAction
+      ? `Verifying the result before reporting it as fixed.\n\n${responseText.slice(0, 1100)}`
+      : responseText.slice(0, 1200),
     "agent-loop",
   );
 
   writeAuditEntry(
-    `Agent loop: ${tookAction ? "remediated" : "diagnosed"} ${event.type} on ${event.source}`,
+    `Agent loop: ${tookAction ? "attempted remediation of" : "diagnosed"} ${event.type} on ${event.source}`,
     tookAction ? "modify" : "read",
     JSON.stringify({ eventId: event.id, toolsUsed }),
   );
@@ -154,7 +163,7 @@ function finalizeRemediation(
     action: actionLabel,
     model,
     confidence,
-    outcome: "pending",
+    outcome,
     details: responseText.slice(0, 500),
   };
 
@@ -166,7 +175,7 @@ function finalizeRemediation(
         action: result.action,
         model,
         confidence,
-        outcome: "pending",
+        outcome,
         createdAt: new Date().toISOString(),
       })
       .run();
@@ -409,7 +418,8 @@ export async function remediateEvent(
 
     // Fallback: API call (pay-per-token)
     console.log("[agent-loop] Remediating via API");
-    return await remediateViaApi(event, triage, autoRemediate);
+    // Attribute any app operations the agent triggers (e.g. rollback_update).
+    return await runWithActor("agent-loop", () => remediateViaApi(event, triage, autoRemediate));
   } catch (err) {
     console.error("[agent-loop] Remediation failed:", err);
     writeNotification(

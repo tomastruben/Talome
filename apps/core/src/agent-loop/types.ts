@@ -40,7 +40,11 @@ export interface TriageResult {
   suggestedAction?: string;
 }
 
-export type RemediationOutcome = "success" | "failure" | "partial" | "pending";
+/**
+ * "pending" — diagnosis only, awaiting the outcome check.
+ * "pending_verification" — a fix was attempted; not "fixed" until verified.
+ */
+export type RemediationOutcome = "success" | "failure" | "partial" | "pending" | "pending_verification";
 
 export interface RemediationResult {
   eventId: string;

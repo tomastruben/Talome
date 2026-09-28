@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "../db/index.js";
 import { sql } from "drizzle-orm";
 import { serverError } from "../middleware/request-logger.js";
+import { listAppOperations } from "../ops/operations.js";
 
 export const updates = new Hono();
 
@@ -56,6 +57,10 @@ updates.get("/:appId", (c) => {
 
     const hasUpdate = catalog.version !== installed.version && catalog.version !== "latest" && installed.version !== "latest";
 
+    // Most recent update/rollback from the operations journal (status, steps
+    // progress, rollback reason, pre-update backup) — null if none recorded.
+    const lastUpdateOperation = listAppOperations(appId, 20).find((op) => op.kind === "update" || op.kind === "rollback") ?? null;
+
     return c.json({
       appId,
       name: catalog.name ?? appId,
@@ -65,6 +70,7 @@ updates.get("/:appId", (c) => {
       releaseNotes: catalog.release_notes || null,
       installedDate: installed.installed_at,
       lastUpdated: installed.updated_at,
+      lastUpdateOperation,
     });
   } catch (err) {
     return serverError(c, err, { message: "Failed to get update info", context: { appId: c.req.param("appId") } });

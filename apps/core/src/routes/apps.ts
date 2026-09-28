@@ -13,11 +13,27 @@ import {
   updateApp,
 } from "../stores/lifecycle.js";
 import { installProgress, emitProgress, type InstallProgressEvent } from "../stores/install-emitter.js";
+import { listAppOperations } from "../ops/operations.js";
 import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus } from "@talome/types";
 import { listContainers } from "../docker/client.js";
 import os from "node:os";
+import type { Context } from "hono";
 
 const apps = new Hono();
+
+/** Attribute lifecycle operations to the signed-in user (journal "actor"). */
+function actorFor(c: Context): string {
+  const userId = c.get("sessionUser" as never) as string | undefined;
+  return userId ? `user:${userId}` : "user";
+}
+
+/** 409 when another operation on the app is running, 400 otherwise. */
+function operationError(c: Context, result: { error?: string; conflict?: boolean; operationId?: string }) {
+  if (result.conflict) {
+    return c.json({ error: result.error, operationId: result.operationId, conflict: true }, 409);
+  }
+  return c.json({ error: result.error, ...(result.operationId ? { operationId: result.operationId } : {}) }, 400);
+}
 
 const dockerArch = os.arch() === "arm64" ? "arm64" : "amd64";
 
@@ -279,6 +295,21 @@ apps.get("/categories", (c) => {
   }
 });
 
+const operationsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(50),
+});
+
+// Registered before "/:storeId/:appId" so "operations" is not read as an app id.
+apps.get("/:appId/operations", (c) => {
+  const parsed = operationsQuerySchema.safeParse({ limit: c.req.query("limit") ?? undefined });
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  try {
+    return c.json(listAppOperations(c.req.param("appId"), parsed.data.limit));
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to load app operations" });
+  }
+});
+
 apps.get("/:storeId/:appId", async (c) => {
   const { storeId, appId } = c.req.param();
   const locale = c.req.query("locale") || c.req.header("Accept-Language")?.split(",")[0]?.trim() || null;
@@ -331,16 +362,18 @@ apps.post("/:storeId/:appId/install", async (c) => {
 
   const result = await installApp(appId, storeId, env, volumeMounts, (stage, message) => {
     emitProgress(appId, { stage: stage as InstallProgressEvent["stage"], message });
-  });
+  }, { actor: actorFor(c) });
 
   if (!result.success) {
-    return c.json({ error: result.error }, 400);
+    if (result.conflict) emitProgress(appId, { stage: "error", message: result.error ?? "Another operation is running" });
+    return operationError(c, result);
   }
 
   return c.json({
     ok: true,
     message: `${appId} installed`,
     remappedPorts: result.remappedPorts,
+    operationId: result.operationId,
   });
 });
 
@@ -382,30 +415,33 @@ apps.get("/:storeId/:appId/progress", (c) => {
 
 apps.post("/:storeId/:appId/start", async (c) => {
   const { appId } = c.req.param();
-  const result = await startApp(appId);
-  if (!result.success) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true });
+  const result = await startApp(appId, { actor: actorFor(c) });
+  if (!result.success) return operationError(c, result);
+  return c.json({ ok: true, operationId: result.operationId });
 });
 
 apps.post("/:storeId/:appId/stop", async (c) => {
   const { appId } = c.req.param();
-  const result = await stopApp(appId);
-  if (!result.success) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true });
+  const result = await stopApp(appId, { actor: actorFor(c) });
+  if (!result.success) return operationError(c, result);
+  return c.json({ ok: true, operationId: result.operationId });
 });
 
 apps.post("/:storeId/:appId/restart", async (c) => {
   const { appId } = c.req.param();
-  const result = await restartApp(appId);
-  if (!result.success) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true });
+  const result = await restartApp(appId, { actor: actorFor(c) });
+  if (!result.success) return operationError(c, result);
+  return c.json({ ok: true, operationId: result.operationId });
 });
 
 apps.post("/:storeId/:appId/update", async (c) => {
   const { appId } = c.req.param();
-  const result = await updateApp(appId);
-  if (!result.success) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true });
+  const result = await updateApp(appId, { actor: actorFor(c) });
+  if (!result.success) {
+    if (result.conflict) return operationError(c, result);
+    return c.json({ error: result.error, operationId: result.operationId, rolledBack: result.rolledBack ?? false }, 400);
+  }
+  return c.json({ ok: true, operationId: result.operationId, verified: result.verified ?? false });
 });
 
 /* ── Rename app / change port mappings ─────────────────────────────── */
@@ -515,9 +551,9 @@ apps.patch("/:storeId/:appId", async (c) => {
 
 apps.delete("/:storeId/:appId", async (c) => {
   const { appId } = c.req.param();
-  const result = await uninstallApp(appId);
-  if (!result.success) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true, message: `${appId} uninstalled` });
+  const result = await uninstallApp(appId, { actor: actorFor(c) });
+  if (!result.success) return operationError(c, result);
+  return c.json({ ok: true, message: `${appId} uninstalled`, operationId: result.operationId });
 });
 
 /* ── Serve local store assets (icons, screenshots, covers) ─────────── */

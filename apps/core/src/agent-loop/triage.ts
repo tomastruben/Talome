@@ -3,8 +3,7 @@
 import { generateObject } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
-import { db, schema } from "../db/index.js";
-import { eq } from "drizzle-orm";
+import { getSetting } from "../utils/settings.js";
 import { checkBudget, logAiUsage, shouldRunService, getEffectiveRate } from "./budget.js";
 import type { SystemEvent, TriageResult, TriageVerdict } from "./types.js";
 
@@ -21,17 +20,9 @@ const triageResultSchema = z.object({
   ),
 });
 
+/** anthropic_key is encrypted at rest — getSetting() decrypts it. */
 function getApiKey(): string | undefined {
-  try {
-    const row = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, "anthropic_key"))
-      .get();
-    return row?.value || process.env.ANTHROPIC_API_KEY;
-  } catch {
-    return process.env.ANTHROPIC_API_KEY;
-  }
+  return getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
 }
 
 /**

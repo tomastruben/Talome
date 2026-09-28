@@ -38,6 +38,8 @@ import { mdns as mdnsRoute } from "./routes/mdns.js";
 import { webhooks } from "./routes/webhooks.js";
 import { backups as backupsRoute } from "./routes/backups.js";
 import { updates as updatesRoute } from "./routes/updates.js";
+import { operationsRoute } from "./ops/routes.js";
+import { recoverOperationsOnBoot } from "./ops/recovery.js";
 import { ollama as ollamaRoute } from "./routes/ollama.js";
 import { aiModels as aiModelsRoute } from "./routes/ai-models.js";
 import { push as pushRoute } from "./routes/push.js";
@@ -202,6 +204,14 @@ try {
   }
 } catch {
   // Non-fatal — schema may not exist yet on first boot (migration handles it)
+}
+
+// ── Recover app operations / automation runs cut short by a restart ─────────
+// Marks them interrupted (never re-runs them) and reconciles real container state.
+try {
+  recoverOperationsOnBoot();
+} catch (err) {
+  startupLog.error("recoverOperationsOnBoot failed", err);
 }
 
 try {
@@ -391,6 +401,8 @@ app.use("/api/audiobooks/*", requirePermission("audiobooks"));
 app.use("/api/files/*", requirePermission("files"));
 app.use("/api/automations/*", requirePermission("automations"));
 app.use("/api/apps/*", requirePermission("apps"));
+app.use("/api/operations", requirePermission("apps"));
+app.use("/api/operations/*", requirePermission("apps"));
 app.use("/api/chat/*", requirePermission("chat"));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -429,6 +441,7 @@ app.route("/api/mdns", mdnsRoute);
 app.route("/api/network", network);
 app.route("/api/backups", backupsRoute);
 app.route("/api/updates", updatesRoute);
+app.route("/api/operations", operationsRoute);
 app.route("/api/webhooks", webhooks);
 app.route("/api/ollama", ollamaRoute);
 app.route("/api/ai", aiModelsRoute);

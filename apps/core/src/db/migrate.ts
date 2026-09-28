@@ -1,4 +1,5 @@
 import { db } from "./index.js";
+import { runOpsUpdatesMigrations } from "./migrations/ops-updates.js";
 import { sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
@@ -857,6 +858,8 @@ export function runMigrations() {
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_attempts_run_id ON setup_attempts(run_id)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_runs_status ON setup_runs(status)`);
 
+  runOpsUpdatesMigrations();
+
   // ── Record schema versions ─────────────────────────────────────────────
   recordMigration(1, "Initial schema: users, conversations, messages, settings, audit_log");
   recordMigration(2, "App store: store_sources, app_catalog, installed_apps");
@@ -873,6 +876,7 @@ export function runMigrations() {
   recordMigration(13, "Optimization jobs: ai_diagnosis column for AI-first error handling");
   recordMigration(14, "Installed apps: display_name column for user-defined app names");
   recordMigration(15, "Setup loop: setup_runs and setup_attempts for autonomous app configuration");
+  recordMigration(17, "Ops journal: app_operations, app_operation_events, snapshot rollback state, automation run durability");
 
   console.log("Database migrations complete");
 }
