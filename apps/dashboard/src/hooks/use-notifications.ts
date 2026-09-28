@@ -120,8 +120,12 @@ function assistantPromptUrl(n: AppNotification): string {
 
 /** Poll cadence of the notification list (the only polled notification key). */
 export const NOTIFICATIONS_POLL_MS = 15_000;
-/** Safety refresh for the unread count (normally refreshed when the list changes). */
-export const NOTIFICATIONS_COUNT_SAFETY_MS = 5 * 60_000;
+/**
+ * Safety refresh for the unread count. The count is normally refreshed when
+ * the polled list changes; this cheap poll also catches changes outside the
+ * top-N list (read/dismissed on another device, bulk cleanup).
+ */
+export const NOTIFICATIONS_COUNT_SAFETY_MS = 60_000;
 export const NOTIFICATIONS_MUTE_POLL_MS = 60_000;
 
 /**

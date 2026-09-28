@@ -12,6 +12,16 @@ import { scheduleIdle } from "@/lib/idle";
 // still happens within the click's user-activation window.
 const loadCinemaBrowser = () => import("./cinema-browser");
 
+/**
+ * Start fetching the cinema overlay chunk (idempotent). Called on media pages
+ * as soon as the browser is idle and on hover/focus of the Cinema button, so
+ * the overlay usually mounts within the click's user-activation window and
+ * its fullscreen request is not rejected.
+ */
+export function preloadCinemaBrowser(): void {
+  void loadCinemaBrowser().catch(() => {});
+}
+
 const CinemaBrowserOverlay = dynamic(
   () => loadCinemaBrowser().then((m) => ({ default: m.CinemaBrowserOverlay })),
   { ssr: false },
@@ -30,9 +40,7 @@ export function CinemaBrowserLauncher() {
   const onMediaPage = pathname?.startsWith("/dashboard/media") ?? false;
   useEffect(() => {
     if (!onMediaPage || overlayMounted) return;
-    return scheduleIdle(() => {
-      void loadCinemaBrowser().catch(() => {});
-    }, 1_500);
+    return scheduleIdle(preloadCinemaBrowser);
   }, [onMediaPage, overlayMounted]);
 
   return overlayMounted ? <CinemaBrowserOverlay /> : null;

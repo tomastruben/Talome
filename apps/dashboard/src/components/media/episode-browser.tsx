@@ -81,7 +81,7 @@ export function EpisodeBrowser({
     `${getDirectCoreUrl()}/api/optimization/jobs?status=running,queued,completed`,
     (url: string) => fetch(url, { credentials: "include" }).then(r => r.json()),
     // 3s while a job is running/queued, 30s when idle
-    { refreshInterval: (data) => optimizationJobsRefreshInterval(data) },
+    { refreshInterval: optimizationJobsRefreshInterval },
   );
 
   const jobByBasename = useMemo(() => {

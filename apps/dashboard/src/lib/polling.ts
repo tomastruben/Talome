@@ -52,6 +52,19 @@ export function optimizationJobsRefreshInterval(
   return pickPollInterval(hasInProgressJobs(data?.jobs), options);
 }
 
+/**
+ * Stable (module-level) variant of `optimizationJobsRefreshInterval` that uses
+ * POLL_ACTIVE_MS while jobs run. Always pass SWR a function with a stable
+ * identity: SWR's polling effect depends on `refreshInterval`, so an inline
+ * arrow function restarts the poll timer on every render and a component that
+ * re-renders faster than the idle interval would never poll at all.
+ */
+export function optimizationJobsActiveRefreshInterval(
+  data: { jobs?: ReadonlyArray<{ status?: string | null }> | null } | null | undefined,
+): number {
+  return optimizationJobsRefreshInterval(data, { fast: POLL_ACTIVE_MS });
+}
+
 /** Installed-app statuses that mean an install/update is still in flight. */
 const TRANSITIONAL_INSTALL_STATUSES = new Set(["installing", "updating"]);
 
@@ -64,6 +77,37 @@ export function hasTransitionalInstall(
     const status = a?.installed?.status;
     return typeof status === "string" && TRANSITIONAL_INSTALL_STATUSES.has(status);
   });
+}
+
+/**
+ * Stable SWR `refreshInterval` for the installed-apps list: POLL_ACTIVE_MS
+ * while any app is installing/updating, POLL_IDLE_MS otherwise.
+ */
+export function installedAppsRefreshInterval(
+  apps: ReadonlyArray<{ installed?: { status?: string | null } | null } | null | undefined> | null | undefined,
+): number {
+  return pickPollInterval(hasTransitionalInstall(apps), { fast: POLL_ACTIVE_MS });
+}
+
+/**
+ * Order-independent signature of which apps are installed and in what state,
+ * e.g. "jellyfin:running|sonarr:stopped". Used to detect when a cached catalog
+ * disagrees with the (cheaper, fresher) installed-apps list. `restrictTo`
+ * limits the signature to the given app ids (e.g. the ids in the catalog).
+ */
+export function installedStateSignature(
+  apps: ReadonlyArray<{ installed?: { appId?: string | null; status?: string | null } | null } | null | undefined> | null | undefined,
+  restrictTo?: ReadonlySet<string>,
+): string {
+  if (!Array.isArray(apps)) return "";
+  const entries = new Set<string>();
+  for (const app of apps) {
+    const inst = app?.installed;
+    if (!inst?.appId) continue;
+    if (restrictTo && !restrictTo.has(inst.appId)) continue;
+    entries.add(`${inst.appId}:${inst.status ?? ""}`);
+  }
+  return [...entries].sort().join("|");
 }
 
 /** True when a single installed-app status is transitional. */

@@ -214,7 +214,7 @@ function FormatStatRow({ container, filePath, codec, audioCodec }: {
     filePath ? `${getDirectCoreUrl()}/api/optimization/jobs` : null,
     (url: string) => fetch(url, { credentials: "include" }).then(r => r.json()),
     // 3s while a job is running/queued, 30s when idle
-    { refreshInterval: (data) => optimizationJobsRefreshInterval(data) },
+    { refreshInterval: optimizationJobsRefreshInterval },
   );
   // Match by basename — host paths (stored in job) differ from container paths (from Radarr)
   const fileBasename = filePath?.split("/").pop()?.toLowerCase() ?? null;

@@ -363,9 +363,14 @@ export function useWidgetLayout(options: UseWidgetLayoutOptions = {}) {
     lastLocalWriteAtRef.current = Date.now();
     saveLayout(next);
     if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent<LayoutChangeDetail>(LAYOUT_CHANGE_EVENT, { detail: { source: instanceId, layout: next } }),
-      );
+      // persistLayout is called from inside setLayout updaters, which React
+      // may run during render; defer the broadcast so listeners in other
+      // components never set state while this one is rendering.
+      queueMicrotask(() => {
+        window.dispatchEvent(
+          new CustomEvent<LayoutChangeDetail>(LAYOUT_CHANGE_EVENT, { detail: { source: instanceId, layout: next } }),
+        );
+      });
     }
   }, [instanceId]);
 

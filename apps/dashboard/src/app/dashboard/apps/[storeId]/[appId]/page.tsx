@@ -282,14 +282,22 @@ export default function AppDetailPage() {
     graceMs: ACTION_GRACE_MS,
   });
 
+  // Stable refreshInterval functions: SWR restarts its poll timer whenever
+  // the function identity changes, so inline closures would starve polling
+  // while SSE progress / editor state re-renders the page.
+  const appRefreshInterval = useCallback(
+    (data: CatalogApp | undefined) => {
+      if (!data?.installed) return 0;
+      return isTransitionalInstallStatus(data.installed.status) ? POLL_ACTIVE_MS : actionPollMs;
+    },
+    [actionPollMs],
+  );
+
   const { data: app, isLoading, mutate } = useSWR<CatalogApp>(
     storeId && appId ? `${CORE_URL}/api/apps/${storeId}/${appId}` : null,
     fetcher,
     {
-      refreshInterval: (data) => {
-        if (!data?.installed) return 0;
-        return isTransitionalInstallStatus(data.installed.status) ? POLL_ACTIVE_MS : actionPollMs;
-      },
+      refreshInterval: appRefreshInterval,
       onSuccess: (data) => {
         if (!data.installed && Object.keys(envValues).length === 0) {
           const defaults: Record<string, string> = {};
@@ -305,15 +313,19 @@ export default function AppDetailPage() {
 
   // Fetch service stacks to find containers for this app
   const appTransitional = isTransitionalInstallStatus(app?.installed?.status);
+  const stacksRefreshInterval = useCallback(
+    (data: ServiceStack[] | undefined) => {
+      const stack = data?.find((s) => s.appId === appId || s.id === appId);
+      const containersSettling = stack?.containers.some((c) => c.status === "restarting") ?? false;
+      return appTransitional || containersSettling ? POLL_ACTIVE_MS : actionPollMs;
+    },
+    [appId, appTransitional, actionPollMs],
+  );
   const { data: stacks } = useSWR<ServiceStack[]>(
     `${CORE_URL}/api/containers?grouped=true`,
     fetcher,
     {
-      refreshInterval: (data) => {
-        const stack = data?.find((s) => s.appId === appId || s.id === appId);
-        const containersSettling = stack?.containers.some((c) => c.status === "restarting") ?? false;
-        return appTransitional || containersSettling ? POLL_ACTIVE_MS : actionPollMs;
-      },
+      refreshInterval: stacksRefreshInterval,
       revalidateOnFocus: false,
     },
   );

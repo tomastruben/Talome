@@ -51,7 +51,7 @@ import { ChatMessage } from "@/components/chat/chat-message";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import { CORE_URL } from "@/lib/constants";
+import { CORE_URL, CONTAINERS_REFRESH_INTERVAL } from "@/lib/constants";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePathname } from "next/navigation";
 import type { Container, ServiceStack, SearchResult } from "@talome/types";
@@ -325,10 +325,20 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
     }
   }, [mode, messages, isActive]);
 
-  // Live data — only fetched (and polled) while the palette is open
-  const { stacks } = useServiceStacks({ enabled: open });
+  // Live data — fetched once when the palette mounts (idle preload) so the
+  // first open has no pop-in, then polled only while the palette is open.
+  const { stacks, refresh: refreshStacks } = useServiceStacks({
+    refreshInterval: open ? CONTAINERS_REFRESH_INTERVAL : 0,
+  });
   const launchableServices = extractLaunchable(stacks);
-  const { apps: installedApps } = useInstalledApps(open);
+  const { apps: installedApps } = useInstalledApps();
+  // Refresh the warm (possibly stale) list whenever the palette opens; the
+  // mount fetch already covers a palette that mounts open.
+  const stacksOpenedRef = useRef(open);
+  useEffect(() => {
+    if (open && !stacksOpenedRef.current) void refreshStacks();
+    stacksOpenedRef.current = open;
+  }, [open, refreshStacks]);
 
   // Unified entity search — fires after 3+ chars with debounce
   const { results: searchResults, isSearching } = useUnifiedSearch(

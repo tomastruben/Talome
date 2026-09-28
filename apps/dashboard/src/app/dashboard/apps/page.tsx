@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { ErrorState } from "@/components/ui/empty-state";
 import { CORE_URL } from "@/lib/constants";
-import { hasTransitionalInstall, pickPollInterval, POLL_ACTIVE_MS } from "@/lib/polling";
+import { installedAppsRefreshInterval, installedStateSignature } from "@/lib/polling";
 import type { CatalogApp, StoreSource, StackListItem } from "@talome/types";
 
 type Tab = "all" | "installed" | string;
@@ -101,20 +101,38 @@ function AppsPageContent() {
   // The full catalog is several MB and changes rarely — don't refetch it on
   // every window focus or remount within a few minutes (explicit retries and
   // mutations still refresh it).
-  const { data: apps = [], mutate: mutateApps, error: appsError } = useSWR<CatalogApp[]>(
+  const { data: catalogData, mutate: mutateApps, error: appsError } = useSWR<CatalogApp[]>(
     `${CORE_URL}/api/apps?limit=2000`, jsonFetcher,
     { ...swrOpts, revalidateOnFocus: false, dedupingInterval: CATALOG_DEDUPE_MS },
   );
   // Installed tab: poll fast only while an install/update is in progress.
-  const { data: installedApps = [], mutate: mutateInstalled } = useSWR<CatalogApp[]>(
+  const { data: installedData, mutate: mutateInstalled } = useSWR<CatalogApp[]>(
     `${CORE_URL}/api/apps/installed`, jsonFetcher,
     {
       ...swrOpts,
-      refreshInterval: tab === "installed"
-        ? (data?: CatalogApp[]) => pickPollInterval(hasTransitionalInstall(data), { fast: POLL_ACTIVE_MS })
-        : 0,
+      refreshInterval: tab === "installed" ? installedAppsRefreshInterval : 0,
     },
   );
+  // The catalog is cached for minutes, but its `installed` badges must not go
+  // stale: the small installed-apps list revalidates on every mount/focus, so
+  // when it disagrees with the cached catalog (install, uninstall, start/stop
+  // from the detail page or the assistant), refetch the catalog once.
+  const catalogIds = useMemo(
+    () => (catalogData ? new Set(catalogData.map((a) => a.id)) : null),
+    [catalogData],
+  );
+  const catalogInstalledSig = useMemo(
+    () => (catalogData ? installedStateSignature(catalogData) : null),
+    [catalogData],
+  );
+  const installedListSig = useMemo(
+    () => (installedData && catalogIds ? installedStateSignature(installedData, catalogIds) : null),
+    [installedData, catalogIds],
+  );
+  useEffect(() => {
+    if (catalogInstalledSig === null || installedListSig === null) return;
+    if (catalogInstalledSig !== installedListSig) void mutateApps();
+  }, [catalogInstalledSig, installedListSig, mutateApps]);
   const { data: stores = [] } = useSWR<StoreSource[]>(
     `${CORE_URL}/api/stores`, jsonFetcher, swrOpts,
   );
@@ -127,6 +145,8 @@ function AppsPageContent() {
   const { data: updatesData = [] } = useSWR<{ appId: string; hasUpdate: boolean }[]>(
     `${CORE_URL}/api/updates`, jsonFetcher, { ...swrOpts, refreshInterval: 5 * 60 * 1000 },
   );
+  const apps = useMemo(() => catalogData ?? [], [catalogData]);
+  const installedApps = useMemo(() => installedData ?? [], [installedData]);
   const stacks = stacksData?.stacks ?? [];
   const appsWithUpdates = useMemo(
     () => new Set(updatesData.filter((u) => u.hasUpdate).map((u) => u.appId)),

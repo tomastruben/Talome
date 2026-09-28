@@ -122,7 +122,7 @@ function FormatBadge({ format, filePath }: { format: string | null | undefined; 
     filePath ? `${getDirectCoreUrl()}/api/optimization/jobs` : null,
     (url: string) => fetch(url, { credentials: "include" }).then(r => r.json()),
     // 3s while a job is running/queued, 30s when idle
-    { refreshInterval: (data) => optimizationJobsRefreshInterval(data) },
+    { refreshInterval: optimizationJobsRefreshInterval },
   );
   const fileBasename = filePath?.split("/").pop()?.toLowerCase() ?? null;
   const fileJob = jobsData?.jobs?.find((j) => {

@@ -10,7 +10,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { formatBytes, relativeTime } from "@/lib/format";
 import { CORE_URL } from "@/lib/constants";
-import { optimizationJobsRefreshInterval, POLL_ACTIVE_MS } from "@/lib/polling";
+import { optimizationJobsActiveRefreshInterval } from "@/lib/polling";
 import { Widget, WidgetHeader } from "./widget";
 import { WidgetList } from "./list-widget";
 import { useAssistant } from "@/components/assistant/assistant-context";
@@ -396,7 +396,7 @@ export function OptimizationWidget({
     `${CORE_URL}/api/optimization/jobs`,
     fetcher,
     {
-      refreshInterval: (data) => optimizationJobsRefreshInterval(data, { fast: POLL_ACTIVE_MS }),
+      refreshInterval: optimizationJobsActiveRefreshInterval,
       dedupingInterval: 3000,
     },
   );
