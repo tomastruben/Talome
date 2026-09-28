@@ -297,7 +297,6 @@ import {
   removeNotificationChannelTool,
   testNotificationChannelTool,
 } from "./tools/notification-channel-tools.js";
-import { writeAuditEntry } from "../db/audit.js";
 import { db, schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
 import { getTopMemories } from "../db/memories.js";
@@ -310,6 +309,7 @@ import {
   getAllTiers,
 } from "./tool-registry.js";
 import { gateToolExecution, getSecurityMode } from "./tool-gateway.js";
+import { automationActor, withExecutionContext } from "./execution.js";
 import { getFeatureStackStatus } from "../stacks/feature-stacks.js";
 
 // getSetting imported from ../utils/settings.js
@@ -1226,37 +1226,6 @@ setBuiltinToolNames(Object.keys(getAllRegisteredTools()));
 
 const TOOL_TIERS = getAllTiers();
 
-/** Produce a concise, human-readable details string for audit log entries. */
-function summarizeToolArgs(toolName: string, args: Record<string, unknown>): string {
-  switch (toolName) {
-    case "track_issue":
-      return `${args.priority} ${args.category}: ${args.title}`;
-    case "remember":
-      return String(args.content ?? args.text ?? "").slice(0, 200);
-    case "forget":
-      return `memory: ${args.id ?? args.query ?? ""}`;
-    case "apply_change":
-      return String(args.description ?? args.task ?? "").slice(0, 200);
-    case "set_app_env":
-      return `${args.appId}: ${args.key}=${args.value ? "***" : "(empty)"}`;
-    case "install_app":
-    case "uninstall_app":
-    case "start_app":
-    case "stop_app":
-    case "restart_app":
-    case "update_app":
-      return String(args.appId ?? args.name ?? "");
-    case "create_automation":
-    case "update_automation":
-    case "delete_automation":
-      return String(args.name ?? args.id ?? "");
-    default: {
-      const s = JSON.stringify(args);
-      return s.length > 300 ? s.slice(0, 300) + "…" : s;
-    }
-  }
-}
-
 /**
  * Returns tools for dashboard chat — only domains whose apps are configured,
  * plus custom tools, minus explicitly disabled tools.
@@ -1465,7 +1434,7 @@ Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive
     tools,
     abortSignal,
     stopWhen: stepCountIs(10),
-    onStepFinish: ({ toolCalls, toolResults }) => {
+    onStepFinish: ({ toolResults }) => {
       // Warn about oversized tool results that burn tokens
       if (toolResults) {
         for (const r of toolResults) {
@@ -1475,17 +1444,8 @@ Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive
           }
         }
       }
-      if (!toolCalls) return;
-      for (const call of toolCalls) {
-        const tier = TOOL_TIERS[call.toolName] ?? "read";
-        if (tier !== "read") {
-          writeAuditEntry(
-            `AI: ${call.toolName}`,
-            tier,
-            summarizeToolArgs(call.toolName, (call as any).args),
-          );
-        }
-      }
+      // Tool calls are audited once, with actor and outcome, by executeTool
+      // (ai/execution.ts) via gateToolExecution.
     },
     onFinish: ({ usage }) => {
       logAiUsage({
@@ -1510,7 +1470,7 @@ export async function runAutomationPrompt(params: {
   const modelId = resolveModel(provider);
   const model = createModelInstance(provider, modelId);
   const isAnthropic = provider === "anthropic";
-  const activeTools = getActiveTools();
+  const activeTools = withExecutionContext(automationActor(params.automationName), "automation", () => getActiveTools());
 
   // Use provided allowedTools, or fall back to all automation-safe tools
   const { getAutomationSafeToolNames } = await import("./automation-safe-tools.js");

@@ -28,6 +28,7 @@ import bcrypt from "bcryptjs";
 import Database from "better-sqlite3";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { allowsTerminalAccess, parseTokenScopes } from "./approval/grants.js";
 import { homedir } from "node:os";
 import { DAEMON_PORT } from "./terminal-constants.js";
 
@@ -121,9 +122,11 @@ function verifyBearerToken(authHeader: string | null | undefined): boolean {
   const raw = authHeader.slice(7).trim();
   if (!raw) return false;
   const hash = hashToken(raw);
-  // A terminal is a shell: only live (not revoked/expired) tokens granted the
-  // destructive tier may open one. Columns come from db/migrations/trust.ts;
-  // before that migration ran, fall back to the original existence check.
+  // A terminal is an unrestricted host shell: only live (not revoked/expired)
+  // tokens with owner-equivalent grants may open one (allowsTerminalAccess),
+  // and never while security mode is "locked". Columns come from
+  // db/migrations/trust.ts; before that migration ran, fall back to the
+  // original existence check.
   let row: { id: string; scopes?: string | null; expires_at?: string | null; revoked_at?: string | null } | undefined;
   try {
     row = sqlite.prepare("SELECT id, scopes, expires_at, revoked_at FROM mcp_tokens WHERE token_hash = ?").get(hash) as typeof row;
@@ -132,8 +135,14 @@ function verifyBearerToken(authHeader: string | null | undefined): boolean {
   }
   if (!row || row.revoked_at) return false;
   if (row.expires_at && !(Date.parse(row.expires_at) > Date.now())) return false;
+  if (isSecurityModeLocked()) return false;
+  return allowsTerminalAccess(parseTokenScopes(row.scopes));
+}
+
+function isSecurityModeLocked(): boolean {
   try {
-    return (JSON.parse(row.scopes ?? "null") as { maxTier?: string } | null)?.maxTier === "destructive";
+    const mode = sqlite.prepare("SELECT value FROM settings WHERE key = 'security_mode'").get() as { value?: string } | undefined;
+    return mode?.value === "locked";
   } catch {
     return false;
   }

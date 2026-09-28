@@ -90,6 +90,20 @@ export function checkToolGrant(scopes: TokenScopes, meta: ToolGrantMeta): GrantD
   return { ok: true };
 }
 
+/**
+ * A terminal (host PTY) is an unrestricted shell, so only owner-equivalent
+ * tokens may open one: destructive tier, all domains, all apps, no tool
+ * allow-list, and run_shell not denied. Any narrowing of a token's grants
+ * therefore also removes terminal access.
+ */
+export function allowsTerminalAccess(scopes: TokenScopes): boolean {
+  if (scopes.maxTier !== "destructive") return false;
+  if (scopes.domains !== "all" || scopes.apps !== "all") return false;
+  if (scopes.tools && scopes.tools.length > 0) return false;
+  if (scopes.deniedTools?.includes("run_shell")) return false;
+  return true;
+}
+
 // ── App / resource targets ───────────────────────────────────────────────────
 
 /**
@@ -141,6 +155,20 @@ const DOMAIN_APP_TARGETS: Record<string, readonly string[]> = {
 /** Arr-domain tools take `app: "sonarr" | "radarr" | ...`, which is the target app. */
 const APP_ARG_DOMAINS = new Set(["arr"]);
 
+/**
+ * Argument names that hold a container name (vs. an app id). Only these may
+ * match an allowed app by stack prefix (`<appId>-<svc>`); app-id arguments
+ * must match exactly.
+ */
+const CONTAINER_KEYS = new Set(["containerId", "container_id", "containerIds", "container", "containerName"]);
+
+export type TargetKind = "app" | "container";
+
+export interface CallTarget {
+  value: string;
+  kind: TargetKind;
+}
+
 function collectStrings(value: unknown, out: string[]): boolean {
   if (typeof value === "string") {
     if (value.trim()) out.push(value.trim());
@@ -157,44 +185,73 @@ function collectStrings(value: unknown, out: string[]): boolean {
 }
 
 /**
- * Determine which apps/containers a call targets.
- * Returns null when the target cannot be determined from the arguments.
+ * Determine which apps/containers a call targets, and whether each one is an
+ * app id or a container name. Returns null when the target cannot be
+ * determined from the arguments.
  */
-export function extractTargets(
+export function extractCallTargets(
   toolName: string,
   domain: string,
   args: Record<string, unknown>,
-): string[] | null {
-  const targets: string[] = [];
+): CallTarget[] | null {
+  const targets: CallTarget[] = [];
 
   const domainApps = DOMAIN_APP_TARGETS[domain];
-  if (domainApps) return [domainApps[0]];
+  if (domainApps) return [{ value: domainApps[0], kind: "app" }];
 
   if (APP_ARG_DOMAINS.has(domain)) {
-    if (typeof args.app === "string" && args.app.trim()) targets.push(args.app.trim());
-    else if (toolName.startsWith("prowlarr_")) targets.push("prowlarr");
+    if (typeof args.app === "string" && args.app.trim()) targets.push({ value: args.app.trim(), kind: "app" });
+    else if (toolName.startsWith("prowlarr_")) targets.push({ value: "prowlarr", kind: "app" });
   }
 
   const keys = TOOL_TARGET_KEYS[toolName] ?? GENERIC_TARGET_KEYS;
   for (const key of keys) {
     if (!(key in args) || args[key] === undefined || args[key] === null) continue;
-    if (!collectStrings(args[key], targets)) return null;
+    const values: string[] = [];
+    if (!collectStrings(args[key], values)) return null;
+    const kind: TargetKind = CONTAINER_KEYS.has(key) ? "container" : "app";
+    for (const value of values) targets.push({ value, kind });
   }
 
   return targets.length > 0 ? targets : null;
+}
+
+/** Target values only (see extractCallTargets). */
+export function extractTargets(
+  toolName: string,
+  domain: string,
+  args: Record<string, unknown>,
+): string[] | null {
+  return extractCallTargets(toolName, domain, args)?.map((t) => t.value) ?? null;
 }
 
 function normalizeTarget(value: string): string {
   return value.trim().replace(/^\/+/, "").toLowerCase();
 }
 
+function isStackMember(container: string, appId: string): boolean {
+  return container === appId || container.startsWith(`${appId}-`) || container.startsWith(`${appId}_`);
+}
+
+export interface TargetMatchOptions {
+  /** "app" ids must match exactly; "container" names may match by stack prefix. */
+  kind?: TargetKind;
+  /**
+   * Installed app ids. A container that belongs to a more specific installed
+   * app (`nextcloud-aio-x` when `nextcloud-aio` is installed) never matches the
+   * shorter app (`nextcloud`).
+   */
+  installedAppIds?: readonly string[];
+}
+
 /**
- * A target matches an allowed app when it is the app id itself or a container
- * of that app's stack (Talome names containers `<appId>` / `<appId>-<svc>` /
- * `<appId>_<svc>`). Raw container hashes never match — restricted tokens must
- * address containers by name.
+ * A target matches an allowed app when it is the app id itself (or a known
+ * alias), or — for container names only — a container of that app's stack
+ * (Talome names containers `<appId>` / `<appId>-<svc>` / `<appId>_<svc>`)
+ * that no longer installed app id claims. Raw container hashes never match —
+ * restricted tokens must address containers by name.
  */
-export function targetMatchesApp(target: string, appId: string): boolean {
+export function targetMatchesApp(target: string, appId: string, options: TargetMatchOptions = {}): boolean {
   const t = normalizeTarget(target);
   const a = normalizeTarget(appId);
   if (!t || !a) return false;
@@ -202,7 +259,13 @@ export function targetMatchesApp(target: string, appId: string): boolean {
   for (const aliases of Object.values(DOMAIN_APP_TARGETS)) {
     if (aliases.includes(a) && aliases.includes(t)) return true;
   }
-  return t.startsWith(`${a}-`) || t.startsWith(`${a}_`);
+  if ((options.kind ?? "container") !== "container") return false;
+  if (!isStackMember(t, a)) return false;
+  const claimedByOther = (options.installedAppIds ?? []).some((raw) => {
+    const other = normalizeTarget(raw);
+    return other.length > a.length && other !== a && isStackMember(t, other);
+  });
+  return !claimedByOther;
 }
 
 /**
@@ -214,13 +277,14 @@ export function checkCallGrant(
   scopes: TokenScopes,
   meta: ToolGrantMeta,
   args: Record<string, unknown>,
+  installedAppIds?: readonly string[],
 ): GrantDecision {
   const toolDecision = checkToolGrant(scopes, meta);
   if (!toolDecision.ok) return toolDecision;
   if (scopes.apps === "all") return { ok: true };
 
   const allowed = scopes.apps;
-  const targets = extractTargets(meta.name, meta.domain, args);
+  const targets = extractCallTargets(meta.name, meta.domain, args);
 
   if (!targets) {
     if (meta.tier === "read") return { ok: true };
@@ -229,10 +293,12 @@ export function checkCallGrant(
     );
   }
 
-  const outside = targets.filter((t) => !allowed.some((a) => targetMatchesApp(t, a)));
+  const outside = targets.filter(
+    (t) => !allowed.some((a) => targetMatchesApp(t.value, a, { kind: t.kind, installedAppIds })),
+  );
   if (outside.length > 0) {
     return deny(
-      `This token is not allowed to act on ${outside.map((t) => `'${t}'`).join(", ")} (allowed apps: ${allowed.join(", ") || "none"}).`,
+      `This token is not allowed to act on ${outside.map((t) => `'${t.value}'`).join(", ")} (allowed apps: ${allowed.join(", ") || "none"}).`,
     );
   }
   return { ok: true };

@@ -11,7 +11,9 @@ import {
 import type { IconSvgElement } from "@/components/icons";
 import {
   TIER_OPTIONS,
+  TERMINAL_ACCESS_NOTE,
   countGrantedTools,
+  grantsTerminalAccess,
   humanToolName,
   type GrantCatalog,
   type TokenScopes,
@@ -111,6 +113,9 @@ export function GrantEditor({
             </button>
           );
         })}
+        {grantsTerminalAccess(value) && (
+          <p className="text-xs text-status-warning leading-relaxed">{TERMINAL_ACCESS_NOTE}</p>
+        )}
       </div>
 
       {/* Tool groups */}

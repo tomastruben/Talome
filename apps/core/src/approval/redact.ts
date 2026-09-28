@@ -71,15 +71,57 @@ function redactString(value: string, secrets: readonly string[]): string {
   return out;
 }
 
+/** A name (object key, env var, setting key) that denotes a secret. */
+export function isSecretName(name: string): boolean {
+  return SECRET_KEY_PATTERN.test(name) || isSecretSettingKey(name.toLowerCase());
+}
+
+/**
+ * Object fields that carry the *name* of a setting / env var whose value sits
+ * in a sibling field — e.g. set_setting / set_app_env take `{ key, value }`.
+ */
+const NAME_FIELDS = ["key", "name", "envKey", "env_key", "setting", "variable"] as const;
+const VALUE_FIELDS = ["value", "newValue", "new_value", "val"] as const;
+
+function describesSecretPair(obj: Record<string, unknown>): boolean {
+  return NAME_FIELDS.some((f) => typeof obj[f] === "string" && isSecretName(obj[f] as string));
+}
+
+function isPresent(v: unknown): boolean {
+  return v !== undefined && v !== null && v !== "";
+}
+
+/**
+ * Free-text patterns: `KEY=value`, `KEY: value` (where KEY looks secret) and
+ * `Bearer <token>`. Catches secrets the value layer cannot know yet (a new API
+ * key being set, a password typed into a shell command).
+ */
+const SECRET_ASSIGNMENT_PATTERN =
+  /\b([A-Za-z0-9_.-]*(?:pass(?:word)?|secret|token|api[_-]?key|auth|cookie|credential|private|bearer)[A-Za-z0-9_.-]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'&;,]+)/gi;
+const BEARER_PATTERN = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{4,}/gi;
+
+function redactAssignments(text: string): string {
+  return text
+    .replace(BEARER_PATTERN, (_m, scheme: string) => `${scheme} ${REDACTED}`)
+    .replace(SECRET_ASSIGNMENT_PATTERN, (match, key: string, sep: string, value: string) => {
+      if (value === REDACTED || value.startsWith("[REDACTED")) return match;
+      const quote = value.startsWith('"') || value.startsWith("'") ? value[0] : "";
+      return `${key}${sep}${quote}${REDACTED}${quote}`;
+    });
+}
+
 /** Deep-copy `value` with secret keys and known secret values replaced. */
 export function redactValue(value: unknown, secrets: readonly string[] = getKnownSecretValues(), depth = 0): unknown {
   if (depth > 8) return "[…]";
   if (typeof value === "string") return redactString(value, secrets);
   if (Array.isArray(value)) return value.map((v) => redactValue(v, secrets, depth + 1));
   if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const secretPair = describesSecretPair(obj);
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = SECRET_KEY_PATTERN.test(k) && v !== undefined && v !== null && v !== "" ? REDACTED : redactValue(v, secrets, depth + 1);
+    for (const [k, v] of Object.entries(obj)) {
+      const secretField = isSecretName(k) || (secretPair && (VALUE_FIELDS as readonly string[]).includes(k));
+      out[k] = secretField && isPresent(v) ? REDACTED : redactValue(v, secrets, depth + 1);
     }
     return out;
   }
@@ -94,13 +136,18 @@ export function redactedPreview(args: unknown, maxLength = 500): string {
   } catch {
     json = "[unserializable]";
   }
-  // A final value pass over the serialized text catches secrets that were
-  // split across structure (e.g. JSON-escaped) in the object walk.
-  json = redactString(json, getKnownSecretValues());
+  // A final text pass over the serialized form catches secrets that were
+  // split across structure (e.g. JSON-escaped) or embedded as KEY=value.
+  json = redactText(json);
   return json.length > maxLength ? `${json.slice(0, maxLength)}…` : json;
 }
 
-/** Redact free text (e.g. an error message) without truncating. */
-export function redactText(text: string): string {
-  return redactString(text, getKnownSecretValues());
+/**
+ * Redact free text (an error message, a shell command, a legacy audit detail)
+ * without truncating: known secret values, `KEY=value` / `KEY: value` pairs
+ * whose key looks secret, and `Bearer <token>`.
+ */
+export function redactText(text: string, secrets: readonly string[] = getKnownSecretValues()): string {
+  if (!text) return text;
+  return redactAssignments(redactString(text, secrets));
 }

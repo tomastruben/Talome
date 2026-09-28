@@ -15,8 +15,8 @@
 
 import type { Tool } from "ai";
 import {
-  DASHBOARD_CHAT_ACTOR,
   acceptsApprovalArg,
+  currentExecutionContext,
   approvalIdArgSchema,
   executeTool,
   getSecurityMode,
@@ -68,14 +68,18 @@ export function toChatToolResult(r: ExecuteToolResult): unknown {
  * Wrap a tool so every call runs through the execution service.
  * Returns a new tool with the same schema (plus `approval_id` where an
  * approval may be required) and a guarded execute function.
+ *
+ * `actor`/`source` default to the execution context active when the tool is
+ * wrapped (withExecutionContext — the chat route sets the session user,
+ * runAutomationPrompt the automation), else dashboard chat.
  */
 export function gateToolExecution(
   toolDef: Tool,
   toolName: string,
   tier: ToolTier,
   mode: SecurityMode,
-  actor: Actor = DASHBOARD_CHAT_ACTOR,
-  source: ExecutionSource = "chat",
+  actor: Actor = currentExecutionContext().actor,
+  source: ExecutionSource = currentExecutionContext().source,
 ): Tool {
   const original = (toolDef as { execute?: unknown }).execute;
   if (typeof original !== "function") return toolDef;

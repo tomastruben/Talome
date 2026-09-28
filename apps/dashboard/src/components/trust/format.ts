@@ -99,7 +99,7 @@ export const TIER_OPTIONS: { value: ToolTier; label: string; description: string
     value: "destructive",
     label: "Destructive",
     description:
-      "Full control, including uninstalling apps, deleting data and running shell commands. In Cautious mode each of these still waits for your approval.",
+      "Full control, including uninstalling apps, deleting data and running shell commands. In Cautious mode these wait for your approval.",
   },
 ];
 
@@ -147,6 +147,24 @@ export function summarizeScopes(scopes: TokenScopes, legacy = false): string {
   }
   return parts.join(" · ");
 }
+
+/**
+ * Mirrors core `allowsTerminalAccess`: an unrestricted Destructive token (all
+ * tool groups, all apps, no tool allow-list, shell not blocked) can also open a
+ * host terminal, which is a live shell and not approval-gated.
+ */
+export function grantsTerminalAccess(scopes: TokenScopes): boolean {
+  return (
+    scopes.maxTier === "destructive" &&
+    scopes.domains === "all" &&
+    scopes.apps === "all" &&
+    !(scopes.tools && scopes.tools.length > 0) &&
+    !scopes.deniedTools?.includes("run_shell")
+  );
+}
+
+export const TERMINAL_ACCESS_NOTE =
+  "With all tool groups and all apps, this token can also open a host terminal. Terminal sessions are not approval-gated. Narrow the tool groups or apps to remove terminal access.";
 
 /** Grant editor validation: returns a message when the scopes cannot be saved. */
 export function validateScopes(scopes: TokenScopes): string | null {
@@ -366,6 +384,19 @@ export function approvalStatusLabel(status: ApprovalStatus): string {
 export function effectiveApprovalStatus(item: Pick<ApprovalItem, "status" | "expiresAt">, now = Date.now()): ApprovalStatus {
   if ((item.status === "pending" || item.status === "approved") && msUntil(item.expiresAt, now) <= 0) return "expired";
   return item.status;
+}
+
+export const APPROVAL_POLL_MS = 5_000;
+
+/**
+ * How often a view should re-fetch one approval: while it is pending (waiting
+ * for a decision) or approved (waiting for the agent's retry), and never once
+ * it is decided, consumed or past its TTL — the server only marks stale rows
+ * expired lazily, so the raw status alone would poll forever.
+ */
+export function approvalPollInterval(item: Pick<ApprovalItem, "status" | "expiresAt">, now = Date.now()): number {
+  const status = effectiveApprovalStatus(item, now);
+  return status === "pending" || status === "approved" ? APPROVAL_POLL_MS : 0;
 }
 
 /** Pending approvals that have not passed their TTL yet. */

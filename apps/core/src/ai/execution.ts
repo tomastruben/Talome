@@ -28,8 +28,10 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Tool } from "ai";
 import { z } from "zod";
+import { db, schema } from "../db/index.js";
 import { getAllDomains, getAllRegisteredTools } from "./tool-registry.js";
 import { getCustomTools } from "./custom-tools.js";
 import { getSetting } from "../utils/settings.js";
@@ -37,7 +39,9 @@ import { writeAuditEntry, type AuditOutcome } from "../db/audit.js";
 import { writeNotification } from "../db/notifications.js";
 import { checkCallGrant, TIER_RANK, type TokenScopes, type ToolTier } from "../approval/grants.js";
 import { APPROVAL_ARG, consumeApproval, hashArgs, requestApproval, type ConsumeFailure } from "../approval/approvals.js";
-import { redactedPreview, redactText } from "../approval/redact.js";
+import { invalidateSecretValueCache, redactedPreview, redactText } from "../approval/redact.js";
+import { isApprovalExemptShellCommand } from "../approval/shell-safety.js";
+import { isSecretSettingKey } from "../utils/crypto.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -115,8 +119,46 @@ export interface ExecuteToolParams {
 
 // ── Actors ───────────────────────────────────────────────────────────────────
 
-/** Dashboard chat until the chat route supplies the session user. */
+/**
+ * Fallback chat actor for callers that run no execution context (e.g. the
+ * messaging bots). The dashboard chat route runs as the session user.
+ */
 export const DASHBOARD_CHAT_ACTOR: Actor = { kind: "user", id: "dashboard", label: "Dashboard chat" };
+
+/** The actor for a dashboard chat request made by a logged-in user. */
+export function sessionChatActor(userId: unknown, username: unknown, role: unknown): Actor {
+  const id = typeof userId === "string" && userId ? userId : "dashboard";
+  const name = typeof username === "string" && username ? username : "Dashboard";
+  return { kind: "user", id, label: `${name} (chat)`, role: typeof role === "string" ? role : undefined };
+}
+
+/** Automation ai_prompt steps (runAutomationPrompt). */
+export function automationActor(automationName: string): Actor {
+  return { kind: "automation", id: automationName, label: `Automation: ${automationName}` };
+}
+
+// ── Execution context ────────────────────────────────────────────────────────
+// Lets a caller (the chat route, runAutomationPrompt) say who is acting without
+// threading the actor through every tool-building function. Tool wrappers read
+// it when they are built (gateToolExecution), so the actor is bound to the
+// wrapped tool even if the model calls it later from another async context.
+
+export interface ExecutionContext {
+  actor: Actor;
+  source: ExecutionSource;
+}
+
+const executionContext = new AsyncLocalStorage<ExecutionContext>();
+
+/** Run `fn` with `actor`/`source` as the default for tools built inside it. */
+export function withExecutionContext<T>(actor: Actor, source: ExecutionSource, fn: () => T): T {
+  return executionContext.run({ actor, source }, fn);
+}
+
+/** The current execution context, or dashboard chat when none is set. */
+export function currentExecutionContext(): ExecutionContext {
+  return executionContext.getStore() ?? { actor: DASHBOARD_CHAT_ACTOR, source: "chat" };
+}
 
 /**
  * The local MCP stdio server (Claude Code via .mcp.json). Owner-level: the
@@ -153,11 +195,6 @@ const TIER_OVERRIDES: Record<string, ToolTier> = {
   cleanup_hls_cache: "modify",
 };
 
-/**
- * Destructive tools that enforce cautious mode themselves (run_shell only runs
- * allowlisted commands in cautious mode), so they skip the approval step.
- */
-const CAUTIOUS_SELF_GUARDED = new Set(["run_shell"]);
 
 /** Settings that change the trust boundary itself: writing them is destructive. */
 const PROTECTED_SETTING_KEYS = new Set([
@@ -171,10 +208,33 @@ const PROTECTED_SETTING_KEYS = new Set([
   "proxy_auth_enabled",
   "proxy_auth_bypass_apps",
 ]);
-const PROTECTED_SETTING_PREFIXES = ["admin_", "session_", "mcp_", "approval", "auth_", "jwt"];
+const PROTECTED_SETTING_PREFIXES = ["admin_", "session_", "mcp_", "approval", "auth_", "jwt", "proxy_auth_"];
+
+/** Endpoint settings (sonarr_url, jellyfin_host, ...) that stored credentials are sent to. */
+const ENDPOINT_SETTING_SUFFIX = /_(url|base_url|host|endpoint)$/;
 
 export function isProtectedSettingKey(key: string): boolean {
   return PROTECTED_SETTING_KEYS.has(key) || PROTECTED_SETTING_PREFIXES.some((p) => key.startsWith(p));
+}
+
+/**
+ * Re-pointing an endpoint whose service has a stored secret (sonarr_url while
+ * sonarr_api_key is set) would make Talome send that secret to the new host —
+ * exfiltrating a credential the caller can never read directly. Such writes
+ * are treated as destructive (approval-gated, and outside a Modify grant).
+ */
+export function isCredentialEndpointSettingKey(key: string): boolean {
+  const match = ENDPOINT_SETTING_SUFFIX.exec(key);
+  if (!match) return false;
+  const prefix = key.slice(0, match.index);
+  if (!prefix) return false;
+  try {
+    const rows = db.select({ key: schema.settings.key, value: schema.settings.value }).from(schema.settings).all();
+    return rows.some((r) => r.key !== key && r.key.startsWith(`${prefix}_`) && isSecretSettingKey(r.key) && !!r.value);
+  } catch {
+    // Unknown: be conservative.
+    return true;
+  }
 }
 
 function maxTier(a: ToolTier, b: ToolTier): ToolTier {
@@ -227,15 +287,26 @@ export function getToolMeta(toolName: string, baseTier?: ToolTier): ToolMeta {
 /** Effective tier for a concrete call (arguments can escalate it). */
 export function getEffectiveTier(toolName: string, args: Record<string, unknown>, baseTier?: ToolTier): ToolTier {
   const tier = getToolMeta(toolName, baseTier).tier;
-  if ((toolName === "set_setting" || toolName === "revert_setting") && typeof args.key === "string" && isProtectedSettingKey(args.key)) {
+  if (
+    (toolName === "set_setting" || toolName === "revert_setting") &&
+    typeof args.key === "string" &&
+    (isProtectedSettingKey(args.key) || isCredentialEndpointSettingKey(args.key))
+  ) {
     return "destructive";
   }
   return tier;
 }
 
-/** Destructive tools that go through the approval flow in cautious mode. */
-export function requiresApprovalInCautious(toolName: string, tier: ToolTier): boolean {
-  return tier === "destructive" && !CAUTIOUS_SELF_GUARDED.has(toolName);
+/**
+ * Destructive calls that go through the approval flow in cautious mode.
+ * run_shell is exempt only for a single read-only program invocation with no
+ * shell metacharacters (see approval/shell-safety.ts); its own first-word
+ * allowlist is not a safety boundary (`ls && rm -rf ~` passes it).
+ */
+export function requiresApprovalInCautious(toolName: string, tier: ToolTier, args?: Record<string, unknown>): boolean {
+  if (tier !== "destructive") return false;
+  if (toolName === "run_shell" && args && isApprovalExemptShellCommand(args.command)) return false;
+  return true;
 }
 
 /** Tools that may need approval → their input schema accepts `approval_id`. */
@@ -301,6 +372,35 @@ function humanToolName(toolName: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+const SUMMARY_TARGET_KEYS = ["appId", "app_id", "appIds", "containerId", "container", "containerName", "name", "path", "key", "id"] as const;
+
+/** A short, redacted "on <target>" phrase for approval summaries, when the args name one. */
+function describeTarget(toolName: string, args: Record<string, unknown>): string {
+  if (toolName === "run_shell" && typeof args.command === "string") {
+    const cmd = redactText(args.command.trim());
+    return `: ${cmd.length > 120 ? `${cmd.slice(0, 120)}…` : cmd}`;
+  }
+  for (const key of SUMMARY_TARGET_KEYS) {
+    const v = args[key];
+    const text = Array.isArray(v) ? v.filter((x) => typeof x === "string").join(", ") : typeof v === "string" ? v : "";
+    if (text.trim()) {
+      const safe = redactText(text.trim());
+      return ` on ${safe.length > 80 ? `${safe.slice(0, 80)}…` : safe}`;
+    }
+  }
+  return "";
+}
+
+function listInstalledAppIds(): string[] {
+  try {
+    return db.select({ appId: schema.installedApps.appId }).from(schema.installedApps).all().map((r) => r.appId);
+  } catch {
+    return [];
+  }
+}
+
+const TOOL_ERROR_HINT = "Check the arguments and the target's current state (e.g. that the app is installed and running), then retry.";
+
 const CONSUME_MESSAGES: Record<ConsumeFailure, string> = {
   not_found: "This approval id does not exist.",
   actor_mismatch: "This approval was issued to a different agent.",
@@ -365,7 +465,8 @@ export async function executeTool(params: ExecuteToolParams): Promise<ExecuteToo
 
   // 1. Per-actor grants (defense in depth: tools are also filtered at list time)
   if (actor.scopes) {
-    const decision = checkCallGrant(actor.scopes, { name: toolName, tier, domain: meta.domain }, args);
+    const installed = actor.scopes.apps === "all" ? undefined : listInstalledAppIds();
+    const decision = checkCallGrant(actor.scopes, { name: toolName, tier, domain: meta.domain }, args, installed);
     if (!decision.ok) {
       return finish({ outcome: "blocked", error: { code: "forbidden", message: decision.message, hint: decision.hint } });
     }
@@ -385,11 +486,11 @@ export async function executeTool(params: ExecuteToolParams): Promise<ExecuteToo
   }
 
   // 3. Server-issued approvals (cautious mode, destructive tier)
-  if (mode === "cautious" && requiresApprovalInCautious(toolName, tier)) {
+  if (mode === "cautious" && requiresApprovalInCautious(toolName, tier, args)) {
     const argsHash = hashArgs(args);
     if (!approvalId) {
       try {
-        const summary = `${actor.label} wants to run "${humanToolName(toolName)}" (${tier}).`;
+        const summary = `${actor.label} wants to run "${humanToolName(toolName)}"${describeTarget(toolName, args)} (${tier}).`;
         const argsPreview = redactedPreview(args, 400);
         const { approval, created } = requestApproval({
           actor: { kind: actor.kind, id: actor.id, label: actor.label },
@@ -401,7 +502,12 @@ export async function executeTool(params: ExecuteToolParams): Promise<ExecuteToo
         });
         const approveUrl = `/dashboard/settings/approvals?id=${approval.id}`;
         if (created) {
-          writeNotification("warning", `Approval needed: ${humanToolName(toolName)}`, `${summary}\n${argsPreview}`, `approval:${approval.id}`);
+          writeNotification(
+            "warning",
+            `Approval needed: ${humanToolName(toolName)}`,
+            `${summary}\nReview it in Settings -> Approvals: ${approveUrl}\n${argsPreview}`,
+            `approval:${approval.id}`,
+          );
         }
         const alreadyApproved = approval.status === "approved";
         return finish(
@@ -465,12 +571,16 @@ export async function executeTool(params: ExecuteToolParams): Promise<ExecuteToo
     output = await execute(args, params.toolCallOptions ?? { toolCallId: `${source}-${randomUUID()}`, messages: [] });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return finish({ outcome: "error", thrown: err, error: { code: "tool_error", message } });
+    return finish({ outcome: "error", thrown: err, error: { code: "tool_error", message, hint: TOOL_ERROR_HINT } });
   }
+
+  // A secret setting may just have changed: refresh the redaction list before
+  // this call's own audit entry is written.
+  if (toolName === "set_setting" || toolName === "revert_setting") invalidateSecretValueCache();
 
   const reported = detectToolReportedError(output);
   if (reported) {
-    return finish({ outcome: "error", result: output, error: { code: "tool_error", message: reported } });
+    return finish({ outcome: "error", result: output, error: { code: "tool_error", message: reported, hint: TOOL_ERROR_HINT } });
   }
   return finish({ outcome: "success", result: output });
 }

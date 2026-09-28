@@ -186,7 +186,9 @@ export function consumeApproval(params: {
   return { ok: false, reason: "pending" };
 }
 
+/** Look up one approval; a row past its TTL is reported (and stored) as expired. */
 export function getApproval(id: string): ApprovalRow | undefined {
+  expireStaleApprovals();
   return db.select().from(schema.approvals).where(eq(schema.approvals.id, id)).get();
 }
 

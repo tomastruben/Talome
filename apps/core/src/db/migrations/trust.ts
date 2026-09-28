@@ -18,6 +18,8 @@ export const LEGACY_FULL_ACCESS_SCOPES = JSON.stringify({
   apps: "all",
 });
 
+const LEGACY_BACKFILL_MARKER = "mcp_tokens_legacy_scopes";
+
 function columnNames(table: string): Set<string> {
   const rows = db.all(sql.raw(`PRAGMA table_info(${table})`)) as Array<{ name: string }>;
   return new Set(rows.map((r) => r.name));
@@ -45,17 +47,31 @@ export function runTrustMigrations(): void {
     last_used_at TEXT
   )`);
 
-  const addedScopes = addColumnIfMissing("mcp_tokens", "scopes", "TEXT");
+  addColumnIfMissing("mcp_tokens", "scopes", "TEXT");
   addColumnIfMissing("mcp_tokens", "expires_at", "TEXT");
   addColumnIfMissing("mcp_tokens", "revoked_at", "TEXT");
   addColumnIfMissing("mcp_tokens", "legacy", "INTEGER NOT NULL DEFAULT 0");
 
   // Tokens created before per-token grants existed keep full access (flagged
-  // legacy so the UI can nudge the owner to narrow them). This backfill only
-  // runs in the same boot that adds the column — later rows with NULL scopes
-  // (e.g. written by older code) are treated as read-only at runtime.
-  if (addedScopes) {
-    db.run(sql`UPDATE mcp_tokens SET scopes = ${LEGACY_FULL_ACCESS_SCOPES}, legacy = 1 WHERE scopes IS NULL`);
+  // legacy so the UI can nudge the owner to narrow them). Completion is
+  // tracked by a marker written in the same transaction as the backfill, so a
+  // crash between adding the column and backfilling cannot leave existing
+  // tokens silently read-only; once the marker exists, later rows with NULL
+  // scopes (e.g. written by older code) are treated as read-only at runtime.
+  db.run(sql`CREATE TABLE IF NOT EXISTS trust_migration_markers (
+    name TEXT PRIMARY KEY,
+    done_at TEXT NOT NULL
+  )`);
+  const backfilled = db.get(
+    sql`SELECT name FROM trust_migration_markers WHERE name = ${LEGACY_BACKFILL_MARKER}`,
+  ) as { name: string } | undefined;
+  if (!backfilled) {
+    db.transaction((tx) => {
+      tx.run(sql`UPDATE mcp_tokens SET scopes = ${LEGACY_FULL_ACCESS_SCOPES}, legacy = 1 WHERE scopes IS NULL`);
+      tx.run(
+        sql`INSERT OR IGNORE INTO trust_migration_markers (name, done_at) VALUES (${LEGACY_BACKFILL_MARKER}, ${new Date().toISOString()})`,
+      );
+    });
   }
 
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_mcp_tokens_hash ON mcp_tokens(token_hash)`);

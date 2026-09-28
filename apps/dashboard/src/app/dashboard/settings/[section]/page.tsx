@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useSetAtom } from "jotai";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { useUser } from "@/hooks/use-user";
+import { Skeleton } from "@/components/ui/skeleton";
+import { resolveSectionAccess } from "../section-access";
 
 import { GeneralSection } from "@/components/settings/sections/general";
 import { UsersSection } from "@/components/settings/sections/users";
@@ -70,21 +72,31 @@ export default function SettingsSectionPage() {
   const params = useParams();
   const router = useRouter();
   const setPageTitle = useSetAtom(pageTitleAtom);
-  const { isAdmin } = useUser();
+  const { isAdmin, isLoading } = useUser();
   const slug = params.section as string;
   const section = SECTIONS[slug];
+  const access = resolveSectionAccess({ exists: !!section, adminOnly: section?.adminOnly, isAdmin, isLoading });
 
   useEffect(() => {
-    if (!section || (section.adminOnly && !isAdmin)) {
+    if (access === "redirect") {
       router.replace("/dashboard/settings");
       return;
     }
+    if (!section) return;
     setPageTitle(section.title);
     return () => setPageTitle(null);
-  }, [section, setPageTitle, router, isAdmin]);
+  }, [access, section, setPageTitle, router]);
 
-  if (!section) return null;
-  if (section.adminOnly && !isAdmin) return null;
+  if (!section || access === "redirect") return null;
+  if (access === "loading") {
+    return (
+      <div className="mx-auto w-full max-w-2xl min-w-0 pb-12 grid gap-3" aria-busy="true">
+        <Skeleton className="h-4 w-32" />
+        <Skeleton className="h-24 w-full rounded-xl" />
+        <Skeleton className="h-24 w-full rounded-xl" />
+      </div>
+    );
+  }
 
   const Component = section.component;
 

@@ -105,7 +105,12 @@ describe("audit log never contains secrets", () => {
   });
 
   it("the audit-log route returns the new columns and filters by actor", async () => {
-    const app = new Hono().route("/audit", auditLog);
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.set("sessionRole" as never, "admin" as never);
+      await next();
+    });
+    app.route("/audit", auditLog);
     const res = await app.request("/audit?actorId=tok-audit&outcome=success");
     const rows = (await res.json()) as Array<Record<string, unknown>>;
     expect(rows.length).toBeGreaterThan(0);

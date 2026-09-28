@@ -12,6 +12,7 @@ import { useAssistant } from "@/components/assistant/assistant-context";
 import { APPROVALS_URL, decideApproval, trustFetcher, useNow } from "@/components/trust/api";
 import {
   approvalHref,
+  approvalPollInterval,
   effectiveApprovalStatus,
   formatTimeLeft,
   humanToolName,
@@ -41,8 +42,10 @@ function ApprovalCardInner({ request }: { request: NonNullable<ReturnType<typeof
     isAdmin ? `${APPROVALS_URL}/${encodeURIComponent(request.approvalId)}` : null,
     trustFetcher,
     {
+      // Stop once the row is decided, consumed or past its TTL (the server
+      // only flips stale rows to "expired" lazily).
       refreshInterval: (latest) =>
-        !latest || latest.status === "pending" || latest.status === "approved" ? 5_000 : 0,
+        approvalPollInterval(latest ?? { status: request.approvalStatus, expiresAt: request.expiresAt }),
       revalidateOnFocus: true,
     },
   );
