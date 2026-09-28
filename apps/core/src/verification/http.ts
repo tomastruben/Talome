@@ -2,11 +2,13 @@
  * Read-only app API access for probes.
  *
  * Connection details come from the app-registry (settings keys for URL and
- * credential), so every probe talks to an app exactly the way Talome's AI
- * tools do — same settings, same auth scheme — without duplicating clients.
+ * credential, auth scheme, settings fallbacks), so every probe talks to an
+ * app with the same settings and auth scheme as Talome's AI tools. This layer
+ * only adds what probes need on top: abort signals, per-run caching and
+ * secret-safe error descriptions.
  */
 
-import { APP_REGISTRY } from "../app-registry/index.js";
+import { APP_AUTH_SCHEMES, APP_SETTINGS_FALLBACK, getConnectableApp } from "../app-registry/index.js";
 import type { HttpResult, ProbeEnv, QbtSession } from "./env.js";
 import { clip } from "./redact.js";
 
@@ -27,42 +29,21 @@ export interface AppConnection {
   password?: string;
 }
 
-type AuthStyle = "x-api-key" | "mediabrowser" | "bearer" | "qbt-cookie" | "none";
-
-const AUTH_STYLE: Record<string, AuthStyle> = {
-  sonarr: "x-api-key",
-  radarr: "x-api-key",
-  readarr: "x-api-key",
-  prowlarr: "x-api-key",
-  overseerr: "x-api-key",
-  jellyseerr: "x-api-key",
-  immich: "x-api-key",
-  jellyfin: "mediabrowser",
-  audiobookshelf: "bearer",
-  homeassistant: "bearer",
-  qbittorrent: "qbt-cookie",
-};
-
-/** Request apps that share one API — Jellyseerr is a fork of Overseerr. */
-const SETTINGS_FALLBACK: Record<string, string> = {
-  jellyseerr: "overseerr",
-};
-
 export function getAppName(appId: string): string {
-  return APP_REGISTRY[appId]?.name ?? appId;
+  return getConnectableApp(appId)?.name ?? appId;
 }
 
 export function resolveConnection(env: ProbeEnv, appId: string): AppConnection | null {
-  const caps = APP_REGISTRY[appId];
+  const caps = getConnectableApp(appId);
   if (!caps) return null;
 
   let urlKey = caps.apiBaseSettingKey;
   let keyKey = caps.apiKeySettingKey;
   let url = env.getSetting(urlKey);
-  const fallback = SETTINGS_FALLBACK[appId];
-  if (!url && fallback && APP_REGISTRY[fallback]) {
-    urlKey = APP_REGISTRY[fallback].apiBaseSettingKey;
-    keyKey = APP_REGISTRY[fallback].apiKeySettingKey;
+  const fallback = Object.hasOwn(APP_SETTINGS_FALLBACK, appId) ? getConnectableApp(APP_SETTINGS_FALLBACK[appId]) : undefined;
+  if (!url && fallback) {
+    urlKey = fallback.apiBaseSettingKey;
+    keyKey = fallback.apiKeySettingKey;
     url = env.getSetting(urlKey);
   }
   if (!url) return null;
@@ -182,6 +163,10 @@ export function qbtLogin(ctx: ProbeCallContext): Promise<QbtSession> {
   })();
 
   ctx.env.qbtSessions.set(conn.baseUrl, pending);
+  // A login aborted by this check's timeout must not be reused by the next check.
+  ctx.signal.addEventListener("abort", () => {
+    if (ctx.env.qbtSessions.get(conn.baseUrl) === pending) ctx.env.qbtSessions.delete(conn.baseUrl);
+  }, { once: true });
   pending.then((s) => {
     if (!s.ok && s.status === 0) ctx.env.qbtSessions.delete(conn.baseUrl);
   }).catch(() => ctx.env.qbtSessions.delete(conn.baseUrl));
@@ -227,7 +212,7 @@ export async function appRequest<T = unknown>(
     if (opts.body !== undefined) headers["Content-Type"] = "application/json";
 
     if (useAuth) {
-      const style = AUTH_STYLE[appId] ?? "none";
+      const style = Object.hasOwn(APP_AUTH_SCHEMES, appId) ? APP_AUTH_SCHEMES[appId] : "none";
       if (style === "qbt-cookie") {
         const session = await qbtLogin(ctx);
         if (!session.ok) return { ok: false, status: session.status, error: `qBittorrent login failed: ${session.error ?? "unknown error"}` };
@@ -251,8 +236,14 @@ export async function appRequest<T = unknown>(
   if (cacheKey) {
     ctx.env.cache.set(cacheKey, pending);
     // Never keep aborted requests: a later check must be allowed to retry.
+    // Evict synchronously on abort — the runner starts the next check as soon
+    // as this one times out, before the aborted fetch has settled.
+    const evict = () => {
+      if (ctx.env.cache.get(cacheKey) === pending) ctx.env.cache.delete(cacheKey);
+    };
+    ctx.signal.addEventListener("abort", evict, { once: true });
     void pending.then((r) => {
-      if (r.status === 0 && ctx.signal.aborted) ctx.env.cache.delete(cacheKey);
+      if (r.status === 0 && ctx.signal.aborted) evict();
     });
   }
   return (await pending) as HttpResult<T>;

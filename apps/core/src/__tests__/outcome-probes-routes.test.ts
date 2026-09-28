@@ -35,6 +35,7 @@ beforeAll(() => {
   vi.spyOn(console, "log").mockImplementation(() => {});
   runMigrations();
   db.run(sql`INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at) VALUES ('u-member', 'member', 'x', 'member', '2026-01-01T00:00:00Z')`);
+  db.run(sql`INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at, permissions) VALUES ('u-no-apps', 'noapps', 'x', 'member', '2026-01-01T00:00:00Z', '{"apps":false}')`);
 });
 
 afterAll(() => {
@@ -148,6 +149,23 @@ describe("verification routes", () => {
       body: JSON.stringify({ appId: "sonarr" }),
     });
     expect(allowed.status).toBe(200);
+  });
+
+  it("requires the apps permission for every verification route (evidence names hosts and paths)", async () => {
+    const restricted = appAs("member", "u-no-apps");
+    for (const path of ["/api/verification", "/api/verification/apps/sonarr", "/api/verification/stacks/media-server"]) {
+      expect((await restricted.request(path)).status, path).toBe(403);
+    }
+    const run = await restricted.request("/api/verification/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ appId: "sonarr" }) });
+    expect(run.status).toBe(403);
+    expect((await appAs("member", "u-member").request("/api/verification/apps/sonarr")).status).toBe(200);
+  });
+
+  it("answers 404 (not 500) for prototype-key app ids", async () => {
+    const app = appAs("admin");
+    const res = await app.request("/api/verification/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ appId: "constructor" }) });
+    expect(res.status).toBe(404);
+    expect((await app.request("/api/verification/apps/constructor")).status).toBe(404);
   });
 
   it("GET / lists verifiable apps and stacks with their latest status", async () => {

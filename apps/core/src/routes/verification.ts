@@ -15,6 +15,9 @@ import {
 
 const verification = new Hono();
 
+// Evidence names internal hosts, host paths and library contents — same gate as /api/apps/*.
+verification.use("*", requirePermission("apps"));
+
 const targetIdSchema = z.string().trim().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/i, "Invalid id");
 
 const historyQuerySchema = z.object({
@@ -69,7 +72,7 @@ verification.get("/stacks/:id", (c) => {
 });
 
 /** POST /api/verification/run — { appId } or { stackId }, optional includeActive (admin only). */
-verification.post("/run", requirePermission("apps"), async (c) => {
+verification.post("/run", async (c) => {
   const parsed = runBodySchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const { appId, stackId, includeActive } = parsed.data;
@@ -83,7 +86,7 @@ verification.post("/run", requirePermission("apps"), async (c) => {
   const outcome = appId
     ? await verifyApp(appId, { includeActive })
     : await verifyStack(stackId as string, { includeActive });
-  if (!outcome.ok) return c.json({ error: outcome.error }, 404);
+  if (!outcome.ok) return c.json({ error: outcome.error }, outcome.code === "unknown_target" ? 404 : 500);
   return c.json({ result: outcome.result });
 });
 

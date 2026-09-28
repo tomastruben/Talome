@@ -23,7 +23,9 @@ export const APP_PROBES: Record<string, () => CheckDefinition[]> = {
 };
 
 export function getAppProbe(appId: string): (() => CheckDefinition[]) | undefined {
-  return APP_PROBES[appId.toLowerCase()];
+  const id = appId.toLowerCase();
+  // Own keys only — "constructor"/"__proto__" must not resolve to Object internals.
+  return Object.hasOwn(APP_PROBES, id) ? APP_PROBES[id] : undefined;
 }
 
 export function listProbedApps(): string[] {

@@ -111,7 +111,7 @@ export function jellyfinChecks(): CheckDefinition[] {
       const info = parseOr(systemInfoSchema, data);
       return `Jellyfin${info?.Version ? ` ${info.Version}` : ""}${info?.ServerName ? ` "${info.ServerName}"` : ""} answered and accepted the API key`;
     }),
-    { id: "libraries", label: "Libraries configured", appId: "jellyfin", dependsOn: ["api"], run: evaluateJellyfinLibraries },
+    { id: "libraries", label: "Libraries configured", appId: "jellyfin", critical: true, dependsOn: ["api"], run: evaluateJellyfinLibraries },
     { id: "library-paths", label: "Library folders exist", appId: "jellyfin", dependsOn: ["libraries"], timeoutMs: 15_000, run: evaluateJellyfinLibraryPaths },
   ];
 }

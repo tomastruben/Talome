@@ -15,6 +15,7 @@ import {
   getArrDownloadClients,
   getArrHealth,
   arrChecks,
+  testArrDownloadClients,
   IMPORT_HEALTH_SOURCES,
   type ArrAppId,
 } from "./probes/arr.js";
@@ -24,7 +25,7 @@ import { evaluateJellyfinLibraryPaths, jellyfinChecks } from "./probes/jellyfin.
 import { evaluateDownloadPathMapping, evaluateLibraryPathMapping } from "./probes/path-mapping.js";
 import { evaluateProwlarrAppSync, prowlarrChecks } from "./probes/prowlarr.js";
 import { qbittorrentChecks } from "./probes/qbittorrent.js";
-import { evaluateSeerrArrConnectivity, evaluateSeerrMediaServer, seerrChecks, type SeerrAppId } from "./probes/seerr.js";
+import { evaluateSeerrArrConfigured, evaluateSeerrArrConnectivity, evaluateSeerrMediaServer, seerrChecks, type SeerrAppId } from "./probes/seerr.js";
 import { audiobookshelfChecks, homeAssistantChecks } from "./probes/simple-apps.js";
 import { outcome, prefixChecks, type CheckDefinition } from "./runner.js";
 import type { CheckOutcome } from "./types.js";
@@ -127,7 +128,9 @@ function mediaServerPlan(env: ProbeEnv): StackPlan {
   if (seerr) {
     const deps = [`${seerr}:api`, `${seerr}:auth`];
     checks.push({ id: `request:${seerr}:media-server`, label: `${getAppName(seerr)} knows your library`, appId: seerr, critical: true, dependsOn: deps, run: (ctx) => evaluateSeerrMediaServer(ctx, seerr) });
-    checks.push({ id: `request:${seerr}:arr`, label: `${getAppName(seerr)} → Sonarr/Radarr`, appId: seerr, critical: true, dependsOn: deps, timeoutMs: 20_000, run: (ctx) => evaluateSeerrArrConnectivity(ctx, seerr) });
+    // Configured first: "no Sonarr/Radarr in the request app" is a broken chain, not an unknown.
+    checks.push({ id: `request:${seerr}:arr-configured`, label: `${getAppName(seerr)} has Sonarr/Radarr`, appId: seerr, critical: true, dependsOn: deps, run: (ctx) => evaluateSeerrArrConfigured(ctx, seerr) });
+    checks.push({ id: `request:${seerr}:arr`, label: `${getAppName(seerr)} → Sonarr/Radarr`, appId: seerr, critical: true, dependsOn: [`request:${seerr}:arr-configured`], timeoutMs: 20_000, run: (ctx) => evaluateSeerrArrConnectivity(ctx, seerr) });
   } else {
     checks.push(missing(
       "request:none",
@@ -149,6 +152,9 @@ function mediaServerPlan(env: ProbeEnv): StackPlan {
   // 3. Download client
   for (const arrId of arrs) {
     checks.push({ id: `download:${arrId}`, label: `${getAppName(arrId)} → download client`, appId: arrId, critical: true, dependsOn: [`${arrId}:api`], run: (ctx) => evaluateArrDownloadClients(ctx, arrId, { includeImportHealth: false }) });
+    // The *arr's own "Test" button. Active (qBittorrent's test creates the
+    // *arr's category if missing), so it only runs with includeActive.
+    checks.push({ id: `download:${arrId}:test`, label: `${getAppName(arrId)} download client test passes`, appId: arrId, critical: true, active: true, dependsOn: [`download:${arrId}`], timeoutMs: 20_000, run: (ctx) => testArrDownloadClients(ctx, arrId) });
   }
 
   // 4. Import (download path mapping)

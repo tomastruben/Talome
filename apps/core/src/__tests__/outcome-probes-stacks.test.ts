@@ -90,18 +90,21 @@ describe("media-server stack chain", () => {
     expect(result.status).toBe("failed");
   });
 
-  it("falls back to container-path comparison when Docker mounts are unavailable", async () => {
+  it("only warns (never passes) on container-path comparison when Docker mounts are unavailable", async () => {
     const routes = {
       ...healthyMediaRoutes(),
       [`GET ${URLS.sonarr}/api/v3/rootfolder`]: jsonResponse([{ path: "/data/media/tv", accessible: true, freeSpace: 1e12 }]),
       [`GET ${URLS.radarr}/api/v3/rootfolder`]: jsonResponse([{ path: "/movies", accessible: true, freeSpace: 1e12 }]),
     };
     const result = await stack("media-server", { routes, mounts: null });
-    expect(check(result, "library:sonarr").status).toBe("pass");
-    expect(check(result, "library:sonarr").evidence).toContain("mounts not verified");
+    // Matching container paths are a hint, not proof — different host folders
+    // could sit behind them, so the result is a warning, never a pass.
+    expect(check(result, "library:sonarr").status).toBe("warn");
+    expect(check(result, "library:sonarr").evidence).toContain("container path only");
     // /movies vs /data/media/movies can't be proven without mounts → warn, not a false failure
     expect(check(result, "library:radarr").status).toBe("warn");
-    expect(check(result, "import:sonarr").status).toBe("pass");
+    expect(check(result, "import:sonarr").status).toBe("warn");
+    expect(check(result, "import:sonarr").evidence).toContain("isn't proven");
     expect(result.status).toBe("degraded");
   });
 

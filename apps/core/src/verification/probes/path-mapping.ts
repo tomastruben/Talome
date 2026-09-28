@@ -10,15 +10,16 @@
  * Proof strategy: translate container paths to host paths through each
  * container's mounts (docker inspect, read-only). The *arr's own filesystem
  * API confirms the path exists inside the *arr container. When Docker can't
- * tell us mounts, fall back to container-path comparison and say so.
+ * tell us mounts, a matching container path is reported as a warning — never
+ * as proof.
  */
 
 import { posix } from "node:path";
 import { z } from "zod";
-import { APP_REGISTRY } from "../../app-registry/index.js";
+import { getConnectableApp } from "../../app-registry/index.js";
 import type { MountInfo } from "../env.js";
 import { appRequest, getAppName, resolveConnection, type ProbeCallContext } from "../http.js";
-import { applyRemotePathMappings, isSameOrUnder, normalizePath, pathsOverlap, toHostPath, type RemotePathMapping } from "../paths.js";
+import { applyRemotePathMappings, isSameOrUnder, normalizePath, toHostPath, type RemotePathMapping } from "../paths.js";
 import { outcome } from "../runner.js";
 import type { CheckOutcome, CheckStatus } from "../types.js";
 import { arrPath, evaluateArrRootFolders, fieldValue, getArrDownloadClients, getArrRootFolders, type ArrAppId } from "./arr.js";
@@ -28,7 +29,7 @@ import { listPreview, parseOr } from "./common.js";
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
 export function containerNameFor(appId: string): string {
-  return APP_REGISTRY[appId]?.dockerServiceName ?? appId;
+  return getConnectableApp(appId)?.dockerServiceName ?? appId;
 }
 
 async function mountsFor(ctx: ProbeCallContext, appId: string): Promise<MountInfo[] | null> {
@@ -57,21 +58,46 @@ export function combineOutcomes(parts: Array<{ label: string; outcome: CheckOutc
 
 // ── *arr filesystem ────────────────────────────────────────────────────────
 
+const fsEntrySchema = z.object({ name: z.string().optional(), path: z.string().optional() }).loose();
 const fsSchema = z.object({
   parent: z.string().nullable().optional(),
-  directories: z.array(z.unknown()).optional(),
+  directories: z.array(fsEntrySchema).optional(),
   files: z.array(z.unknown()).optional(),
 });
+type FsListing = z.infer<typeof fsSchema>;
 
-/** Does `path` exist inside the *arr container? Read-only (the *arr folder browser API). */
-export async function arrPathExists(ctx: ProbeCallContext, appId: ArrAppId, path: string): Promise<boolean | null> {
-  const folder = `${normalizePath(path).replace(/\/$/, "")}/`;
+async function listArrFolder(ctx: ProbeCallContext, appId: ArrAppId, folderPath: string): Promise<FsListing | null> {
+  const folder = folderPath === "/" ? "/" : `${folderPath}/`;
   const query = `?path=${encodeURIComponent(folder)}&includeFiles=false&allowFoldersWithoutTrailingSlashes=true`;
   const res = await appRequest(ctx, appId, arrPath(appId, `/filesystem${query}`));
   if (!res.ok) return null;
-  const data = parseOr(fsSchema, res.data);
-  if (!data) return null;
-  return Boolean(data.parent) || (data.directories?.length ?? 0) > 0 || (data.files?.length ?? 0) > 0;
+  return parseOr(fsSchema, res.data);
+}
+
+/**
+ * Does `path` exist inside the *arr container? Read-only (the *arr folder browser API).
+ *
+ * The *arr answers a missing folder with `{ parent: "<dirname>", directories: [] }`
+ * (it swallows DirectoryNotFound and still reports the parent), so neither
+ * `parent` nor an empty listing proves anything. Existence is proven by the
+ * folder appearing in its parent's listing, or by the folder having children.
+ * Returns null when the *arr could not be asked.
+ */
+export async function arrPathExists(ctx: ProbeCallContext, appId: ArrAppId, path: string): Promise<boolean | null> {
+  const target = normalizePath(path);
+  if (!target) return null;
+  if (target === "/") return true;
+
+  const parent = await listArrFolder(ctx, appId, posix.dirname(target));
+  const listed = (parent?.directories ?? []).some((d) =>
+    (d.path !== undefined && normalizePath(d.path) === target) || (d.path === undefined && d.name === posix.basename(target)),
+  );
+  if (listed) return true;
+
+  const self = await listArrFolder(ctx, appId, target);
+  if ((self?.directories?.length ?? 0) > 0 || (self?.files?.length ?? 0) > 0) return true;
+  if (!parent && !self) return null;
+  return false;
 }
 
 // ── Download path mapping (qBittorrent → *arr) ───────────────────────────────
@@ -151,23 +177,37 @@ export async function evaluateDownloadPathMapping(ctx: ProbeCallContext, arrId: 
       remediation = `Mount ${qbtHost} into the ${arrName} container at ${arrLocal} (add_volume_mount), then restart ${arrName}.`;
       continue;
     }
+    if (arrHost && qbtMounts && !qbtHost) {
+      problems.push(`${arrName} imports from host folder ${arrHost}, but qBittorrent's ${qbtPath} is not a mounted folder — downloads stay inside the qBittorrent container where ${arrName} can't see them.`);
+      remediation = `Mount ${arrHost} into the qBittorrent container at ${qbtPath} (add_volume_mount), then restart qBittorrent.`;
+      continue;
+    }
     if (qbtHost && arrHost && normalizePath(qbtHost) !== normalizePath(arrHost)) {
       problems.push(`qBittorrent writes to host folder ${qbtHost}, but ${arrName}'s ${arrLocal} is host folder ${arrHost} — different directories.`);
       remediation = `Point both containers at the same host download folder (${qbtHost}).`;
       continue;
     }
-    const proof = qbtHost && arrHost
-      ? `${qbtPath} (qBittorrent) and ${arrLocal} (${arrName}) are the same host folder ${qbtHost}${via}`
-      : `${arrName} can see qBittorrent's save path ${arrLocal}${via}${exists === null ? " (existence not confirmed)" : ""}${qbtHost || arrHost ? "" : " — container mounts unavailable, compared container paths only"}`;
-    if (exists === null && !(qbtHost && arrHost)) warnings.push(proof);
-    else proofs.push(pendingCategoryFolder ? `${proof} (category folder is created on first download)` : proof);
+    const categoryNote = pendingCategoryFolder ? " (category folder is created on first download)" : "";
+    if (qbtHost && arrHost) {
+      // Both container paths resolve to the same host folder — that is the proof.
+      proofs.push(`${qbtPath} (qBittorrent) and ${arrLocal} (${arrName}) are the same host folder ${qbtHost}${via}${categoryNote}`);
+      continue;
+    }
+    // Not proven: Docker mounts were unavailable, so a matching container path
+    // could still be two different host folders.
+    const missingMounts = [!qbtHost ? "qBittorrent" : null, !arrHost ? arrName : null].filter(Boolean).join(" and ");
+    warnings.push(
+      exists === null
+        ? `${arrName} could not confirm that ${arrLocal}${via} exists, and Docker mounts for ${missingMounts} were unavailable`
+        : `${arrName} can see a folder at qBittorrent's save path ${arrLocal}${via}${categoryNote}, but Docker mounts for ${missingMounts} were unavailable, so it isn't proven to be the same host folder`,
+    );
   }
 
   if (problems.length > 0) return outcome.fail(problems.join(" "), remediation);
   if (warnings.length > 0) {
     return outcome.warn(
-      [...proofs, ...warnings].join("; "),
-      `Could not confirm the folder inside ${arrName}; check ${arrName} → System → Status for remote path mapping warnings.`,
+      `${[...proofs, ...warnings].join("; ")}.`,
+      `Make sure qBittorrent and ${arrName} mount the same host download folder, and check ${arrName} → System → Status for remote path mapping warnings.`,
     );
   }
   return outcome.pass(`${proofs.join("; ")}.`);
@@ -236,8 +276,11 @@ export async function evaluateLibraryPathMapping(ctx: ProbeCallContext, arrId: A
     const rHost = toHostPath(folder.path, arrMounts);
     const lHosts = locations.map((l) => ({ container: l, host: toHostPath(l, targetMounts) }));
 
+    // Imports land in the root folder (or below it), so the root folder must be
+    // the library folder or inside it — a library that is merely *inside* the
+    // root folder misses everything imported next to it.
     if (rHost && lHosts.some((l) => l.host)) {
-      const match = lHosts.find((l) => l.host && pathsOverlap(rHost, l.host));
+      const match = lHosts.find((l) => l.host && isSameOrUnder(rHost, l.host));
       if (match) {
         proofs.push(`${arrName} ${folder.path} → ${targetName} library ${match.container} (host ${rHost})`);
       } else {
@@ -250,15 +293,17 @@ export async function evaluateLibraryPathMapping(ctx: ProbeCallContext, arrId: A
       continue;
     }
 
-    const match = locations.find((l) => pathsOverlap(folder.path, l));
-    if (match) proofs.push(`${arrName} ${folder.path} → ${targetName} library ${match} (same container path; mounts not verified)`);
-    else uncertain.push(folder.path);
+    // Without mounts on both sides a matching container path is a hint, not proof.
+    const match = locations.find((l) => isSameOrUnder(folder.path, l));
+    uncertain.push(match
+      ? `${arrName} ${folder.path} matches ${targetName} library ${match} by container path only`
+      : `${arrName} ${folder.path} has no ${targetName} library at the same container path`);
   }
 
   if (problems.length > 0) return outcome.fail(problems.join(" "), remediation);
   if (uncertain.length > 0) {
     return outcome.warn(
-      `Could not prove that ${listPreview(uncertain)} (${arrName}) is inside a ${targetName} library (${listPreview(locations)}); container paths differ and Docker mounts were unavailable.`,
+      `${[...proofs, ...uncertain].join("; ")} — Docker mounts were unavailable, so it isn't proven that imports land in a library (${listPreview(locations)}).`,
       `Make sure the ${arrName} root folder and a ${targetName} library point at the same host folder.`,
     );
   }

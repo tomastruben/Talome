@@ -23,7 +23,7 @@ vi.mock("../db/memories.js", () => ({ getTopMemories: vi.fn().mockResolvedValue(
 
 import { getAllRegisteredTools, getAllTiers, getToolsForMessage } from "../ai/tool-registry.js";
 import "../ai/agent.js";
-import { APP_REGISTRY } from "../app-registry/index.js";
+import { APP_REGISTRY, getConnectableApp } from "../app-registry/index.js";
 import { listProbedApps } from "../verification/index.js";
 import { photoManagementStack } from "../stacks/photo-management.js";
 import { mediaServerStack } from "../stacks/media-server.js";
@@ -35,10 +35,13 @@ describe("verify_app_outcome registration", () => {
     expect(Object.keys(getToolsForMessage("is my media server actually working?"))).toContain("verify_app_outcome");
   });
 
-  it("every probed app has an app-registry entry (settings keys come from the registry)", () => {
-    for (const appId of listProbedApps()) expect(APP_REGISTRY[appId], appId).toBeDefined();
-    expect(APP_REGISTRY.immich.apiKeySettingKey).toBe("immich_api_key");
-    expect(APP_REGISTRY.jellyseerr.apiBaseSettingKey).toBe("jellyseerr_url");
+  it("every probed app has connection details in the app-registry (settings keys come from the registry)", () => {
+    for (const appId of listProbedApps()) expect(getConnectableApp(appId), appId).toBeDefined();
+    expect(getConnectableApp("immich")?.apiKeySettingKey).toBe("immich_api_key");
+    expect(getConnectableApp("jellyseerr")?.apiBaseSettingKey).toBe("jellyseerr_url");
+    // User-keyed apps stay out of APP_REGISTRY so health score / setup loop don't manage them.
+    expect(APP_REGISTRY.immich).toBeUndefined();
+    expect(APP_REGISTRY.jellyseerr).toBeUndefined();
   });
 });
 

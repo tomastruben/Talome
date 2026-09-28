@@ -284,8 +284,10 @@ export function arrChecks(appId: ArrAppId): CheckDefinition[] {
       const v = parseOr(versionSchema, data)?.version;
       return `${name}${v ? ` ${v}` : ""} answered and accepted the API key`;
     }),
-    { id: "root-folders", label: "Root folder exists and is accessible", appId, dependsOn: ["api"], run: (ctx) => evaluateArrRootFolders(ctx, appId) },
-    { id: "download-client", label: "Download client configured and healthy", appId, dependsOn: ["api"], run: (ctx) => evaluateArrDownloadClients(ctx, appId) },
+    // Critical: without a root folder, a download client or indexers the *arr
+    // cannot deliver anything — "failed", not merely "degraded".
+    { id: "root-folders", label: "Root folder exists and is accessible", appId, critical: true, dependsOn: ["api"], run: (ctx) => evaluateArrRootFolders(ctx, appId) },
+    { id: "download-client", label: "Download client configured and healthy", appId, critical: true, dependsOn: ["api"], run: (ctx) => evaluateArrDownloadClients(ctx, appId) },
     {
       id: "download-client-test",
       label: "Download client test passes",
@@ -295,7 +297,7 @@ export function arrChecks(appId: ArrAppId): CheckDefinition[] {
       timeoutMs: 20_000,
       run: (ctx) => testArrDownloadClients(ctx, appId),
     },
-    { id: "indexers", label: "Indexers present", appId, dependsOn: ["api"], run: (ctx) => evaluateArrIndexers(ctx, appId) },
+    { id: "indexers", label: "Indexers present", appId, critical: true, dependsOn: ["api"], run: (ctx) => evaluateArrIndexers(ctx, appId) },
     { id: "health", label: `${name} health checks`, appId, dependsOn: ["api"], run: (ctx) => evaluateArrGeneralHealth(ctx, appId) },
   ];
 }

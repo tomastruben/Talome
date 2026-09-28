@@ -4,7 +4,7 @@
  */
 
 import { networkInterfaces } from "node:os";
-import { APP_REGISTRY } from "../app-registry/index.js";
+import { APP_REGISTRY, SETTINGS_ONLY_APPS } from "../app-registry/index.js";
 import { isSecretSettingKey } from "../utils/crypto.js";
 import { getSetting as readSetting } from "../utils/settings.js";
 
@@ -82,7 +82,7 @@ function defaultLanAddress(): string | undefined {
 /** Setting keys whose values must be scrubbed even if a probe never reads them directly. */
 function registrySecretKeys(): string[] {
   const keys = new Set<string>(["qbittorrent_password"]);
-  for (const caps of Object.values(APP_REGISTRY)) keys.add(caps.apiKeySettingKey);
+  for (const caps of [...Object.values(APP_REGISTRY), ...Object.values(SETTINGS_ONLY_APPS)]) keys.add(caps.apiKeySettingKey);
   return [...keys];
 }
 

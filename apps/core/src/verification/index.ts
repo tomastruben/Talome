@@ -29,7 +29,7 @@ export interface VerifyRunOptions extends VerifyOptions {
 
 export type VerifyOutcome =
   | { ok: true; result: VerificationResult }
-  | { ok: false; error: string; code: "unknown_target" };
+  | { ok: false; error: string; code: "unknown_target" | "probe_error" };
 
 export function isVerifiableApp(appId: string): boolean {
   return getAppProbe(appId) !== undefined;
@@ -42,10 +42,27 @@ export function isVerifiableStack(stackId: string): boolean {
 /** Concurrent requests for the same target share one run instead of hammering the apps. */
 const inFlight = new Map<string, Promise<VerifyOutcome>>();
 
-function dedupe(key: string, run: () => Promise<VerifyOutcome>): Promise<VerifyOutcome> {
+/** Runs that differ in anything observable (persistence, timeouts, injected deps) are never shared. */
+function dedupeKey(target: string, opts: VerifyRunOptions): string | null {
+  if (opts.deps) return null;
+  return [target, opts.includeActive ? "active" : "passive", opts.persist === false ? "ephemeral" : "persist", opts.timeoutMs ?? "default"].join(":");
+}
+
+/** Never rejects — verifyApp/verifyStack promise callers a VerifyOutcome. */
+async function guarded(run: () => Promise<VerifyOutcome>): Promise<VerifyOutcome> {
+  try {
+    return await run();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, code: "probe_error", error: `Verification failed to run: ${message}` };
+  }
+}
+
+function dedupe(key: string | null, run: () => Promise<VerifyOutcome>): Promise<VerifyOutcome> {
+  if (key === null) return guarded(run);
   const existing = inFlight.get(key);
   if (existing) return existing;
-  const pending = run().finally(() => inFlight.delete(key));
+  const pending = guarded(run).finally(() => inFlight.delete(key));
   inFlight.set(key, pending);
   return pending;
 }
@@ -84,7 +101,7 @@ export function verifyApp(appId: string, opts: VerifyRunOptions = {}): Promise<V
       error: `No outcome probe for app "${appId}". Verifiable apps: ${listProbedApps().join(", ")}.`,
     });
   }
-  return dedupe(`app:${id}:${opts.includeActive ? "active" : "passive"}`, async () => {
+  return dedupe(dedupeKey(`app:${id}`, opts), async () => {
     const env = createProbeEnv(opts.deps);
     const startedAt = env.now();
     const checks = await runChecks(probe(), env, { includeActive: opts.includeActive, timeoutMs: opts.timeoutMs });
@@ -105,7 +122,7 @@ export function verifyStack(stackId: string, opts: VerifyRunOptions = {}): Promi
       error: `No outcome probe for stack "${stackId}". Verifiable stacks: ${listVerifiableStacks().map((s) => s.id).join(", ")}.`,
     });
   }
-  return dedupe(`stack:${id}:${opts.includeActive ? "active" : "passive"}`, async () => {
+  return dedupe(dedupeKey(`stack:${id}`, opts), async () => {
     const env = createProbeEnv(opts.deps);
     const plan = getStackPlan(id, env);
     if (!plan) return { ok: false, code: "unknown_target", error: `Unknown stack "${stackId}".` };

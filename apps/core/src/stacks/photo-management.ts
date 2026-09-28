@@ -18,6 +18,8 @@ export const photoManagementStack: TalomeStack = {
       // valkey + postgres with VectorChord). Server and ML must run the same
       // version — both follow IMMICH_VERSION. The postgres image also ships
       // pgvecto.rs so older pgvecto-rs databases migrate automatically.
+      // Time zone comes from TZ, not an /etc/localtime bind (Docker Desktop on
+      // macOS rejects binds of unshared host paths).
       compose: `services:
   immich-server:
     image: ghcr.io/immich-app/immich-server:\${IMMICH_VERSION:-v2.0.0}
@@ -27,7 +29,6 @@ export const photoManagementStack: TalomeStack = {
       - "2283:2283"
     volumes:
       - \${UPLOAD_LOCATION:-./library}:/data
-      - /etc/localtime:/etc/localtime:ro
     environment:
       - TZ=\${TZ:-America/New_York}
       - DB_HOSTNAME=immich-postgres

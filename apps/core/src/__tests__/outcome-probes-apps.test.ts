@@ -143,10 +143,11 @@ describe("sonarr/radarr probe", () => {
     expect(check(result, "root-folders").status).toBe("skip");
   });
 
-  it("degrades when there is no root folder, an inaccessible one, or no indexers", async () => {
+  it("fails when there is no root folder, an inaccessible one, or no indexers", async () => {
     const noRoot = await run("sonarr", { routes: { ...healthyMediaRoutes(), [`GET ${URLS.sonarr}/api/v3/rootfolder`]: jsonResponse([]) } });
     expect(check(noRoot.result, "root-folders").status).toBe("fail");
-    expect(noRoot.result.status).toBe("degraded");
+    // An *arr that can't import anything is broken, not merely degraded.
+    expect(noRoot.result.status).toBe("failed");
 
     const inaccessible = await run("sonarr", { routes: { ...healthyMediaRoutes(), [`GET ${URLS.sonarr}/api/v3/rootfolder`]: jsonResponse([{ path: "/tv", accessible: false }]) } });
     expect(check(inaccessible.result, "root-folders").evidence).toContain("cannot access /tv");

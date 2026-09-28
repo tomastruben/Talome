@@ -116,9 +116,28 @@ export function mediaSettings(): Record<string, string> {
 
 const GB = 1024 ** 3;
 
+/**
+ * Mimics Servarr's /filesystem endpoint (FileSystemLookupService): an existing
+ * folder lists its child folders; a MISSING folder still answers 200 with
+ * `{ parent: "<dirname>/", directories: [] }` — it never 404s.
+ */
+export function servarrFilesystem(existingFolders: string[]): RouteHandler {
+  const existing = new Set(existingFolders.map((f) => f.replace(/\/+$/, "") || "/"));
+  existing.add("/");
+  const dirname = (p: string) => p.slice(0, p.lastIndexOf("/")) || "/";
+  return (url) => {
+    const p = (url.searchParams.get("path") ?? "").replace(/\/+$/, "") || "/";
+    const parent = p === "/" ? null : `${dirname(p).replace(/\/$/, "")}/`;
+    if (!existing.has(p)) return jsonResponse({ parent, directories: [], files: [] });
+    const directories = [...existing]
+      .filter((e) => e !== "/" && e !== p && dirname(e) === p)
+      .map((e) => ({ type: "folder", name: e.slice(e.lastIndexOf("/") + 1), path: `${e}/` }));
+    return jsonResponse({ parent, directories, files: [] });
+  };
+}
+
 function arrRoutes(app: "sonarr" | "radarr", root: string, category: string, categoryField: string): Record<string, RouteHandler> {
   const base = URLS[app];
-  const existing = new Set(["/downloads", root, "/"]);
   return {
     [`GET ${base}/api/v3/system/status`]: jsonResponse({ version: app === "sonarr" ? "4.0.14" : "5.21.1" }),
     [`GET ${base}/api/v3/rootfolder`]: jsonResponse([{ id: 1, path: root, accessible: true, freeSpace: 500 * GB }]),
@@ -143,12 +162,7 @@ function arrRoutes(app: "sonarr" | "radarr", root: string, category: string, cat
       { name: "Nyaa (Prowlarr)", enableRss: true, enableAutomaticSearch: true, enableInteractiveSearch: true, protocol: "torrent" },
     ]),
     [`GET ${base}/api/v3/remotepathmapping`]: jsonResponse([]),
-    [`GET ${base}/api/v3/filesystem`]: (url) => {
-      const p = (url.searchParams.get("path") ?? "").replace(/\/+$/, "") || "/";
-      return existing.has(p)
-        ? jsonResponse({ parent: "/", directories: [], files: [] })
-        : jsonResponse({ directories: [], files: [] });
-    },
+    [`GET ${base}/api/v3/filesystem`]: servarrFilesystem(["/downloads", root]),
     [`POST ${base}/api/v3/downloadclient/test`]: jsonResponse({}),
   };
 }
