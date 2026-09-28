@@ -1,0 +1,18 @@
+manifestVersion: 1.1
+id: ollama
+category: ai
+name: Ollama
+version: "0.4.7"
+tagline: Run large language models locally
+description: Get up and running with large language models.
+developer: Ollama
+website: https://ollama.com
+dependencies: []
+repo: https://github.com/ollama/ollama
+support: https://github.com/ollama/ollama/issues
+port: 11434
+gallery: []
+permissions:
+  - GPU
+implements:
+  - llm-runtime

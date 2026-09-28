@@ -75,6 +75,8 @@ export const storeSources = sqliteTable("store_sources", {
   lastSyncedAt: text("last_synced_at"),
   appCount: integer("app_count").notNull().default(0),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  /** git HEAD + parser version of the last catalog parse (store-compat migration) */
+  lastParsedRev: text("last_parsed_rev"),
 });
 
 export const appCatalog = sqliteTable("app_catalog", {
@@ -110,6 +112,8 @@ export const appCatalog = sqliteTable("app_catalog", {
   defaultUsername: text("default_username"),
   defaultPassword: text("default_password"),
   webPort: integer("web_port"),
+  /** Umbrel 2.0 manifest metadata as JSON (store-compat migration) */
+  umbrelMeta: text("umbrel_meta"),
 });
 
 export const installedApps = sqliteTable("installed_apps", {
@@ -606,3 +610,4 @@ export const communitySubmissions = sqliteTable("community_submissions", {
 export * from "./schema-trust.js";
 export * from "./schema-ops-updates.js";
 export * from "./schema-backups.js";
+export * from "./schema-store-compat.js";

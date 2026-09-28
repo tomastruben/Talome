@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { runCorePerfMigrations } from "./migrations/core-perf.js";
 import { runTrustMigrations } from "./migrations/trust.js";
 import { runBackupsMigrations } from "./migrations/backups.js";
+import { runStoreCompatMigrations } from "./migrations/store-compat.js";
 
 function recordMigration(version: number, description: string) {
   db.run(sql`INSERT OR IGNORE INTO schema_versions (version, applied_at, description) VALUES (${version}, datetime('now'), ${description})`);
@@ -865,6 +866,7 @@ export function runMigrations() {
   runTrustMigrations();
   runOpsUpdatesMigrations();
   runBackupsMigrations();
+  runStoreCompatMigrations();
 
   // ── Record schema versions ─────────────────────────────────────────────
   recordMigration(1, "Initial schema: users, conversations, messages, settings, audit_log");
@@ -886,6 +888,7 @@ export function runMigrations() {
   recordMigration(16, "Trust: per-token MCP grants, server-issued approvals, actor-aware audit log");
   recordMigration(17, "Ops journal: app_operations, app_operation_events, snapshot rollback state, automation run durability");
   recordMigration(18, "Backups: methods, manifests, verification, per-app config, destinations, restores, GFS retention");
+  recordMigration(19, "Store compat: app_catalog.umbrel_meta, store_sources.last_parsed_rev, app_install_options, catalog store index");
 
   console.log("Database migrations complete");
 }

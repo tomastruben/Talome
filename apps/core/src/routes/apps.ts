@@ -15,6 +15,8 @@ import {
 } from "../stores/lifecycle.js";
 import { installProgress, emitProgress, type InstallProgressEvent } from "../stores/install-emitter.js";
 import { listAppOperations, hasLiveOperation } from "../ops/operations.js";
+import { UmbrelInstallOptionsSchema } from "../stores/umbrel-v2.js";
+import { runWithUmbrelInstallOptions } from "../stores/umbrel-v2-install.js";
 import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus } from "@talome/types";
 import { listContainers } from "../docker/client.js";
 import os from "node:os";
@@ -351,20 +353,22 @@ apps.get("/:storeId/:appId", async (c) => {
 const installSchema = z.object({
   env: z.record(z.string(), z.string()).default({}),
   volumeMounts: z.record(z.string(), z.string()).default({}),
+  /** Umbrel 2.0 choices: folderAccess folders, environment values, data root, dependency providers */
+  umbrel: UmbrelInstallOptionsSchema.optional(),
 });
 
 apps.post("/:storeId/:appId/install", async (c) => {
   const { storeId, appId } = c.req.param();
   const parsed = installSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-  const { env, volumeMounts } = parsed.data;
+  const { env, volumeMounts, umbrel } = parsed.data;
 
   // Don't reset the progress of an install that is already running (double-click, second tab).
   if (!hasLiveOperation(appId)) emitProgress(appId, { stage: "queued", message: "Preparing..." });
 
-  const result = await installApp(appId, storeId, env, volumeMounts, (stage, message) => {
+  const result = await runWithUmbrelInstallOptions(umbrel, () => installApp(appId, storeId, env, volumeMounts, (stage, message) => {
     emitProgress(appId, { stage: stage as InstallProgressEvent["stage"], message });
-  }, { actor: actorFor(c) });
+  }, { actor: actorFor(c) }));
 
   if (!result.success) {
     // On a conflict, do NOT emit into the per-app progress channel: the running

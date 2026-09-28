@@ -1,0 +1,19 @@
+manifestVersion: 1
+id: home-assistant
+category: automation
+name: Home Assistant
+version: "2024.11.3"
+tagline: Home automation that puts local control first
+description: Control and automate your smart home devices.
+developer: Home Assistant
+website: https://home-assistant.io
+dependencies: []
+repo: https://github.com/home-assistant/core
+support: https://community.home-assistant.io
+port: 8123
+gallery:
+  - 1.jpg
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: Umbrel

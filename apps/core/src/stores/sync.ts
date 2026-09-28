@@ -1,14 +1,39 @@
-import { exec as execCb } from "node:child_process";
+import { exec as execCb, execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { db, schema } from "../db/index.js";
-import { eq } from "drizzle-orm";
-import { detectStoreType, getAdapter } from "./adapters/index.js";
+import { eq, sql } from "drizzle-orm";
+import { detectStoreType, getAdapter, type StoreAdapter } from "./adapters/index.js";
 import type { AppManifest, StoreSource, StoreType } from "@talome/types";
 
 const exec = promisify(execCb);
+const execFile = promisify(execFileCb);
+
+/**
+ * Bump when adapter output changes (new fields, parsing fixes) so catalogs
+ * parsed by an older Talome are re-parsed once even if git HEAD is unchanged.
+ */
+export const CATALOG_PARSER_VERSION = "2";
+
+/** Boot sync is skipped when the last successful sync is newer than this. */
+export const BOOT_SYNC_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+export interface StoreSyncResult {
+  success: boolean;
+  appCount: number;
+  error?: string;
+  /** True when git HEAD and parser version were unchanged, so parsing was skipped. */
+  unchanged?: boolean;
+}
+
+export interface SyncStoreOptions {
+  /** Re-parse even when git HEAD and parser version are unchanged. */
+  force?: boolean;
+  /** Re-parse the existing local checkout without git pull (no network). */
+  skipPull?: boolean;
+}
 
 const STORES_CACHE_DIR = join(homedir(), ".talome", "stores");
 
@@ -89,6 +114,7 @@ async function cloneWithBranchFallback(gitUrl: string, localPath: string, prefer
 }
 
 function manifestToRow(m: AppManifest, storeSourceId: string) {
+  const extra = m as AppManifest & { localizedFields?: unknown; umbrelMeta?: unknown };
   return {
     appId: m.id,
     storeSourceId,
@@ -117,14 +143,93 @@ function manifestToRow(m: AppManifest, storeSourceId: string) {
     dependencies: m.dependencies ? JSON.stringify(m.dependencies) : null,
     hooks: m.hooks ? JSON.stringify(m.hooks) : null,
     permissions: m.permissions ? JSON.stringify(m.permissions) : null,
-    localizedFields: (m as unknown as Record<string, unknown>).localizedFields ? JSON.stringify((m as unknown as Record<string, unknown>).localizedFields) : null,
+    localizedFields: extra.localizedFields ? JSON.stringify(extra.localizedFields) : null,
     defaultUsername: m.defaultUsername || null,
     defaultPassword: m.defaultPassword || null,
     webPort: m.webPort || null,
+    umbrelMeta: extra.umbrelMeta ? JSON.stringify(extra.umbrelMeta) : null,
   };
 }
 
-export async function syncStore(storeId: string): Promise<{ success: boolean; appCount: number; error?: string }> {
+/** git HEAD of a local checkout, or null when it is not a git repository. */
+async function readGitHead(storePath: string): Promise<string | null> {
+  if (!existsSync(join(storePath, ".git"))) return null;
+  try {
+    const { stdout } = await execFile("git", ["-C", storePath, "rev-parse", "HEAD"], { timeout: 15_000 });
+    const sha = stdout.trim();
+    return /^[0-9a-f]{7,64}$/i.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Identity of a parse: same HEAD + same adapter + same parser version ⇒ same catalog. */
+export function makeParseRev(gitHead: string, storeType: string): string {
+  return `${gitHead}:${storeType}:v${CATALOG_PARSER_VERSION}`;
+}
+
+/** Catalogs at least this big are checked for sudden drops after a parse. */
+const DROP_CHECK_MIN_ROWS = 20;
+
+/** True when a re-parse returned under half of a sizeable previous catalog. */
+export function isSuspiciousDrop(previous: number, next: number): boolean {
+  return previous >= DROP_CHECK_MIN_ROWS && next * 2 < previous;
+}
+
+function countCatalogRows(storeId: string): number {
+  const row = db
+    .select({ count: sql<number>`count(*)` })
+    .from(schema.appCatalog)
+    .where(eq(schema.appCatalog.storeSourceId, storeId))
+    .get();
+  return row?.count ?? 0;
+}
+
+/** Rows per multi-row INSERT (35 columns × 40 rows stays far below SQLite's variable limit). */
+const CATALOG_INSERT_CHUNK = 40;
+
+/**
+ * Replace a store's catalog rows in ONE transaction: readers never observe a
+ * half-written catalog and ~700 rows commit with a single fsync.
+ * Duplicate app ids keep the first occurrence (matches the old per-row
+ * insert that skipped UNIQUE violations).
+ */
+export function replaceStoreCatalog(storeId: string, manifests: AppManifest[]): number {
+  const seen = new Set<string>();
+  const rows: ReturnType<typeof manifestToRow>[] = [];
+  for (const m of manifests) {
+    if (!m?.id || seen.has(m.id)) continue;
+    seen.add(m.id);
+    rows.push(manifestToRow(m, storeId));
+  }
+
+  let inserted = 0;
+  db.transaction((tx) => {
+    tx.delete(schema.appCatalog).where(eq(schema.appCatalog.storeSourceId, storeId)).run();
+    for (let i = 0; i < rows.length; i += CATALOG_INSERT_CHUNK) {
+      const chunk = rows.slice(i, i + CATALOG_INSERT_CHUNK);
+      try {
+        tx.insert(schema.appCatalog).values(chunk).run();
+        inserted += chunk.length;
+      } catch {
+        // A malformed row fails its whole chunk — fall back to row-by-row so
+        // only the bad entry is skipped (a failed statement does not abort
+        // the surrounding transaction in SQLite).
+        for (const row of chunk) {
+          try {
+            tx.insert(schema.appCatalog).values(row).run();
+            inserted++;
+          } catch {
+            // Skip malformed entries
+          }
+        }
+      }
+    }
+  });
+  return inserted;
+}
+
+export async function syncStore(storeId: string, options: SyncStoreOptions = {}): Promise<StoreSyncResult> {
   const source = db
     .select()
     .from(schema.storeSources)
@@ -140,7 +245,7 @@ export async function syncStore(storeId: string): Promise<{ success: boolean; ap
 
     try {
       if (existsSync(join(storePath, ".git"))) {
-        await gitCloneOrPull(source.gitUrl, storePath, source.branch);
+        if (!options.skipPull) await gitCloneOrPull(source.gitUrl, storePath, source.branch);
       } else {
         const resolvedBranch = await cloneWithBranchFallback(source.gitUrl, storePath, source.branch);
         if (resolvedBranch !== source.branch) {
@@ -180,51 +285,76 @@ export async function syncStore(storeId: string): Promise<{ success: boolean; ap
       .where(eq(schema.storeSources.id, storeId))
       .run();
 
-    return syncStoreWithAdapter(storeId, storePath, source, detectedAdapter);
+    return syncStoreWithAdapter(storeId, storePath, source, detectedAdapter, options);
   }
 
-  return syncStoreWithAdapter(storeId, storePath, source, adapter);
+  return syncStoreWithAdapter(storeId, storePath, source, adapter, options);
 }
 
-function syncStoreWithAdapter(
+async function syncStoreWithAdapter(
   storeId: string,
   storePath: string,
-  source: { id: string; type: string; name: string; gitUrl: string | null; branch: string; localPath: string | null },
-  adapter: { parse: (path: string, storeId: string, source?: StoreSource) => AppManifest[] },
-): { success: boolean; appCount: number; error?: string } {
-  let manifests: AppManifest[];
-  try {
-    manifests = adapter.parse(storePath, storeId, source as StoreSource);
-  } catch (err: any) {
-    return { success: false, appCount: 0, error: `Parse failed: ${err.message}` };
-  }
+  source: typeof schema.storeSources.$inferSelect,
+  adapter: StoreAdapter,
+  options: SyncStoreOptions,
+): Promise<StoreSyncResult> {
+  const head = await readGitHead(storePath);
+  const parseRev = head ? makeParseRev(head, adapter.type) : null;
 
-  db.delete(schema.appCatalog)
-    .where(eq(schema.appCatalog.storeSourceId, storeId))
-    .run();
-
-  for (const m of manifests) {
-    try {
-      db.insert(schema.appCatalog)
-        .values(manifestToRow(m, storeId))
+  // Unchanged checkout + unchanged parser ⇒ the catalog is already current.
+  // An empty catalog is always re-parsed: it can only come from a bad parse.
+  const existing = countCatalogRows(storeId);
+  if (!options.force && parseRev && source.lastParsedRev === parseRev) {
+    if (existing > 0) {
+      db.update(schema.storeSources)
+        .set({ lastSyncedAt: new Date().toISOString(), appCount: existing })
+        .where(eq(schema.storeSources.id, storeId))
         .run();
-    } catch {
-      // Skip duplicates or malformed entries
+      return { success: true, appCount: existing, unchanged: true };
     }
   }
+
+  let manifests: AppManifest[];
+  try {
+    manifests = adapter.parseAsync
+      ? await adapter.parseAsync(storePath, storeId, source as StoreSource)
+      : adapter.parse(storePath, storeId, source as StoreSource);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, appCount: 0, error: `Parse failed: ${message}` };
+  }
+
+  // A parse that finds nothing (unreadable checkout, adapter failure) must not
+  // wipe a working catalog — keep what we have and try again next sync.
+  if (manifests.length === 0 && existing > 0) {
+    return {
+      success: false,
+      appCount: existing,
+      error: "Parse found no apps; keeping the existing catalog",
+    };
+  }
+
+  const appCount = replaceStoreCatalog(storeId, manifests);
+
+  // Only remember this parse (and so skip the next one) when it looks
+  // complete: an empty result or a sudden drop to under half the previous
+  // catalog is re-parsed on the next sync instead of sticking until upstream
+  // HEAD moves.
+  const suspicious = appCount === 0 || isSuspiciousDrop(existing, appCount);
 
   db.update(schema.storeSources)
     .set({
       lastSyncedAt: new Date().toISOString(),
-      appCount: manifests.length,
+      appCount,
+      lastParsedRev: suspicious ? null : parseRev,
     })
     .where(eq(schema.storeSources.id, storeId))
     .run();
 
-  return { success: true, appCount: manifests.length };
+  return { success: true, appCount };
 }
 
-export async function syncAllStores(): Promise<Record<string, { success: boolean; appCount: number; error?: string }>> {
+export async function syncAllStores(options: SyncStoreOptions = {}): Promise<Record<string, StoreSyncResult>> {
   const sources = db
     .select()
     .from(schema.storeSources)
@@ -233,12 +363,12 @@ export async function syncAllStores(): Promise<Record<string, { success: boolean
 
   const settled = await Promise.allSettled(
     sources.map(async (source) => {
-      const result = await syncStore(source.id);
+      const result = await syncStore(source.id, options);
       return [source.id, result] as const;
     }),
   );
 
-  const results: Record<string, { success: boolean; appCount: number; error?: string }> = {};
+  const results: Record<string, StoreSyncResult> = {};
   for (const entry of settled) {
     if (entry.status === "fulfilled") {
       const [id, result] = entry.value;
@@ -296,7 +426,37 @@ export function removeStore(storeId: string): void {
     .run();
 }
 
-export function initializeStores(): void {
+export type BootSyncAction = "skip" | "reparse" | "sync";
+
+/**
+ * Decide what a store needs at boot:
+ * - `sync`    — never synced, stale (≥ 24h), empty, or forced: git pull + parse
+ * - `reparse` — synced recently but by an older parser: re-parse the local
+ *               checkout without touching the network
+ * - `skip`    — synced recently by the current parser
+ */
+export function planBootSync(
+  source: { lastSyncedAt: string | null; lastParsedRev: string | null; appCount: number; gitUrl: string | null },
+  now: number = Date.now(),
+  force = false,
+): BootSyncAction {
+  if (force || !source.lastSyncedAt) return "sync";
+  const last = Date.parse(source.lastSyncedAt);
+  if (Number.isNaN(last) || now - last >= BOOT_SYNC_MAX_AGE_MS || last > now + 60_000) return "sync";
+  if (source.appCount === 0) return "sync";
+  if (!source.lastParsedRev?.endsWith(`:v${CATALOG_PARSER_VERSION}`)) {
+    // Local-path stores have no git HEAD; re-parsing them is always local.
+    return "reparse";
+  }
+  return "skip";
+}
+
+function isForcedBootSync(): boolean {
+  const flag = process.env.TALOME_FORCE_STORE_SYNC;
+  return flag === "1" || flag === "true";
+}
+
+export function initializeStores(options: { force?: boolean } = {}): void {
   // One-time cleanup for legacy local built-in store rows.
   const legacyBuiltinStores = db
     .select()
@@ -309,18 +469,35 @@ export function initializeStores(): void {
 
   ensureDefaultStores();
 
-  // Warm/sync all enabled stores on startup so branch fallbacks are resolved
-  // early and startup issues become visible in logs.
-  syncAllStores()
-    .then((results) => {
-      for (const [storeId, result] of Object.entries(results)) {
-        if (!result.success) {
-          console.error(`[stores] Startup sync failed for ${storeId}: ${result.error ?? "Unknown error"}`);
-        }
+  // Sync on startup only what needs it: a recent catalog is served as-is, so
+  // boot no longer pulls and re-parses ~700 app directories every time.
+  // Set TALOME_FORCE_STORE_SYNC=1 (or pass force) to sync everything.
+  const force = options.force === true || isForcedBootSync();
+  const sources = db
+    .select()
+    .from(schema.storeSources)
+    .where(eq(schema.storeSources.enabled, true))
+    .all();
+
+  const now = Date.now();
+  const work = sources
+    .map((source) => ({ source, action: planBootSync(source, now, force) }))
+    .filter((w) => w.action !== "skip");
+
+  if (work.length === 0) {
+    console.log(`[stores] Catalog is fresh (< 24h) — skipping startup sync for ${sources.length} store(s)`);
+    return;
+  }
+
+  Promise.allSettled(
+    work.map(async ({ source, action }) => {
+      const result = await syncStore(source.id, { force, skipPull: action === "reparse" });
+      if (!result.success) {
+        console.error(`[stores] Startup sync failed for ${source.id}: ${result.error ?? "Unknown error"}`);
       }
-    })
-    .catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[stores] Startup sync-all failed: ${message}`);
-    });
+    }),
+  ).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[stores] Startup sync-all failed: ${message}`);
+  });
 }

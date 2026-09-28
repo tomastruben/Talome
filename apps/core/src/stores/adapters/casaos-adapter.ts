@@ -1,8 +1,9 @@
-import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync, type Dirent } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
 import yaml from "js-yaml";
 import type { AppManifest, AppPort, AppEnvVar, AppVolume } from "@talome/types";
-import { type StoreAdapter, inferMediaVolume } from "./types.js";
+import { type StoreAdapter, inferMediaVolume, yieldToEventLoop, PARSE_YIELD_EVERY } from "./types.js";
 
 // ── Docker Compose YAML interfaces ────────────────────────────────────────────
 
@@ -268,6 +269,113 @@ function inferPermissionsFromCompose(compose: DockerComposeDocument): AppManifes
   return hasAny ? result : undefined;
 }
 
+/**
+ * Build a Talome manifest from one CasaOS app directory's already-read files.
+ * Returns null for directories that are not valid CasaOS apps.
+ */
+function buildCasaosApp(entry: string, appDir: string, files: string[], raw: string, storeId: string): AppManifest | null {
+  const composePath = join(appDir, "docker-compose.yml");
+  const compose = yaml.load(raw) as DockerComposeDocument;
+  if (!compose) return null;
+
+  const { appLevel, mainService, services } = extractCasaOSMetadata(compose);
+
+  const appId = compose.name || entry.toLowerCase().replace(/\s+/g, "-");
+  const mainSvcName = mainService || Object.keys(services)[0];
+  const mainSvc = services[mainSvcName];
+
+  if (!mainSvc) return null;
+
+  const ports = parsePorts(mainSvc);
+  const volumes = parseVolumes(mainSvc, mainSvc.xcasaos);
+  const envVars = parseEnvVars(mainSvc, mainSvc.xcasaos);
+
+  const iconPath = join(appDir, "icon.png");
+  const iconUrl = appLevel.icon || (files.includes("icon.png") ? `/api/apps/store-asset?path=${encodeURIComponent(iconPath)}` : undefined);
+
+  const localScreenshots: string[] = [];
+  for (const f of files) {
+    if (f.startsWith("screenshot") && (f.endsWith(".png") || f.endsWith(".jpg"))) {
+      localScreenshots.push(`/api/apps/store-asset?path=${encodeURIComponent(join(appDir, f))}`);
+    }
+  }
+
+  // CasaOS provides richer remote asset metadata; prefer it over local files
+  // to keep screenshots visible in the dashboard.
+  const remoteScreenshots = toStringArray(appLevel.screenshot_link);
+  const screenshots = remoteScreenshots.length > 0 ? remoteScreenshots : localScreenshots;
+  const thumbnail = typeof appLevel.thumbnail === "string" && appLevel.thumbnail.length > 0
+    ? appLevel.thumbnail
+    : undefined;
+  const coverUrl = thumbnail || screenshots.find((s) => !s.startsWith("file://"));
+  const installNotes = getLocalized(appLevel?.tips?.before_install) || undefined;
+
+  const portMap = appLevel.port_map;
+  let webPort: number | undefined;
+  if (portMap) {
+    const parsed = parseInt(String(portMap).replace(/\$\{.*\}/, ""));
+    if (!isNaN(parsed)) webPort = parsed;
+  }
+  if (!webPort && ports.length > 0) {
+    webPort = ports[0].host;
+  }
+
+  const localizedFields = extractLocalizedFields(appLevel);
+  const permissions = inferPermissionsFromCompose(compose);
+
+  return {
+    id: appId,
+    name: getLocalized(appLevel.title) || entry,
+    version: mainSvc.image?.split(":")[1]?.split("@")[0] || "latest",
+    tagline: getLocalized(appLevel.tagline) || "",
+    description: getLocalized(appLevel.description) || "",
+    releaseNotes: undefined,
+    icon: "📦",
+    iconUrl: typeof iconUrl === "string" ? iconUrl : undefined,
+    screenshots: screenshots.length > 0 ? screenshots : undefined,
+    coverUrl,
+    category: (appLevel.category || "other").toLowerCase(),
+    author: appLevel.author || appLevel.developer || "Unknown",
+    website: undefined,
+    repo: undefined,
+    installNotes,
+    source: "casaos",
+    storeId,
+    composePath,
+    image: mainSvc.image,
+    ports,
+    volumes,
+    env: envVars,
+    architectures: appLevel.architectures,
+    dependencies: undefined,
+    permissions,
+    webPort,
+    localizedFields,
+  } as AppManifest & { localizedFields?: Record<string, Record<string, string>> };
+}
+
+async function findAppsDirAsync(storePath: string): Promise<string | null> {
+  for (const dir of ["Apps", "apps"]) {
+    const full = join(storePath, dir);
+    try {
+      if ((await stat(full)).isDirectory()) return full;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+async function isDirectoryEntry(parent: string, dirent: Dirent): Promise<boolean> {
+  if (dirent.isDirectory()) return true;
+  if (!dirent.isSymbolicLink()) return false;
+  try {
+    return (await stat(join(parent, dirent.name))).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export const casaosAdapter: StoreAdapter = {
   type: "casaos",
 
@@ -293,90 +401,44 @@ export const casaosAdapter: StoreAdapter = {
         const appDir = join(appsDir, entry);
         if (!statSync(appDir).isDirectory()) continue;
 
-        const composePath = join(appDir, "docker-compose.yml");
-        if (!existsSync(composePath)) continue;
+        const files = readdirSync(appDir);
+        if (!files.includes("docker-compose.yml")) continue;
 
-        const raw = readFileSync(composePath, "utf-8");
-        const compose = yaml.load(raw) as DockerComposeDocument;
-        if (!compose) continue;
+        const raw = readFileSync(join(appDir, "docker-compose.yml"), "utf-8");
+        const manifest = buildCasaosApp(entry, appDir, files, raw, storeId);
+        if (manifest) results.push(manifest);
+      } catch {
+        // Skip malformed apps
+      }
+    }
 
-        const { appLevel, mainService, services } = extractCasaOSMetadata(compose);
+    return results;
+  },
 
-        const appId = compose.name || entry.toLowerCase().replace(/\s+/g, "-");
-        const mainSvcName = mainService || Object.keys(services)[0];
-        const mainSvc = services[mainSvcName];
+  async parseAsync(storePath: string, storeId: string): Promise<AppManifest[]> {
+    const appsDir = await findAppsDirAsync(storePath);
+    if (!appsDir) return [];
 
-        if (!mainSvc) continue;
+    let entries: Dirent[];
+    try {
+      entries = await readdir(appsDir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
 
-        const ports = parsePorts(mainSvc);
-        const volumes = parseVolumes(mainSvc, mainSvc.xcasaos);
-        const envVars = parseEnvVars(mainSvc, mainSvc.xcasaos);
+    const results: AppManifest[] = [];
+    let processed = 0;
+    for (const dirent of entries) {
+      if (++processed % PARSE_YIELD_EVERY === 0) await yieldToEventLoop();
+      try {
+        if (!(await isDirectoryEntry(appsDir, dirent))) continue;
+        const appDir = join(appsDir, dirent.name);
+        const files = await readdir(appDir);
+        if (!files.includes("docker-compose.yml")) continue;
 
-        const iconPath = join(appDir, "icon.png");
-        const iconUrl = appLevel.icon || (existsSync(iconPath) ? `/api/apps/store-asset?path=${encodeURIComponent(iconPath)}` : undefined);
-
-        const localScreenshots: string[] = [];
-        try {
-          const files = readdirSync(appDir);
-          for (const f of files) {
-            if (f.startsWith("screenshot") && (f.endsWith(".png") || f.endsWith(".jpg"))) {
-              localScreenshots.push(`/api/apps/store-asset?path=${encodeURIComponent(join(appDir, f))}`);
-            }
-          }
-        } catch { /* ignore */ }
-
-        // CasaOS provides richer remote asset metadata; prefer it over local files
-        // to keep screenshots visible in the dashboard.
-        const remoteScreenshots = toStringArray(appLevel.screenshot_link);
-        const screenshots = remoteScreenshots.length > 0 ? remoteScreenshots : localScreenshots;
-        const thumbnail = typeof appLevel.thumbnail === "string" && appLevel.thumbnail.length > 0
-          ? appLevel.thumbnail
-          : undefined;
-        const coverUrl = thumbnail || screenshots.find((s) => !s.startsWith("file://"));
-        const installNotes = getLocalized(appLevel?.tips?.before_install) || undefined;
-
-        const portMap = appLevel.port_map;
-        let webPort: number | undefined;
-        if (portMap) {
-          const parsed = parseInt(String(portMap).replace(/\$\{.*\}/, ""));
-          if (!isNaN(parsed)) webPort = parsed;
-        }
-        if (!webPort && ports.length > 0) {
-          webPort = ports[0].host;
-        }
-
-        const localizedFields = extractLocalizedFields(appLevel);
-        const permissions = inferPermissionsFromCompose(compose);
-
-        results.push({
-          id: appId,
-          name: getLocalized(appLevel.title) || entry,
-          version: mainSvc.image?.split(":")[1]?.split("@")[0] || "latest",
-          tagline: getLocalized(appLevel.tagline) || "",
-          description: getLocalized(appLevel.description) || "",
-          releaseNotes: undefined,
-          icon: "📦",
-          iconUrl: typeof iconUrl === "string" ? iconUrl : undefined,
-          screenshots: screenshots.length > 0 ? screenshots : undefined,
-          coverUrl,
-          category: (appLevel.category || "other").toLowerCase(),
-          author: appLevel.author || appLevel.developer || "Unknown",
-          website: undefined,
-          repo: undefined,
-          installNotes,
-          source: "casaos",
-          storeId,
-          composePath,
-          image: mainSvc.image,
-          ports,
-          volumes,
-          env: envVars,
-          architectures: appLevel.architectures,
-          dependencies: undefined,
-          permissions,
-          webPort,
-          localizedFields,
-        } as AppManifest & { localizedFields?: Record<string, Record<string, string>> });
+        const raw = await readFile(join(appDir, "docker-compose.yml"), "utf-8");
+        const manifest = buildCasaosApp(dirent.name, appDir, files, raw, storeId);
+        if (manifest) results.push(manifest);
       } catch {
         // Skip malformed apps
       }

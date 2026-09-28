@@ -1,0 +1,19 @@
+manifestVersion: 1
+id: jellyfin
+category: media
+name: Jellyfin
+version: "10.10.3"
+tagline: The free software media system
+description: Stream your movies, shows and music to any device.
+developer: Jellyfin
+website: https://jellyfin.org
+dependencies: []
+repo: https://github.com/jellyfin/jellyfin
+support: https://github.com/jellyfin/jellyfin/issues
+port: 8096
+gallery:
+  - 1.jpg
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: Umbrel
