@@ -15,10 +15,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
 import { MediaCodeTag } from "./media-code-tag";
 import { HugeiconsIcon, ArrowLeft02Icon, ArrowRight02Icon } from "@/components/icons";
 import {
@@ -33,7 +29,8 @@ import {
 import { Streamdown } from "streamdown";
 import { useRouter } from "next/navigation";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
-import { useContainers } from "@/hooks/use-containers";
+import { useContainerLookup } from "@/hooks/use-containers";
+import { useStreamdownPlugins } from "@/lib/streamdown-plugins";
 import type { Container } from "@talome/types";
 import { motion, useReducedMotion } from "motion/react";
 
@@ -328,8 +325,6 @@ export const MessageBranchPage = ({
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mermaid version mismatch between @streamdown/mermaid and fumadocs-mermaid
-const streamdownPlugins = { cjk, code, math, mermaid } as any;
 const streamdownControls = { code: false, table: false } as const;
 const MEDIA_TOOL_NAMES = new Set([
   "search_media",
@@ -393,7 +388,8 @@ function MessageLink({
   children,
   ...props
 }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
-  const { containers } = useContainers();
+  // Non-polling, deduped lookup — links only need names/ports to resolve.
+  const { containers } = useContainerLookup();
   const quickLook = useQuickLook();
   const router = useRouter();
 
@@ -450,6 +446,8 @@ function inferToolIntent(toolContextNames?: string[]): ToolIntent {
 export const MessageResponse = memo(
   ({ className, toolContextNames, ...props }: MessageResponseProps & { toolContextNames?: string[] }) => {
     const toolIntent = useMemo(() => inferToolIntent(toolContextNames), [toolContextNames]);
+    // Plugins (shiki / KaTeX / mermaid / CJK) load on demand for content that needs them.
+    const streamdownPlugins = useStreamdownPlugins(props.children);
     const streamdownComponents = useMemo(
       () => ({
         code: (codeProps: ComponentPropsWithoutRef<"code"> & { node?: unknown }) => (

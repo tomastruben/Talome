@@ -1,13 +1,14 @@
 "use client";
 
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSetAtom } from "jotai";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { pageBackAtom } from "@/atoms/page-back";
 import { CORE_URL, getDirectCoreUrl, resolvePosterUrl, resolveBackdropUrl } from "@/lib/constants";
-import { VideoPlayer } from "@/components/files/media-player";
+import { optimizationJobsRefreshInterval } from "@/lib/polling";
 import { EpisodeBrowser } from "@/components/media/episode-browser";
 import {
   type MediaItem,
@@ -68,6 +69,13 @@ import { cn } from "@/lib/utils";
 import useSWR from "swr";
 import type { DownloadQueueItem } from "@talome/types";
 
+// The player (hls.js) only loads once playback starts; it renders inside a
+// fixed aspect-video box, so there is no layout shift while it loads.
+const VideoPlayer = dynamic(
+  () => import("@/components/files/media-player").then((m) => ({ default: m.VideoPlayer })),
+  { ssr: false },
+);
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatRuntime(runtime: string | null | undefined): string {
@@ -113,7 +121,8 @@ function FormatBadge({ format, filePath }: { format: string | null | undefined; 
   const { data: jobsData, mutate: mutateJobs } = useSWR<{ jobs: Array<{ id: string; sourcePath: string; status: string; progress: number; priority: number; error: string | null }> }>(
     filePath ? `${getDirectCoreUrl()}/api/optimization/jobs` : null,
     (url: string) => fetch(url, { credentials: "include" }).then(r => r.json()),
-    { refreshInterval: 3000 },
+    // 3s while a job is running/queued, 30s when idle
+    { refreshInterval: (data) => optimizationJobsRefreshInterval(data) },
   );
   const fileBasename = filePath?.split("/").pop()?.toLowerCase() ?? null;
   const fileJob = jobsData?.jobs?.find((j) => {

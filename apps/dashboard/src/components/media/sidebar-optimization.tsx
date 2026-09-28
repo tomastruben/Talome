@@ -12,6 +12,7 @@ import {
 import { SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDirectCoreUrl } from "@/lib/constants";
+import { pickPollInterval, useVisibleInterval } from "@/lib/polling";
 import type { OptimizationJob, OptimizationConfig } from "@talome/types";
 
 /**
@@ -51,9 +52,17 @@ export function SidebarOptimization() {
   useEffect(() => {
     void fetchJobs();
     void fetchConfig();
-    const interval = setInterval(() => { void fetchJobs(); void fetchConfig(); }, 3000);
-    return () => clearInterval(interval);
   }, [fetchJobs, fetchConfig]);
+
+  // Mounted on every page: poll every 3s only while conversions are active,
+  // every 30s otherwise; paused while the tab is hidden.
+  const hasActiveJobs = totalActive > 0;
+  const pollTick = useCallback(() => {
+    void fetchJobs();
+    // Pause state only matters while the widget is visible (jobs active).
+    if (hasActiveJobs) void fetchConfig();
+  }, [fetchJobs, fetchConfig, hasActiveJobs]);
+  useVisibleInterval(pollTick, pickPollInterval(hasActiveJobs));
 
   // Reset dismissed when new jobs appear
   useEffect(() => {

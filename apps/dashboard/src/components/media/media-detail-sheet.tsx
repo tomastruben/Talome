@@ -44,6 +44,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { CORE_URL, getDirectCoreUrl, resolvePosterUrl } from "@/lib/constants";
+import { optimizationJobsRefreshInterval } from "@/lib/polling";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useDownloads } from "@/hooks/use-downloads";
 import { cn } from "@/lib/utils";
@@ -212,7 +213,8 @@ function FormatStatRow({ container, filePath, codec, audioCodec }: {
   const { data: jobsData, mutate: mutateJobs } = useSWR<{ jobs: Array<{ id: string; sourcePath: string; targetPath?: string; status: string; progress: number; priority: number; error?: string | null }> }>(
     filePath ? `${getDirectCoreUrl()}/api/optimization/jobs` : null,
     (url: string) => fetch(url, { credentials: "include" }).then(r => r.json()),
-    { refreshInterval: 3000 },
+    // 3s while a job is running/queued, 30s when idle
+    { refreshInterval: (data) => optimizationJobsRefreshInterval(data) },
   );
   // Match by basename — host paths (stored in job) differ from container paths (from Radarr)
   const fileBasename = filePath?.split("/").pop()?.toLowerCase() ?? null;

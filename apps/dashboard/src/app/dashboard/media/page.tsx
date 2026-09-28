@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR from "swr";
 import { CORE_URL, resolvePosterUrl } from "@/lib/constants";
+import { optimizationJobsRefreshInterval } from "@/lib/polling";
 import { SearchField } from "@/components/ui/search-field";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -818,7 +819,8 @@ function MediaPageInner({
   const { data: optJobsData } = useSWR<{ jobs: Array<{ sourcePath: string; status: string; progress: number }> }>(
     `${CORE_URL}/api/optimization/jobs?status=running,queued,completed`,
     fetcher,
-    { refreshInterval: 3000 }
+    // 3s while a job is running/queued, 30s when idle
+    { refreshInterval: (data) => optimizationJobsRefreshInterval(data) }
   );
   const stemOf = (p: string) => {
     const name = p.split("/").pop() ?? "";

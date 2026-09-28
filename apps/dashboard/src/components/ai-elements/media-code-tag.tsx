@@ -1,9 +1,9 @@
 "use client";
 
 import type { ComponentPropsWithoutRef } from "react";
-import { useMediaDetail } from "@/components/media/media-detail-context";
+import { useMediaDetail, useMediaLibraryDemand } from "@/components/media/media-detail-context";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
-import { useContainers } from "@/hooks/use-containers";
+import { useContainerLookup } from "@/hooks/use-containers";
 import { cn } from "@/lib/utils";
 
 type CodeProps = ComponentPropsWithoutRef<"code"> & {
@@ -76,10 +76,15 @@ function isLikelyMediaReference(title: string, inLibrary: boolean): boolean {
 export function MediaCodeTag({ className, children, toolIntent = "unknown", ...props }: CodeProps) {
   const { openDetail, findItem } = useMediaDetail();
   const quickLook = useQuickLook();
-  const { containers } = useContainers();
 
   const isBlock = className?.startsWith("language-");
   const title = typeof children === "string" ? children : "";
+  const isInlineTag = !isBlock && !!title;
+
+  // Only inline code tags need the lookups; both are shared, non-polling
+  // (containers) or demand-driven (media library) so chat doesn't poll.
+  const { containers } = useContainerLookup(isInlineTag);
+  useMediaLibraryDemand(isInlineTag);
 
   if (isBlock || !title) {
     return <code className={className} {...props}>{children}</code>;

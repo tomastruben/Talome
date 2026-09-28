@@ -17,11 +17,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { ErrorState } from "@/components/ui/empty-state";
 import { CORE_URL } from "@/lib/constants";
+import { hasTransitionalInstall, pickPollInterval, POLL_ACTIVE_MS } from "@/lib/polling";
 import type { CatalogApp, StoreSource, StackListItem } from "@talome/types";
 
 type Tab = "all" | "installed" | string;
 
 const PAGE_CHUNK = 60;
+/** Don't refetch the multi-MB catalog more than once per this window. */
+const CATALOG_DEDUPE_MS = 5 * 60 * 1000;
 
 function sourceLabel(type: string) {
   if (type === "casaos") return "CasaOS";
@@ -95,11 +98,22 @@ function AppsPageContent() {
   const jsonFetcher = useCallback((url: string) => fetch(url).then((r) => r.ok ? r.json() : Promise.reject(new Error("fetch failed"))), []);
   const swrOpts = { revalidateOnFocus: true, revalidateOnReconnect: true, keepPreviousData: true } as const;
 
+  // The full catalog is several MB and changes rarely — don't refetch it on
+  // every window focus or remount within a few minutes (explicit retries and
+  // mutations still refresh it).
   const { data: apps = [], mutate: mutateApps, error: appsError } = useSWR<CatalogApp[]>(
-    `${CORE_URL}/api/apps?limit=2000`, jsonFetcher, swrOpts,
+    `${CORE_URL}/api/apps?limit=2000`, jsonFetcher,
+    { ...swrOpts, revalidateOnFocus: false, dedupingInterval: CATALOG_DEDUPE_MS },
   );
+  // Installed tab: poll fast only while an install/update is in progress.
   const { data: installedApps = [], mutate: mutateInstalled } = useSWR<CatalogApp[]>(
-    `${CORE_URL}/api/apps/installed`, jsonFetcher, swrOpts,
+    `${CORE_URL}/api/apps/installed`, jsonFetcher,
+    {
+      ...swrOpts,
+      refreshInterval: tab === "installed"
+        ? (data?: CatalogApp[]) => pickPollInterval(hasTransitionalInstall(data), { fast: POLL_ACTIVE_MS })
+        : 0,
+    },
   );
   const { data: stores = [] } = useSWR<StoreSource[]>(
     `${CORE_URL}/api/stores`, jsonFetcher, swrOpts,
@@ -153,12 +167,6 @@ function AppsPageContent() {
       cancelled = true;
     };
   }, [tab, sourceCache]);
-
-  useEffect(() => {
-    if (tab !== "installed") return;
-    const interval = setInterval(() => { void mutateInstalled(); }, 5000);
-    return () => clearInterval(interval);
-  }, [tab, mutateInstalled]);
 
   const SOURCE_TAB_ORDER: Record<string, number> = { umbrel: 0, talome: 1, casaos: 2, "user-created": 3 };
   const sourceTypes = useMemo(

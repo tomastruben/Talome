@@ -24,7 +24,8 @@ function renderInlineBold(text: string): ReactNode {
  * Renders nothing — this is a behaviour-only component.
  */
 export function NotificationToastBridge() {
-  const { notifications, isMuted } = useNotifications();
+  // The always-mounted bridge is the single notifications poller.
+  const { notifications, isMuted } = useNotifications({ poll: true });
   const seenIds = useRef<Set<number>>(new Set());
   const initialized = useRef(false);
 

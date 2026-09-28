@@ -10,6 +10,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { formatBytes, relativeTime } from "@/lib/format";
 import { CORE_URL } from "@/lib/constants";
+import { optimizationJobsRefreshInterval, POLL_ACTIVE_MS } from "@/lib/polling";
 import { Widget, WidgetHeader } from "./widget";
 import { WidgetList } from "./list-widget";
 import { useAssistant } from "@/components/assistant/assistant-context";
@@ -390,11 +391,14 @@ export function OptimizationWidget({
 }: {
   mode?: "compact" | "summary" | "detail";
 }) {
-  // Active jobs — fast poll when active, slow when idle
+  // Active jobs — fast poll (5s) when a job is running/queued, slow (30s) when idle
   const { data: jobsData } = useSWR<{ jobs: OptimizationJob[] }>(
     `${CORE_URL}/api/optimization/jobs`,
     fetcher,
-    { refreshInterval: 5000, dedupingInterval: 3000 },
+    {
+      refreshInterval: (data) => optimizationJobsRefreshInterval(data, { fast: POLL_ACTIVE_MS }),
+      dedupingInterval: 3000,
+    },
   );
 
   const allJobs = jobsData?.jobs ?? [];

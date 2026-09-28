@@ -14,6 +14,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import useSWR, { mutate } from "swr";
 import { CORE_URL, getDirectCoreUrl } from "@/lib/constants";
+import { POLL_SLOW_MS } from "@/lib/polling";
 import type { FileUIPart, UIMessage } from "ai";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -254,10 +255,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     openPaletteRef.current?.(prefill);
   }, []);
 
+  // Local changes (new conversation, title, delete) call mutate() directly;
+  // polling only picks up changes made elsewhere, so it can be slow.
   const { data: conversationList } = useSWR<ConversationItem[]>(
     `${CORE_URL}/api/conversations`,
     fetcher,
-    { refreshInterval: 10000 }
+    { refreshInterval: POLL_SLOW_MS }
   );
 
   const { data: storedMessages } = useSWR<StoredMessage[]>(

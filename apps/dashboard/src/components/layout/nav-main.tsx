@@ -12,11 +12,14 @@ import {
 import { HugeiconsIcon } from "@/components/icons";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { useBugHunt } from "@/components/bug-hunt/bug-hunt-context";
-import { useDownloads } from "@/hooks/use-downloads";
+import { adaptiveDownloadsInterval, useDownloads } from "@/hooks/use-downloads";
 import { useUser } from "@/hooks/use-user";
 import { CORE_URL } from "@/lib/constants";
 import { startNav, contentNav, operationsNav, systemNav } from "./nav-config";
 import type { NavItem } from "./nav-config";
+
+/** Nav download badge: 10s while something is downloading, 30s otherwise. */
+const NAV_DOWNLOADS_INTERVAL = adaptiveDownloadsInterval(10_000);
 
 function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStreaming, isIntelligenceActive, onAction }: {
   item: NavItem;
@@ -81,7 +84,8 @@ function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStrea
 
 export function NavMain() {
   const pathname = usePathname();
-  const { totalCount, isActivelyDownloading } = useDownloads(10000);
+  // 10s while something is downloading, 30s otherwise
+  const { totalCount, isActivelyDownloading } = useDownloads(NAV_DOWNLOADS_INTERVAL);
   const { status: aiStatus } = useAssistant();
   const isStreaming = aiStatus === "streaming" || aiStatus === "submitted";
   const { isAdmin, hasPermission } = useUser();

@@ -332,19 +332,62 @@ function saveLayout(layout: WidgetInstance[]) {
   });
 }
 
-export function useWidgetLayout() {
+/** Cross-device layout sync cadence (same-tab changes propagate instantly). */
+export const WIDGET_LAYOUT_SYNC_INTERVAL_MS = 60_000;
+/** Skip a focus/visibility-triggered sync if one ran this recently. */
+const WIDGET_LAYOUT_SYNC_MIN_GAP_MS = 2_000;
+/** Same-tab broadcast so every useWidgetLayout instance sees local edits. */
+const LAYOUT_CHANGE_EVENT = "talome:widget-layout-change";
+
+interface LayoutChangeDetail {
+  source: symbol;
+  layout: WidgetInstance[];
+}
+
+export interface UseWidgetLayoutOptions {
+  /**
+   * Poll the server for layout changes made on other devices (default true).
+   * Instances that only trigger edits (e.g. header controls) pass false and
+   * rely on the same-tab broadcast from the instance that syncs.
+   */
+  remoteSync?: boolean;
+}
+
+export function useWidgetLayout(options: UseWidgetLayoutOptions = {}) {
+  const { remoteSync = true } = options;
   const [layout, setLayout] = useState<WidgetInstance[]>(() => loadLayout());
   const lastLocalWriteAtRef = useRef(0);
+  const [instanceId] = useState(() => Symbol("widget-layout"));
 
   const persistLayout = useCallback((next: WidgetInstance[]) => {
     lastLocalWriteAtRef.current = Date.now();
     saveLayout(next);
-  }, []);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent<LayoutChangeDetail>(LAYOUT_CHANGE_EVENT, { detail: { source: instanceId, layout: next } }),
+      );
+    }
+  }, [instanceId]);
+
+  // Apply layout edits made by other instances in this tab (e.g. header reset).
+  useEffect(() => {
+    const onChange = (event: Event) => {
+      const detail = (event as CustomEvent<LayoutChangeDetail>).detail;
+      if (!detail || detail.source === instanceId) return;
+      lastLocalWriteAtRef.current = Date.now();
+      setLayout(detail.layout);
+    };
+    window.addEventListener(LAYOUT_CHANGE_EVENT, onChange);
+    return () => window.removeEventListener(LAYOUT_CHANGE_EVENT, onChange);
+  }, [instanceId]);
 
   useEffect(() => {
+    if (!remoteSync) return;
     let cancelled = false;
+    let lastSyncAt = 0;
 
     const syncFromServer = async () => {
+      lastSyncAt = Date.now();
       try {
         const res = await fetch(`${CORE_URL}/api/widgets/layout`, { cache: "no-store", credentials: "include" });
         if (!res.ok) return;
@@ -371,15 +414,21 @@ export function useWidgetLayout() {
       }
     };
 
+    // Focus and visibilitychange usually fire together — sync once.
+    const syncIfStale = () => {
+      if (Date.now() - lastSyncAt < WIDGET_LAYOUT_SYNC_MIN_GAP_MS) return;
+      void syncFromServer();
+    };
+
     void syncFromServer();
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") void syncFromServer();
-    }, 15000);
+    }, WIDGET_LAYOUT_SYNC_INTERVAL_MS);
     const onFocus = () => {
-      void syncFromServer();
+      syncIfStale();
     };
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void syncFromServer();
+      if (document.visibilityState === "visible") syncIfStale();
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
@@ -390,7 +439,7 @@ export function useWidgetLayout() {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, []);
+  }, [remoteSync]);
 
   const toggleWidget = useCallback((instanceId: string) => {
     setLayout((prev) => {
@@ -446,11 +495,13 @@ export function useWidgetLayout() {
   }, [persistLayout]);
 
   const resetLayout = useCallback((): WidgetInstance[] => {
-    const prev = layout;
+    // Non-syncing instances read the persisted copy, which the syncing
+    // instance keeps current with remote changes.
+    const prev = remoteSync ? layout : loadLayout();
     setLayout(DEFAULT_LAYOUT);
     persistLayout(DEFAULT_LAYOUT);
     return prev;
-  }, [layout, persistLayout]);
+  }, [layout, persistLayout, remoteSync]);
 
   const restoreLayout = useCallback((snapshot: WidgetInstance[]) => {
     setLayout(snapshot);

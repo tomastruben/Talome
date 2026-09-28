@@ -3,7 +3,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import useSWR from "swr";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,8 +34,7 @@ import { pageBackAtom } from "@/atoms/page-back";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { MobileNav } from "@/components/layout/mobile-nav";
-import { CORE_URL } from "@/lib/constants";
-import type { Container } from "@talome/types";
+import { useContainerLookup } from "@/hooks/use-containers";
 
 const pathLabels: Record<string, string> = {
   dashboard: "Home",
@@ -146,7 +144,7 @@ function AutomationsHeaderAction() {
 
 function HomeEditControls() {
   const { editMode, setEditMode } = useWidgetEdit();
-  const { resetLayout, restoreLayout } = useWidgetLayout();
+  const { resetLayout, restoreLayout } = useWidgetLayout({ remoteSync: false });
 
   const handleReset = useCallback(() => {
     const prev = resetLayout();
@@ -313,15 +311,10 @@ function TerminalHeaderAction() {
 function ServicesHeaderAction() {
   const { handleSubmit } = useAssistant();
   const router = useRouter();
-  const { data: containers } = useSWR<Container[]>(
-    `${CORE_URL}/api/containers`,
-    (url: string) => fetch(url, { credentials: "include" }).then((r) => {
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    })
-  );
+  // Names are only needed to build the prompt — shared, non-polling lookup.
+  const { containers } = useContainerLookup();
 
-  const running = (containers ?? []).filter((c) => c.status === "running");
+  const running = containers.filter((c) => c.status === "running");
 
   const checkAllUpdates = () => {
     const previewNames = running.slice(0, 12).map((c) => c.name);

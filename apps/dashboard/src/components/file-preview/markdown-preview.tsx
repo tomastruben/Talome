@@ -2,19 +2,16 @@
 
 import { useState } from "react";
 import { Streamdown } from "streamdown";
-import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
 import { CodeBlockContent } from "@/components/ai-elements/code-block";
+import { useStreamdownPlugins } from "@/lib/streamdown-plugins";
 import { cn } from "@/lib/utils";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mermaid version mismatch between @streamdown/mermaid and fumadocs-mermaid
-const plugins = { cjk, code, math, mermaid } as any;
 const controls = { code: false } as const;
 
 export function MarkdownPreview({ content }: { content: string }) {
   const [view, setView] = useState<"preview" | "source">("preview");
+  // Plugins (shiki / KaTeX / mermaid / CJK) load on demand for content that needs them.
+  const plugins = useStreamdownPlugins(content);
 
   return (
     <div className="flex flex-col h-full">
