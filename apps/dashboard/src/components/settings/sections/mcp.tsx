@@ -1,47 +1,169 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useSyncExternalStore } from "react";
 import useSWR from "swr";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { HugeiconsIcon, ArrowDown01Icon, ArrowRight01Icon } from "@/components/icons";
-import { CORE_URL } from "@/lib/constants";
+import { HugeiconsIcon, ArrowDown01Icon, ArrowRight01Icon, Add01Icon, Plug02Icon } from "@/components/icons";
 import { toast } from "sonner";
 import { SettingsGroup, SettingsRow, relativeTime, copyToClipboard } from "@/components/settings/settings-primitives";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
+import { TokenDialog, type TokenDialogMode } from "@/components/trust/token-dialog";
+import { MCP_CATALOG_URL, MCP_TOKENS_URL, revokeMcpToken, trustFetcher } from "@/components/trust/api";
+import {
+  formatExpiry,
+  isExpired,
+  summarizeScopes,
+  type GrantCatalog,
+  type McpToken,
+} from "@/components/trust/format";
+
+const DEFAULT_SERVER_URL = "http://localhost:4000/api/mcp";
+const subscribeNoop = () => () => {};
+const clientServerUrl = () => `http://${window.location.hostname}:4000/api/mcp`;
+
+function TokenRow({
+  token,
+  onEdit,
+  onRevoke,
+}: {
+  token: McpToken;
+  onEdit: () => void;
+  onRevoke: () => void;
+}) {
+  const expired = isExpired(token.expiresAt);
+  return (
+    <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2 items-start">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <p className="text-sm font-medium truncate">{token.name}</p>
+          {token.legacy && (
+            <Badge variant="outline" className="text-status-warning border-status-warning/30">
+              Legacy full access
+            </Badge>
+          )}
+          {expired && <Badge variant="outline" className="text-muted-foreground">Expired</Badge>}
+        </div>
+        {!token.legacy && (
+          <p className="text-xs text-muted-foreground mt-0.5">{summarizeScopes(token.scopes)}</p>
+        )}
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Created {relativeTime(token.createdAt)}
+          {" · "}
+          {token.lastUsedAt ? `Last used ${relativeTime(token.lastUsedAt)}` : "Never used"}
+          {!expired && ` · ${formatExpiry(token.expiresAt)}`}
+        </p>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={onEdit}>
+          {token.legacy ? "Restrict" : "Edit"}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 text-xs text-destructive/70 hover:text-destructive"
+          onClick={onRevoke}
+        >
+          Revoke
+        </Button>
+      </div>
+    </SettingsRow>
+  );
+}
+
+function RevokeDialog({
+  token,
+  onOpenChange,
+  onRevoked,
+}: {
+  token: McpToken | null;
+  onOpenChange: (open: boolean) => void;
+  onRevoked: () => void;
+}) {
+  const [revoking, setRevoking] = useState(false);
+  return (
+    <Dialog open={token !== null} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Revoke {token?.name}?</DialogTitle>
+          <DialogDescription>
+            The client stops working immediately. Its past actions stay in the audit log.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={revoking}
+            onClick={async () => {
+              if (!token) return;
+              setRevoking(true);
+              try {
+                await revokeMcpToken(token.id);
+                toast.success(`${token.name} revoked`);
+                onRevoked();
+                onOpenChange(false);
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : "Could not revoke token");
+              } finally {
+                setRevoking(false);
+              }
+            }}
+          >
+            {revoking ? "Revoking…" : "Revoke"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function McpSection() {
-  const [mcpTokenName, setMcpTokenName] = useState("");
-  const [mcpGenerating, setMcpGenerating] = useState(false);
-  const [mcpNewToken, setMcpNewToken] = useState<{ id: string; name: string; token: string } | null>(null);
-  const [mcpTokenCopied, setMcpTokenCopied] = useState(false);
   const [mcpUrlCopied, setMcpUrlCopied] = useState(false);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
-  const { data: mcpTokens, mutate: mutateMcpTokens } = useSWR<{ id: string; name: string; createdAt: string; lastUsedAt: string | null }[]>(
-    `${CORE_URL}/api/integrations/mcp/tokens`,
-    (url: string) => fetch(url).then(r => r.json()),
-    { revalidateOnFocus: false },
-  );
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogMode, setDialogMode] = useState<TokenDialogMode>({ kind: "create" });
+  const [revoking, setRevoking] = useState<McpToken | null>(null);
 
-  const [mcpServerUrl, setMcpServerUrl] = useState("http://localhost:4000/api/mcp");
-  useEffect(() => {
-    setMcpServerUrl(`http://${window.location.hostname}:4000/api/mcp`);
-  }, []);
+  const {
+    data: mcpTokens,
+    error: tokensError,
+    isLoading,
+    mutate: mutateMcpTokens,
+  } = useSWR<McpToken[]>(MCP_TOKENS_URL, trustFetcher, { revalidateOnFocus: false });
+  const { data: catalog } = useSWR<GrantCatalog>(MCP_CATALOG_URL, trustFetcher, { revalidateOnFocus: false });
+
+  const mcpServerUrl = useSyncExternalStore(subscribeNoop, clientServerUrl, () => DEFAULT_SERVER_URL);
+
+  const tokens = Array.isArray(mcpTokens) ? mcpTokens : [];
+  const hasLegacy = tokens.some((t) => t.legacy);
+
+  const openCreate = () => {
+    setDialogMode({ kind: "create" });
+    setDialogOpen(true);
+  };
 
   return (
     <div className="grid gap-6">
       <p className="text-sm text-muted-foreground leading-relaxed">
-        Talome exposes an MCP server so external AI clients can use all of Talome's tools — Docker management, media, automations, and more. Generate a token, then add the connection to your client.
+        Let AI clients like Claude Desktop, Cursor, or Claude Code on another machine use Talome. Each client gets
+        its own token with only the access you grant — every call is checked and recorded in the audit log.
       </p>
 
-      {/* Server URL + token generation */}
+      {/* Connection */}
       <SettingsGroup>
-        <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Connection</p>
-        </SettingsRow>
-
-        {/* Server URL */}
         <SettingsRow className="flex-wrap gap-y-2">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium">Server URL</p>
@@ -68,125 +190,72 @@ export function McpSection() {
             </Button>
           </div>
         </SettingsRow>
-
-        {/* Generate token */}
-        <SettingsRow className="flex-wrap gap-y-2">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium">Generate Token</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Each client should have its own token
-            </p>
-          </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Input
-              className="h-8 flex-1 sm:w-40 text-sm"
-              placeholder="e.g. Cursor, Claude Desktop"
-              value={mcpTokenName}
-              onChange={(e) => setMcpTokenName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") document.getElementById("mcp-generate-btn")?.click(); }}
-            />
-            <Button
-              id="mcp-generate-btn"
-              size="sm"
-              variant="secondary"
-              className="h-8 text-xs px-3 shrink-0"
-              disabled={mcpGenerating || !mcpTokenName.trim()}
-              onClick={async () => {
-                setMcpGenerating(true);
-                setMcpNewToken(null);
-                try {
-                  const res = await fetch(`${CORE_URL}/api/integrations/mcp/tokens`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: mcpTokenName.trim() }),
-                  });
-                  const data = await res.json();
-                  if (data.ok) {
-                    setMcpNewToken({ id: data.id, name: data.name, token: data.token });
-                    setMcpTokenName("");
-                    mutateMcpTokens();
-                  } else {
-                    toast.error(data.error ?? "Failed to generate token");
-                  }
-                } catch {
-                  toast.error("Failed to generate token");
-                } finally {
-                  setMcpGenerating(false);
-                }
-              }}
-            >
-              {mcpGenerating ? "Generating..." : "Generate"}
-            </Button>
-          </div>
-        </SettingsRow>
       </SettingsGroup>
 
-      {/* One-time token reveal */}
-      {mcpNewToken && (
-        <div className="rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 p-4 space-y-2">
-          <p className="text-xs font-medium text-status-warning">
-            Save this token — it will not be shown again.
-          </p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 text-xs font-mono bg-background/60 rounded-lg px-3 py-2 border border-border break-all min-w-0">
-              {mcpNewToken.token}
-            </code>
-            <Button
-              size="sm"
-              variant="secondary"
-              className="h-7 text-xs shrink-0"
-              onClick={async () => {
-                const copied = await copyToClipboard(mcpNewToken.token);
-                if (!copied) { toast.error("Clipboard unavailable"); return; }
-                setMcpTokenCopied(true);
-                setTimeout(() => setMcpTokenCopied(false), 2000);
-              }}
-            >
-              {mcpTokenCopied ? "Copied" : "Copy"}
+      {/* Tokens */}
+      <SettingsGroup>
+        <SettingsRow className="py-2.5">
+          <p className="flex-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tokens</p>
+          {tokens.length > 0 && (
+            <Button size="sm" className="h-7 text-xs" onClick={openCreate}>
+              <HugeiconsIcon icon={Add01Icon} size={14} />
+              New token
             </Button>
-          </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 text-xs text-muted-foreground"
-            onClick={() => setMcpNewToken(null)}
-          >
-            Dismiss
-          </Button>
-        </div>
-      )}
+          )}
+        </SettingsRow>
 
-      {/* Active tokens */}
-      {mcpTokens && mcpTokens.length > 0 && (
-        <SettingsGroup>
-          <SettingsRow className="py-2.5">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Active Tokens</p>
+        {hasLegacy && (
+          <SettingsRow className="bg-status-warning/5">
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Tokens marked <span className="text-status-warning">Legacy full access</span> were created before access
+              controls and can do anything. Restrict them to what each client needs.
+            </p>
           </SettingsRow>
-          {mcpTokens.map((token) => (
-            <SettingsRow key={token.id}>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{token.name}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Created {relativeTime(token.createdAt)}
-                  {token.lastUsedAt && ` · Last used ${relativeTime(token.lastUsedAt)}`}
-                </p>
-              </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 text-xs text-destructive/70 hover:text-destructive shrink-0"
-                onClick={async () => {
-                  await fetch(`${CORE_URL}/api/integrations/mcp/tokens/${token.id}`, { method: "DELETE" });
-                  mutateMcpTokens();
-                  toast.success("Token revoked");
-                }}
-              >
-                Revoke
-              </Button>
-            </SettingsRow>
-          ))}
-        </SettingsGroup>
-      )}
+        )}
+
+        {isLoading && (
+          <SettingsRow>
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-3 w-56" />
+            </div>
+          </SettingsRow>
+        )}
+
+        {tokensError && (
+          <SettingsRow>
+            <p className="text-xs text-muted-foreground">
+              {tokensError instanceof Error ? tokensError.message : "Could not load tokens"}
+            </p>
+          </SettingsRow>
+        )}
+
+        {!isLoading && !tokensError && tokens.length === 0 && (
+          <SettingsRow className="flex-col items-center text-center py-8 gap-3">
+            <HugeiconsIcon icon={Plug02Icon} size={24} className="text-dim-foreground" />
+            <div className="grid gap-1">
+              <p className="text-sm font-medium">No agents connected</p>
+              <p className="text-xs text-muted-foreground">New tokens are read-only unless you grant more.</p>
+            </div>
+            <Button size="sm" onClick={openCreate}>
+              <HugeiconsIcon icon={Add01Icon} size={14} />
+              New token
+            </Button>
+          </SettingsRow>
+        )}
+
+        {tokens.map((token) => (
+          <TokenRow
+            key={token.id}
+            token={token}
+            onEdit={() => {
+              setDialogMode({ kind: "edit", token });
+              setDialogOpen(true);
+            }}
+            onRevoke={() => setRevoking(token)}
+          />
+        ))}
+      </SettingsGroup>
 
       {/* Connection snippets */}
       <Collapsible open={snippetsOpen} onOpenChange={setSnippetsOpen}>
@@ -225,13 +294,27 @@ export function McpSection() {
               }, null, 2)}</pre>
             </div>
             <p className="text-xs text-muted-foreground px-1">
-              Replace <span className="font-mono">YOUR_TOKEN</span> with the token you generated above. If you access Talome via Tailscale or a custom domain, the URL above already reflects that.
+              Replace <span className="font-mono">YOUR_TOKEN</span> with the token you created. Claude Code running in
+              the Talome repo on this machine connects over stdio and needs no token.
             </p>
           </div>
         </CollapsibleContent>
       </Collapsible>
 
       <ConfigureWithAI prompt="I'd like to connect external tools to Talome via MCP" />
+
+      <TokenDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        mode={dialogMode}
+        catalog={catalog}
+        onSaved={() => void mutateMcpTokens()}
+      />
+      <RevokeDialog
+        token={revoking}
+        onOpenChange={(open) => { if (!open) setRevoking(null); }}
+        onRevoked={() => void mutateMcpTokens()}
+      />
     </div>
   );
 }

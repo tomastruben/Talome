@@ -28,6 +28,8 @@ import { LegalSection } from "@/components/settings/sections/legal";
 import { NotificationsSection } from "@/components/settings/sections/notifications";
 import { SecuritySection } from "@/components/settings/sections/security";
 import { UpdatesSection } from "@/components/settings/sections/updates";
+import { ApprovalsSection } from "@/components/settings/sections/approvals";
+import { AuditSection } from "@/components/settings/sections/audit";
 
 import type { ComponentType } from "react";
 
@@ -43,12 +45,14 @@ const SECTIONS: Record<string, SectionDef> = {
   "ai-provider":      { component: AiProviderSection,     title: "AI Provider" },
   "ai-tools":         { component: AiToolsSection,         title: "AI Tools" },
   "security":         { component: SecuritySection,        title: "Security", adminOnly: true },
+  "approvals":        { component: ApprovalsSection,       title: "Approvals", adminOnly: true },
+  "audit":            { component: AuditSection,           title: "Audit Log", adminOnly: true },
   "ai-prompt":        { component: AiPromptSection,       title: "System Prompt" },
   "ai-memory":        { component: AiMemorySection,       title: "Memory" },
   "connections":      { component: ConnectionsSection,    title: "Media Services" },
   "integrations":     { component: IntegrationsSection,   title: "Chat Bots" },
   "notifications":    { component: NotificationsSection,   title: "Notifications" },
-  "mcp":              { component: McpSection,            title: "MCP Server" },
+  "mcp":              { component: McpSection,            title: "AI Agents", adminOnly: true },
   "app-sources":      { component: AppSourcesSection,     title: "App Sources" },
   "community-review": { component: CommunityReviewSection, title: "Community Review", adminOnly: true },
   "stacks":           { component: ExportImportSection,      title: "Export & Import" },

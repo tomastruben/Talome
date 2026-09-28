@@ -35,6 +35,7 @@ import {
   ConfirmationActions,
   ConfirmationAction,
 } from "@/components/ai-elements/confirmation";
+import { ApprovalCard } from "@/components/trust/approval-card";
 
 interface ChatMessageProps {
   message: UIMessage;
@@ -394,6 +395,7 @@ export function ChatMessage({
                   <LiveToolOutput isRunning={p.state === "input-available"} />
                 )}
               </Tool>
+              {p.state === "output-available" && <ApprovalCard output={p.output} />}
 
               {approval && addToolApprovalResponse && (
                 <Confirmation approval={approval} state={p.state}>
