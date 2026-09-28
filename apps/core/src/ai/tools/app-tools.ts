@@ -16,6 +16,8 @@ import {
 } from "../../stores/lifecycle.js";
 import { addStore, syncStore } from "../../stores/sync.js";
 import { getCatalogApp } from "../../stores/compose-exec.js";
+import { UmbrelInstallOptionsSchema } from "../../stores/umbrel-v2.js";
+import { runWithUmbrelInstallOptions } from "../../stores/umbrel-v2-install.js";
 import { writeAuditEntry } from "../../db/audit.js";
 import { checkForUpdates } from "../../stores/update-checker.js";
 import os from "node:os";
@@ -177,9 +179,10 @@ All apps are placed on the shared 'talome' Docker network so they can reach each
     storeId: z.string().describe("Store source ID the app belongs to"),
     env: z.record(z.string(), z.string()).optional().describe("Environment variable overrides."),
     volumeMounts: z.record(z.string(), z.string()).optional().describe("Volume name → host path mapping for media volumes (e.g. { 'media': '/Volumes/Media/Movies', 'downloads': '/DATA/Downloads' }). Only needed for volumes with mediaVolume=true."),
+    umbrel: UmbrelInstallOptionsSchema.optional().describe("Umbrel 2.0 apps only: { folders: { <folderAccess id>: '/host/path' }, environment: { <NAME>: <allowed value> }, dataRoot: '/host/path', dependencies: { <dependency>: <installed provider app id> } }. Omit to use defaults."),
   }),
-  execute: async ({ appId, storeId, env, volumeMounts }) => {
-    const result = await installApp(appId, storeId, env || {}, volumeMounts || {});
+  execute: async ({ appId, storeId, env, volumeMounts, umbrel }) => {
+    const result = await runWithUmbrelInstallOptions(umbrel, () => installApp(appId, storeId, env || {}, volumeMounts || {}));
     if (result.success) {
       writeAuditEntry("Installed app", "modify", `${appId} from store ${storeId}`);
 

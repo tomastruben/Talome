@@ -1,0 +1,28 @@
+manifestVersion: 1.1
+id: immich
+category: files
+name: Immich
+version: "1.120.2"
+tagline: Self-hosted photo and video backup
+description: >-
+  Back up photos and videos from your phone and browse them on the web.
+releaseNotes: >-
+  Bug fixes and performance improvements.
+developer: Immich Team
+website: https://immich.app
+dependencies: []
+repo: https://github.com/immich-app/immich
+support: https://github.com/immich-app/immich/discussions
+port: 2283
+gallery:
+  - 1.jpg
+  - 2.jpg
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+backupIgnore:
+  - data/model-cache/*
+  - /etc/passwd
+  - ../escape
+submitter: Umbrel
+submission: https://github.com/getumbrel/umbrel-apps/pull/1

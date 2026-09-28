@@ -1,0 +1,14 @@
+manifestVersion: 1
+id: onion-board
+category: social
+name: Onion Board
+version: "1.0.0"
+tagline: A message board reachable only over Tor
+description: Runs as a Tor hidden service.
+developer: Example Labs
+website: https://example.com/onion-board
+dependencies: []
+support: https://example.com/onion-board/support
+port: 4040
+gallery: []
+torOnly: true

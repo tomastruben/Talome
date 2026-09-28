@@ -48,6 +48,7 @@ import {
   applyVolumeMounts,
 } from "./compose-pipeline.js";
 import { executeHook } from "./lifecycle-hooks.js";
+import { reconcileUmbrelDependencies, applyUmbrelV2Install } from "./umbrel-v2-install.js";
 
 // ── Re-exports (preserve public API) ─────────────────────────────────────
 export { checkPortConflicts } from "./port-resolution.js";
@@ -177,7 +178,7 @@ async function installAppInner(
 
   // Check dependencies
   onProgress?.("queued", "Checking dependencies…");
-  const depCheck = resolveDependencies(appId, storeSourceId);
+  const depCheck = reconcileUmbrelDependencies(app, resolveDependencies(appId, storeSourceId));
   if (!depCheck.satisfied) {
     return {
       success: false,
@@ -263,6 +264,12 @@ async function installAppInner(
   } catch (err: unknown) {
     log.warn(`talome network injection for ${appId}`, err);
   }
+
+  // ── Umbrel 2.0 manifest (folderAccess, environment, GPU, dataRoot, torOnly) ──
+  const umbrelV2 = applyUmbrelV2Install(app, appId, composePath, mergedEnvOverrides);
+  if (!umbrelV2.ok) return { success: false, error: umbrelV2.error };
+  if (umbrelV2.composePath) composePath = effectiveCompose = umbrelV2.composePath;
+  mergedEnvOverrides = umbrelV2.env;
 
   // ── Write per-app .env file ─────────────────────────────────────────
   writeAppDotEnv(appId, mergedEnvOverrides);
