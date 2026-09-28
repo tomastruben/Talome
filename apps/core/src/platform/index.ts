@@ -247,8 +247,28 @@ export function parseDfOutput(dfOutput: string): DiskMountInfo[] {
  * await it without a bound.
  */
 export async function readDiskMountsAsync(timeoutMs = 5_000): Promise<DiskMountInfo[] | null> {
-  const out = await execFileText("df", ["-Pk"], timeoutMs);
-  return out ? parseDfOutput(out) : null;
+  return readDiskMountsTracked(timeoutMs).mounts;
+}
+
+export interface TrackedDiskRead {
+  /** Parsed mounts, or null on failure/timeout. Always settles by timeoutMs + 500ms. */
+  mounts: Promise<DiskMountInfo[] | null>;
+  /**
+   * Settles when the `df` child has actually exited. A df blocked in
+   * uninterruptible I/O on a dead network mount outlives its timeout (it
+   * ignores even SIGKILL until the kernel gives up), so callers that must
+   * never run two df processes at once wait on this, not on `mounts`.
+   */
+  exited: Promise<void>;
+}
+
+/** Like {@link readDiskMountsAsync}, but also reports when the child really exits. */
+export function readDiskMountsTracked(timeoutMs = 5_000): TrackedDiskRead {
+  const run = execFileTracked("df", ["-Pk"], timeoutMs);
+  return {
+    mounts: run.output.then((out) => (out ? parseDfOutput(out) : null)),
+    exited: run.exited,
+  };
 }
 
 // ── CPU utilisation ──────────────────────────────────────────────────────
@@ -287,11 +307,29 @@ export function computeCpuUsage(prev: CpuTimesSample, curr: CpuTimesSample): num
 
 /**
  * execFile wrapper that resolves stdout, or null on error/timeout. The
- * outer timer guarantees resolution even when the child ignores SIGTERM
- * (e.g. a process stuck in uninterruptible I/O on a dead network mount).
+ * outer timer guarantees resolution even when the child ignores the kill
+ * signal (e.g. a process stuck in uninterruptible I/O on a dead network mount).
  */
 export function execFileText(cmd: string, args: string[], timeoutMs: number): Promise<string | null> {
-  return new Promise((resolve) => {
+  return execFileTracked(cmd, args, timeoutMs).output;
+}
+
+export interface TrackedExec {
+  /** stdout, or null on error/timeout. Always settles by timeoutMs + 500ms. */
+  output: Promise<string | null>;
+  /** Settles once the child process has exited (or failed to spawn). */
+  exited: Promise<void>;
+}
+
+/**
+ * Spawn a child with a hard timeout (SIGKILL) and expose both its output and
+ * its real lifetime. `output` is bounded; `exited` may take much longer when
+ * the child is wedged in the kernel.
+ */
+export function execFileTracked(cmd: string, args: string[], timeoutMs: number): TrackedExec {
+  let markExited!: () => void;
+  const exited = new Promise<void>((resolve) => { markExited = resolve; });
+  const output = new Promise<string | null>((resolve) => {
     let settled = false;
     const finish = (value: string | null) => {
       if (settled) return;
@@ -302,11 +340,14 @@ export function execFileText(cmd: string, args: string[], timeoutMs: number): Pr
     const guard = setTimeout(() => finish(null), timeoutMs + 500);
     guard.unref?.();
     try {
+      // The callback fires once the child has exited and its pipes closed
+      // (or it failed to spawn) — never earlier, even after a timeout kill.
       execFile(
         cmd,
         args,
-        { encoding: "utf-8", timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+        { encoding: "utf-8", timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, windowsHide: true },
         (err, stdout) => {
+          markExited();
           // df exits non-zero when a single mount is unreadable but still
           // prints the rest — keep partial output when there is any.
           if (err && !stdout) finish(null);
@@ -314,9 +355,11 @@ export function execFileText(cmd: string, args: string[], timeoutMs: number): Pr
         },
       );
     } catch {
+      markExited();
       finish(null);
     }
   });
+  return { output, exited };
 }
 
 // ── Filesystem detection ──────────────────────────────────────────────────

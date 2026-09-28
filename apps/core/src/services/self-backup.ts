@@ -43,9 +43,27 @@ function formatTimestamp(d: Date): string {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 }
 
+/** `.partial` files older than this were left by a crash mid-backup. */
+const STALE_PARTIAL_MS = 60 * 60 * 1000;
+
+function pruneStalePartials(dir: string, entries: string[]) {
+  const now = Date.now();
+  for (const f of entries) {
+    if (!f.startsWith("talome-db-") || !f.endsWith(".db.partial")) continue;
+    try {
+      // A backup in progress keeps touching its file, so only old ones go.
+      if (now - statSync(join(dir, f)).mtimeMs > STALE_PARTIAL_MS) unlinkSync(join(dir, f));
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
 function pruneOldSnapshots(dir: string) {
   try {
-    const files = readdirSync(dir)
+    const entries = readdirSync(dir);
+    pruneStalePartials(dir, entries);
+    const files = entries
       .filter((f) => f.startsWith("talome-db-") && f.endsWith(".db"))
       .map((f) => ({ f, mtime: statSync(join(dir, f)).mtimeMs }))
       .sort((a, b) => b.mtime - a.mtime);

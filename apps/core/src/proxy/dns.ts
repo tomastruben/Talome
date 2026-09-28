@@ -194,12 +194,14 @@ export function startIpMonitor(baseDomain: string, intervalMs = 60_000): () => v
     if (lastKnownIp && currentIp !== lastKnownIp) {
       reloading = true;
       console.log(`[dns] IP changed: ${lastKnownIp} -> ${currentIp}`);
-      lastKnownIp = currentIp;
 
       try {
         // Regenerate zone file with new IP
         const zoneFilePath = join(DNS_DIR, `db.${baseDomain}`);
         writeFileSync(zoneFilePath, generateZoneFile(baseDomain, currentIp));
+        // Only remember the new IP once the zone is on disk, so a failed
+        // write (missing dir, transient FS error) is retried next tick.
+        lastKnownIp = currentIp;
 
         // Reload CoreDNS
         const container = docker.getContainer(DNS_CONTAINER_NAME);

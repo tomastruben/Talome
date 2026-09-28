@@ -5,6 +5,7 @@ import {
   runWithContainerListCache,
   type ContainerPair,
 } from "./docker/client.js";
+import { createSkipIfRunning, settleWithin } from "./platform/concurrency.js";
 import { startRetentionScheduler } from "./db/retention.js";
 import { verifyTalomeNetworkAttachments } from "./docker/talome-network.js";
 import { writeAuditEntry } from "./db/audit.js";
@@ -482,31 +483,41 @@ async function repairNetworkAttachments() {
   }
 }
 
-let checksRunning = false;
+// ── Tick scheduling ────────────────────────────────────────────────────────
+//
+// Each check is guarded on its own: a slow or wedged check (Docker daemon
+// freeze, dead network mount) only skips *that* check on later ticks while
+// everything else — crash notifications, metrics, backup schedules — keeps
+// running every minute. A check stuck for longer than MONITOR_CHECK_ABANDON_MS is
+// abandoned so one hung promise can never disable it permanently.
+
+/** A check still running after this long is treated as wedged and may start again. */
+const MONITOR_CHECK_ABANDON_MS = 5 * 60_000;
+/** Upper bound on how long a tick waits before running its follow-up steps. */
+const TICK_SETTLE_MS = 50_000;
+
+const runMonitorCheck = createSkipIfRunning({
+  abandonAfterMs: MONITOR_CHECK_ABANDON_MS,
+  onAbandon: (name) => log.warn(`Monitor check "${name}" still running after ${MONITOR_CHECK_ABANDON_MS / 1000}s — starting a new run`),
+});
 
 async function runChecks() {
-  // A slow tick (Docker hiccup, wedged df) must not stack up overlapping runs.
-  if (checksRunning) return;
-  checksRunning = true;
-  try {
-    await runChecksOnce();
-  } finally {
-    checksRunning = false;
-  }
-}
-
-async function runChecksOnce() {
-  await Promise.allSettled([
-    checkContainerHealth(),
-    checkDiskUsage(),
-    checkMetricThresholds(),
-    // Read-only consumers of `docker ps`: let them share the cached list
-    // with checkContainerHealth instead of each doing their own round-trip.
-    runWithContainerListCache(() => refreshAppStatuses()),
-    persistMetrics(),
-    checkBackupSchedules(),
-    runWithContainerListCache(() => repairNetworkAttachments()),
-  ]);
+  await settleWithin(
+    Promise.allSettled([
+      runMonitorCheck("containerHealth", checkContainerHealth),
+      runMonitorCheck("diskUsage", checkDiskUsage),
+      runMonitorCheck("metricThresholds", checkMetricThresholds),
+      // Read-only consumers of `docker ps`: let them share the cached list
+      // with checkContainerHealth instead of each doing their own round-trip.
+      runMonitorCheck("appStatuses", () => runWithContainerListCache(() => refreshAppStatuses())),
+      runMonitorCheck("persistMetrics", persistMetrics),
+      // Not guarded: schedules are minute-exact, so every tick must look at them.
+      checkBackupSchedules(),
+      runMonitorCheck("networkAttachments", () => runWithContainerListCache(() => repairNetworkAttachments())),
+    ]),
+    TICK_SETTLE_MS,
+    undefined,
+  );
   // Non-async, runs on its own 6h cadence internally
   maybeCheckUpdates();
   // Evolution scan runs on its own 6h cadence

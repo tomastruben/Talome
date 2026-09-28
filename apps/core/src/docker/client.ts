@@ -7,7 +7,7 @@ import { join } from "node:path";
 import {
   getAppMemoryUsedAsync,
   sampleNetworkBytesAsync,
-  readDiskMountsAsync,
+  readDiskMountsTracked,
   sampleCpuTimes,
   computeCpuUsage,
   type CpuTimesSample,
@@ -93,7 +93,10 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 1000): Pr
 //    stays a fresh read so install/compose flows that create containers
 //    outside Talome's helpers never see a pre-mutation list.
 //  - Talome's own start/stop/restart/remove/prune helpers and Docker
-//    container events invalidate the cache immediately.
+//    container events invalidate the cache immediately. The events come from
+//    a private watcher (see startContainerCacheWatcher) that is independent
+//    of the agent loop; while it is disconnected, cached reads fall back to
+//    fresh ones so compose-driven changes are never masked.
 //  - A generation counter guarantees a request that was in flight when the
 //    cache was invalidated never repopulates it with pre-mutation data.
 
@@ -163,11 +166,15 @@ function fetchContainerList(joinInflight: boolean): Promise<RawContainerInfo[]> 
  * The returned array is shared between callers — treat it as read-only.
  */
 export async function listContainersRaw(opts?: ListContainersOptions): Promise<readonly RawContainerInfo[]> {
-  const maxAgeMs = resolveListMaxAge(opts);
+  const requestedMaxAgeMs = resolveListMaxAge(opts);
+  if (requestedMaxAgeMs > 0) void startContainerCacheWatcher();
+  // Without a live event stream, compose-driven changes would go unnoticed:
+  // only in-flight de-duplication is allowed then, never a cached list.
+  const maxAgeMs = cacheWatcherConnected ? requestedMaxAgeMs : 0;
   if (maxAgeMs > 0 && containerListCache && Date.now() - containerListCache.at <= maxAgeMs) {
     return containerListCache.data;
   }
-  return fetchContainerList(maxAgeMs > 0);
+  return fetchContainerList(requestedMaxAgeMs > 0);
 }
 
 export async function listContainers(opts?: ListContainersOptions): Promise<Container[]> {
@@ -205,7 +212,7 @@ const CONTAINER_STATS_CONCURRENCY = 4;
 
 const containerStatsLimiter = createLimiter(CONTAINER_STATS_CONCURRENCY);
 const containerStatsCache = new Map<string, { stats: ContainerStats; at: number }>();
-const containerStatsInflight = new Map<string, Promise<ContainerStats>>();
+const containerStatsInflight = new Map<string, StatsInflight>();
 
 async function fetchContainerStats(id: string): Promise<ContainerStats> {
   const container = docker.getContainer(id);
@@ -248,19 +255,42 @@ async function fetchContainerStats(id: string): Promise<ContainerStats> {
   };
 }
 
-/** Take a new stats sample (bounded concurrency, joined if already in flight). */
-function sampleContainerStats(id: string): Promise<ContainerStats> {
+interface StatsInflight {
+  promise: Promise<ContainerStats>;
+  /** `started` flips once the task left the limiter queue and is talking to Docker. */
+  state: { started: boolean };
+  priority: boolean;
+}
+
+/**
+ * Take a new stats sample (bounded concurrency, joined if already in flight).
+ * Priority samples (interactive requests) jump ahead of queued background
+ * refreshes; a queued background sample that finds a newer sample in the
+ * cache when its turn comes reuses it instead of asking Docker again.
+ */
+function sampleContainerStats(id: string, opts: { priority?: boolean } = {}): Promise<ContainerStats> {
+  const priority = opts.priority === true;
   const existing = containerStatsInflight.get(id);
-  if (existing) return existing;
-  const promise = containerStatsLimiter(() => fetchContainerStats(id))
-    .then((stats) => {
-      containerStatsCache.set(id, { stats, at: Date.now() });
+  // Join unless the caller is interactive and the existing sample is still
+  // waiting behind background work in the queue.
+  if (existing && (existing.state.started || existing.priority || !priority)) return existing.promise;
+
+  const queuedAt = Date.now();
+  const state = { started: false };
+  const promise: Promise<ContainerStats> = containerStatsLimiter(async () => {
+    state.started = true;
+    const cached = containerStatsCache.get(id);
+    if (cached && cached.at >= queuedAt) return { stats: cached.stats, reused: true };
+    return { stats: await fetchContainerStats(id), reused: false };
+  }, { priority })
+    .then(({ stats, reused }) => {
+      if (!reused) containerStatsCache.set(id, { stats, at: Date.now() });
       return stats;
     })
     .finally(() => {
-      if (containerStatsInflight.get(id) === promise) containerStatsInflight.delete(id);
+      if (containerStatsInflight.get(id)?.promise === promise) containerStatsInflight.delete(id);
     });
-  containerStatsInflight.set(id, promise);
+  containerStatsInflight.set(id, { promise, state, priority });
   return promise;
 }
 
@@ -276,13 +306,25 @@ export function invalidateContainerStats(id?: string): void {
   else containerStatsCache.delete(id);
 }
 
+/** Upper bound for an interactive stats request, including time spent queued. */
+const CONTAINER_STATS_REQUEST_TIMEOUT_MS = 15_000;
+
 /**
- * Fresh stats for one container. Concurrent callers for the same container
- * share one Docker request, and at most CONTAINER_STATS_CONCURRENCY samples
- * run at once across the process.
+ * Current stats for one container: a cached sample younger than
+ * CONTAINER_STATS_TTL_MS when there is one, otherwise a new sample that
+ * jumps ahead of queued background refreshes. Concurrent callers for the
+ * same container share one Docker request, at most
+ * CONTAINER_STATS_CONCURRENCY samples run at once across the process, and
+ * the whole wait (queue + Docker) is bounded.
  */
 export async function getContainerStats(id: string): Promise<ContainerStats> {
-  return sampleContainerStats(id);
+  const cached = getCachedContainerStats(id);
+  if (cached) return cached;
+  return withTimeout(
+    sampleContainerStats(id, { priority: true }),
+    CONTAINER_STATS_REQUEST_TIMEOUT_MS,
+    `getContainerStats(${id})`,
+  );
 }
 
 /** Cached stats sample if one exists and is at most `maxAgeMs` old. */
@@ -453,8 +495,14 @@ async function getSystemStatsImpl(): Promise<SystemStats> {
 
 // ── Disk (df) — stale-while-revalidate ──────────────────────────────────────
 // `df` can stall for a long time on unreachable SMB/NFS mounts. It runs
-// async with a timeout, at most one at a time, and callers get the last
-// known result immediately while a refresh happens in the background.
+// async with a timeout and callers get the last known result immediately
+// while a refresh happens in the background.
+//
+// A df blocked in uninterruptible I/O outlives its timeout (the kernel holds
+// it until the mount answers), so the "one at a time" rule is tied to the
+// child's real exit, not to the timeout: no new df is spawned while the
+// previous one is still alive. Failed/timed-out reads also back off
+// exponentially so a dead mount is not re-probed on every stats tick.
 
 interface DiskInfo {
   usedBytes: number;
@@ -466,11 +514,16 @@ interface DiskInfo {
 const DISK_REFRESH_MS = 15_000;
 const DISK_FIRST_WAIT_MS = 5_000;
 const DISK_DF_TIMEOUT_MS = 5_000;
-/** A df still running after this long is considered wedged and abandoned. */
-const DISK_INFLIGHT_ABANDON_MS = 60_000;
+/** Upper bound for the retry backoff after consecutive df failures. */
+const DISK_BACKOFF_MAX_MS = 5 * 60_000;
 
 let diskCache: { info: DiskInfo; at: number } | null = null;
-let diskInflight: { promise: Promise<DiskInfo | null>; startedAt: number } | null = null;
+/** Result of the latest df run (settles within the timeout). */
+let diskRefresh: Promise<DiskInfo | null> | null = null;
+/** True from spawn until the df child has really exited. */
+let dfChildAlive = false;
+let diskFailures = 0;
+let diskNextAttemptAt = 0;
 
 function summarizeMounts(mounts: DiskMountInfo[]): DiskInfo {
   if (mounts.length === 0) return { usedBytes: 0, totalBytes: 0, percent: 0, mounts: [] };
@@ -483,23 +536,46 @@ function summarizeMounts(mounts: DiskMountInfo[]): DiskInfo {
   };
 }
 
+function recordDiskFailure(): void {
+  diskFailures++;
+  const backoff = Math.min(DISK_REFRESH_MS * 2 ** (diskFailures - 1), DISK_BACKOFF_MAX_MS);
+  diskNextAttemptAt = Date.now() + backoff;
+}
+
 function refreshDiskInfo(): Promise<DiskInfo | null> {
-  const now = Date.now();
-  if (diskInflight && now - diskInflight.startedAt < DISK_INFLIGHT_ABANDON_MS) {
-    return diskInflight.promise;
+  // Never stack df processes: a wedged child keeps this closed until it exits.
+  if (dfChildAlive) return diskRefresh ?? Promise.resolve(null);
+  if (Date.now() < diskNextAttemptAt) return Promise.resolve(null);
+
+  let run: ReturnType<typeof readDiskMountsTracked>;
+  try {
+    run = readDiskMountsTracked(DISK_DF_TIMEOUT_MS);
+  } catch {
+    recordDiskFailure();
+    return Promise.resolve(null);
   }
-  const promise = readDiskMountsAsync(DISK_DF_TIMEOUT_MS)
+  dfChildAlive = true;
+  const markExited = () => {
+    if (diskRefresh === promise) dfChildAlive = false;
+  };
+  const promise = run.mounts
     .then((mounts) => {
-      if (!mounts) return null;
+      if (!mounts) {
+        recordDiskFailure();
+        return null;
+      }
+      diskFailures = 0;
+      diskNextAttemptAt = 0;
       const info = summarizeMounts(mounts);
       diskCache = { info, at: Date.now() };
       return info;
     })
-    .catch(() => null)
-    .finally(() => {
-      if (diskInflight?.promise === promise) diskInflight = null;
+    .catch(() => {
+      recordDiskFailure();
+      return null;
     });
-  diskInflight = { promise, startedAt: now };
+  diskRefresh = promise;
+  run.exited.then(markExited, markExited);
   return promise;
 }
 
@@ -565,6 +641,7 @@ async function getNetworkThroughput(): Promise<{ rxBytesPerSec: number; txBytesP
 
 /** Reset internal caches — test helper. */
 export function __resetDockerClientCachesForTests(): void {
+  stopContainerCacheWatcher();
   invalidateContainerListCache();
   containerListInflight = null;
   containerStatsCache.clear();
@@ -573,7 +650,10 @@ export function __resetDockerClientCachesForTests(): void {
   cachedStatsAt = 0;
   systemStatsInflight = null;
   diskCache = null;
-  diskInflight = null;
+  diskRefresh = null;
+  dfChildAlive = false;
+  diskFailures = 0;
+  diskNextAttemptAt = 0;
   lastCpuSample = null;
   lastCpuUsage = 0;
   lastNetSample = null;
@@ -968,6 +1048,154 @@ function applyDockerEventToCaches(action: string, actorId: string): boolean {
 }
 
 /**
+ * Build a chunk handler for the daemon's event stream. The daemon sends
+ * newline-delimited JSON; one chunk can carry several events or a partial
+ * one, so input is buffered and split on newlines.
+ */
+function createDockerEventParser(onEvent: (event: DockerEvent) => void): (chunk: Buffer) => void {
+  let pending = "";
+  return (chunk: Buffer) => {
+    pending += chunk.toString("utf-8");
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    const parsed: unknown[] = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try { parsed.push(JSON.parse(line)); } catch { /* Malformed event — skip */ }
+    }
+    // A complete event without a trailing newline: parse it now; a
+    // partial one fails to parse and stays buffered for the next chunk.
+    if (pending.trim()) {
+      try {
+        parsed.push(JSON.parse(pending));
+        pending = "";
+      } catch { /* incomplete — keep buffering */ }
+    }
+    for (const item of parsed) {
+      try {
+        const raw = item as {
+          Type?: DockerEvent["type"];
+          Action?: string;
+          status?: string;
+          id?: string;
+          from?: string;
+          time?: number;
+          Actor?: { ID?: string; Attributes?: Record<string, string> };
+        };
+        onEvent({
+          type: raw.Type ?? "container",
+          action: raw.Action ?? raw.status ?? "",
+          actorId: (raw.Actor?.ID ?? raw.id ?? "").slice(0, 12),
+          actorName: raw.Actor?.Attributes?.name ?? "",
+          actorImage: raw.Actor?.Attributes?.image ?? raw.from ?? "",
+          time: raw.time ?? Math.floor(Date.now() / 1000),
+        });
+      } catch {
+        // Malformed event — skip
+      }
+    }
+    // Guard against unbounded growth on a garbage stream.
+    if (pending.length > 1_000_000) pending = "";
+  };
+}
+
+function destroyEventStream(stream: NodeJS.ReadableStream): void {
+  try {
+    const s = stream as NodeJS.ReadableStream & { destroy?: () => void };
+    if (typeof s.destroy === "function") s.destroy();
+  } catch { /* ignore */ }
+}
+
+// ── Container cache watcher ─────────────────────────────────────────────────
+//
+// App lifecycle (compose up/stop/restart, installs, updates) runs through
+// `docker compose` rather than the helpers above, so the list cache relies on
+// Docker events to notice those changes. This private, invalidation-only
+// subscription is independent of the agent loop (which may be disabled) and
+// starts on the first cached read. Cached reads are honoured only while it is
+// connected; otherwise callers get a fresh `docker ps`.
+
+let cacheWatcherStop: (() => void) | null = null;
+let cacheWatcherReady: Promise<void> | null = null;
+let cacheWatcherConnected = false;
+
+/**
+ * Start the invalidation-only Docker event subscription (idempotent). The
+ * returned promise settles after the first connection attempt.
+ */
+export function startContainerCacheWatcher(): Promise<void> {
+  if (cacheWatcherReady) return cacheWatcherReady;
+  let aborted = false;
+  let current: NodeJS.ReadableStream | null = null;
+  let markReady!: () => void;
+  cacheWatcherReady = new Promise<void>((resolve) => { markReady = resolve; });
+
+  const scheduleReconnect = (ms: number) => {
+    const timer = setTimeout(() => { if (!aborted) void connect(); }, ms);
+    timer.unref?.();
+  };
+
+  const connect = async (): Promise<void> => {
+    try {
+      const stream = await docker.getEvents({
+        filters: { type: ["container"], event: [...LIST_INVALIDATING_ACTIONS] },
+      });
+      if (aborted) {
+        destroyEventStream(stream);
+        return;
+      }
+      current = stream;
+      const parse = createDockerEventParser((event) => { applyDockerEventToCaches(event.action, event.actorId); });
+      stream.on("data", (chunk: Buffer) => {
+        if (!aborted && current === stream) parse(chunk);
+      });
+      const onLost = () => {
+        if (current !== stream) return;
+        current = null;
+        cacheWatcherConnected = false;
+        // Events may have been missed — don't trust the cache.
+        invalidateContainerListCache();
+        if (!aborted) scheduleReconnect(5_000);
+      };
+      stream.on("error", onLost);
+      stream.on("end", onLost);
+      stream.on("close", onLost);
+      // Changes made before the stream was up were never seen as events.
+      invalidateContainerListCache();
+      cacheWatcherConnected = true;
+    } catch (err) {
+      cacheWatcherConnected = false;
+      log.debug("Container cache watcher could not subscribe, retrying in 10s", err);
+      if (!aborted) scheduleReconnect(10_000);
+    } finally {
+      markReady();
+    }
+  };
+
+  cacheWatcherStop = () => {
+    aborted = true;
+    cacheWatcherConnected = false;
+    if (current) destroyEventStream(current);
+    current = null;
+  };
+  void connect();
+  return cacheWatcherReady;
+}
+
+/** Stop the cache watcher (shutdown / tests). Cached reads become fresh reads. */
+export function stopContainerCacheWatcher(): void {
+  cacheWatcherStop?.();
+  cacheWatcherStop = null;
+  cacheWatcherReady = null;
+  cacheWatcherConnected = false;
+}
+
+/** Whether cached container-list reads are currently trusted. */
+export function isContainerCacheWatcherConnected(): boolean {
+  return cacheWatcherConnected;
+}
+
+/**
  * Subscribe to real-time Docker events via the daemon's event stream.
  * Returns a cleanup function to stop listening.
  *
@@ -993,53 +1221,12 @@ export function subscribeDockerEvents(handler: DockerEventHandler): () => void {
 
       eventStream = stream;
 
-      // The daemon sends newline-delimited JSON; one chunk can carry several
-      // events or a partial one, so buffer and split on newlines.
-      let pending = "";
+      const parse = createDockerEventParser((event) => {
+        if (applyDockerEventToCaches(event.action, event.actorId)) handler(event);
+      });
       stream.on("data", (chunk: Buffer) => {
         if (aborted) return;
-        pending += chunk.toString("utf-8");
-        const lines = pending.split("\n");
-        pending = lines.pop() ?? "";
-        const parsed: unknown[] = [];
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try { parsed.push(JSON.parse(line)); } catch { /* Malformed event — skip */ }
-        }
-        // A complete event without a trailing newline: parse it now; a
-        // partial one fails to parse and stays buffered for the next chunk.
-        if (pending.trim()) {
-          try {
-            parsed.push(JSON.parse(pending));
-            pending = "";
-          } catch { /* incomplete — keep buffering */ }
-        }
-        for (const item of parsed) {
-          try {
-            const raw = item as {
-              Type?: DockerEvent["type"];
-              Action?: string;
-              status?: string;
-              id?: string;
-              from?: string;
-              time?: number;
-              Actor?: { ID?: string; Attributes?: Record<string, string> };
-            };
-            const event: DockerEvent = {
-              type: raw.Type ?? "container",
-              action: raw.Action ?? raw.status ?? "",
-              actorId: (raw.Actor?.ID ?? raw.id ?? "").slice(0, 12),
-              actorName: raw.Actor?.Attributes?.name ?? "",
-              actorImage: raw.Actor?.Attributes?.image ?? raw.from ?? "",
-              time: raw.time ?? Math.floor(Date.now() / 1000),
-            };
-            if (applyDockerEventToCaches(event.action, event.actorId)) handler(event);
-          } catch {
-            // Malformed event — skip
-          }
-        }
-        // Guard against unbounded growth on a garbage stream.
-        if (pending.length > 1_000_000) pending = "";
+        parse(chunk);
       });
 
       stream.on("error", (err: Error) => {

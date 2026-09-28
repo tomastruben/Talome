@@ -1,8 +1,10 @@
 import { Cron } from "croner";
 import { db, schema } from "../db/index.js";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { fireTrigger } from "./engine.js";
 import type { AutomationTrigger } from "./engine.js";
+import { getSetting, setSetting } from "../utils/settings.js";
+import { writeNotification } from "../db/notifications.js";
 
 let cronJob: Cron | undefined;
 
@@ -110,7 +112,63 @@ export async function runScheduleTick(now: Date = new Date()): Promise<void> {
   }
 }
 
+// ── One-time pause of dormant schedule automations ────────────────────────
+// Before the parsed-schedule cache landed, the tick asked croner for
+// `previousRun()` on a pattern-only instance, which is always null — so no
+// schedule automation had ever fired. Fixing that would suddenly start every
+// enabled schedule automation in existing databases (some long forgotten,
+// some with restart/prune/AI steps), on a UTC clock the user may not expect.
+// Instead, the first boot with the fix pauses them once and tells the user;
+// re-enabling one is the opt-in. Automations created afterwards run normally.
+
+export const SCHEDULE_ACTIVATION_SETTING = "automation_schedules_activated_at";
+
+function isScheduleTrigger(triggerJson: string): boolean {
+  try {
+    const trigger = JSON.parse(triggerJson) as AutomationTrigger;
+    return trigger.type === "schedule" && Boolean(trigger.cron);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pause enabled schedule automations that predate the scheduler fix (runs
+ * once, guarded by a settings marker). Returns how many were paused.
+ */
+export function pauseDormantScheduleAutomations(): number {
+  try {
+    if (getSetting(SCHEDULE_ACTIVATION_SETTING)) return 0;
+    const dormant = db
+      .select({ id: schema.automations.id, name: schema.automations.name, trigger: schema.automations.trigger })
+      .from(schema.automations)
+      .where(eq(schema.automations.enabled, true))
+      .all()
+      .filter((row) => isScheduleTrigger(row.trigger));
+
+    if (dormant.length > 0) {
+      db.update(schema.automations)
+        .set({ enabled: false })
+        .where(inArray(schema.automations.id, dormant.map((row) => row.id)))
+        .run();
+      const names = dormant.map((row) => row.name).join(", ");
+      writeNotification(
+        "info",
+        `${dormant.length} scheduled automation${dormant.length === 1 ? "" : "s"} paused for review`,
+        `A scheduler bug kept schedule-triggered automations from ever running. It is fixed now, so these were paused instead of starting unexpectedly: ${names}. Re-enable each one you still want. Schedules are evaluated in UTC.`,
+      );
+      console.log(`[automation-cron] paused ${dormant.length} dormant schedule automation(s) for review`);
+    }
+    setSetting(SCHEDULE_ACTIVATION_SETTING, new Date().toISOString());
+    return dormant.length;
+  } catch (err) {
+    console.error("[automation-cron] could not pause dormant schedule automations:", err);
+    return 0;
+  }
+}
+
 export function startAutomationCron(): void {
+  pauseDormantScheduleAutomations();
   // Runs every minute, checks for schedule-type automations
   cronJob = new Cron("* * * * *", async () => {
     try {

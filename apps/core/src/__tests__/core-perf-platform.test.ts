@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   computeCpuUsage,
   sampleCpuTimes,
@@ -6,8 +6,9 @@ import {
   parseVmStat,
   parseNetstatIb,
   parseProcNetDev,
+  execFileTracked,
 } from "../platform/index.js";
-import { createLimiter, mapWithConcurrency, settleWithin } from "../platform/concurrency.js";
+import { createLimiter, createSkipIfRunning, mapWithConcurrency, settleWithin } from "../platform/concurrency.js";
 import type os from "node:os";
 
 function cpu(user: number, sys: number, idle: number): os.CpuInfo {
@@ -129,5 +130,89 @@ describe("concurrency helpers", () => {
     expect(await settleWithin(new Promise(() => {}), 5, "late")).toBe("late");
     expect(await settleWithin(Promise.reject(new Error("x")), 50, "failed")).toBe("failed");
     expect(await settleWithin(Promise.resolve(7), 50, 0)).toBe(7);
+  });
+});
+
+describe("limiter priority lane", () => {
+  it("runs priority tasks before queued normal tasks", async () => {
+    const limit = createLimiter(1);
+    const order: string[] = [];
+    let release!: () => void;
+    const first = limit(() => new Promise<void>((r) => { release = r; }));
+    const normal = limit(async () => { order.push("normal"); });
+    const urgent = limit(async () => { order.push("urgent"); }, { priority: true });
+    release();
+    await Promise.all([first, normal, urgent]);
+    expect(order).toEqual(["urgent", "normal"]);
+  });
+});
+
+describe("createSkipIfRunning", () => {
+  it("skips only the job that is still running", async () => {
+    const guard = createSkipIfRunning({ abandonAfterMs: 60_000 });
+    let release!: () => void;
+    const slow = vi.fn(() => new Promise<void>((r) => { release = r; }));
+    const fast = vi.fn(async () => {});
+
+    void guard("slow", slow);
+    await guard("fast", fast);
+    void guard("slow", slow); // skipped: previous run pending
+    await guard("fast", fast); // other jobs keep running
+    expect(slow).toHaveBeenCalledTimes(1);
+    expect(fast).toHaveBeenCalledTimes(2);
+
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    void guard("slow", slow);
+    expect(slow).toHaveBeenCalledTimes(2);
+    release();
+  });
+
+  it("abandons a run that never settles after abandonAfterMs", async () => {
+    let now = 0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const onAbandon = vi.fn();
+      const guard = createSkipIfRunning({ abandonAfterMs: 1_000, onAbandon });
+      const hung = vi.fn(() => new Promise<void>(() => {}));
+      void guard("hung", hung);
+      now = 999;
+      void guard("hung", hung);
+      expect(hung).toHaveBeenCalledTimes(1);
+      now = 1_000;
+      void guard("hung", hung);
+      expect(hung).toHaveBeenCalledTimes(2);
+      expect(onAbandon).toHaveBeenCalledWith("hung");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("never rejects, even when the job throws synchronously", async () => {
+    const guard = createSkipIfRunning({ abandonAfterMs: 1_000 });
+    await expect(guard("boom", () => { throw new Error("boom"); })).resolves.toBeUndefined();
+    await expect(guard("boom", async () => { throw new Error("boom"); })).resolves.toBeUndefined();
+  });
+});
+
+describe("execFileTracked", () => {
+  it("returns stdout and reports the child's exit", async () => {
+    const run = execFileTracked("/bin/echo", ["hello"], 2_000);
+    expect(await run.output).toBe("hello\n");
+    await expect(run.exited).resolves.toBeUndefined();
+  });
+
+  it("resolves null on timeout and SIGKILLs a child that ignores SIGTERM", async () => {
+    const started = performance.now();
+    const run = execFileTracked("/bin/sh", ["-c", "trap '' TERM; exec sleep 5"], 100);
+    expect(await run.output).toBeNull();
+    await run.exited;
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
+  it("reports a spawn failure as null output and an exited child", async () => {
+    const run = execFileTracked("/definitely/not/a/binary", [], 1_000);
+    expect(await run.output).toBeNull();
+    await expect(run.exited).resolves.toBeUndefined();
   });
 });

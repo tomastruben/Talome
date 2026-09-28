@@ -865,13 +865,6 @@ export function startOptimizerWatchdog(): void {
   watchdogTimer.unref?.();
 }
 
-export function stopOptimizerWatchdog(): void {
-  if (watchdogTimer) {
-    clearInterval(watchdogTimer);
-    watchdogTimer = null;
-  }
-}
-
 /** Priority threshold for user-initiated "Convert Now" jobs that bypass pause. */
 const CONVERT_NOW_PRIORITY = 10;
 

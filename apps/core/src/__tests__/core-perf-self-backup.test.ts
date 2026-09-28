@@ -74,4 +74,19 @@ describe("snapshotNowAsync", () => {
     expect(snapshots).toHaveLength(7);
     if (res.ok) expect(snapshots).toContain(res.path.split("/").pop());
   });
+
+  it("removes .partial files left by a crash, but not recent ones", async () => {
+    const stale = join(paths.backupDir, "talome-db-20200101-0000.db.partial");
+    const recent = join(paths.backupDir, "talome-db-20990101-0000.db.partial");
+    writeFileSync(stale, "half");
+    writeFileSync(recent, "in progress");
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(stale, old, old);
+
+    const res = await snapshotNowAsync();
+    expect(res.ok).toBe(true);
+    const files = readdirSync(paths.backupDir);
+    expect(files).not.toContain("talome-db-20200101-0000.db.partial");
+    expect(files).toContain("talome-db-20990101-0000.db.partial");
+  });
 });

@@ -5,24 +5,31 @@
  * unbounded against the Docker socket or the event loop.
  */
 
-export type Limiter = <T>(fn: () => Promise<T>) => Promise<T>;
+export interface LimiterTaskOptions {
+  /** Jump ahead of queued (non-priority) tasks, e.g. for interactive requests. */
+  priority?: boolean;
+}
+
+export type Limiter = <T>(fn: () => Promise<T>, opts?: LimiterTaskOptions) => Promise<T>;
 
 /**
  * Create a limiter that runs at most `max` tasks at the same time. Extra tasks
- * queue in FIFO order. A task that throws releases its slot like any other.
+ * queue in FIFO order; priority tasks queue ahead of normal ones (FIFO among
+ * themselves). A task that throws releases its slot like any other.
  */
 export function createLimiter(max: number): Limiter {
   const limit = Math.max(1, Math.floor(max));
   let active = 0;
+  const priorityQueue: Array<() => void> = [];
   const queue: Array<() => void> = [];
 
   const release = () => {
     active--;
-    const next = queue.shift();
+    const next = priorityQueue.shift() ?? queue.shift();
     if (next) next();
   };
 
-  return <T>(fn: () => Promise<T>): Promise<T> =>
+  return <T>(fn: () => Promise<T>, opts?: LimiterTaskOptions): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       const run = () => {
         active++;
@@ -40,6 +47,7 @@ export function createLimiter(max: number): Limiter {
         );
       };
       if (active < limit) run();
+      else if (opts?.priority) priorityQueue.push(run);
       else queue.push(run);
     });
 }
@@ -73,6 +81,45 @@ export async function settleWithin<T, F>(promise: Promise<T>, ms: number, fallba
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+export interface SkipIfRunningOptions {
+  /** A run still pending after this long is treated as wedged and may start again. */
+  abandonAfterMs: number;
+  /** Called when a wedged run is abandoned. */
+  onAbandon?: (name: string) => void;
+}
+
+/**
+ * Per-name overlap guard for periodic jobs: `guard(name, fn)` skips `fn` while
+ * a previous run under the same name is still pending, so one slow job only
+ * skips itself instead of stalling every other job on the same tick. A run
+ * pending for longer than `abandonAfterMs` no longer blocks new runs, so a
+ * promise that never settles cannot disable a job for good. The returned
+ * promise never rejects.
+ */
+export function createSkipIfRunning(
+  opts: SkipIfRunningOptions,
+): (name: string, fn: () => Promise<unknown>) => Promise<void> {
+  const running = new Map<string, { token: symbol; startedAt: number }>();
+  return (name, fn) => {
+    const current = running.get(name);
+    if (current && Date.now() - current.startedAt < opts.abandonAfterMs) return Promise.resolve();
+    if (current) opts.onAbandon?.(name);
+    const token = Symbol(name);
+    running.set(name, { token, startedAt: Date.now() });
+    let result: Promise<unknown>;
+    try {
+      result = fn();
+    } catch (err) {
+      result = Promise.reject(err);
+    }
+    return result
+      .then(() => undefined, () => undefined)
+      .finally(() => {
+        if (running.get(name)?.token === token) running.delete(name);
+      });
+  };
 }
 
 /** Yield to the event loop so queued I/O callbacks and timers can run. */

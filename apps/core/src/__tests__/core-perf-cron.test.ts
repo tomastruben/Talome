@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const state = vi.hoisted(() => ({
-  rows: [] as Array<{ id: string; trigger: string }>,
+  rows: [] as Array<{ id: string; name?: string; trigger: string }>,
+  updates: [] as Array<{ set: unknown }>,
+  settings: new Map<string, string>(),
 }));
 
 vi.mock("../db/index.js", () => {
@@ -10,11 +12,28 @@ vi.mock("../db/index.js", () => {
     where: () => chain,
     all: () => state.rows,
   };
+  const update = () => {
+    const entry: { set: unknown } = { set: undefined };
+    const u = {
+      set: (v: unknown) => { entry.set = v; return u; },
+      where: () => u,
+      run: () => { state.updates.push(entry); },
+    };
+    return u;
+  };
   return {
-    db: { select: () => chain },
-    schema: { automations: { id: "id", trigger: "trigger", enabled: "enabled" } },
+    db: { select: () => chain, update },
+    schema: { automations: { id: "id", name: "name", trigger: "trigger", enabled: "enabled" } },
   };
 });
+
+vi.mock("../utils/settings.js", () => ({
+  getSetting: (key: string) => state.settings.get(key),
+  setSetting: (key: string, value: string) => { state.settings.set(key, value); },
+}));
+
+const writeNotification = vi.hoisted(() => vi.fn());
+vi.mock("../db/notifications.js", () => ({ writeNotification }));
 
 const fireTrigger = vi.hoisted(() => vi.fn(async () => []));
 vi.mock("../automation/engine.js", () => ({ fireTrigger }));
@@ -25,6 +44,8 @@ import {
   getScheduleCacheSize,
   clearScheduleCache,
   dueOccurrence,
+  pauseDormantScheduleAutomations,
+  SCHEDULE_ACTIVATION_SETTING,
 } from "../automation/cron.js";
 
 const schedule = (cron: string) => JSON.stringify({ type: "schedule", cron });
@@ -32,7 +53,10 @@ const schedule = (cron: string) => JSON.stringify({ type: "schedule", cron });
 beforeEach(() => {
   clearScheduleCache();
   fireTrigger.mockClear();
+  writeNotification.mockClear();
   state.rows = [];
+  state.updates = [];
+  state.settings.clear();
 });
 
 describe("parsed schedule cache", () => {
@@ -94,5 +118,32 @@ describe("schedule firing", () => {
     const entry = getParsedSchedule("daily", schedule("0 3 * * *"));
     expect(dueOccurrence(entry, new Date("2026-09-28T03:00:00.500Z"))?.toISOString()).toBe("2026-09-28T03:00:00.000Z");
     expect(dueOccurrence(entry, new Date("2026-09-28T04:00:00.500Z"))).toBeNull();
+  });
+});
+
+describe("one-time pause of dormant schedule automations", () => {
+  it("pauses pre-existing schedule automations once and notifies the user", () => {
+    state.rows = [
+      { id: "s1", name: "Nightly prune", trigger: schedule("0 3 * * *") },
+      { id: "e1", name: "On crash", trigger: JSON.stringify({ type: "container_stopped" }) },
+    ];
+    expect(pauseDormantScheduleAutomations()).toBe(1);
+    expect(state.updates).toEqual([{ set: { enabled: false } }]);
+    expect(writeNotification).toHaveBeenCalledTimes(1);
+    expect(writeNotification.mock.calls[0][2]).toContain("Nightly prune");
+    expect(writeNotification.mock.calls[0][2]).toContain("UTC");
+    expect(state.settings.has(SCHEDULE_ACTIVATION_SETTING)).toBe(true);
+
+    // Later boots (and automations the user re-enabled) are left alone.
+    expect(pauseDormantScheduleAutomations()).toBe(0);
+    expect(state.updates).toHaveLength(1);
+    expect(writeNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks fresh installs without touching anything", () => {
+    expect(pauseDormantScheduleAutomations()).toBe(0);
+    expect(state.updates).toHaveLength(0);
+    expect(writeNotification).not.toHaveBeenCalled();
+    expect(state.settings.has(SCHEDULE_ACTIVATION_SETTING)).toBe(true);
   });
 });

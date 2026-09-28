@@ -20,12 +20,17 @@ vi.mock("dockerode", () => ({
 
 // Platform probes are exercised in core-perf-platform.test.ts; here they are
 // stubbed so getSystemStats never spawns a process.
+type Mounts = Array<{ fs: string; mount: string; usedBytes: number; totalBytes: number; percent: number; type: "internal" }>;
 const platformMock = vi.hoisted(() => ({
   getAppMemoryUsedAsync: vi.fn(async () => 4 * 1024 ** 3),
   sampleNetworkBytesAsync: vi.fn(async () => ({ rx: 1000, tx: 2000 })),
-  readDiskMountsAsync: vi.fn(async () => [
-    { fs: "/dev/disk1", mount: "/", usedBytes: 50, totalBytes: 100, percent: 50, type: "internal" as const },
-  ]),
+  // `mounts` is what df printed; `exited` is when the df child really exits.
+  readDiskMountsTracked: vi.fn((): { mounts: Promise<Mounts | null>; exited: Promise<void> } => ({
+    mounts: Promise.resolve([
+      { fs: "/dev/disk1", mount: "/", usedBytes: 50, totalBytes: 100, percent: 50, type: "internal" as const },
+    ]),
+    exited: Promise.resolve(),
+  })),
 }));
 
 vi.mock("../platform/index.js", async (importOriginal) => {
@@ -45,6 +50,9 @@ import {
   getCachedContainerStats,
   getSystemStats,
   subscribeDockerEvents,
+  startContainerCacheWatcher,
+  stopContainerCacheWatcher,
+  isContainerCacheWatcherConnected,
   CONTAINER_LIST_CACHE_TTL_MS,
   CONTAINER_STATS_TTL_MS,
   __resetDockerClientCachesForTests,
@@ -79,13 +87,25 @@ function statsPayload() {
 }
 
 let nowMs = 1_000_000;
+/** Event stream handed to every getEvents() call (cache watcher + subscribers). */
+let eventStreamMock = new EventEmitter();
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   __resetDockerClientCachesForTests();
   nowMs = 1_000_000;
   vi.spyOn(Date, "now").mockImplementation(() => nowMs);
   dockerMock.listContainers.mockImplementation(async () => [rawContainer("aaa"), rawContainer("bbb", "exited")]);
+  platformMock.readDiskMountsTracked.mockImplementation(() => ({
+    mounts: Promise.resolve([
+      { fs: "/dev/disk1", mount: "/", usedBytes: 50, totalBytes: 100, percent: 50, type: "internal" as const },
+    ]),
+    exited: Promise.resolve(),
+  }));
+  eventStreamMock = new EventEmitter();
+  dockerMock.getEvents.mockImplementation(async () => eventStreamMock);
+  // Cached reads are only trusted while the invalidation stream is up.
+  await startContainerCacheWatcher();
 });
 
 afterEach(() => {
@@ -186,6 +206,56 @@ describe("listContainers cache", () => {
   });
 });
 
+// ── Cache watcher (independent of the agent loop) ──────────────────────────
+
+describe("container cache watcher", () => {
+  it("invalidates the cached list on compose-driven events without any subscriber", async () => {
+    expect(isContainerCacheWatcherConnected()).toBe(true);
+    await listContainers({ cached: true });
+    await listContainers({ cached: true });
+    expect(dockerMock.listContainers).toHaveBeenCalledTimes(1);
+
+    // `docker compose stop` outside Talome's helpers: only the event tells us.
+    eventStreamMock.emit("data", Buffer.from(JSON.stringify({ Type: "container", Action: "stop", Actor: { ID: "aaa", Attributes: { name: "aaa" } } }) + "\n"));
+    await listContainers({ cached: true });
+    expect(dockerMock.listContainers).toHaveBeenCalledTimes(2);
+  });
+
+  it("serves fresh reads while the event stream is down, cached again once reconnected", async () => {
+    stopContainerCacheWatcher();
+    dockerMock.getEvents.mockImplementation(async () => { throw new Error("daemon unavailable"); });
+    await startContainerCacheWatcher();
+    expect(isContainerCacheWatcherConnected()).toBe(false);
+
+    await listContainers({ cached: true });
+    await listContainers({ cached: true });
+    expect(dockerMock.listContainers).toHaveBeenCalledTimes(2);
+
+    stopContainerCacheWatcher();
+    dockerMock.getEvents.mockImplementation(async () => eventStreamMock);
+    await startContainerCacheWatcher();
+    await listContainers({ cached: true });
+    await listContainers({ cached: true });
+    expect(dockerMock.listContainers).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops trusting the cache when the stream ends", async () => {
+    await listContainers({ cached: true });
+    eventStreamMock.emit("end");
+    expect(isContainerCacheWatcherConnected()).toBe(false);
+    await listContainers({ cached: true });
+    expect(dockerMock.listContainers).toHaveBeenCalledTimes(2);
+  });
+
+  it("the first cached read starts the watcher on its own", async () => {
+    stopContainerCacheWatcher();
+    dockerMock.getEvents.mockClear();
+    await listContainers({ cached: true });
+    await vi.waitFor(() => expect(isContainerCacheWatcherConnected()).toBe(true));
+    expect(dockerMock.getEvents).toHaveBeenCalledTimes(1);
+  });
+});
+
 // ── Docker events → invalidation ────────────────────────────────────────────
 
 describe("subscribeDockerEvents cache invalidation", () => {
@@ -281,6 +351,51 @@ describe("container stats sampler", () => {
     await vi.waitFor(() => expect(getCachedContainerStats("a", Infinity)?.memoryUsageMb).toBe(200));
   });
 
+  it("getContainerStats serves a fresh cached sample without calling Docker", async () => {
+    const stats = vi.fn(async () => statsPayload());
+    dockerMock.getContainer.mockReturnValue({ stats });
+    await getContainerStatsBatch(["a"]);
+    nowMs += CONTAINER_STATS_TTL_MS - 1;
+    expect((await getContainerStats("a")).cpuPercent).toBe(40);
+    expect(stats).toHaveBeenCalledTimes(1);
+  });
+
+  it("interactive getContainerStats jumps ahead of queued background refreshes", async () => {
+    const gates = new Map<string, ReturnType<typeof deferred<ReturnType<typeof statsPayload>>>>();
+    const started: string[] = [];
+    dockerMock.getContainer.mockImplementation((id: string) => ({
+      stats: () => {
+        started.push(id);
+        const d = deferred<ReturnType<typeof statsPayload>>();
+        gates.set(id, d);
+        return d.promise;
+      },
+    }));
+
+    // 4 samples running, 6 background samples queued (including "q5").
+    const ids = Array.from({ length: 10 }, (_, i) => `q${i}`);
+    void getContainerStatsBatch(ids, { waitMs: 1 });
+    await vi.waitFor(() => expect(started).toHaveLength(4));
+
+    // Interactive request for a container whose background sample is queued.
+    const interactive = getContainerStats("q9");
+    gates.get("q0")!.resolve(statsPayload());
+    await vi.waitFor(() => expect(started).toHaveLength(5));
+    expect(started[4]).toBe("q9");
+
+    gates.get("q9")!.resolve(statsPayload());
+    expect((await interactive).memoryUsageMb).toBe(100);
+
+    // Drain: the queued background sample for q9 reuses the new sample.
+    for (let i = 1; i < 9; i++) {
+      await vi.waitFor(() => expect(gates.has(`q${i}`)).toBe(true));
+      gates.get(`q${i}`)!.resolve(statsPayload());
+    }
+    await vi.waitFor(() => expect(started.filter((id) => id !== "q9")).toHaveLength(9));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(started.filter((id) => id === "q9")).toHaveLength(1);
+  });
+
   it("waits at most waitMs for containers without a sample", async () => {
     const d = deferred<ReturnType<typeof statsPayload>>();
     dockerMock.getContainer.mockReturnValue({ stats: () => d.promise });
@@ -300,7 +415,7 @@ describe("getSystemStats", () => {
   it("shares one sample between concurrent callers and caches it briefly", async () => {
     const [a, b] = await Promise.all([getSystemStats(), getSystemStats()]);
     expect(a).toBe(b);
-    expect(platformMock.readDiskMountsAsync).toHaveBeenCalledTimes(1);
+    expect(platformMock.readDiskMountsTracked).toHaveBeenCalledTimes(1);
     expect(platformMock.sampleNetworkBytesAsync).toHaveBeenCalledTimes(1);
     expect(a.disk.percent).toBe(50);
     expect(a.cpu.usage).toBeGreaterThanOrEqual(0);
@@ -312,18 +427,18 @@ describe("getSystemStats", () => {
     nowMs += 3_000; // next SSE tick → new sample; disk served from its own longer cache
     await getSystemStats();
     expect(platformMock.sampleNetworkBytesAsync).toHaveBeenCalledTimes(2);
-    expect(platformMock.readDiskMountsAsync).toHaveBeenCalledTimes(1);
+    expect(platformMock.readDiskMountsTracked).toHaveBeenCalledTimes(1);
   });
 
   it("serves the last disk reading while a slow df refreshes", async () => {
     await getSystemStats();
-    const d = deferred<Awaited<ReturnType<typeof platformMock.readDiskMountsAsync>>>();
-    platformMock.readDiskMountsAsync.mockImplementationOnce(() => d.promise);
+    const d = deferred<Mounts | null>();
+    platformMock.readDiskMountsTracked.mockImplementationOnce(() => ({ mounts: d.promise, exited: d.promise.then(() => {}) }));
 
     nowMs += 60_000;
     const stats = await getSystemStats(); // must not block on the pending df
     expect(stats.disk.percent).toBe(50);
-    expect(platformMock.readDiskMountsAsync).toHaveBeenCalledTimes(2);
+    expect(platformMock.readDiskMountsTracked).toHaveBeenCalledTimes(2);
     d.resolve([{ fs: "/dev/disk1", mount: "/", usedBytes: 90, totalBytes: 100, percent: 90, type: "internal" }]);
     await d.promise;
 
@@ -331,5 +446,35 @@ describe("getSystemStats", () => {
       nowMs += 3_000;
       expect((await getSystemStats()).disk.percent).toBe(90);
     });
+  });
+  it("never starts a second df while a wedged one is alive, and backs off after failures", async () => {
+    const exited = deferred<void>();
+    // df timed out (no output) and its child is stuck in the kernel.
+    platformMock.readDiskMountsTracked.mockImplementation(() => ({ mounts: Promise.resolve(null), exited: exited.promise }));
+
+    // Ten minutes of SSE ticks.
+    for (let i = 0; i < 200; i++) {
+      nowMs += 3_000;
+      await getSystemStats();
+    }
+    expect(platformMock.readDiskMountsTracked).toHaveBeenCalledTimes(1);
+
+    // The child finally exits; the next attempt may run.
+    exited.resolve();
+    await exited.promise;
+    await Promise.resolve();
+    nowMs += 3_000;
+    await getSystemStats();
+    expect(platformMock.readDiskMountsTracked).toHaveBeenCalledTimes(2);
+
+    // Second failure → at least 30s backoff before the third df.
+    for (let i = 0; i < 9; i++) {
+      nowMs += 3_000;
+      await getSystemStats();
+    }
+    expect(platformMock.readDiskMountsTracked).toHaveBeenCalledTimes(2);
+    nowMs += 6_000;
+    await getSystemStats();
+    expect(platformMock.readDiskMountsTracked).toHaveBeenCalledTimes(3);
   });
 });
