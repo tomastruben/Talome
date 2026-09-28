@@ -37,7 +37,7 @@ chat.post("/", async (c) => {
       );
     }
 
-    const { messages, pageContext, model, provider } = await c.req.json();
+    const { messages, pageContext, model, provider, conversationId } = await c.req.json();
 
     if (!messages || !Array.isArray(messages)) {
       return c.json({ error: "messages array is required" }, 400);
@@ -66,8 +66,12 @@ chat.post("/", async (c) => {
 
     // Tool calls in this chat act as the session user (audit, approvals).
     const actor = sessionChatActor(c.get("sessionUser" as never), c.get("sessionUsername" as never), c.get("sessionRole" as never));
+    // Optional stable conversation id keys per-conversation tool routing;
+    // without it the first message id is used (see ai/tool-discovery.ts).
     const result = await withExecutionContext(actor, "chat", () =>
-      createChatStream(messages, pageContext ?? undefined, model ?? undefined, streamAbort.signal, provider ?? undefined),
+      createChatStream(messages, pageContext ?? undefined, model ?? undefined, streamAbort.signal, provider ?? undefined, {
+        conversationId: typeof conversationId === "string" ? conversationId : undefined,
+      }),
     );
 
     // Wrap the result stream so lazy read failures are always translated

@@ -611,3 +611,4 @@ export * from "./schema-trust.js";
 export * from "./schema-ops-updates.js";
 export * from "./schema-backups.js";
 export * from "./schema-store-compat.js";
+export * from "./schema-ai-chat.js";
