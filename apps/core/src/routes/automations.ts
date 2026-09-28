@@ -6,6 +6,7 @@ import { eq, desc, inArray, sql } from "drizzle-orm";
 import { fireTrigger } from "../automation/engine.js";
 import type { AutomationTrigger, AutomationAction, AutomationStep } from "../automation/engine.js";
 import { getAutomationSafeTools } from "../ai/automation-safe-tools.js";
+import { executedStepRuns } from "../automation/step-run-view.js";
 import { serverError } from "../middleware/request-logger.js";
 import { createLogger } from "../utils/logger.js";
 
@@ -262,7 +263,7 @@ automations.get("/:id/runs", (c) => {
           .all()
       : [];
     const stepsByRun = new Map<string, typeof allStepRuns>();
-    for (const step of allStepRuns) {
+    for (const step of executedStepRuns(allStepRuns)) {
       const arr = stepsByRun.get(step.runId) ?? [];
       arr.push(step);
       stepsByRun.set(step.runId, arr);

@@ -231,6 +231,12 @@ async function runCycle(): Promise<void> {
           .set({ remediationId: remResult.eventId })
           .where(eq(schema.systemEvents.id, event.id))
           .run();
+
+        // An attempted fix is only reported as fixed once verified — check
+        // soon instead of waiting for the next 5-minute verification tick.
+        if (remResult.outcome === "pending_verification") {
+          scheduleEarlyVerification();
+        }
       } catch (err) {
         log.error(`Remediation for ${event.id} failed`, err);
       }
@@ -240,6 +246,20 @@ async function runCycle(): Promise<void> {
   } finally {
     running = false;
   }
+}
+
+let earlyVerifyTimer: ReturnType<typeof setTimeout> | null = null;
+const EARLY_VERIFY_DELAY_MS = 90_000;
+
+function scheduleEarlyVerification(): void {
+  if (earlyVerifyTimer) return;
+  earlyVerifyTimer = setTimeout(() => {
+    earlyVerifyTimer = null;
+    verifyPendingRemediations().catch((err) => {
+      log.error("Early outcome verification error (isolated)", err);
+    });
+  }, EARLY_VERIFY_DELAY_MS);
+  earlyVerifyTimer.unref?.();
 }
 
 // ── Reactive Network Repair ────────────────────────────────────────────────
@@ -451,6 +471,10 @@ export function startAgentLoop(): () => void {
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
+    }
+    if (earlyVerifyTimer) {
+      clearTimeout(earlyVerifyTimer);
+      earlyVerifyTimer = null;
     }
     if (eventStreamCleanup) {
       eventStreamCleanup();

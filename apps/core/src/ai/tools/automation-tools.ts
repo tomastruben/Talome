@@ -5,6 +5,7 @@ import { db, schema } from "../../db/index.js";
 import { eq, desc } from "drizzle-orm";
 import { writeAuditEntry } from "../../db/audit.js";
 import { getAutomationSafeTools } from "../automation-safe-tools.js";
+import { executedStepRuns } from "../../automation/step-run-view.js";
 
 // ── Schema helpers ────────────────────────────────────────────────────────────
 
@@ -181,12 +182,12 @@ export const getAutomationRunsTool = tool({
       .all();
 
     const runsWithSteps = runs.map((run) => {
-      const stepRuns = db
+      const stepRuns = executedStepRuns(db
         .select()
         .from(schema.automationStepRuns)
         .where(eq(schema.automationStepRuns.runId, run.id))
         .orderBy(schema.automationStepRuns.startedAt)
-        .all();
+        .all());
       return {
         id: run.id,
         triggeredAt: run.triggeredAt,
@@ -195,6 +196,7 @@ export const getAutomationRunsTool = tool({
         actionsRun: run.actionsRun,
         steps: stepRuns.map((s) => ({
           stepType: s.stepType,
+          status: s.status,
           success: s.success,
           blocked: s.blocked,
           output: s.output,
