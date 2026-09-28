@@ -555,3 +555,4 @@ export const communitySubmissions = sqliteTable("community_submissions", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
   publishedAt: text("published_at"),
 });
+export * from "./schema-ai-chat.js";

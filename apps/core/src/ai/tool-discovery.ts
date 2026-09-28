@@ -10,13 +10,17 @@
  * The set only grows within a conversation (monotonic), so the tool list sent
  * to the model — and therefore the provider's cached prompt prefix — stays
  * stable from turn to turn. Everything is re-derived from the message history
- * on every request, so it survives restarts; an in-memory LRU additionally
- * remembers discover_tools activations for histories that do not keep tool
- * parts (e.g. messaging platforms that persist plain text only).
+ * on every request. The conversation's routed domains are also remembered by
+ * conversation key — in an in-memory LRU backed by the
+ * conversation_tool_domains table — so discover_tools activations survive
+ * restarts even for histories that do not keep tool parts (messaging
+ * platforms persist plain text only).
  */
 
 import { tool, type Tool, type UIMessage } from "ai";
+import { eq, lt } from "drizzle-orm";
 import { z } from "zod";
+import { db, schema } from "../db/index.js";
 import {
   getActiveDomainNames,
   getAllDomains,
@@ -39,6 +43,9 @@ const MAX_RESULTS = 12;
 const MAX_CONVERSATIONS = 500;
 const CONVERSATION_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_KEY_LENGTH = 200;
+/** Persisted rows untouched for this long are pruned. */
+const PERSISTED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const PRUNE_EVERY_WRITES = 100;
 
 // ── Conversation state (in-memory LRU) ──────────────────────────────────────
 
@@ -48,22 +55,60 @@ interface RememberedDomains {
 }
 
 const conversationDomains = new Map<string, RememberedDomains>();
+let writesSincePrune = 0;
+
+function loadPersistedDomains(key: string): string[] {
+  try {
+    const row = db
+      .select({ domains: schema.conversationToolDomains.domains })
+      .from(schema.conversationToolDomains)
+      .where(eq(schema.conversationToolDomains.conversationKey, key))
+      .get();
+    if (!row) return [];
+    const parsed: unknown = JSON.parse(row.domains);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return []; // table missing (not migrated yet) or unreadable — the in-memory state still works
+  }
+}
+
+function persistDomains(key: string, domains: ReadonlySet<string>): void {
+  try {
+    const now = new Date().toISOString();
+    const value = JSON.stringify([...domains].sort());
+    db.insert(schema.conversationToolDomains)
+      .values({ conversationKey: key, domains: value, updatedAt: now })
+      .onConflictDoUpdate({
+        target: schema.conversationToolDomains.conversationKey,
+        set: { domains: value, updatedAt: now },
+      })
+      .run();
+    if (++writesSincePrune >= PRUNE_EVERY_WRITES) {
+      writesSincePrune = 0;
+      const cutoff = new Date(Date.now() - PERSISTED_TTL_MS).toISOString();
+      db.delete(schema.conversationToolDomains)
+        .where(lt(schema.conversationToolDomains.updatedAt, cutoff))
+        .run();
+    }
+  } catch {
+    // Best effort: routing still works from history + the in-memory LRU.
+  }
+}
 
 function recall(key: string): Set<string> {
   const entry = conversationDomains.get(key);
-  if (!entry) return new Set();
-  if (Date.now() - entry.touchedAt > CONVERSATION_TTL_MS) {
-    conversationDomains.delete(key);
-    return new Set();
-  }
-  return entry.domains;
+  if (entry && Date.now() - entry.touchedAt <= CONVERSATION_TTL_MS) return entry.domains;
+  if (entry) conversationDomains.delete(key);
+  // LRU miss (restart, eviction, TTL): fall back to the persisted set.
+  const persisted = new Set(loadPersistedDomains(key));
+  if (persisted.size > 0) store(key, persisted);
+  return persisted;
 }
 
-function remember(key: string, domains: Iterable<string>): void {
-  const merged = new Set([...recall(key), ...domains]);
+function store(key: string, domains: Set<string>): void {
   // Re-insert so Map iteration order doubles as LRU order.
   conversationDomains.delete(key);
-  conversationDomains.set(key, { domains: merged, touchedAt: Date.now() });
+  conversationDomains.set(key, { domains, touchedAt: Date.now() });
   while (conversationDomains.size > MAX_CONVERSATIONS) {
     const oldest = conversationDomains.keys().next().value;
     if (oldest === undefined) break;
@@ -71,7 +116,14 @@ function remember(key: string, domains: Iterable<string>): void {
   }
 }
 
-/** Test helper — forget all remembered conversations. */
+function remember(key: string, domains: Iterable<string>): void {
+  const previous = recall(key);
+  const merged = new Set([...previous, ...domains]);
+  store(key, merged);
+  if (merged.size > previous.size) persistDomains(key, merged);
+}
+
+/** Test helper — forget all in-memory conversation state (persisted rows stay). */
 export function resetToolRoutingState(): void {
   conversationDomains.clear();
 }
@@ -134,7 +186,7 @@ export function deriveDomainsFromHistory(
 
   for (const message of messages) {
     if (message.role === "user") {
-      for (const name of matchDomainsForText(messageText(message), activeDomains)) add(name);
+      for (const name of matchDomainsForText(messageText(message), activeDomains, message.id)) add(name);
       continue;
     }
     for (const part of (message.parts ?? []) as ToolPartLike[]) {
@@ -223,8 +275,26 @@ export interface ToolSearchMatch {
   score: number;
 }
 
-/** Rank registered tools against a free-text query and/or a domain name. */
-export function searchRegisteredTools(query: string, domainFilter?: string): ToolSearchMatch[] {
+export type ToolEnabledPredicate = (toolName: string) => boolean;
+
+const allToolsEnabled: ToolEnabledPredicate = () => true;
+
+/** True when the domain registers at least one tool that is not disabled. */
+function domainHasEnabledTools(name: string, isToolEnabled: ToolEnabledPredicate): boolean {
+  const domain = getDomain(name);
+  if (!domain) return false;
+  return Object.keys(domain.tools).some((toolName) => getDomainNameForTool(toolName) === name && isToolEnabled(toolName));
+}
+
+/**
+ * Rank registered tools against a free-text query and/or a domain name.
+ * Tools rejected by `isToolEnabled` (the user's disabled_tools) are skipped.
+ */
+export function searchRegisteredTools(
+  query: string,
+  domainFilter?: string,
+  isToolEnabled: ToolEnabledPredicate = allToolsEnabled,
+): ToolSearchMatch[] {
   const tokens = tokenize(query);
   const exact = query.trim().toLowerCase();
   const matches: ToolSearchMatch[] = [];
@@ -235,7 +305,7 @@ export function searchRegisteredTools(query: string, domainFilter?: string): Too
     const domainHit = tokens.some((t) => keywords.some((kw) => kw === t || textMatchesKeyword(t, kw)))
       || (exact.length > 0 && keywords.some((kw) => textMatchesKeyword(exact, kw)));
     for (const [name, t] of Object.entries(domain.tools)) {
-      if (getDomainNameForTool(name) !== domain.name) continue;
+      if (getDomainNameForTool(name) !== domain.name || !isToolEnabled(name)) continue;
       const description = ((t as { description?: string }).description ?? "").toLowerCase();
       let score = 0;
       if (name === exact) score += 100;
@@ -272,8 +342,16 @@ const discoverToolsInput = z.object({
  * Activated domains are added to the session immediately, so their tools are
  * callable from the model's next step (the chat loop re-reads the session in
  * prepareStep) and on every later turn of the conversation.
+ *
+ * `isToolEnabled` hides tools the user disabled: they are never listed as
+ * callable, and a domain whose tools are all disabled is never activated.
  */
-export function createDiscoverToolsTool(session: ToolRoutingSession): Tool {
+export function createDiscoverToolsTool(
+  session: ToolRoutingSession,
+  options: { isToolEnabled?: ToolEnabledPredicate } = {},
+): Tool {
+  const isToolEnabled = options.isToolEnabled ?? allToolsEnabled;
+  const routable = (name: string) => domainHasEnabledTools(name, isToolEnabled);
   return tool({
     description:
       "Find and load more tools. Your tool list holds core tools plus domains relevant to this conversation; " +
@@ -291,12 +369,12 @@ export function createDiscoverToolsTool(session: ToolRoutingSession): Tool {
         return {
           activatedDomains: [],
           tools: [],
-          availableDomains: listRoutableDomains(active, session),
+          availableDomains: listRoutableDomains(active, session, routable),
           note: "Pass a query or a domain name to load tools.",
         };
       }
 
-      const matches = searchRegisteredTools(text, domainName);
+      const matches = searchRegisteredTools(text, domainName, isToolEnabled);
 
       // Rank candidate domains by their best tool score; keyword-matched domains count too.
       const domainScores = new Map<string, number>();
@@ -305,6 +383,7 @@ export function createDiscoverToolsTool(session: ToolRoutingSession): Tool {
       if (domainName && getDomain(domainName)) domainScores.set(domainName, Math.max(domainScores.get(domainName) ?? 0, 1000));
 
       const rankedDomains = [...domainScores.entries()]
+        .filter(([name]) => routable(name))
         .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
         .map(([name]) => name);
 
@@ -328,7 +407,7 @@ export function createDiscoverToolsTool(session: ToolRoutingSession): Tool {
         alreadyLoaded: rankedDomains.filter((n) => session.domains.has(n) && !activatedDomains.includes(n)).slice(0, 5),
         tools,
         ...(unconfigured.length > 0 ? { unconfigured } : {}),
-        ...(tools.length === 0 ? { availableDomains: listRoutableDomains(active, session) } : {}),
+        ...(tools.length === 0 ? { availableDomains: listRoutableDomains(active, session, routable) } : {}),
         note: activatedDomains.length > 0
           ? "The listed tools are now loaded and callable from your next step."
           : tools.length > 0
@@ -339,9 +418,13 @@ export function createDiscoverToolsTool(session: ToolRoutingSession): Tool {
   });
 }
 
-function listRoutableDomains(active: ReadonlySet<string>, session: ToolRoutingSession) {
+function listRoutableDomains(
+  active: ReadonlySet<string>,
+  session: ToolRoutingSession,
+  routable: (name: string) => boolean,
+) {
   return getAllDomains()
-    .filter((d) => active.has(d.name) && !isBaseDomain(d))
+    .filter((d) => active.has(d.name) && !isBaseDomain(d) && routable(d.name))
     .map((d) => ({
       name: d.name,
       loaded: session.domains.has(d.name),

@@ -91,6 +91,8 @@ let toolDomainIndex: Map<string, string> | null = null;
 export function registerDomain(domain: ToolDomain): void {
   domains.push(domain);
   toolDomainIndex = null;
+  domainPatternCache.clear();
+  textMatchCache.clear();
 }
 
 function pick<T>(source: Record<string, T> | undefined, names: ReadonlySet<string>, keep: boolean): Record<string, T> {
@@ -221,9 +223,29 @@ const DOMAIN_KEYWORDS: Record<string, string[]> = {
 };
 
 const keywordPatternCache = new Map<string, RegExp>();
+/** One combined pattern per domain (all of its keywords), rebuilt when domains change. */
+const domainPatternCache = new Map<string, RegExp>();
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Regex source for one keyword plus its common inflections: "movie" also
+ * matches "movies", and a consonant + y ending also matches -ies / -ied / -ying
+ * ("library" → "libraries").
+ */
+function keywordSource(keyword: string): string {
+  const lower = keyword.toLowerCase();
+  if (/[^aeiou\s]y$/.test(lower)) {
+    return `${escapeRegExp(lower.slice(0, -1))}(?:y|ies|ied|ying)`;
+  }
+  return `${escapeRegExp(lower)}(?:s|es|ing|ed|er|ers)?`;
+}
+
+/** Whole-word boundary wrapper shared by the single- and multi-keyword patterns. */
+function wholeWord(source: string): RegExp {
+  return new RegExp(`(?:^|[^a-z0-9])(?:${source})(?=$|[^a-z0-9])`);
 }
 
 /**
@@ -233,7 +255,7 @@ function escapeRegExp(value: string): string {
 function keywordPattern(keyword: string): RegExp {
   let pattern = keywordPatternCache.get(keyword);
   if (!pattern) {
-    pattern = new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(keyword.toLowerCase())}(?:s|es|ing|ed|er|ers)?(?=$|[^a-z0-9])`);
+    pattern = wholeWord(keywordSource(keyword));
     keywordPatternCache.set(keyword, pattern);
   }
   return pattern;
@@ -241,6 +263,24 @@ function keywordPattern(keyword: string): RegExp {
 
 export function textMatchesKeyword(text: string, keyword: string): boolean {
   return keywordPattern(keyword).test(text.toLowerCase());
+}
+
+/** True when already-lowercased `lowerText` contains any of `keywords` as a whole word. */
+export function lowerTextMatchesAnyKeyword(lowerText: string, keywords: readonly string[]): boolean {
+  return keywords.some((kw) => keywordPattern(kw).test(lowerText));
+}
+
+function domainPattern(domain: ToolDomain): RegExp {
+  let pattern = domainPatternCache.get(domain.name);
+  if (!pattern) {
+    // Longest first so a multi-word keyword wins over its first word.
+    const sources = getDomainKeywords(domain)
+      .sort((a, b) => b.length - a.length)
+      .map(keywordSource);
+    pattern = wholeWord(sources.join("|"));
+    domainPatternCache.set(domain.name, pattern);
+  }
+  return pattern;
 }
 
 /** All routing keywords for a domain: its own list, the built-in table, and its name. */
@@ -277,20 +317,51 @@ export function getDomainNameForTool(toolName: string): string | undefined {
   return toolDomainIndex.get(toolName);
 }
 
+/** Per-text memo of keyword matches (all non-base domains, before the active filter). */
+const textMatchCache = new Map<string, readonly string[]>();
+const TEXT_MATCH_CACHE_MAX = 2000;
+/** Texts shorter than this are cheap to scan and not worth a cache slot. */
+const TEXT_MATCH_CACHE_MIN_LENGTH = 2000;
+
+function scanDomainsForText(lowerText: string): string[] {
+  const matched: string[] = [];
+  for (const domain of domains) {
+    if (isBaseDomain(domain)) continue;
+    if (domainPattern(domain).test(lowerText)) matched.push(domain.name);
+  }
+  return matched;
+}
+
 /**
  * Active, non-base domains whose keywords appear in `text`.
  * No fallback: a message that matches nothing adds nothing.
+ *
+ * The text is lowercased once and each domain is tested with one combined
+ * pattern. `cacheKey` (e.g. a message id) memoizes the scan for long texts,
+ * so a pasted log in the history is scanned once, not on every request.
  */
-export function matchDomainsForText(text: string, activeDomains: ReadonlySet<string> = getActiveDomainNames()): Set<string> {
-  const matched = new Set<string>();
-  if (!text.trim()) return matched;
-  for (const domain of domains) {
-    if (isBaseDomain(domain) || !activeDomains.has(domain.name)) continue;
-    if (getDomainKeywords(domain).some((kw) => textMatchesKeyword(text, kw))) {
-      matched.add(domain.name);
+export function matchDomainsForText(
+  text: string,
+  activeDomains: ReadonlySet<string> = getActiveDomainNames(),
+  cacheKey?: string,
+): Set<string> {
+  if (!text.trim()) return new Set();
+  let names: readonly string[] | undefined;
+  const memoKey = cacheKey && text.length >= TEXT_MATCH_CACHE_MIN_LENGTH
+    ? `${cacheKey}\u0000${text.length}\u0000${text.slice(0, 64)}\u0000${text.slice(-64)}`
+    : undefined;
+  if (memoKey) names = textMatchCache.get(memoKey);
+  if (!names) {
+    names = scanDomainsForText(text.toLowerCase());
+    if (memoKey) {
+      textMatchCache.set(memoKey, names);
+      if (textMatchCache.size > TEXT_MATCH_CACHE_MAX) {
+        const oldest = textMatchCache.keys().next().value;
+        if (oldest !== undefined) textMatchCache.delete(oldest);
+      }
     }
   }
-  return matched;
+  return new Set(names.filter((name) => activeDomains.has(name)));
 }
 
 /** Deterministic domain order: base domains first, then by name. */
@@ -317,17 +388,6 @@ export function getOrderedDomainTools(domainNames: Iterable<string>): Array<[str
     }
   }
   return entries;
-}
-
-/**
- * Returns tools relevant to a single message: the base domains plus any active
- * domain whose keywords match. Kept for callers without conversation state —
- * chat uses tool-discovery.ts, which also remembers domains across turns.
- */
-export function getToolsForMessage(message: string): Record<string, Tool> {
-  const active = getActiveDomainNames();
-  const names = [...getBaseDomainNames().filter((n) => active.has(n)), ...matchDomainsForText(message, active)];
-  return Object.fromEntries(getOrderedDomainTools(names));
 }
 
 /**

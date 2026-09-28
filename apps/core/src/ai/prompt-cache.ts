@@ -16,7 +16,7 @@
  * on system messages, messages (applied to their last content part) and tools.
  */
 
-import type { ModelMessage, SystemModelMessage, Tool } from "ai";
+import type { ModelMessage, SystemModelMessage, Tool, UIMessage } from "ai";
 
 type ProviderOptions = NonNullable<ModelMessage["providerOptions"]>;
 
@@ -44,8 +44,9 @@ function withoutCacheControl(options: ProviderOptions | undefined): ProviderOpti
 
 /**
  * System messages: the static prompt first (cache breakpoint when `cache`),
- * then the dynamic context — memories, setup status, page context — which may
- * change between turns without invalidating the cached tools + static prompt.
+ * then the conversation-stable context (memories snapshot, setup status).
+ * Everything here precedes the history in the cache prefix, so turn-scoped
+ * context must not go here — see attachTurnNotes().
  */
 export function buildSystemMessages(params: {
   staticPrompt: string;
@@ -130,5 +131,28 @@ export function applyMessageCacheBreakpoints(messages: readonly ModelMessage[]):
     if (next) copy.providerOptions = next;
     else delete copy.providerOptions;
     return copy as ModelMessage;
+  });
+}
+
+/** Header of the text part that carries a turn note inside a user message. */
+export const TURN_NOTE_HEADER = "[Context for this message, added by Talome, not written by the user]";
+
+/**
+ * Attach turn-scoped context (page context, saved screenshot paths, the setup
+ * guide) to the user message it belongs to, as a trailing text part. Unlike
+ * the system block, a note on an older message stays byte-identical on later
+ * turns, so the cached history prefix survives. Returns a new array; messages
+ * without a note are passed through unchanged.
+ */
+export function attachTurnNotes(messages: readonly UIMessage[], notes: ReadonlyMap<string, string>): UIMessage[] {
+  if (notes.size === 0) return [...messages];
+  return messages.map((message) => {
+    if (message.role !== "user") return message;
+    const note = notes.get(message.id);
+    if (!note || !note.trim()) return message;
+    return {
+      ...message,
+      parts: [...(message.parts ?? []), { type: "text" as const, text: `${TURN_NOTE_HEADER}\n${note}` }],
+    };
   });
 }

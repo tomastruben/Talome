@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import type { ModelMessage, Tool, UIMessage } from "ai";
 
-const { streamTextMock } = vi.hoisted(() => ({ streamTextMock: vi.fn() }));
+const { streamTextMock, getTopMemoriesMock, getFeatureStackStatusMock, saveScreenshotsMock } = vi.hoisted(() => ({
+  streamTextMock: vi.fn(),
+  getTopMemoriesMock: vi.fn(),
+  getFeatureStackStatusMock: vi.fn(),
+  saveScreenshotsMock: vi.fn(),
+}));
 
 vi.mock("ai", async (importOriginal) => {
   const actual = await importOriginal<typeof import("ai")>();
@@ -20,8 +25,12 @@ vi.mock("../db/index.js", () => {
   };
 });
 vi.mock("../db/audit.js", () => ({ writeAuditEntry: vi.fn() }));
-vi.mock("../db/memories.js", () => ({ getTopMemories: vi.fn().mockResolvedValue([]) }));
-vi.mock("../stacks/feature-stacks.js", () => ({ getFeatureStackStatus: vi.fn().mockResolvedValue([]) }));
+vi.mock("../db/memories.js", () => ({ getTopMemories: getTopMemoriesMock }));
+vi.mock("../stacks/feature-stacks.js", () => ({ getFeatureStackStatus: getFeatureStackStatusMock }));
+vi.mock("../ai/claude-runner.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ai/claude-runner.js")>();
+  return { ...actual, saveScreenshots: saveScreenshotsMock };
+});
 vi.mock("../agent-loop/budget.js", () => ({ logAiUsage: vi.fn() }));
 
 import {
@@ -29,7 +38,8 @@ import {
   buildSystemMessages,
   withToolCacheBreakpoint,
 } from "../ai/prompt-cache.js";
-import { createChatStream } from "../ai/agent.js";
+import { createChatStream, DEFAULT_SYSTEM_PROMPT } from "../ai/agent.js";
+import { invalidateChatContextCaches } from "../ai/chat-context-cache.js";
 import { getBaseDomainNames, getOrderedDomainTools } from "../ai/tool-registry.js";
 import { resetToolRoutingState } from "../ai/tool-discovery.js";
 
@@ -117,7 +127,14 @@ describe("createChatStream cache options", () => {
   beforeEach(() => {
     streamTextMock.mockReset();
     streamTextMock.mockReturnValue({});
+    getTopMemoriesMock.mockReset();
+    getTopMemoriesMock.mockResolvedValue([]);
+    getFeatureStackStatusMock.mockReset();
+    getFeatureStackStatusMock.mockResolvedValue([]);
+    saveScreenshotsMock.mockReset();
+    saveScreenshotsMock.mockResolvedValue([]);
     resetToolRoutingState();
+    invalidateChatContextCaches();
     process.env.ANTHROPIC_API_KEY = "test-anthropic-key";
     process.env.OPENAI_API_KEY = "test-openai-key";
     delete process.env.DEFAULT_MODEL;
@@ -128,7 +145,9 @@ describe("createChatStream cache options", () => {
   });
 
   type StreamArgs = {
-    system: Array<{ providerOptions?: unknown }>;
+    system: Array<{ content: string; providerOptions?: unknown }>;
+    messages: ModelMessage[];
+    onStepFinish: (step: { toolCalls: Array<{ toolName: string; args?: unknown }>; toolResults: unknown[] }) => void;
     tools: Record<string, Tool & { providerOptions?: unknown }>;
     activeTools: string[];
     prepareStep: (o: { messages: ModelMessage[]; stepNumber: number }) => { activeTools?: string[]; messages?: ModelMessage[] };
@@ -180,5 +199,105 @@ describe("createChatStream cache options", () => {
     const execute = args.tools.discover_tools.execute as (i: unknown, o: unknown) => Promise<unknown>;
     await execute({ query: "automation" }, { toolCallId: "d1", messages: [] });
     expect(args.prepareStep({ messages: history, stepNumber: 1 }).activeTools).toContain("create_automation");
+  });
+
+  const text = (m: ModelMessage) =>
+    typeof m.content === "string" ? m.content : m.content.map((p) => ("text" in p ? String(p.text) : `[${p.type}]`)).join("|");
+
+  it("keeps the system block identical across turns when a memory is added mid-conversation", async () => {
+    getTopMemoriesMock
+      .mockResolvedValueOnce([{ id: 1, content: "media lives on /mnt/media" }])
+      .mockResolvedValue([{ id: 1, content: "media lives on /mnt/media" }, { id: 2, content: "prefers 4K" }]);
+    const turn1: UIMessage[] = [{ id: "u1", role: "user", parts: [{ type: "text", text: "hello" }] }];
+    await createChatStream(turn1, undefined, undefined, undefined, "anthropic");
+    const system1 = lastArgs().system;
+
+    const turn2: UIMessage[] = [
+      ...turn1,
+      { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi! How can I help with your server today?" }] },
+      { id: "u2", role: "user", parts: [{ type: "text", text: "thanks" }] },
+    ];
+    await createChatStream(turn2, undefined, undefined, undefined, "anthropic");
+    expect(lastArgs().system).toEqual(system1);
+    expect(system1[1].content).toContain("media lives on /mnt/media");
+    expect(system1[1].content).not.toContain("prefers 4K");
+
+    // A new conversation picks up the new memory.
+    await createChatStream([{ id: "n1", role: "user", parts: [{ type: "text", text: "hi" }] }], undefined, undefined, undefined, "anthropic");
+    expect(lastArgs().system[1].content).toContain("prefers 4K");
+  });
+
+  it("attaches page context and screenshot paths to their user message and replays them verbatim", async () => {
+    saveScreenshotsMock.mockResolvedValue(["/tmp/shots/1-0.png"]);
+    const turn1: UIMessage[] = [{
+      id: "u1",
+      role: "user",
+      parts: [
+        { type: "text", text: "make this button bigger" },
+        { type: "file", mediaType: "image/png", url: "data:image/png;base64,iVBORw0KGgo=" },
+      ],
+    }];
+    await createChatStream(turn1, "Page: /apps", undefined, undefined, "anthropic");
+    const args1 = lastArgs();
+    expect(args1.system.map((m) => m.content).join("\n")).not.toContain("Page: /apps");
+    expect(args1.system.map((m) => m.content).join("\n")).not.toContain("Visual context");
+    const u1Text = text(args1.messages[0]);
+    expect(u1Text).toContain("Page: /apps");
+    expect(u1Text).toContain("/tmp/shots/1-0.png");
+
+    const turn2: UIMessage[] = [
+      ...turn1,
+      { id: "a1", role: "assistant", parts: [{ type: "text", text: "Done." }] },
+      { id: "u2", role: "user", parts: [{ type: "text", text: "and the header" }] },
+    ];
+    await createChatStream(turn2, "Page: /media", undefined, undefined, "anthropic");
+    const args2 = lastArgs();
+    expect(args2.system).toEqual(args1.system);
+    expect(args2.messages[0]).toEqual(args1.messages[0]);
+    expect(text(args2.messages[2])).toContain("Page: /media");
+    expect(text(args2.messages[2])).not.toContain("Visual context");
+    expect(saveScreenshotsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("attaches the setup guide to the first setup message (whole words only) and keeps it there", async () => {
+    const report: UIMessage[] = [{ id: "r1", role: "user", parts: [{ type: "text", text: "give me a report, it's important" }] }];
+    await createChatStream(report, undefined, undefined, undefined, "anthropic");
+    expect(lastArgs().messages.map(text).join("\n")).not.toContain("## App settings reference");
+
+    const turn1: UIMessage[] = [{ id: "s1", role: "user", parts: [{ type: "text", text: "how do I configure sonarr?" }] }];
+    await createChatStream(turn1, undefined, undefined, undefined, "anthropic");
+    const args1 = lastArgs();
+    expect(text(args1.messages[0])).toContain("## App settings reference");
+    expect(args1.system.map((m) => m.content).join("\n")).not.toContain("## App settings reference");
+
+    await createChatStream([
+      ...turn1,
+      { id: "a1", role: "assistant", parts: [{ type: "text", text: "Sure." }] },
+      { id: "s2", role: "user", parts: [{ type: "text", text: "thanks" }] },
+    ], undefined, undefined, undefined, "anthropic");
+    const args2 = lastArgs();
+    expect(args2.messages[0]).toEqual(args1.messages[0]);
+    expect(text(args2.messages[2])).not.toContain("## App settings reference");
+  });
+
+  it("adds the Tool Loading section only to the chat prompt", async () => {
+    expect(DEFAULT_SYSTEM_PROMPT).not.toContain("discover_tools");
+    await createChatStream(uiMessages, undefined, undefined, undefined, "anthropic");
+    expect(lastArgs().system[0].content).toContain("## Tool Loading");
+    expect(lastArgs().system[0].content.startsWith(DEFAULT_SYSTEM_PROMPT)).toBe(true);
+  });
+
+  it("refreshes setup status after the agent runs a state-changing tool", async () => {
+    await createChatStream(uiMessages, undefined, undefined, undefined, "anthropic");
+    await createChatStream(uiMessages, undefined, undefined, undefined, "anthropic");
+    expect(getFeatureStackStatusMock).toHaveBeenCalledTimes(1);
+
+    lastArgs().onStepFinish({ toolCalls: [{ toolName: "list_containers", args: {} }], toolResults: [] });
+    await createChatStream(uiMessages, undefined, undefined, undefined, "anthropic");
+    expect(getFeatureStackStatusMock).toHaveBeenCalledTimes(1);
+
+    lastArgs().onStepFinish({ toolCalls: [{ toolName: "install_app", args: { appId: "sonarr" } }], toolResults: [] });
+    await createChatStream(uiMessages, undefined, undefined, undefined, "anthropic");
+    expect(getFeatureStackStatusMock).toHaveBeenCalledTimes(2);
   });
 });

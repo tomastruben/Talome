@@ -30,7 +30,7 @@ import {
   getBaseDomainNames,
   getDomain,
   getOrderedDomainTools,
-  getToolsForMessage,
+  matchDomainsForText,
   textMatchesKeyword,
 } from "../ai/tool-registry.js";
 import {
@@ -54,6 +54,9 @@ async function runDiscover(session: ReturnType<typeof createToolRoutingSession>,
   const execute = discover.execute as (args: typeof input, opts: unknown) => Promise<Record<string, unknown>>;
   return execute(input, { toolCallId: "t1", messages: [] });
 }
+
+/** Tools routed for a one-message conversation. */
+const toolsFor = (text: string) => createToolRoutingSession({ messages: [userMessage("single", text)] }).toolNames();
 
 const baseToolNames = () => getOrderedDomainTools(getBaseDomainNames()).map(([name]) => name);
 
@@ -130,20 +133,20 @@ describe("deterministic ordering", () => {
 
 describe("no catch-all fallback", () => {
   it("returns only the base set for a message that matches no domain", () => {
-    const names = Object.keys(getToolsForMessage("hey, thanks!"));
+    const names = toolsFor("hey, thanks!");
     expect(names).toEqual(baseToolNames());
     expect(names.length).toBeLessThan(Object.keys(getActiveRegisteredTools()).length / 2);
   });
 
   it("adds only the matching domains", () => {
-    const names = Object.keys(getToolsForMessage("my torrents are slow"));
+    const names = toolsFor("my torrents are slow");
     expect(names).toContain("qbt_list_torrents");
     expect(names).not.toContain("arr_get_status");
     expect(names).not.toContain("create_automation");
   });
 
   it("does not load unconfigured app domains", () => {
-    expect(Object.keys(getToolsForMessage("what is on deck in plex"))).not.toContain("plex_get_on_deck");
+    expect(toolsFor("what is on deck in plex")).not.toContain("plex_get_on_deck");
   });
 });
 
@@ -154,6 +157,52 @@ describe("keyword matching", () => {
     expect(textMatchesKeyword("highlight the row", "light")).toBe(false);
     expect(textMatchesKeyword("show recent activity", "tv")).toBe(false);
     expect(textMatchesKeyword("Set up Home Assistant", "home assistant")).toBe(true);
+  });
+
+  it("matches consonant + y keywords in their -ies form", () => {
+    expect(textMatchesKeyword("scan my libraries", "library")).toBe(true);
+    expect(textMatchesKeyword("it notifies me twice", "notify")).toBe(true);
+    expect(textMatchesKeyword("add two api keys", "api key")).toBe(true);
+  });
+
+  it("routes 'libraries' to the media domains", () => {
+    const domains = matchDomainsForText("scan my libraries", new Set(getAllDomains().map((d) => d.name)));
+    expect(domains.has("media")).toBe(true);
+  });
+
+  it("does not load broad or risky domains for unrelated phrasing", () => {
+    const unrelated: Array<[string, string]> = [
+      ["what's the error code in the logs", "self-improvement"],
+      ["what features do you have?", "self-improvement"],
+      ["there is a bug in sonarr", "self-improvement"],
+      ["set a rate limit", "app-management"],
+      ["which group of containers is using the most cpu", "app-management"],
+      ["what's my memory usage", "memory-admin"],
+      ["show the jellyfin log file", "files"],
+      ["show chat history", "monitoring"],
+    ];
+    for (const [text, domain] of unrelated) {
+      expect(matchDomainsForText(text).has(domain), `${domain} for "${text}"`).toBe(false);
+    }
+    for (const [text, domain] of [
+      ["read your own source code", "self-improvement"],
+      ["set a memory limit on plex", "app-management"],
+      ["start the media app group", "app-management"],
+      ["what memories do you have about me", "memory-admin"],
+      ["browse the downloads folder", "files"],
+    ] as const) {
+      expect(matchDomainsForText(text).has(domain), `${domain} for "${text}"`).toBe(true);
+    }
+  });
+
+  it("returns the same matches with a memo key and still applies the active filter", () => {
+    const long = `${"lorem ipsum ".repeat(400)} add Dune to my movies and seed the torrent`;
+    const all = new Set(getAllDomains().map((d) => d.name));
+    const first = matchDomainsForText(long, all, "msg-1");
+    expect(first.has("media")).toBe(true);
+    expect(first.has("qbittorrent")).toBe(true);
+    expect(matchDomainsForText(long, all, "msg-1")).toEqual(first);
+    expect(matchDomainsForText(long, new Set(["media"]), "msg-1")).toEqual(new Set(["media"]));
   });
 });
 
@@ -246,6 +295,26 @@ describe("discover_tools", () => {
     expect(result.activatedDomains).not.toContain("plex");
     expect(result.unconfigured).toEqual(expect.arrayContaining([expect.objectContaining({ domain: "plex", needsAnyOfSettings: ["plex_url"] })]));
     expect(session.toolNames()).not.toContain("plex_get_on_deck");
+  });
+
+  it("never lists or activates tools the user disabled", async () => {
+    const disabled = new Set(["delete_file", "rename_file"]);
+    const session = createToolRoutingSession({ messages: [userMessage("u1", "hi")] });
+    const discover = createDiscoverToolsTool(session, { isToolEnabled: (name) => !disabled.has(name) });
+    const execute = discover.execute as (args: unknown, opts: unknown) => Promise<Record<string, unknown>>;
+    const result = await execute({ query: "delete file" }, { toolCallId: "t1", messages: [] });
+    const names = (result.tools as Array<{ name: string }>).map((t) => t.name);
+    expect(names).not.toContain("delete_file");
+    expect(names).not.toContain("rename_file");
+
+    // A domain whose tools are all disabled is never activated.
+    const allCreator = new Set(["design_app_blueprint"]);
+    const fresh = createToolRoutingSession({ messages: [userMessage("u2", "hi")] });
+    const discover2 = createDiscoverToolsTool(fresh, { isToolEnabled: (name) => !allCreator.has(name) });
+    const execute2 = discover2.execute as (args: unknown, opts: unknown) => Promise<Record<string, unknown>>;
+    const byName = await execute2({ query: "design_app_blueprint" }, { toolCallId: "t2", messages: [] });
+    expect(byName.activatedDomains).not.toContain("app-creator");
+    expect(fresh.domains.has("app-creator")).toBe(false);
   });
 
   it("activates at most three domains per call and lists domains when nothing matches", async () => {
