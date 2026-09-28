@@ -32,10 +32,14 @@ import {
   CpuIcon,
   LayoutGridIcon,
   ComputerTerminal01Icon,
+  SecurityCheckIcon,
+  Activity01Icon,
 } from "@/components/icons";
 import { useUser } from "@/hooks/use-user";
 import { CORE_URL } from "@/lib/constants";
 import { SettingsGroup, ToggleRow, InfoRow } from "@/components/settings/settings-primitives";
+import { Badge } from "@/components/ui/badge";
+import { usePendingApprovals } from "@/components/trust/api";
 import type { IconSvgElement } from "@/components/icons";
 
 interface SettingsLink {
@@ -51,6 +55,8 @@ const GENERAL_ITEMS: SettingsLink[] = [
 ];
 
 const AI_ITEMS: SettingsLink[] = [
+  { slug: "approvals", icon: SecurityCheckIcon, title: "Approvals", description: "Agent actions waiting for your decision", adminOnly: true },
+  { slug: "mcp", icon: Plug02Icon, title: "AI Agents", description: "Connect Claude Desktop, Cursor, or Claude Code and control their access", adminOnly: true },
   { slug: "ai-provider", icon: AiCloudIcon, title: "AI Provider", description: "Anthropic, OpenAI, and Ollama keys" },
   { slug: "intelligence", icon: AiMagicIcon, title: "Intelligence", description: "Agent loop, auto-remediation, self-improvement", adminOnly: true },
   { slug: "ai-cost", icon: ChartIcon, title: "API Cost", description: "Track spend, set daily caps, view usage breakdown" },
@@ -61,6 +67,7 @@ const AI_ITEMS: SettingsLink[] = [
 
 const INFRASTRUCTURE_ITEMS: SettingsLink[] = [
   { slug: "security", icon: Shield01Icon, title: "Security", description: "Control AI access level and shell permissions", adminOnly: true },
+  { slug: "audit", icon: Activity01Icon, title: "Audit Log", description: "Every action by the assistant, agents, and automations", adminOnly: true },
   { slug: "notifications", icon: AlertCircleIcon, title: "Notifications", description: "Alert thresholds and notification channels" },
   { slug: "networking", icon: Globe02Icon, title: "Networking", description: "Reverse proxy, remote access, Docker networks", adminOnly: true },
   { slug: "backups", icon: ArchiveIcon, title: "Backups", description: "Scheduled backups and restore history" },
@@ -75,7 +82,6 @@ const CONNECTIONS_ITEMS: SettingsLink[] = [
 ];
 
 const DEVELOPER_ITEMS: SettingsLink[] = [
-  { slug: "mcp", icon: Plug02Icon, title: "MCP Server", description: "Connect Cursor, Claude Desktop, or Claude Code" },
   { slug: "app-sources", icon: PackageAdd01Icon, title: "App Sources", description: "Manage app store sources" },
   { slug: "community-review", icon: CheckmarkBadge01Icon, title: "Community Review", description: "Review and approve submitted apps", adminOnly: true },
   { slug: "stacks", icon: Layers01Icon, title: "Export & Import", description: "Share settings and app stack codes" },
@@ -93,7 +99,7 @@ function CategoryLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SettingsLinkRow({ item }: { item: SettingsLink }) {
+function SettingsLinkRow({ item, badge }: { item: SettingsLink; badge?: number }) {
   return (
     <Link href={`/dashboard/settings/${item.slug}`} className="block">
       <div className="px-4 py-3.5 flex items-center gap-3 hover:bg-muted/30 transition-colors cursor-pointer">
@@ -104,13 +110,28 @@ function SettingsLinkRow({ item }: { item: SettingsLink }) {
           <p className="text-sm font-medium">{item.title}</p>
           <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>
         </div>
+        {badge !== undefined && badge > 0 && (
+          <Badge className="bg-status-warning text-background tabular-nums" aria-label={`${badge} pending`}>
+            {badge}
+          </Badge>
+        )}
         <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="text-dim-foreground shrink-0" />
       </div>
     </Link>
   );
 }
 
-function SettingsCategory({ label, items, isAdmin }: { label: string; items: SettingsLink[]; isAdmin: boolean }) {
+function SettingsCategory({
+  label,
+  items,
+  isAdmin,
+  badges,
+}: {
+  label: string;
+  items: SettingsLink[];
+  isAdmin: boolean;
+  badges?: Record<string, number>;
+}) {
   const visible = items.filter((item) => !item.adminOnly || isAdmin);
   if (visible.length === 0) return null;
 
@@ -119,7 +140,7 @@ function SettingsCategory({ label, items, isAdmin }: { label: string; items: Set
       <CategoryLabel>{label}</CategoryLabel>
       <div className="rounded-xl border border-border bg-card divide-y divide-border overflow-hidden">
         {visible.map((item) => (
-          <SettingsLinkRow key={item.slug} item={item} />
+          <SettingsLinkRow key={item.slug} item={item} badge={badges?.[item.slug]} />
         ))}
       </div>
     </section>
@@ -343,13 +364,14 @@ function LogoutButton() {
 
 export default function SettingsPage() {
   const { isAdmin } = useUser();
+  const { count: pendingApprovals } = usePendingApprovals(isAdmin);
 
   return (
     <div className="mx-auto w-full max-w-2xl min-w-0 grid gap-8 pb-12">
       <GeneralInline />
       <ServicesSection />
       <SettingsCategory label="Access" items={GENERAL_ITEMS} isAdmin={isAdmin} />
-      <SettingsCategory label="AI" items={AI_ITEMS} isAdmin={isAdmin} />
+      <SettingsCategory label="AI" items={AI_ITEMS} isAdmin={isAdmin} badges={{ approvals: pendingApprovals }} />
       <SettingsCategory label="Infrastructure" items={INFRASTRUCTURE_ITEMS} isAdmin={isAdmin} />
       <SettingsCategory label="Connections" items={CONNECTIONS_ITEMS} isAdmin={isAdmin} />
       <SettingsCategory label="Developer" items={DEVELOPER_ITEMS} isAdmin={isAdmin} />

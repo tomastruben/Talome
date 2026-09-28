@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { createChatStream } from "../ai/agent.js";
+import { sessionChatActor, withExecutionContext } from "../ai/execution.js";
 import { checkDailyCap, getDailyCapUsd, getTodayCostUsd } from "../agent-loop/budget.js";
 import { serverError } from "../middleware/request-logger.js";
 
@@ -63,7 +64,11 @@ chat.post("/", async (c) => {
 
     activeStreams.set(streamKey, streamAbort);
 
-    const result = await createChatStream(messages, pageContext ?? undefined, model ?? undefined, streamAbort.signal, provider ?? undefined);
+    // Tool calls in this chat act as the session user (audit, approvals).
+    const actor = sessionChatActor(c.get("sessionUser" as never), c.get("sessionUsername" as never), c.get("sessionRole" as never));
+    const result = await withExecutionContext(actor, "chat", () =>
+      createChatStream(messages, pageContext ?? undefined, model ?? undefined, streamAbort.signal, provider ?? undefined),
+    );
 
     // Wrap the result stream so lazy read failures are always translated
     // into protocol-level "error" chunks the client can render.
