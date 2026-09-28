@@ -386,6 +386,17 @@ export const backups = sqliteTable("backups", {
   completedAt: text("completed_at"),
   error: text("error"),
   triggeredBy: text("triggered_by", { enum: ["manual", "schedule"] }).notNull().default("manual"),
+  method: text("method", { enum: ["dump", "stop", "live"] }),
+  manifestPath: text("manifest_path"),
+  archiveSha256: text("archive_sha256"),
+  purpose: text("purpose", { enum: ["manual", "schedule", "pre-update", "pre-restore"] }),
+  scheduleId: text("schedule_id"),
+  destinationId: text("destination_id"),
+  appVersion: text("app_version"),
+  warnings: text("warnings"),
+  verifyStatus: text("verify_status", { enum: ["running", "verified", "failed"] }),
+  verifiedAt: text("verified_at"),
+  verifyDetail: text("verify_detail"),
 });
 
 export const backupSchedules = sqliteTable("backup_schedules", {
@@ -396,6 +407,11 @@ export const backupSchedules = sqliteTable("backup_schedules", {
   retentionDays: integer("retention_days").notNull().default(30),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   lastRunAt: text("last_run_at"),
+  destinationId: text("destination_id"),
+  keepLast: integer("keep_last"),
+  keepDaily: integer("keep_daily"),
+  keepWeekly: integer("keep_weekly"),
+  keepMonthly: integer("keep_monthly"),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
@@ -555,3 +571,4 @@ export const communitySubmissions = sqliteTable("community_submissions", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
   publishedAt: text("published_at"),
 });
+export * from "./schema-backups.js";

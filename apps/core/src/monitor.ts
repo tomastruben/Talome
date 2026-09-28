@@ -11,8 +11,7 @@ import { maybeRunScheduledSetup } from "./setup/triggers.js";
 import { getSetting, setSetting } from "./utils/settings.js";
 import { db } from "./db/index.js";
 import { sql } from "drizzle-orm";
-import { backupAppTool } from "./ai/tools/backup-tools.js";
-import { randomUUID } from "node:crypto";
+import { runScheduledBackup, runBackupMaintenance, isContainerInBackupWindow, type ScheduleRow } from "./backup/index.js";
 import { createLogger } from "./utils/logger.js";
 
 const log = createLogger("monitor");
@@ -70,7 +69,8 @@ async function checkContainerHealth() {
       currentStates.set(c.name, c.status);
       const prev = previousContainerStates.get(c.name);
 
-      if (prev && prev === "running" && c.status !== "running") {
+      // Containers stopped on purpose by a backup/restore are not "down"
+      if (prev && prev === "running" && c.status !== "running" && !isContainerInBackupWindow(c.name, c.id)) {
         stoppedNames.push(c.name);
         writeAuditEntry(
           `Container down: ${c.name}`,
@@ -364,26 +364,11 @@ function cronMatchesNow(cron: string): boolean {
   );
 }
 
-async function executeScheduledBackup(appId: string, scheduleId: string) {
-  const execute = backupAppTool.execute;
-  if (!execute) {
-    log.error("backupAppTool.execute not available");
-    return;
-  }
+async function executeScheduledBackup(appId: string, schedule: ScheduleRow) {
   try {
-    const result = await execute(
-      { appId, stopFirst: false, triggeredBy: "schedule" as const },
-      { toolCallId: randomUUID(), messages: [], abortSignal: undefined as unknown as AbortSignal },
-    );
-    const success = typeof result === "object" && result !== null && "success" in result && result.success;
-    if (success) {
-      const sizeMb = "sizeMb" in result ? result.sizeMb : "?";
-      writeNotification("info", "Backup completed", `${appId} backed up successfully (${sizeMb} MB)`);
-    } else {
-      const error = typeof result === "object" && result !== null && "error" in result ? result.error : "Unknown error";
-      writeNotification("warning", "Backup failed", `${appId}: ${error}`);
-      log.error(`Scheduled backup failed for ${appId}`, error);
-    }
+    // Application-consistent backup + manifest, then the schedule's retention policy.
+    // Notifications for success/failure are written by runScheduledBackup.
+    await runScheduledBackup(schedule, appId);
   } catch (err) {
     writeNotification("warning", "Backup failed", `${appId}: ${err instanceof Error ? err.message : String(err)}`);
     log.error(`Scheduled backup error for ${appId}`, err);
@@ -392,12 +377,7 @@ async function executeScheduledBackup(appId: string, scheduleId: string) {
 
 async function checkBackupSchedules() {
   try {
-    const schedules = db.all(sql`SELECT * FROM backup_schedules WHERE enabled = 1`) as Array<{
-      id: string;
-      app_id: string | null;
-      cron: string;
-      last_run_at: string | null;
-    }>;
+    const schedules = db.all(sql`SELECT * FROM backup_schedules WHERE enabled = 1`) as ScheduleRow[];
 
     for (const schedule of schedules) {
       if (!cronMatchesNow(schedule.cron)) continue;
@@ -416,13 +396,13 @@ async function checkBackupSchedules() {
 
       // Execute backups directly — don't rely on an automation being wired up
       if (schedule.app_id) {
-        void executeScheduledBackup(schedule.app_id, schedule.id);
+        void executeScheduledBackup(schedule.app_id, schedule);
       } else {
         // All-apps backup: back up each installed app sequentially
         const apps = db.all(sql`SELECT app_id FROM installed_apps`) as Array<{ app_id: string }>;
         void (async () => {
           for (const app of apps) {
-            await executeScheduledBackup(app.app_id, schedule.id);
+            await executeScheduledBackup(app.app_id, schedule);
           }
         })();
       }
@@ -430,6 +410,8 @@ async function checkBackupSchedules() {
   } catch (err) {
     log.error("checkBackupSchedules error", err);
   }
+  // Weekly verification, stale-backup alerts, safety-backup pruning (self-throttled)
+  void runBackupMaintenance();
 }
 
 // ── Evolution auto-scan ──────────────────────────────────────────────────────

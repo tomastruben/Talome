@@ -18,6 +18,7 @@ import { deduplicate, formatOccurrenceLabel } from "./event-dedup.js";
 import { writeNotification } from "../db/notifications.js";
 import { subscribeDockerEvents, connectContainerToNetwork, type DockerEvent } from "../docker/client.js";
 import { ensureTalomeNetwork } from "../docker/talome-network.js";
+import { isContainerInBackupWindow } from "../backup/state.js";
 import type { AgentLoopConfig, SystemEvent } from "./types.js";
 import { DEFAULT_AGENT_LOOP_CONFIG } from "./types.js";
 import { randomUUID } from "node:crypto";
@@ -278,6 +279,8 @@ function handleDockerEventUnsafe(event: DockerEvent): void {
   if (!config.enabled) return;
 
   const containerName = event.actorName || event.actorId;
+  // Intentional stop by a backup/restore — not a crash, don't remediate
+  if (isContainerInBackupWindow(event.actorName, event.actorId)) return;
   const now = new Date().toISOString();
 
   let systemEvent: SystemEvent | null = null;

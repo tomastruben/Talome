@@ -10,6 +10,7 @@ import { APP_REGISTRY } from "../app-registry/index.js";
 import { db, schema } from "../db/index.js";
 import { eq, desc } from "drizzle-orm";
 import type { SystemEvent, EventSeverity, AgentLoopConfig } from "./types.js";
+import { isContainerInBackupWindow } from "../backup/state.js";
 
 const execAsync = promisify(execCb);
 
@@ -70,7 +71,7 @@ async function detectContainerIssues(config: AgentLoopConfig): Promise<SystemEve
       const prev = previousStates.get(c.name);
 
       // Container went down
-      if (prev && prev === "running" && c.status !== "running") {
+      if (prev && prev === "running" && c.status !== "running" && !isContainerInBackupWindow(c.name, c.id)) {
         if (shouldEmit(`container_down:${c.name}`)) {
           events.push(
             makeEvent("container_down", "warning", c.name, `Container ${c.name} stopped (was running)`, {

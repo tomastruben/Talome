@@ -1,6 +1,7 @@
 import { db } from "./index.js";
 import { sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { runBackupsMigrations } from "./migrations/backups.js";
 
 function recordMigration(version: number, description: string) {
   db.run(sql`INSERT OR IGNORE INTO schema_versions (version, applied_at, description) VALUES (${version}, datetime('now'), ${description})`);
@@ -857,6 +858,8 @@ export function runMigrations() {
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_attempts_run_id ON setup_attempts(run_id)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_runs_status ON setup_runs(status)`);
 
+  runBackupsMigrations();
+
   // ── Record schema versions ─────────────────────────────────────────────
   recordMigration(1, "Initial schema: users, conversations, messages, settings, audit_log");
   recordMigration(2, "App store: store_sources, app_catalog, installed_apps");
@@ -873,6 +876,7 @@ export function runMigrations() {
   recordMigration(13, "Optimization jobs: ai_diagnosis column for AI-first error handling");
   recordMigration(14, "Installed apps: display_name column for user-defined app names");
   recordMigration(15, "Setup loop: setup_runs and setup_attempts for autonomous app configuration");
+  recordMigration(18, "Backups: methods, manifests, verification, per-app config, destinations, restores, GFS retention");
 
   console.log("Database migrations complete");
 }

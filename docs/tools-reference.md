@@ -84,8 +84,8 @@ The MCP server auto-syncs from `allTools` in `apps/core/src/ai/agent.ts` — eve
 - `wire_apps` — auto-configure connections between related apps
 
 ## Backup & Restore
-- `backup_app` — create tarball backup of app data volumes
-- `restore_app` — restore app data from a backup archive
+- `backup_app` — application-consistent backup of app data (database dump or brief stop), with a checksummed manifest
+- `restore_app` — restore app data from a backup (safety backup first, health check, automatic rollback)
 
 ## Log Search
 - `search_container_logs` — cross-container log search with regex pattern matching
