@@ -1,41 +1,92 @@
 /**
- * App backup and restore tools — volume-level snapshot backup/restore for
- * installed apps. Creates tarball archives of app volumes.
+ * App backup and restore tools for the assistant.
  *
- * Key design decisions:
- * - Async exec (not execSync) to avoid blocking the event loop
- * - Live backup by default (no pause/stop) — CasaOS-style
- * - Only config volumes backed up by default (relative paths like ./config, ./data)
- *   Media mounts (absolute paths outside compose dir) are excluded unless explicitly selected
- * - Per-app concurrency lock to prevent overlapping backups
- * - Cancellable — child processes tracked and killable mid-flight
+ * Backups go through the backup engine (apps/core/src/backup): application-
+ * consistent (database dumps or a brief stop), checksummed, with a manifest,
+ * verifiable and restorable per app with automatic rollback.
+ *
+ * Archives made by older Talome versions (plain tar.gz of absolute paths, no
+ * manifest) can still be restored through restore_app's legacy path.
  */
 
 import { tool } from "ai";
 import { z } from "zod";
 import { db, schema } from "../../db/index.js";
 import { eq, sql } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve, join, dirname, basename } from "node:path";
-import { exec as execCb, type ChildProcess, type ExecOptions } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { exec as execCb, type ExecOptions } from "node:child_process";
 import { writeAuditEntry } from "../../db/audit.js";
-import { writeNotification } from "../../db/notifications.js";
+import {
+  createAppBackup,
+  restoreAppBackup,
+  verifyBackup,
+  getBackupProgress,
+  cancelAppBackup,
+  isAppBackupRunning,
+  CONFIGURED_METHODS,
+} from "../../backup/index.js";
+import { bindVolumes, resolveAppContext } from "../../backup/compose.js";
+import { getBackupRoot } from "../../backup/fs-utils.js";
+import { ARCHIVE_FILE_NAME, ARCHIVE_META_DIR, MANIFEST_FILE_NAME } from "../../backup/types.js";
 
-const BACKUP_BASE = join(process.env.HOME || "/tmp", ".talome", "backups", "apps");
+/** Top-level members of archives made by the current backup engine (relative paths). */
+const ENGINE_ARCHIVE_PREFIXES = [`${ARCHIVE_META_DIR}/`, "volumes/", "compose/", "dumps/"];
 
 /**
- * Validate that a tar archive does not contain path traversal entries.
+ * True when a file looks like an archive made by the current backup engine
+ * (which must be restored by backup id, never extracted to "/").
+ */
+export function isEngineArchivePath(archivePath: string): boolean {
+  return basename(archivePath) === ARCHIVE_FILE_NAME || existsSync(join(dirname(archivePath), MANIFEST_FILE_NAME));
+}
+
+const LEGACY_BACKUP_BASE = join(process.env.HOME || "/tmp", ".talome", "backups", "apps");
+
+// Timeouts for the legacy restore path
+const DOCKER_TIMEOUT = 120_000;
+const TAR_EXTRACT_TIMEOUT = 600_000;
+
+// ── Progress / cancel (delegated to the engine) ─────────────────────────────
+
+export function isBackupActive(appId?: string): boolean {
+  return isAppBackupRunning(appId);
+}
+
+export function getActiveBackupProgress(): Map<string, { backupId: string; stage: string; startedAt: number }> {
+  return getBackupProgress();
+}
+
+/** Cancel a running backup. Returns true if a backup was found and cancelled. */
+export function cancelBackup(appId: string): boolean {
+  return cancelAppBackup(appId);
+}
+
+function log(msg: string) {
+  console.log(`[backup] ${msg}`);
+}
+
+function execPromise(cmd: string, options: ExecOptions & { timeout?: number }): Promise<string> {
+  return new Promise<string>((resolvePromise, reject) => {
+    execCb(cmd, options, (err, stdout) => {
+      if (err) reject(err);
+      else resolvePromise(typeof stdout === "string" ? stdout : stdout?.toString() ?? "");
+    });
+  });
+}
+
+/**
+ * Validate that a legacy tar archive does not contain path traversal entries.
  * Rejects any entry that starts with `/` (absolute path) or contains `..`.
  */
 async function validateTarSafety(archivePath: string): Promise<{ safe: boolean; reason?: string }> {
   try {
-    const { promise } = execAbortable(`tar -tzf "${archivePath}"`, { timeout: 60_000 });
-    const listing = await promise;
+    const listing = await execPromise(`tar -tzf "${archivePath}"`, { timeout: 60_000 });
     const entries = listing.split("\n").filter(Boolean);
     for (const entry of entries) {
+      if (ENGINE_ARCHIVE_PREFIXES.some((p) => entry === p.slice(0, -1) || entry.startsWith(p))) {
+        return { safe: false, reason: "This is a backup made by the current backup engine — restore it by backupId" };
+      }
       if (entry.startsWith("/")) {
         return { safe: false, reason: `Archive contains absolute path entry: "${entry}"` };
       }
@@ -49,63 +100,7 @@ async function validateTarSafety(archivePath: string): Promise<{ safe: boolean; 
   }
 }
 
-// Timeouts — generous to handle large volumes without ETIMEDOUT
-const DOCKER_TIMEOUT = 120_000;      // 2 min for docker compose operations
-const TAR_CREATE_TIMEOUT = 600_000;   // 10 min for archive creation
-const TAR_EXTRACT_TIMEOUT = 600_000;  // 10 min for archive extraction
-
-// ── Concurrency + progress + cancel ────────────────────────────────────────
-
-const activeBackups = new Set<string>();
-const backupProgress = new Map<string, { backupId: string; stage: string; startedAt: number }>();
-
-interface BackupHandle {
-  kill: () => void;
-  cancelled: boolean;
-}
-const activeHandles = new Map<string, BackupHandle>();
-
-export function isBackupActive(appId?: string): boolean {
-  return appId ? activeBackups.has(appId) : activeBackups.size > 0;
-}
-
-export function getActiveBackupProgress(): Map<string, { backupId: string; stage: string; startedAt: number }> {
-  return backupProgress;
-}
-
-/** Cancel a running backup. Returns true if a backup was found and cancelled. */
-export function cancelBackup(appId: string): boolean {
-  const handle = activeHandles.get(appId);
-  if (!handle) return false;
-  handle.cancelled = true;
-  handle.kill();
-  return true;
-}
-
-function log(msg: string) {
-  console.log(`[backup] ${msg}`);
-}
-
-function setStage(appId: string, backupId: string, stage: string) {
-  backupProgress.set(appId, { backupId, stage, startedAt: backupProgress.get(appId)?.startedAt ?? Date.now() });
-  log(`${appId}: ${stage}`);
-}
-
-// ── Abortable exec ─────────────────────────────────────────────────────────
-
-/** exec wrapper that returns a killable child process handle alongside the promise. */
-function execAbortable(cmd: string, options: ExecOptions & { timeout?: number }): { promise: Promise<string>; kill: () => void } {
-  let child: ChildProcess | null = null;
-  const promise = new Promise<string>((resolve, reject) => {
-    child = execCb(cmd, options, (err, stdout) => {
-      if (err) reject(err);
-      else resolve(typeof stdout === "string" ? stdout : stdout?.toString() ?? "");
-    });
-  });
-  return { promise, kill: () => child?.kill("SIGTERM") };
-}
-
-// ── Volume discovery + classification ──────────────────────────────────────
+// ── Volume discovery ────────────────────────────────────────────────────────
 
 export interface VolumeInfo {
   /** Resolved absolute path on host */
@@ -119,65 +114,17 @@ export interface VolumeInfo {
   exists: boolean;
 }
 
-function classifyVolumes(composePath: string): VolumeInfo[] {
-  try {
-    const content = readFileSync(composePath, "utf-8");
-    const parsed = parseYaml(content) as Record<string, any>;
-    const services = parsed.services ?? {};
-    const composeDir = dirname(composePath);
-    const seen = new Set<string>();
-    const volumes: VolumeInfo[] = [];
-
-    for (const svc of Object.values(services) as any[]) {
-      for (const vol of svc.volumes ?? []) {
-        let raw: string;
-        let target = "";
-
-        if (typeof vol === "string") {
-          const parts = vol.split(":");
-          raw = parts[0];
-          target = parts[1] ?? "";
-        } else if (vol && typeof vol === "object" && vol.source) {
-          raw = vol.source as string;
-          target = (vol.target as string) ?? "";
-        } else {
-          continue;
-        }
-
-        // Skip system paths
-        if (raw.startsWith("/var/run") || raw.startsWith("/etc")) continue;
-
-        const resolved = raw.startsWith("/") ? raw : resolve(composeDir, raw);
-        if (seen.has(resolved)) continue;
-        seen.add(resolved);
-
-        // Classify: relative paths or paths under compose dir → config, everything else → media
-        const isRelative = !raw.startsWith("/");
-        const isUnderComposeDir = resolved.startsWith(composeDir + "/");
-        const type = isRelative || isUnderComposeDir ? "config" : "media";
-
-        volumes.push({
-          path: resolved,
-          raw,
-          target,
-          type,
-          exists: existsSync(resolved),
-        });
-      }
-    }
-
-    return volumes;
-  } catch (err) {
-    console.error("[backup] classifyVolumes error:", err);
-    return [];
-  }
-}
-
-/** Get classified volume info for an app. Exported for the API route. */
+/** Get classified volume info for an app. */
 export function getAppVolumeInfo(appId: string): VolumeInfo[] | null {
-  const composePath = getInstalledAppComposePath(appId);
-  if (!composePath) return null;
-  return classifyVolumes(composePath);
+  const ctx = resolveAppContext(appId);
+  if (!ctx.ok) return null;
+  return bindVolumes(ctx.ctx.compose).map((v) => ({
+    path: v.hostPath!,
+    raw: v.raw,
+    target: v.target,
+    type: v.type,
+    exists: v.exists,
+  }));
 }
 
 function getInstalledAppComposePath(appId: string): string | null {
@@ -187,386 +134,225 @@ function getInstalledAppComposePath(appId: string): string | null {
       .from(schema.installedApps)
       .where(eq(schema.installedApps.appId, appId))
       .get();
-    return row?.overrideComposePath ?? null;
+    if (!row) return null;
+    const ctx = resolveAppContext(appId);
+    return ctx.ok ? ctx.ctx.composePath : row.overrideComposePath ?? null;
   } catch {
     return null;
-  }
-}
-
-/**
- * Resume a suspended app after backup. Tries the matching resume method first,
- * then escalates through fallbacks to ensure the app comes back up.
- */
-async function resumeApp(
-  composePath: string,
-  composeDir: string,
-  appId: string,
-  suspendMethod: "paused" | "stopped" | null,
-): Promise<void> {
-  if (!suspendMethod) return;
-
-  try {
-    if (suspendMethod === "paused") {
-      log(`Unpausing ${appId}...`);
-      const { promise } = execAbortable(`docker compose -f "${composePath}" unpause`, {
-        cwd: composeDir,
-        timeout: DOCKER_TIMEOUT,
-      });
-      await promise;
-      log(`${appId} unpaused`);
-    } else {
-      log(`Starting ${appId}...`);
-      const { promise } = execAbortable(`docker compose -f "${composePath}" start`, {
-        cwd: composeDir,
-        timeout: DOCKER_TIMEOUT,
-      });
-      await promise;
-      log(`${appId} started`);
-    }
-  } catch (resumeErr) {
-    log(`Failed to resume ${appId} via ${suspendMethod === "paused" ? "unpause" : "start"} — trying up -d`);
-    console.error(`[backup] Resume failure for ${appId}:`, resumeErr);
-
-    try {
-      const { promise } = execAbortable(`docker compose -f "${composePath}" up -d`, {
-        cwd: composeDir,
-        timeout: DOCKER_TIMEOUT,
-      });
-      await promise;
-      log(`${appId} recovered via up -d`);
-    } catch (forceErr) {
-      console.error(`[backup] CRITICAL: all resume attempts failed for ${appId}:`, forceErr);
-      writeNotification(
-        "critical",
-        `${appId} not restarted after backup`,
-        `App could not be resumed after backup. Manual intervention required.`,
-        appId,
-      );
-    }
   }
 }
 
 // ── backup_app ───────────────────────────────────────────────────────────────
 
 export const backupAppTool = tool({
-  description: `Create a tarball backup of an installed app's config/data volumes. By default performs a live (hot) backup of config volumes only — media mounts are excluded unless explicitly listed.
+  description: `Create an application-consistent backup of an installed app's config/data volumes.
 
-The backup is saved to ~/.talome/backups/apps/<appId>/<timestamp>.tar.gz.
+The consistency method comes from the app's backup settings (default "auto": database dump for apps with Postgres/MySQL, otherwise a brief stop of the app while archiving). Every backup gets a manifest with per-file sha256 checksums and can be verified and restored per app. Media mounts are excluded unless explicitly listed.
 
-After calling: Report the backup file path, size, and which volumes were included.`,
+After calling: Report the backup size, the method used, which volumes were included, and any warnings.`,
   inputSchema: z.object({
     appId: z.string().describe("The app ID to back up"),
-    stopFirst: z.boolean().default(false).describe("Pause the app before backup for strict data consistency (default: false — live backup)"),
-    label: z.string().optional().describe("Optional label for the backup (included in filename)"),
+    stopFirst: z.boolean().default(false).describe("Force the stop method (briefly stop the app) for strict file consistency"),
+    method: z.enum(CONFIGURED_METHODS).optional().describe("Override the consistency method: auto, dump, stop or live"),
+    label: z.string().optional().describe("Optional label (kept for compatibility; not used in file names)"),
     triggeredBy: z.enum(["manual", "schedule"]).default("manual").describe("How the backup was triggered"),
     volumes: z.array(z.string()).optional().describe("Specific volume paths to include. If omitted, only config volumes are backed up (media mounts excluded)."),
   }),
-  execute: async ({ appId, stopFirst, label, triggeredBy, volumes: selectedVolumes }) => {
-    // Concurrency check
-    if (activeBackups.has(appId)) {
-      return { success: false, error: `Backup already in progress for '${appId}'.` };
-    }
-
-    const composePath = getInstalledAppComposePath(appId);
-    if (!composePath) {
-      return { success: false, error: `App '${appId}' not found or not installed.` };
-    }
-
-    // Classify volumes and filter
-    const allVolumes = classifyVolumes(composePath);
-    let volumePaths: string[];
-
-    if (selectedVolumes && selectedVolumes.length > 0) {
-      // User explicitly selected which volumes to include
-      const selectedSet = new Set(selectedVolumes);
-      volumePaths = allVolumes
-        .filter((v) => v.exists && selectedSet.has(v.path))
-        .map((v) => v.path);
-    } else {
-      // Default: config volumes only (safe default — no multi-TB media backups)
-      volumePaths = allVolumes
-        .filter((v) => v.exists && v.type === "config")
-        .map((v) => v.path);
-    }
-
-    if (volumePaths.length === 0) {
+  execute: async ({ appId, stopFirst, method, triggeredBy, volumes }) => {
+    const result = await createAppBackup(appId, {
+      method: method ?? (stopFirst ? "stop" : undefined),
+      triggeredBy,
+      purpose: triggeredBy === "schedule" ? "schedule" : "manual",
+      volumes,
+    });
+    if (!result.success) {
       return {
         success: false,
-        error: `No volumes to back up for '${appId}'.`,
-        hint: "The app may use named Docker volumes instead of bind mounts, or only has media mounts. Check with get_app_config.",
+        error: result.error,
+        hint: result.error.includes("No volumes")
+          ? "The app may use named Docker volumes instead of bind mounts, or only has media mounts. Check with get_app_config."
+          : undefined,
       };
     }
-
-    activeBackups.add(appId);
-
-    const composeDir = dirname(composePath);
-    const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    const labelSlug = label ? `-${label.replace(/[^a-zA-Z0-9-]/g, "")}` : "";
-    const backupDir = join(BACKUP_BASE, appId);
-    const backupFile = join(backupDir, `${ts}${labelSlug}.tar.gz`);
-
-    mkdirSync(backupDir, { recursive: true });
-
-    const backupId = randomUUID();
-    const startedAt = new Date().toISOString();
-
-    // Record pending backup
-    try {
-      db.run(sql`INSERT INTO backups (id, app_id, status, started_at, triggered_by) VALUES (${backupId}, ${appId}, 'running', ${startedAt}, ${triggeredBy})`);
-    } catch (err) {
-      console.error("[backup] failed to insert backup record:", err);
-    }
-
-    // Set up cancellation handle
-    const handle: BackupHandle = { kill: () => {}, cancelled: false };
-    activeHandles.set(appId, handle);
-    setStage(appId, backupId, "preparing");
-
-    let suspendMethod: "paused" | "stopped" | null = null;
-
-    try {
-      // Only suspend if explicitly requested — default is live backup (no service interruption)
-      if (stopFirst) {
-        setStage(appId, backupId, "pausing");
-        try {
-          const op = execAbortable(`docker compose -f "${composePath}" pause`, {
-            cwd: composeDir,
-            timeout: DOCKER_TIMEOUT,
-          });
-          handle.kill = op.kill;
-          await op.promise;
-          suspendMethod = "paused";
-        } catch {
-          if (handle.cancelled) throw new Error("Backup cancelled");
-          try {
-            const op = execAbortable(`docker compose -f "${composePath}" stop`, {
-              cwd: composeDir,
-              timeout: DOCKER_TIMEOUT,
-            });
-            handle.kill = op.kill;
-            await op.promise;
-            suspendMethod = "stopped";
-          } catch {
-            if (handle.cancelled) throw new Error("Backup cancelled");
-            log(`${appId} may not be running — proceeding with live backup`);
-          }
-        }
-      }
-
-      if (handle.cancelled) throw new Error("Backup cancelled");
-
-      // Create tarball of selected volume paths
-      setStage(appId, backupId, "archiving");
-      const pathArgs = volumePaths.map((p) => `"${p}"`).join(" ");
-      const tarOp = execAbortable(`tar -czf "${backupFile}" ${pathArgs}`, {
-        timeout: TAR_CREATE_TIMEOUT,
-      });
-      handle.kill = tarOp.kill;
-      await tarOp.promise;
-
-      if (handle.cancelled) throw new Error("Backup cancelled");
-
-      // Validate the backup archive
-      setStage(appId, backupId, "validating");
-      const stat = statSync(backupFile);
-      if (stat.size === 0) {
-        throw new Error("Backup archive is empty — tar may have failed silently");
-      }
-
-      log(`Archive created for ${appId}: ${(stat.size / 1024 / 1024).toFixed(1)} MB (${volumePaths.length} volume(s))`);
-
-      writeAuditEntry(`Backup: ${appId}`, "modify", JSON.stringify({
-        backupFile,
-        volumes: volumePaths,
-        sizeBytes: stat.size,
-        suspendMethod: suspendMethod ?? "live",
-      }));
-
-      // Record completed backup
-      const completedAt = new Date().toISOString();
-      try {
-        db.run(sql`UPDATE backups SET status = 'completed', file_path = ${backupFile}, size_bytes = ${stat.size}, completed_at = ${completedAt} WHERE id = ${backupId}`);
-      } catch (err) {
-        console.error("[backup] failed to update backup record to completed:", err);
-      }
-
-      return {
-        success: true,
-        appId,
-        backupFile,
-        sizeBytes: stat.size,
-        sizeMb: Math.round(stat.size / (1024 * 1024) * 10) / 10,
-        volumes: volumePaths,
-        suspendMethod: suspendMethod ?? "live",
-        timestamp: ts,
-      };
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      const isCancelled = handle.cancelled || errMsg === "Backup cancelled";
-      log(isCancelled ? `Backup cancelled for ${appId}` : `Backup failed for ${appId}: ${errMsg}`);
-
-      // Clean up partial/empty backup file
-      try {
-        if (existsSync(backupFile)) {
-          unlinkSync(backupFile);
-          log(`Cleaned up partial backup file for ${appId}`);
-        }
-      } catch {}
-
-      // Record failed/cancelled backup
-      const status = isCancelled ? "cancelled" : "failed";
-      const errorMsg = isCancelled ? "Cancelled by user" : errMsg;
-      try {
-        db.run(sql`UPDATE backups SET status = ${status}, error = ${errorMsg}, completed_at = ${new Date().toISOString()} WHERE id = ${backupId}`);
-      } catch (dbErr) {
-        console.error("[backup] failed to update backup record:", dbErr);
-      }
-
-      return {
-        success: false,
-        error: errorMsg,
-      };
-    } finally {
-      // Always resume services if we suspended them
-      if (suspendMethod) {
-        setStage(appId, backupId, "resuming");
-        await resumeApp(composePath, composeDir, appId, suspendMethod);
-      }
-      backupProgress.delete(appId);
-      activeBackups.delete(appId);
-      activeHandles.delete(appId);
-    }
+    return {
+      success: true,
+      appId,
+      backupId: result.backupId,
+      backupFile: result.archivePath,
+      manifest: result.manifestPath,
+      sizeBytes: result.sizeBytes,
+      sizeMb: Math.round((result.sizeBytes / (1024 * 1024)) * 10) / 10,
+      volumes: result.volumes,
+      method: result.method,
+      suspendMethod: result.method === "stop" ? "stopped" : result.method,
+      files: result.fileCount,
+      warnings: result.warnings,
+      timestamp: new Date().toISOString(),
+    };
   },
 });
 
 // ── restore_app ──────────────────────────────────────────────────────────────
 
+interface BackupListRow {
+  id: string;
+  file_path: string | null;
+  manifest_path: string | null;
+  size_bytes: number | null;
+  completed_at: string | null;
+  method: string | null;
+  verify_status: string | null;
+  purpose: string | null;
+}
+
 export const restoreAppTool = tool({
-  description: `Restore an app's data volumes from a previously created backup. Stops the app, extracts the backup archive, then restarts it.
+  description: `Restore an app's data from a previously created backup. A safety backup of the current state is taken first; the app is stopped, its data and compose file are restored, it is started again and its health is checked. If the app doesn't come back healthy the previous state is restored automatically.
 
-Lists available backups if no specific backup file is provided.
+Lists available backups (with verification status) if no backup is specified.
 
-After calling: Report what was restored, the backup date, and verify the app restarted. Warn about any data that was overwritten.`,
+After calling: Report what was restored, the backup date, the health check result, and the safety backup id. Warn that data changed since the backup was replaced.`,
   inputSchema: z.object({
     appId: z.string().describe("The app ID to restore"),
-    backupFile: z.string().optional().describe("Full path to the backup .tar.gz file. Omit to list available backups."),
+    backupId: z.string().optional().describe("Backup id to restore (preferred)"),
+    backupFile: z.string().optional().describe("Full path to the backup archive. Omit both to list available backups."),
+    verifyFirst: z.boolean().default(false).describe("Run a full verification (test restore) before restoring"),
   }),
-  execute: async ({ appId, backupFile }) => {
-    const composePath = getInstalledAppComposePath(appId);
-    if (!composePath) {
-      return { success: false, error: `App '${appId}' not found or not installed.` };
-    }
-
-    const backupDir = join(BACKUP_BASE, appId);
-
-    // If no backup file specified, list available backups
-    if (!backupFile) {
-      if (!existsSync(backupDir)) {
+  execute: async ({ appId, backupId, backupFile, verifyFirst }) => {
+    // List mode
+    if (!backupId && !backupFile) {
+      const rows = db.all(
+        sql`SELECT id, file_path, manifest_path, size_bytes, completed_at, method, verify_status, purpose FROM backups WHERE app_id = ${appId} AND status = 'completed' ORDER BY completed_at DESC LIMIT 30`,
+      ) as BackupListRow[];
+      const legacyDir = join(LEGACY_BACKUP_BASE, appId);
+      const known = new Set(rows.map((r) => r.file_path));
+      const legacyFiles = existsSync(legacyDir)
+        ? readdirSync(legacyDir)
+            .filter((f) => f.endsWith(".tar.gz") && !known.has(join(legacyDir, f)))
+            .sort()
+            .reverse()
+        : [];
+      if (rows.length === 0 && legacyFiles.length === 0) {
         return { success: false, error: `No backups found for '${appId}'.` };
-      }
-      const files = readdirSync(backupDir)
-        .filter((f) => f.endsWith(".tar.gz"))
-        .sort()
-        .reverse();
-      if (files.length === 0) {
-        return { success: false, error: `No backup archives found in ${backupDir}.` };
       }
       return {
         success: true,
         action: "list",
         appId,
-        backups: files.map((f) => ({
-          file: join(backupDir, f),
-          name: f,
-          sizeBytes: statSync(join(backupDir, f)).size,
-          sizeMb: Math.round(statSync(join(backupDir, f)).size / (1024 * 1024) * 10) / 10,
+        backups: rows.map((r) => ({
+          backupId: r.id,
+          file: r.file_path,
+          completedAt: r.completed_at,
+          sizeMb: r.size_bytes ? Math.round((r.size_bytes / (1024 * 1024)) * 10) / 10 : null,
+          method: r.method,
+          verification: r.verify_status ?? "not verified",
+          kind: r.purpose ?? "manual",
+          legacy: !r.manifest_path,
         })),
-        hint: "Call restore_app again with the backupFile parameter to restore a specific backup.",
+        legacyArchives: legacyFiles.map((f) => ({
+          file: join(legacyDir, f),
+          sizeMb: Math.round((statSync(join(legacyDir, f)).size / (1024 * 1024)) * 10) / 10,
+        })),
+        hint: "Call restore_app again with backupId (or backupFile for legacy archives) to restore.",
       };
     }
 
-    // Validate backup file exists
-    const resolvedBackup = resolve(backupFile);
-    if (!existsSync(resolvedBackup)) {
-      return { success: false, error: `Backup file not found: ${resolvedBackup}` };
+    // Resolve to a backup record when possible
+    let row: BackupListRow | undefined;
+    if (backupId) {
+      row = db.get(sql`SELECT id, file_path, manifest_path, size_bytes, completed_at, method, verify_status, purpose FROM backups WHERE id = ${backupId} AND app_id = ${appId}`) as BackupListRow | undefined;
+      if (!row) return { success: false, error: `Backup ${backupId} not found for '${appId}'.` };
+    } else if (backupFile) {
+      const resolved = resolve(backupFile);
+      row = db.get(sql`SELECT id, file_path, manifest_path, size_bytes, completed_at, method, verify_status, purpose FROM backups WHERE file_path = ${resolved} AND app_id = ${appId}`) as BackupListRow | undefined;
     }
 
-    const composeDir = dirname(composePath);
-
-    try {
-      // Stop the app (full stop for restore — need to replace files)
-      log(`Stopping ${appId} for restore...`);
-      try {
-        const { promise } = execAbortable(`docker compose -f "${composePath}" stop`, {
-          cwd: composeDir,
-          timeout: DOCKER_TIMEOUT,
-        });
-        await promise;
-      } catch {}
-
-      // Validate archive safety before extracting
-      log(`Validating archive safety for ${appId}...`);
-      const safety = await validateTarSafety(resolvedBackup);
-      if (!safety.safe) {
-        // Restart the app even though restore didn't proceed
-        try {
-          const { promise } = execAbortable(`docker compose -f "${composePath}" up -d`, {
-            cwd: composeDir,
-            timeout: DOCKER_TIMEOUT,
-          });
-          await promise;
-        } catch {}
+    if (row?.manifest_path) {
+      if (verifyFirst) {
+        const v = await verifyBackup(row.id);
+        if (!v.success) return { success: false, error: `Verification failed — not restoring: ${v.errors.join("; ")}` };
+      }
+      const r = await restoreAppBackup(row.id);
+      if (!r.success) {
         return {
           success: false,
-          error: `Unsafe archive rejected: ${safety.reason}`,
-          hint: "The archive contains entries that could write outside the expected directories. This may indicate a tampered backup.",
+          error: r.error,
+          rolledBack: r.rolledBack,
+          safetyBackupId: r.safetyBackupId,
+          hint: r.rolledBack ? "The app was returned to its previous state." : "Check the app — the safety backup can be restored if needed.",
         };
       }
-
-      // Extract backup (tar preserves absolute paths)
-      log(`Restoring ${appId} from ${basename(resolvedBackup)}...`);
-      const { promise: extractPromise } = execAbortable(`tar -xzf "${resolvedBackup}" -C /`, {
-        timeout: TAR_EXTRACT_TIMEOUT,
-      });
-      await extractPromise;
-
-      // Restart the app
-      log(`Starting ${appId} after restore...`);
-      const { promise: startPromise } = execAbortable(`docker compose -f "${composePath}" up -d`, {
-        cwd: composeDir,
-        timeout: DOCKER_TIMEOUT,
-      });
-      await startPromise;
-      log(`${appId} restored and restarted`);
-
-      writeAuditEntry(`Restore: ${appId}`, "destructive", JSON.stringify({
-        backupFile: resolvedBackup,
-      }));
-
       return {
         success: true,
         action: "restore",
         appId,
-        restoredFrom: resolvedBackup,
-        message: `App '${appId}' restored from backup and restarted.`,
-      };
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      log(`Restore failed for ${appId}: ${errMsg}`);
-
-      // Try to restart even if restore failed
-      try {
-        const { promise } = execAbortable(`docker compose -f "${composePath}" up -d`, {
-          cwd: composeDir,
-          timeout: DOCKER_TIMEOUT,
-        });
-        await promise;
-      } catch {}
-      return {
-        success: false,
-        error: errMsg,
-        hint: "The app has been restarted with its previous data. The restore may have partially completed.",
+        restoredFrom: row.id,
+        backupDate: row.completed_at,
+        safetyBackupId: r.safetyBackupId,
+        health: r.health.detail,
+        warnings: r.warnings,
+        message: `App '${appId}' restored from backup and healthy.`,
       };
     }
+
+    // ── Legacy archive (no manifest) ──────────────────────────────────────
+    const legacyPath = resolve(row?.file_path ?? backupFile ?? "");
+    const legacyRoots = [LEGACY_BACKUP_BASE, getBackupRoot()];
+    if (!legacyRoots.some((r) => legacyPath.startsWith(r + "/"))) {
+      return { success: false, error: "Legacy restores are limited to archives inside the Talome backup directory." };
+    }
+    if (!existsSync(legacyPath)) {
+      return { success: false, error: `Backup file not found: ${legacyPath}` };
+    }
+    if (isEngineArchivePath(legacyPath)) {
+      return {
+        success: false,
+        error: "This archive was made by the current backup engine and has no matching backup record for this app. Restore it with backupId (list backups by calling restore_app with only appId).",
+      };
+    }
+    const composePath = getInstalledAppComposePath(appId);
+    if (!composePath) {
+      return { success: false, error: `App '${appId}' not found or not installed.` };
+    }
+    return legacyRestore(appId, composePath, legacyPath);
   },
 });
+
+async function legacyRestore(appId: string, composePath: string, archive: string) {
+  const composeDir = dirname(composePath);
+  try {
+    log(`Stopping ${appId} for legacy restore...`);
+    await execPromise(`docker compose -f "${composePath}" stop`, { cwd: composeDir, timeout: DOCKER_TIMEOUT }).catch(() => "");
+
+    const safety = await validateTarSafety(archive);
+    if (!safety.safe) {
+      await execPromise(`docker compose -f "${composePath}" up -d`, { cwd: composeDir, timeout: DOCKER_TIMEOUT }).catch(() => "");
+      return {
+        success: false,
+        error: `Unsafe archive rejected: ${safety.reason}`,
+        hint: "The archive contains entries that could write outside the expected directories. This may indicate a tampered backup.",
+      };
+    }
+
+    log(`Restoring ${appId} from ${basename(archive)} (legacy format)...`);
+    await execPromise(`tar -xzf "${archive}" -C /`, { timeout: TAR_EXTRACT_TIMEOUT });
+    await execPromise(`docker compose -f "${composePath}" up -d`, { cwd: composeDir, timeout: DOCKER_TIMEOUT });
+
+    writeAuditEntry(`Restore: ${appId}`, "destructive", JSON.stringify({ backupFile: archive, legacy: true }));
+    return {
+      success: true,
+      action: "restore",
+      appId,
+      restoredFrom: archive,
+      message: `App '${appId}' restored from a legacy backup and restarted. Legacy backups have no checksums or automatic rollback.`,
+    };
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    log(`Legacy restore failed for ${appId}: ${errMsg}`);
+    await execPromise(`docker compose -f "${composePath}" up -d`, { cwd: composeDir, timeout: DOCKER_TIMEOUT }).catch(() => "");
+    return {
+      success: false,
+      error: errMsg,
+      hint: "The app has been restarted. The restore may have partially completed.",
+    };
+  }
+}
