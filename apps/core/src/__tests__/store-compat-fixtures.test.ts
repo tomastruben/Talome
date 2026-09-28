@@ -142,7 +142,7 @@ describe("Umbrel compatibility suite (fixtures)", () => {
     const { manifest, compose, plan } = transform("webui-tuner", { environment: { LOG_LEVEL: "debug", WORKERS: "4" } });
     expect(manifest.umbrelMeta?.environment?.map((e) => e.name)).toEqual(["LOG_LEVEL", "MODEL_HOST", "WORKERS"]);
     expect(manifest.umbrelMeta?.warnings?.join(" ")).toMatch(/installSize ignored/);
-    expect(services(compose).web.environment).toMatchObject({ LOG_LEVEL: "debug", WORKERS: "4", MODEL_HOST: "http://ollama_ollama_1:11434" });
+    expect(services(compose).web.environment).toEqual({ MODEL_URL: "${MODEL_HOST}", LOG_LEVEL: "debug", WORKERS: "4" });
     expect(plan.interpolationEnv.MODEL_HOST).toBe("http://ollama_ollama_1:11434");
 
     const rejected = transform("webui-tuner", { environment: { WORKERS: "3" } });

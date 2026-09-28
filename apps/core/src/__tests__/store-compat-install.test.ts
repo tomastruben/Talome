@@ -50,7 +50,7 @@ vi.mock("../stores/compose-exec.js", async (importOriginal) => ({
   pinImageDigest: vi.fn(),
 }));
 
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
@@ -139,6 +139,42 @@ describe("applyUmbrelV2Install", () => {
       applyUmbrelV2Install(row, "webui-tuner", row.composePath, {}),
     );
     expect(result.ok).toBe(false);
+  });
+
+  it("lets the install `env` parameter override a manifest default (compose keeps ${NAME})", async () => {
+    const row = catalogRow("webui-tuner");
+    const result = await runWithUmbrelInstallOptions({ environment: { LOG_LEVEL: "debug" } }, async () =>
+      applyUmbrelV2Install(row, "tuner-env", row.composePath, { MODEL_HOST: "http://mine:2" }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.env.MODEL_HOST).toBe("http://mine:2");
+    const doc = yaml.load(readFileSync(result.composePath!, "utf-8")) as { services: { web: { environment: Record<string, string> } } };
+    expect(doc.services.web.environment).toMatchObject({ MODEL_URL: "${MODEL_HOST}", LOG_LEVEL: "debug" });
+  });
+
+  it("refuses a chosen folder that is a symlink into a protected tree", async () => {
+    const link = join(tmp.dir, "sneaky-link");
+    symlinkSync("/etc", link);
+    const row = catalogRow("photo-vault");
+    const result = await runWithUmbrelInstallOptions({ folders: { photos: link } }, async () =>
+      applyUmbrelV2Install(row, "sneaky", row.composePath, {}),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/resolves to .*etc/);
+  });
+
+  it("only exposes saved options for installed apps and prunes stale rows", async () => {
+    // "tuner-env" saved options above but was never installed.
+    expect(getAppInstallOptions("tuner-env")).toBeNull();
+    const row = catalogRow("webui-tuner");
+    await runWithUmbrelInstallOptions({ environment: { LOG_LEVEL: "info" } }, async () =>
+      applyUmbrelV2Install(row, "tuner-other", row.composePath, {}),
+    );
+    const ids = db.select().from(schema.appInstallOptions).all().map((r) => r.appId);
+    expect(ids).toContain("tuner-other");
+    expect(ids).not.toContain("tuner-env");
   });
 });
 

@@ -168,6 +168,14 @@ export function makeParseRev(gitHead: string, storeType: string): string {
   return `${gitHead}:${storeType}:v${CATALOG_PARSER_VERSION}`;
 }
 
+/** Catalogs at least this big are checked for sudden drops after a parse. */
+const DROP_CHECK_MIN_ROWS = 20;
+
+/** True when a re-parse returned under half of a sizeable previous catalog. */
+export function isSuspiciousDrop(previous: number, next: number): boolean {
+  return previous >= DROP_CHECK_MIN_ROWS && next * 2 < previous;
+}
+
 function countCatalogRows(storeId: string): number {
   const row = db
     .select({ count: sql<number>`count(*)` })
@@ -294,9 +302,10 @@ async function syncStoreWithAdapter(
   const parseRev = head ? makeParseRev(head, adapter.type) : null;
 
   // Unchanged checkout + unchanged parser ⇒ the catalog is already current.
+  // An empty catalog is always re-parsed: it can only come from a bad parse.
+  const existing = countCatalogRows(storeId);
   if (!options.force && parseRev && source.lastParsedRev === parseRev) {
-    const existing = countCatalogRows(storeId);
-    if (existing > 0 || source.appCount === 0) {
+    if (existing > 0) {
       db.update(schema.storeSources)
         .set({ lastSyncedAt: new Date().toISOString(), appCount: existing })
         .where(eq(schema.storeSources.id, storeId))
@@ -315,13 +324,29 @@ async function syncStoreWithAdapter(
     return { success: false, appCount: 0, error: `Parse failed: ${message}` };
   }
 
+  // A parse that finds nothing (unreadable checkout, adapter failure) must not
+  // wipe a working catalog — keep what we have and try again next sync.
+  if (manifests.length === 0 && existing > 0) {
+    return {
+      success: false,
+      appCount: existing,
+      error: "Parse found no apps; keeping the existing catalog",
+    };
+  }
+
   const appCount = replaceStoreCatalog(storeId, manifests);
+
+  // Only remember this parse (and so skip the next one) when it looks
+  // complete: an empty result or a sudden drop to under half the previous
+  // catalog is re-parsed on the next sync instead of sticking until upstream
+  // HEAD moves.
+  const suspicious = appCount === 0 || isSuspiciousDrop(existing, appCount);
 
   db.update(schema.storeSources)
     .set({
       lastSyncedAt: new Date().toISOString(),
       appCount,
-      lastParsedRev: parseRev,
+      lastParsedRev: suspicious ? null : parseRev,
     })
     .where(eq(schema.storeSources.id, storeId))
     .run();
@@ -466,7 +491,7 @@ export function initializeStores(options: { force?: boolean } = {}): void {
 
   Promise.allSettled(
     work.map(async ({ source, action }) => {
-      const result = await syncStore(source.id, { skipPull: action === "reparse" });
+      const result = await syncStore(source.id, { force, skipPull: action === "reparse" });
       if (!result.success) {
         console.error(`[stores] Startup sync failed for ${source.id}: ${result.error ?? "Unknown error"}`);
       }

@@ -10,12 +10,12 @@
  *   await runWithUmbrelInstallOptions(options, () => installApp(...));
  */
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import yaml from "js-yaml";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
-import { atomicWriteFileSync } from "../utils/filesystem.js";
+import { atomicWriteFileSync, TALOME_HOME } from "../utils/filesystem.js";
 import { getSetting } from "../utils/settings.js";
 import { writeNotification } from "../db/notifications.js";
 import { createLogger } from "../utils/logger.js";
@@ -24,10 +24,12 @@ import type { DependencyCheck } from "./lifecycle.js";
 import {
   applyUmbrelV2Plan,
   GPU_UNAVAILABLE_WARNING,
+  hostFolderPolicyFor,
   normalizeBackupIgnore,
   planUmbrelV2Install,
   resolveUmbrelDependencies,
   UmbrelInstallOptionsSchema,
+  validateHostFolder,
   type UmbrelInstallOptions,
   type UmbrelInstalledProvider,
   type UmbrelV2Context,
@@ -100,6 +102,11 @@ export function buildUmbrelV2Context(appId: string): UmbrelV2Context {
       mediaRoot: settingPath("media_root"),
       downloadsRoot: settingPath("downloads_root"),
       booksRoot: settingPath("books_root"),
+      // Talome's own state (DB, secrets, other apps' data, store cache) is never an app folder.
+      protectedTrees: [
+        TALOME_HOME,
+        dirname(resolve(process.env.DATABASE_PATH || join(process.cwd(), "data", "talome.db"))),
+      ],
     },
     installedApps: listInstalledProviders(),
     hasDri: existsSync("/dev/dri"),
@@ -202,7 +209,9 @@ export function applyUmbrelV2Install(
   }
 
   const meta = parseUmbrelMeta(app.umbrelMeta);
-  const plan = planUmbrelV2Install(meta, compose, options, buildUmbrelV2Context(appId));
+  const ctx = buildUmbrelV2Context(appId);
+  const plan = planUmbrelV2Install(meta, compose, options, ctx);
+  plan.blockers.push(...checkResolvedHostFolders(plan, ctx.paths));
   if (plan.blockers.length > 0) {
     return { ok: false, error: plan.blockers.join(" ") };
   }
@@ -238,6 +247,30 @@ export function applyUmbrelV2Install(
   return { ok: true, composePath: nextComposePath, env, plan };
 }
 
+/**
+ * The planner validates the paths the user typed; a symlink could still point
+ * somewhere protected, so re-check the real location of every chosen folder.
+ */
+function checkResolvedHostFolders(plan: UmbrelV2Plan, paths: UmbrelV2Context["paths"]): string[] {
+  const chosen = plan.folders.filter((f) => f.userSelected).map((f) => ({ label: `Folder "${f.name}"`, path: f.source }));
+  if (plan.dataRoot.hostPath) chosen.push({ label: "Data folder", path: plan.dataRoot.hostPath });
+  const policy = hostFolderPolicyFor(paths);
+  const problems: string[] = [];
+  for (const { label, path } of chosen) {
+    if (!existsSync(path)) continue;
+    let real: string;
+    try {
+      real = realpathSync(path);
+    } catch {
+      continue;
+    }
+    if (real === path) continue;
+    const error = validateHostFolder(real, policy);
+    if (error) problems.push(`${label}: ${path} resolves to ${real} — ${error}.`);
+  }
+  return problems;
+}
+
 function saveInstallOptions(
   appId: string,
   storeSourceId: string,
@@ -255,6 +288,7 @@ function saveInstallOptions(
     warnings: plan.warnings,
   };
   try {
+    pruneStaleInstallOptions(appId);
     const now = new Date().toISOString();
     db.insert(schema.appInstallOptions)
       .values({ appId, storeSourceId, options: JSON.stringify(options), plan: JSON.stringify(summary), updatedAt: now })
@@ -265,6 +299,20 @@ function saveInstallOptions(
       .run();
   } catch (err: unknown) {
     log.warn(`persisting install options for ${appId}`, err);
+  }
+}
+
+/**
+ * Options are saved while the install is still running (before `up`), so a
+ * failed install or a later uninstall leaves a row behind. Drop rows whose app
+ * is not installed (the app being installed right now is kept).
+ */
+function pruneStaleInstallOptions(keepAppId: string): void {
+  const installed = new Set(db.select({ appId: schema.installedApps.appId }).from(schema.installedApps).all().map((r) => r.appId));
+  const rows = db.select({ appId: schema.appInstallOptions.appId }).from(schema.appInstallOptions).all();
+  for (const row of rows) {
+    if (row.appId === keepAppId || installed.has(row.appId)) continue;
+    db.delete(schema.appInstallOptions).where(eq(schema.appInstallOptions.appId, row.appId)).run();
   }
 }
 
@@ -298,11 +346,17 @@ export function appRequiresHttps(appId: string): boolean {
   }
 }
 
-/** Saved install choices + resolved plan summary for an app, if any. */
+/**
+ * Saved install choices + resolved plan summary for an installed app, if any.
+ * Returns null for apps that are not (or no longer, or not successfully)
+ * installed so callers never act on a failed or uninstalled install's choices.
+ */
 export function getAppInstallOptions(
   appId: string,
 ): { options: UmbrelInstallOptions; plan: Record<string, unknown> } | null {
   try {
+    const installed = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, appId)).get();
+    if (!installed || installed.status === "error") return null;
     const row = db.select().from(schema.appInstallOptions).where(eq(schema.appInstallOptions.appId, appId)).get();
     if (!row) return null;
     return { options: JSON.parse(row.options) as UmbrelInstallOptions, plan: JSON.parse(row.plan) as Record<string, unknown> };

@@ -51,6 +51,7 @@ import {
   BOOT_SYNC_MAX_AGE_MS,
   CATALOG_PARSER_VERSION,
   initializeStores,
+  isSuspiciousDrop,
   makeParseRev,
   planBootSync,
   replaceStoreCatalog,
@@ -292,6 +293,88 @@ describe("initializeStores", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     initializeStores();
     await vi.waitFor(() => expect(catalogCount("local")).toBe(9), { timeout: 5000 });
+    log.mockRestore();
+  });
+});
+
+describe("sync recovery from bad parses", () => {
+  const fake = (id: string): AppManifest => ({
+    id,
+    name: id,
+    version: "1",
+    tagline: "",
+    description: "",
+    icon: "📦",
+    category: "other",
+    author: "x",
+    source: "umbrel",
+    storeId: "umb",
+    composePath: `/x/${id}/docker-compose.yml`,
+    ports: [],
+    volumes: [],
+    env: [],
+  });
+
+  it("flags only large relative drops as suspicious", () => {
+    expect(isSuspiciousDrop(700, 10)).toBe(true);
+    expect(isSuspiciousDrop(700, 400)).toBe(false);
+    expect(isSuspiciousDrop(10, 2)).toBe(false);
+  });
+
+  it("re-parses an empty catalog even when HEAD and parser are unchanged", async () => {
+    await syncStore("umb", { force: true });
+    const rev = source("umb").lastParsedRev;
+    expect(rev).toBeTruthy();
+    db.delete(schema.appCatalog).where(eq(schema.appCatalog.storeSourceId, "umb")).run();
+    db.update(schema.storeSources).set({ appCount: 0 }).where(eq(schema.storeSources.id, "umb")).run();
+    const result = await syncStore("umb");
+    expect(result.unchanged).toBeUndefined();
+    expect(result.appCount).toBe(5);
+    expect(catalogCount("umb")).toBe(5);
+  });
+
+  it("does not remember a parse that dropped to under half the catalog", async () => {
+    replaceStoreCatalog("umb", Array.from({ length: 30 }, (_, i) => fake(`fake-${i}`)));
+    db.update(schema.storeSources).set({ lastParsedRev: "old:umbrel:v0" }).where(eq(schema.storeSources.id, "umb")).run();
+    const dropped = await syncStore("umb");
+    expect(dropped).toEqual({ success: true, appCount: 5 });
+    expect(source("umb").lastParsedRev).toBeNull();
+    // The next sync parses again (no `unchanged` skip) and then records the rev.
+    const again = await syncStore("umb");
+    expect(again).toEqual({ success: true, appCount: 5 });
+    expect(source("umb").lastParsedRev).toBe(makeParseRev(git(CHECKOUT, "rev-parse", "HEAD"), "umbrel"));
+  });
+
+  it("keeps the existing catalog when a parse finds no apps", async () => {
+    const emptyDir = join(tmp.dir, "empty-store");
+    mkdirSync(emptyDir, { recursive: true });
+    db.insert(schema.storeSources)
+      .values({ id: "gone", name: "Gone", type: "umbrel", branch: "main", localPath: emptyDir, enabled: false, appCount: 2 })
+      .run();
+    replaceStoreCatalog("gone", [fake("keep-a"), fake("keep-b")]);
+    const result = await syncStore("gone");
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/keeping the existing catalog/);
+    expect(catalogCount("gone")).toBe(2);
+  });
+
+  it("forced boot sync re-parses even with an unchanged HEAD", async () => {
+    // Only the git store takes part; the https default stores stay out of it.
+    db.update(schema.storeSources).set({ enabled: false }).run();
+    db.update(schema.storeSources).set({ enabled: true }).where(eq(schema.storeSources.id, "umb")).run();
+    await syncStore("umb");
+    db.update(schema.appCatalog).set({ tagline: "sentinel" }).where(eq(schema.appCatalog.appId, "immich")).run();
+    expect((await syncStore("umb")).unchanged).toBe(true);
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    initializeStores({ force: true });
+    await vi.waitFor(
+      () => {
+        const row = db.select().from(schema.appCatalog).where(eq(schema.appCatalog.appId, "immich")).all().find((r) => r.storeSourceId === "umb")!;
+        expect(row.tagline).toBe("Self-hosted photo and video backup");
+      },
+      { timeout: 10_000 },
+    );
     log.mockRestore();
   });
 });

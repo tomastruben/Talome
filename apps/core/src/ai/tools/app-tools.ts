@@ -17,7 +17,7 @@ import {
 import { addStore, syncStore } from "../../stores/sync.js";
 import { getCatalogApp } from "../../stores/compose-exec.js";
 import { UmbrelInstallOptionsSchema } from "../../stores/umbrel-v2.js";
-import { runWithUmbrelInstallOptions } from "../../stores/umbrel-v2-install.js";
+import { reconcileUmbrelDependencies, runWithUmbrelInstallOptions } from "../../stores/umbrel-v2-install.js";
 import { writeAuditEntry } from "../../db/audit.js";
 import { checkForUpdates } from "../../stores/update-checker.js";
 import os from "node:os";
@@ -158,7 +158,9 @@ export const checkDependenciesTool = tool({
     storeId: z.string().describe("Store source ID"),
   }),
   execute: async ({ appId, storeId }) => {
-    const result = resolveDependencies(appId, storeId);
+    const catalogApp = getCatalogApp(appId, storeId);
+    const base = resolveDependencies(appId, storeId);
+    const result = catalogApp ? reconcileUmbrelDependencies(catalogApp, base) : base;
     return {
       ...result,
       message: result.satisfied

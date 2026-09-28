@@ -9,6 +9,7 @@ import { docker } from "../docker/client.js";
 import { generateCaddyfile } from "./caddyfile.js";
 import { ensureProxyNetwork, connectContainerToProxyNetwork, PROXY_NETWORK } from "./network.js";
 import { getDockerHostAddress } from "../platform/index.js";
+import { appRequiresHttps } from "../stores/umbrel-v2-install.js";
 
 const CADDY_DIR = join(os.homedir(), ".talome", "caddy");
 const CADDY_CONTAINER_NAME = "talome-caddy";
@@ -201,7 +202,8 @@ export async function autoRegisterProxyRoute(appId: string, appName: string, por
   // .local domains must use self-signed — Let's Encrypt can't issue certs for them
   const isLocal = baseDomain.endsWith(".local") || baseDomain.endsWith(".lan") || baseDomain.endsWith(".home");
   const defaultTls = getSetting("proxy_default_tls") || "auto";
-  const tlsMode = isLocal ? "selfsigned" : defaultTls;
+  // Umbrel apps that declare requiresHttps break over plain HTTP — never register them with TLS off.
+  const tlsMode = isLocal ? "selfsigned" : defaultTls === "off" && appRequiresHttps(appId) ? "selfsigned" : defaultTls;
 
   // Check if route already exists
   const existing = db.get(sql`SELECT id FROM proxy_routes WHERE app_id = ${appId}`) as { id: string } | undefined;

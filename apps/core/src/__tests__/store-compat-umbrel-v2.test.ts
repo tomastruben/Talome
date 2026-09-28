@@ -94,6 +94,38 @@ describe("validateHostFolder", () => {
   it("accepts ordinary absolute folders", () => {
     expect(validateHostFolder("/mnt/media/Photos")).toBeNull();
   });
+  it("rejects anything inside protected trees, credential folders and ambiguous specs", () => {
+    expect(validateHostFolder("/etc/ssh")).toMatch(/protected/);
+    expect(validateHostFolder("/root/.ssh")).toMatch(/protected/);
+    expect(validateHostFolder("/var/lib/docker/volumes")).toMatch(/protected/);
+    expect(validateHostFolder("/var/run/")).toMatch(/protected/);
+    expect(validateHostFolder("/private/var/root")).toMatch(/protected/);
+    expect(validateHostFolder("/home/me/.ssh")).toMatch(/protected/);
+    expect(validateHostFolder("/Users/me/.talome/data")).toMatch(/protected/);
+    expect(validateHostFolder("/Volumes/A:B")).toMatch(/":"/);
+    expect(validateHostFolder("/etc:/x")).toMatch(/":"/);
+    expect(validateHostFolder("/mnt/a,b")).toMatch(/","/);
+    expect(validateHostFolder("/mnt/a\nb")).toMatch(/control/);
+    // similar-looking but distinct folders stay allowed
+    expect(validateHostFolder("/etcetera")).toBeNull();
+    expect(validateHostFolder("/srv/usr")).toBeNull();
+  });
+
+  it("applies extra protected trees but keeps the app's own data dir usable", () => {
+    const policy = { protectedTrees: ["/home/me/.config/talome"], allowedTrees: ["/home/me/.talome/app-data/demo"] };
+    expect(validateHostFolder("/home/me/.config/talome/db", policy)).toMatch(/protected/);
+    expect(validateHostFolder("/home/me/.talome/app-data/demo/library", policy)).toBeNull();
+    expect(validateHostFolder("/home/me/.talome/app-data/other", policy)).toMatch(/protected/);
+
+    const plan = planUmbrelV2Install(
+      { folderAccess: [{ id: "photos", name: "Photos", mounts: [{ service: "web", targetPath: "/photos" }] }] },
+      compose(),
+      { folders: { photos: "/talome-home/secrets" } },
+      ctx({}, { protectedTrees: ["/talome-home"] }),
+    );
+    expect(plan.blockers.join(" ")).toMatch(/protected/);
+  });
+
   it("rejects relative, traversal and system paths", () => {
     expect(validateHostFolder("media")).toMatch(/absolute/);
     expect(validateHostFolder("/mnt/../etc")).toMatch(/\.\./);
@@ -132,7 +164,10 @@ describe("planUmbrelV2Install — folderAccess", () => {
     const volumes = svc(out, "web").volumes;
     expect(volumes).toContain("/Volumes/Pictures:/photos");
     expect(volumes).toContain("/srv/inbox:/import:ro");
-    expect(volumes).toContain("/mnt/media:/movies");
+    // keyword suggestion of the whole media root: read-only until chosen explicitly
+    expect(volumes).toContain("/mnt/media:/movies:ro");
+    expect(plan.folders.find((f) => f.id === "movies")?.sharedDefault).toBe(true);
+    expect(plan.warnings.some((w) => w.includes('Folder "Movies" is mounted read-only from /mnt/media'))).toBe(true);
     // the untouched config mount stays as it was
     expect(volumes).toContain("${APP_DATA_DIR}/data/config:/config");
   });
@@ -165,7 +200,61 @@ describe("planUmbrelV2Install — folderAccess", () => {
     expect(plan.folders[0].mounts[0].service).toBe("app");
     expect(plan.folders[0].source).toBe("/mnt/downloads");
     const { compose: out } = applyUmbrelV2Plan(single, plan);
-    expect(svc(out, "app").volumes).toEqual(["/mnt/downloads:/downloads"]);
+    expect(svc(out, "app").volumes).toEqual(["/mnt/downloads:/downloads:ro"]);
+
+    const chosen = planUmbrelV2Install(
+      { folderAccess: [{ id: "dl", name: "Downloads", mounts: [{ targetPath: "/downloads" }] }] },
+      single,
+      { folders: { dl: "/mnt/downloads" } },
+      ctx(),
+    );
+    expect(chosen.folders[0].sharedDefault).toBeUndefined();
+    expect(svc(applyUmbrelV2Plan(single, chosen).compose, "app").volumes).toEqual(["/mnt/downloads:/downloads"]);
+  });
+
+  it("moves compose-default folder slots under ${APP_DATA_DIR}/data with the data root", () => {
+    const doc = {
+      services: {
+        web: { image: "x:1", volumes: ["${APP_DATA_DIR}/data/config:/config", "${APP_DATA_DIR}/data/library:/library"] },
+      },
+    };
+    const plan = planUmbrelV2Install(
+      {
+        storage: { dataRoot: "data" },
+        folderAccess: [{ id: "library", name: "Library", mounts: [{ service: "web", targetPath: "/library" }] }],
+      },
+      doc,
+      { dataRoot: "/mnt/ssd/x" },
+      ctx(),
+    );
+    expect(plan.folders[0].source).toBe("/mnt/ssd/x/library");
+    expect(svc(applyUmbrelV2Plan(doc, plan).compose, "web").volumes).toEqual([
+      "/mnt/ssd/x/config:/config",
+      "/mnt/ssd/x/library:/library",
+    ]);
+  });
+
+  it("keeps the target of anonymous volumes and turns long-syntax volumes into binds", () => {
+    const doc = {
+      services: {
+        web: {
+          image: "x:1",
+          volumes: ["/library", { type: "volume", source: "libvol", target: "/photos", volume: { nocopy: true } }],
+        },
+      },
+      volumes: { libvol: {} },
+    };
+    const meta: UmbrelV2Meta = {
+      folderAccess: [
+        { id: "lib", name: "Lib", mounts: [{ service: "web", targetPath: "/library" }] },
+        { id: "pics", name: "Pics", mounts: [{ service: "web", targetPath: "/photos", readOnly: true }] },
+      ],
+    };
+    const plan = planUmbrelV2Install(meta, doc, { folders: { lib: "/srv/lib", pics: "/srv/pics" } }, ctx());
+    expect(plan.blockers).toEqual([]);
+    const volumes = svc(applyUmbrelV2Plan(doc, plan).compose, "web").volumes;
+    expect(volumes?.[0]).toBe("/srv/lib:/library");
+    expect(volumes?.[1]).toEqual({ type: "bind", source: "/srv/pics", target: "/photos", read_only: true });
   });
 });
 
@@ -204,6 +293,33 @@ describe("planUmbrelV2Install — environment", () => {
     expect(plan.environment.find((e) => e.name === "MODEL_HOST")?.origin).toBe("default");
   });
 
+  it("never bakes a default into the compose — the `${NAME}` reference stays for interpolation", () => {
+    const doc = { services: { web: { image: "x:1", environment: { MODEL_HOST: "${MODEL_HOST}" } } } };
+    const plan = planUmbrelV2Install(meta, doc, {}, ctx());
+    expect(plan.serviceEnv).toEqual({});
+    expect(plan.interpolationEnv).toEqual({ MODEL_HOST: "http://ollama:11434" });
+    const { compose: out, changed } = applyUmbrelV2Plan(doc, plan);
+    expect(changed).toBe(false);
+    expect(svc(out, "web").environment).toEqual({ MODEL_HOST: "${MODEL_HOST}" });
+  });
+
+  it("escapes $ in user values so compose never interpolates them", () => {
+    const free: UmbrelV2Meta = { environment: [{ name: "PASSWORD", services: ["web"] }, { name: "TOKEN", services: ["web"] }] };
+    const plan = planUmbrelV2Install(free, compose(), { environment: { PASSWORD: "pa$word", TOKEN: "${TALOME_SECRET}" } }, ctx());
+    expect(plan.blockers).toEqual([]);
+    const { compose: out } = applyUmbrelV2Plan(compose(), plan);
+    expect(svc(out, "web").environment).toMatchObject({ PASSWORD: "pa$$word", TOKEN: "$${TALOME_SECRET}" });
+    expect(findRequiredComposeVars(out)).not.toContain("TALOME_SECRET");
+    expect(plan.interpolationEnv).toMatchObject({ PASSWORD: "pa$word", TOKEN: "${TALOME_SECRET}" });
+  });
+
+  it("refuses values with line breaks or control characters", () => {
+    const free: UmbrelV2Meta = { environment: [{ name: "PASSWORD", services: ["web"] }] };
+    const plan = planUmbrelV2Install(free, compose(), { environment: { PASSWORD: "a\nAPP_DATA_DIR=/" } }, ctx());
+    expect(plan.blockers.join(" ")).toMatch(/line breaks/);
+    expect(plan.serviceEnv).toEqual({});
+  });
+
   it("updates list-style environment entries in place", () => {
     const doc = { services: { web: { image: "x:1", environment: ["LOG_LEVEL=info", "OTHER=1"] } } };
     const plan = planUmbrelV2Install(meta, doc, { environment: { LOG_LEVEL: "debug" } }, ctx());
@@ -215,10 +331,11 @@ describe("planUmbrelV2Install — environment", () => {
 describe("planUmbrelV2Install — GPU, torOnly, requiresHttps, dataRoot, backupIgnore", () => {
   it("maps GPU permission to /dev/dri when present", () => {
     const plan = planUmbrelV2Install({ permissions: ["GPU"] }, compose(), {}, ctx({ hasDri: true }));
-    expect(plan.gpu).toEqual({ requested: true, devices: ["/dev/dri:/dev/dri"] });
+    expect(plan.gpu).toEqual({ requested: true, devices: ["/dev/dri:/dev/dri"], services: ["web"] });
     const { compose: out } = applyUmbrelV2Plan(compose(), plan);
     expect(svc(out, "web").devices).toEqual(["/dev/dri:/dev/dri"]);
-    expect(svc(out, "db").devices).toEqual(["/dev/dri:/dev/dri"]);
+    // databases/caches never get the GPU
+    expect(svc(out, "db").devices).toBeUndefined();
     expect(svc(out, "app_proxy").devices).toBeUndefined();
   });
 

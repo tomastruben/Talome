@@ -20,24 +20,29 @@ import { z } from "zod";
 export const UMBREL_NOTE_MAX_LENGTH = 300;
 export const ENV_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-function truncateNote(note: string): string | undefined {
-  const trimmed = note.trim();
-  if (!trimmed) return undefined;
-  return trimmed.length > UMBREL_NOTE_MAX_LENGTH
-    ? `${trimmed.slice(0, UMBREL_NOTE_MAX_LENGTH - 1).trimEnd()}…`
-    : trimmed;
+/** Notes are shown in the install UI — keep them short (ellipsis past the limit). */
+function clampNote(note: string): string | undefined {
+  const text = note.trim();
+  if (text.length === 0) return undefined;
+  if (text.length <= UMBREL_NOTE_MAX_LENGTH) return text;
+  const words = text.slice(0, UMBREL_NOTE_MAX_LENGTH - 1).replace(/\s+$/, "");
+  return `${words}\u2026`;
 }
 
 const noteSchema = z
   .string()
-  .transform(truncateNote)
+  .transform(clampNote)
   .optional();
 
-/** YAML parses unquoted `1000` / `true` as non-strings — coerce scalars to strings. */
+/** Manifest YAML may carry unquoted numbers/booleans where strings are meant. */
 export function scalarToString(value: unknown): unknown {
-  return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
-    ? String(value)
-    : value;
+  switch (typeof value) {
+    case "number":
+    case "boolean":
+      return `${value}`;
+    default:
+      return value;
+  }
 }
 
 export const UmbrelFolderAccessMountSchema = z.object({
@@ -63,8 +68,8 @@ export const UmbrelEnvironmentInputSchema = z.object({
   options: z
     .array(z.preprocess(scalarToString, z.string().min(1)))
     .min(1)
-    .refine((options) => new Set(options).size === options.length, {
-      message: "environment options must be unique",
+    .refine((options) => !options.some((opt, i) => options.indexOf(opt) !== i), {
+      message: "duplicate value in options list",
     })
     .optional(),
   note: noteSchema,
@@ -133,6 +138,8 @@ export interface UmbrelV2Paths {
   mediaRoot?: string;
   downloadsRoot?: string;
   booksRoot?: string;
+  /** Host trees user choices may not point into (Talome's home, the store cache…). */
+  protectedTrees?: string[];
 }
 
 export interface UmbrelInstalledProvider {
@@ -160,6 +167,11 @@ export interface UmbrelFolderSlot {
   /** Effective host folder (user choice or default). */
   source: string;
   userSelected: boolean;
+  /**
+   * True when the default is one of the user's shared roots (media/downloads)
+   * suggested by keyword: it is mounted read-only until the user picks it.
+   */
+  sharedDefault?: boolean;
 }
 
 export interface UmbrelEnvironmentPlan {
@@ -192,7 +204,8 @@ export interface UmbrelV2Plan {
   serviceEnv: Record<string, Record<string, string>>;
   /** Values that must also be available for `${VAR}` interpolation. */
   interpolationEnv: Record<string, string>;
-  gpu: { requested: boolean; devices: string[] };
+  /** `services` = the services that get the devices (databases/caches are left out). */
+  gpu: { requested: boolean; devices: string[]; services: string[] };
   requiresHttps: boolean;
   dataRoot: { declared: boolean; hostPath: string | null };
   dependencies: UmbrelDependencyResolution[];
@@ -224,9 +237,13 @@ function getServices(compose: ComposeDoc | null | undefined): Record<string, Com
   return out;
 }
 
-/** Services a user can configure (everything except Umbrel's app_proxy sidecar). */
-export function getConfigurableServiceNames(compose: ComposeDoc | null | undefined): string[] {
-  return Object.keys(getServices(compose)).filter((name) => name !== UMBREL_PROXY_SERVICE);
+/** Names of the app's own services — Umbrel's app_proxy sidecar is not one of them. */
+export function listAppServices(compose: ComposeDoc | null | undefined): string[] {
+  const names: string[] = [];
+  for (const name of Object.keys(getServices(compose))) {
+    if (name !== UMBREL_PROXY_SERVICE) names.push(name);
+  }
+  return names;
 }
 
 /** Split a short-syntax volume `src:target[:mode]`, ignoring colons inside `${…}`. */
@@ -282,18 +299,26 @@ function parseVolume(volume: unknown): ParsedMount | null {
   return null;
 }
 
+/**
+ * Replace a volume's host source. Anonymous volumes (`- /library`) keep their
+ * target, and long-syntax entries become `type: bind` when the new source is a
+ * host path (docker rejects a host path on a `type: volume` entry).
+ */
 function withMount(volume: unknown, source: string, readOnly: boolean): unknown {
   if (typeof volume === "string") {
     const parts = splitVolumeSpec(volume);
-    const modes = (parts[2] ?? "")
-      .split(",")
-      .map((m) => m.trim())
-      .filter((m) => m && m !== "ro" && m !== "rw");
+    const target = parts.length < 2 ? parts[0] : parts[1];
+    const modeList = parts.length < 3 ? [] : parts[2].split(",");
+    const modes = modeList.map((m) => m.trim()).filter((m) => m && m !== "ro" && m !== "rw");
     if (readOnly) modes.unshift("ro");
-    return [source, parts[1], ...(modes.length ? [modes.join(",")] : [])].join(":");
+    return [source, target, ...(modes.length ? [modes.join(",")] : [])].join(":");
   }
   if (isRecord(volume)) {
     const next: Record<string, unknown> = { ...volume, source };
+    if (source.startsWith("/") || source.startsWith("$")) {
+      next.type = "bind";
+      delete next.volume;
+    }
     if (readOnly) next.read_only = true;
     else delete next.read_only;
     return next;
@@ -363,19 +388,55 @@ export function mapUmbrelRootSource(source: string, paths: UmbrelV2Paths): Umbre
 
 // ── Host folder validation ───────────────────────────────────────────────────
 
-const FORBIDDEN_HOST_PATHS = [
-  "/", "/etc", "/proc", "/sys", "/dev", "/boot", "/root", "/bin", "/sbin",
-  "/usr", "/lib", "/lib64", "/var/run", "/run", "/private/etc", "/System",
+/** System folders an app may never be given — neither the folder itself nor anything below it. */
+const PROTECTED_HOST_TREES = [
+  "/etc", "/proc", "/sys", "/dev", "/boot", "/root", "/bin", "/sbin", "/usr", "/lib", "/lib32",
+  "/lib64", "/libx32", "/var/run", "/run", "/var/lib/docker", "/var/lib/containerd", "/snap",
+  "/private/etc", "/private/var/run", "/private/var/root", "/private/var/db", "/System", "/Library",
+  "/Applications", "/cores",
 ];
 
+/** Credential/config folders that must never be handed to an app, wherever they live. */
+const PROTECTED_SEGMENTS = new Set([".ssh", ".gnupg", ".aws", ".kube", ".docker", ".talome"]);
+
+function isSameOrUnder(path: string, root: string): boolean {
+  return path === root || path.startsWith(root === "/" ? "/" : `${root}/`);
+}
+
+export interface HostFolderPolicy {
+  /** Extra trees to protect (Talome's own data directory, the store cache…). */
+  protectedTrees?: string[];
+  /** Trees that stay allowed even when inside a protected tree (the app's own data dir). */
+  allowedTrees?: string[];
+}
+
+/** The policy user choices for an app are checked against: its own data dir stays allowed. */
+export function hostFolderPolicyFor(paths: UmbrelV2Paths): HostFolderPolicy {
+  return { protectedTrees: paths.protectedTrees, allowedTrees: [paths.appDataDir] };
+}
+
 /** Validate a user-chosen host folder. Returns an error message or null. */
-export function validateHostFolder(path: string): string | null {
+export function validateHostFolder(path: string, policy: HostFolderPolicy = {}): string | null {
   if (!path.startsWith("/")) return `"${path}" must be an absolute path`;
-  if (path.includes("\0")) return "path contains a NUL byte";
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(path)) return "path contains control characters";
+  // ":" and "," change how docker parses a short-syntax volume spec.
+  if (/[:,]/.test(path)) return `"${path}" must not contain ":" or ","`;
   if (path.split("/").includes("..")) return `"${path}" must not contain ".."`;
   const normalized = normalizeTarget(path);
-  if (FORBIDDEN_HOST_PATHS.includes(normalized)) return `"${path}" is a protected system folder`;
-  if (normalized.endsWith("docker.sock")) return `"${path}" cannot be mounted`;
+  if (normalized === "/") return `"${path}" is a protected system folder`;
+  if (/(^|\/)docker\.sock$/.test(normalized)) return `"${path}" cannot be mounted`;
+  const allowed = (policy.allowedTrees ?? [])
+    .filter((root) => root.startsWith("/"))
+    .some((root) => isSameOrUnder(normalized, normalizeTarget(root)));
+  if (allowed) return null;
+  if (normalized.split("/").some((segment) => PROTECTED_SEGMENTS.has(segment))) {
+    return `"${path}" is a protected folder`;
+  }
+  const extra = (policy.protectedTrees ?? []).filter((root) => root.startsWith("/")).map(normalizeTarget);
+  if ([...PROTECTED_HOST_TREES, ...extra].some((root) => isSameOrUnder(normalized, root))) {
+    return `"${path}" is a protected system folder`;
+  }
   return null;
 }
 
@@ -385,6 +446,11 @@ function sanitizeSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "folder";
 }
 
+/**
+ * Suggested host folder for a slot the compose file does not mount. A
+ * `configured` suggestion points at one of the user's shared roots, so the
+ * planner only ever grants it read-only until the user picks it explicitly.
+ */
 function heuristicFolderDefault(
   folder: UmbrelFolderAccess,
   paths: UmbrelV2Paths,
@@ -530,6 +596,67 @@ export function isTalomeProvidedUmbrelVar(name: string): boolean {
 export const GPU_UNAVAILABLE_WARNING =
   "This app requests GPU access but /dev/dri was not found; it will run without GPU acceleration.";
 
+export const REQUIRES_HTTPS_WARNING =
+  "This app requires HTTPS. Open it through Talome's reverse proxy (its route is served over TLS); plain http://host:port access may not work.";
+
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+function mountKey(service: string, target: string): string {
+  return `${service}\u0000${target}`;
+}
+
+/**
+ * Resolve a folderAccess slot's declared mounts to concrete service/target
+ * pairs. A mount without a service applies to the app's only service. Returns
+ * an error when the slot cannot be mounted as declared.
+ */
+function resolveSlotMounts(
+  folder: UmbrelFolderAccess,
+  serviceNames: string[],
+  composeMounts: Map<string, ParsedMount>,
+  claimed: Set<string>,
+): { mounts: UmbrelFolderSlot["mounts"] } | { error: string } {
+  const mounts: UmbrelFolderSlot["mounts"] = [];
+  const own = new Set<string>();
+  for (const declared of folder.mounts) {
+    let service = declared.service;
+    if (!service) {
+      if (serviceNames.length !== 1) return { error: "mount has no service and the app has several services" };
+      service = serviceNames[0];
+    }
+    if (!serviceNames.includes(service)) return { error: `service "${service}" does not exist` };
+    if (!declared.targetPath.startsWith("/")) return { error: `target "${declared.targetPath}" is not absolute` };
+    const targetPath = normalizeTarget(declared.targetPath);
+    const key = mountKey(service, targetPath);
+    if (claimed.has(key) || own.has(key)) return { error: `target "${targetPath}" is mounted twice` };
+    own.add(key);
+    // Manifest readOnly wins; otherwise keep whatever the compose mount says.
+    const readOnly = declared.readOnly !== undefined ? declared.readOnly : composeMounts.get(key)?.readOnly === true;
+    mounts.push({ service, targetPath, readOnly });
+  }
+  return { mounts };
+}
+
+const APP_DATA_DATA_PREFIX = /^(?:\$\{APP_DATA_DIR\}|\$APP_DATA_DIR(?![A-Za-z0-9_]))\/data(?=\/|$)/;
+
+/** Move a `${APP_DATA_DIR}/data…` source under the user's chosen data root. */
+function redirectDataRoot(source: string, dataRootHost: string | null): string {
+  if (!dataRootHost || !APP_DATA_DATA_PREFIX.test(source)) return source;
+  return joinBase(dataRootHost, safeSubPath(source.replace(APP_DATA_DATA_PREFIX, "")));
+}
+
+/** Database/cache images never need the GPU — keep /dev/dri away from them. */
+const NON_GPU_IMAGE = /(^|[/_-])(postgres|postgresql|pgvecto-rs|mariadb|mysql|mongo|redis|valkey|memcached|keydb|dragonfly|clickhouse|elasticsearch|opensearch)([:@/_-]|$)/i;
+
+function pickGpuServices(services: Record<string, ComposeService>, serviceNames: string[]): string[] {
+  const picked = serviceNames.filter((name) => {
+    const image = services[name]?.image;
+    return !(typeof image === "string" && NON_GPU_IMAGE.test(image));
+  });
+  return picked.length > 0 ? picked : serviceNames;
+}
+
 /**
  * Build the install plan for an Umbrel app from its (possibly absent) v2
  * metadata, its compose document and the user's install options.
@@ -543,10 +670,11 @@ export function planUmbrelV2Install(
   const m: UmbrelV2Meta = meta ?? {};
   const opts: UmbrelInstallOptions = options ?? {};
   const services = getServices(compose);
-  const serviceNames = getConfigurableServiceNames(compose);
+  const serviceNames = listAppServices(compose);
   const blockers: string[] = [];
   const warnings: string[] = [];
   const ensureDirs = new Set<string>();
+  const folderPolicy = hostFolderPolicyFor(ctx.paths);
 
   const plan: UmbrelV2Plan = {
     supported: true,
@@ -556,7 +684,7 @@ export function planUmbrelV2Install(
     environment: [],
     serviceEnv: {},
     interpolationEnv: {},
-    gpu: { requested: false, devices: [] },
+    gpu: { requested: false, devices: [], services: [] },
     requiresHttps: m.requiresHttps === true,
     dataRoot: { declared: m.storage?.dataRoot === "data", hostPath: null },
     dependencies: [],
@@ -579,7 +707,21 @@ export function planUmbrelV2Install(
   }
 
   if (plan.requiresHttps) {
-    warnings.push("This app requires HTTPS; Talome's reverse proxy must serve it over TLS.");
+    warnings.push(REQUIRES_HTTPS_WARNING);
+  }
+
+  // ── storage.dataRoot (first: folder defaults under the data root follow it) ──
+  if (opts.dataRoot !== undefined) {
+    if (!plan.dataRoot.declared) {
+      warnings.push("Ignoring data folder choice — this app does not declare a movable data root.");
+    } else {
+      const error = validateHostFolder(opts.dataRoot, folderPolicy);
+      if (error) blockers.push(`Data folder: ${error}.`);
+      else {
+        plan.dataRoot.hostPath = normalizeTarget(opts.dataRoot);
+        ensureDirs.add(plan.dataRoot.hostPath);
+      }
+    }
   }
 
   // ── folderAccess ───────────────────────────────────────────────────────
@@ -588,77 +730,65 @@ export function planUmbrelV2Install(
     if (!Array.isArray(svc.volumes)) continue;
     for (const volume of svc.volumes) {
       const parsed = parseVolume(volume);
-      if (parsed) composeMounts.set(`${name}\u0000${parsed.target}`, parsed);
+      if (parsed) composeMounts.set(mountKey(name, parsed.target), parsed);
     }
   }
 
-  const seenSlots = new Set<string>();
-  const seenMountKeys = new Set<string>();
+  const claimedMounts = new Set<string>();
+  const slotIds = new Set<string>();
   for (const folder of m.folderAccess ?? []) {
-    if (seenSlots.has(folder.id)) {
+    if (slotIds.has(folder.id)) {
       warnings.push(`Duplicate folderAccess id "${folder.id}" ignored.`);
       continue;
     }
-    const mounts: UmbrelFolderSlot["mounts"] = [];
-    let invalid: string | null = null;
-    for (const declared of folder.mounts) {
-      const service = declared.service ?? (serviceNames.length === 1 ? serviceNames[0] : "");
-      if (!serviceNames.includes(service)) {
-        invalid = declared.service
-          ? `service "${declared.service}" does not exist`
-          : "mount has no service and the app has several services";
-        break;
-      }
-      if (!declared.targetPath.startsWith("/")) {
-        invalid = `target "${declared.targetPath}" is not absolute`;
-        break;
-      }
-      const targetPath = normalizeTarget(declared.targetPath);
-      const key = `${service}\u0000${targetPath}`;
-      if (seenMountKeys.has(key) || mounts.some((mt) => mt.service === service && mt.targetPath === targetPath)) {
-        invalid = `target "${targetPath}" is mounted twice`;
-        break;
-      }
-      const existing = composeMounts.get(key);
-      mounts.push({ service, targetPath, readOnly: declared.readOnly ?? existing?.readOnly ?? false });
-    }
-    if (invalid) {
-      warnings.push(`Folder "${folder.name}" skipped: ${invalid}.`);
+    const resolved = resolveSlotMounts(folder, serviceNames, composeMounts, claimedMounts);
+    if ("error" in resolved) {
+      warnings.push(`Folder "${folder.name}" skipped: ${resolved.error}.`);
       continue;
     }
-    seenSlots.add(folder.id);
-    for (const mt of mounts) seenMountKeys.add(`${mt.service}\u0000${mt.targetPath}`);
+    const mounts = resolved.mounts;
+    slotIds.add(folder.id);
+    for (const mt of mounts) claimedMounts.add(mountKey(mt.service, mt.targetPath));
 
-    // Default: the compose file's own mount source (mapped when it is an
-    // Umbrel path), else Talome's configured media/download folders.
-    let defaultSource: string | null = null;
-    let defaultConfigured = true;
-    const composeSources = mounts
-      .map((mt) => composeMounts.get(`${mt.service}\u0000${mt.targetPath}`)?.source ?? null)
-      .filter((s): s is string => !!s);
-    if (composeSources.length === mounts.length && composeSources.every((s) => s === composeSources[0])) {
-      const mapped = mapUmbrelRootSource(composeSources[0], ctx.paths);
-      defaultSource = mapped ? mapped.hostPath : composeSources[0];
-      if (mapped?.fallback) defaultConfigured = false;
-    }
-    if (!defaultSource) {
-      const heuristic = heuristicFolderDefault(folder, ctx.paths);
-      defaultSource = heuristic.path;
-      defaultConfigured = heuristic.configured;
+    // Default: the compose file's own mount source when every mount of the
+    // slot agrees on one (mapped from Umbrel paths and moved with the data
+    // root), else a suggestion based on Talome's configured folders.
+    const composeSources = new Set(
+      mounts.map((mt) => composeMounts.get(mountKey(mt.service, mt.targetPath))?.source ?? ""),
+    );
+    const [onlySource] = [...composeSources];
+    let defaultSource: string;
+    let defaultIsFallback = false;
+    let sharedDefault = false;
+    if (composeSources.size === 1 && onlySource) {
+      const mapped = mapUmbrelRootSource(onlySource, ctx.paths);
+      defaultSource = mapped ? mapped.hostPath : redirectDataRoot(onlySource, plan.dataRoot.hostPath);
+      defaultIsFallback = mapped?.fallback === true;
+    } else {
+      const suggestion = heuristicFolderDefault(folder, ctx.paths);
+      defaultSource = suggestion.path;
+      defaultIsFallback = !suggestion.configured;
+      sharedDefault = suggestion.configured;
     }
 
     const chosen = opts.folders?.[folder.id];
     let source = defaultSource;
     let userSelected = false;
     if (chosen !== undefined) {
-      const error = validateHostFolder(chosen);
+      const error = validateHostFolder(chosen, folderPolicy);
       if (error) {
         blockers.push(`Folder "${folder.name}": ${error}.`);
       } else {
         source = normalizeTarget(chosen);
         userSelected = true;
       }
-    } else if (!defaultConfigured) {
+    } else if (sharedDefault) {
+      // Never hand a whole shared library to an app with write access unasked.
+      for (const mt of mounts) mt.readOnly = true;
+      warnings.push(
+        `Folder "${folder.name}" is mounted read-only from ${defaultSource}. Choose a folder at install time to give the app write access.`,
+      );
+    } else if (defaultIsFallback) {
       warnings.push(
         `Folder "${folder.name}" defaults to ${defaultSource} — choose a folder at install time to use your own files.`,
       );
@@ -673,17 +803,18 @@ export function planUmbrelV2Install(
       defaultSource,
       source,
       userSelected,
+      ...(sharedDefault && !userSelected ? { sharedDefault: true } : {}),
     });
   }
   for (const id of Object.keys(opts.folders ?? {})) {
-    if (!seenSlots.has(id)) warnings.push(`Ignoring folder selection "${id}" — the app does not declare it.`);
+    if (!slotIds.has(id)) warnings.push(`Ignoring folder selection "${id}" — the app does not declare it.`);
   }
 
   // ── environment ────────────────────────────────────────────────────────
   const requiredVars = new Set(findRequiredComposeVars(compose));
-  const seenEnv = new Set<string>();
+  const envNames = new Set<string>();
   for (const input of m.environment ?? []) {
-    if (seenEnv.has(input.name)) {
+    if (envNames.has(input.name)) {
       warnings.push(`Duplicate environment variable "${input.name}" ignored.`);
       continue;
     }
@@ -693,7 +824,7 @@ export function planUmbrelV2Install(
       warnings.push(`Environment variable "${input.name}" skipped: unknown service(s) ${unknown.join(", ")}.`);
       continue;
     }
-    seenEnv.add(input.name);
+    envNames.add(input.name);
 
     if (input.default !== undefined && input.options && !input.options.includes(input.default)) {
       warnings.push(`Default for "${input.name}" is not one of its allowed options.`);
@@ -714,27 +845,30 @@ export function planUmbrelV2Install(
         blockers.push(
           `"${userValue}" is not an allowed value for ${input.name} (allowed: ${input.options.join(", ")}).`,
         );
+      } else if (CONTROL_CHARS.test(userValue)) {
+        blockers.push(`The value for ${input.name} must not contain line breaks or control characters.`);
       } else {
+        // An explicit choice is set on the listed services (overriding the
+        // compose file's own value) and is also available for interpolation.
         entry.value = userValue;
         entry.origin = "user";
+        for (const service of envServices) {
+          plan.serviceEnv[service] = { ...(plan.serviceEnv[service] ?? {}), [input.name]: userValue };
+        }
+        plan.interpolationEnv[input.name] = userValue;
       }
     } else if (input.default !== undefined && requiredVars.has(input.name)) {
-      // Defaults are placeholders — only applied when the compose file would
-      // otherwise interpolate an unset variable.
+      // Defaults only fill a `${NAME}` the compose file would otherwise leave
+      // unset. They go through interpolation — never baked into the compose —
+      // so the install `env` parameter or a later .env edit still wins.
       entry.value = input.default;
       entry.origin = "default";
-    }
-
-    if (entry.value !== undefined) {
-      for (const service of envServices) {
-        plan.serviceEnv[service] = { ...(plan.serviceEnv[service] ?? {}), [input.name]: entry.value };
-      }
-      plan.interpolationEnv[input.name] = entry.value;
+      plan.interpolationEnv[input.name] = input.default;
     }
     plan.environment.push(entry);
   }
   for (const name of Object.keys(opts.environment ?? {})) {
-    if (!seenEnv.has(name)) warnings.push(`Ignoring environment choice "${name}" — the app does not expose it.`);
+    if (!envNames.has(name)) warnings.push(`Ignoring environment choice "${name}" — the app does not expose it.`);
   }
 
   // ── GPU ────────────────────────────────────────────────────────────────
@@ -743,22 +877,9 @@ export function planUmbrelV2Install(
     plan.gpu.requested = true;
     if (ctx.hasDri) {
       plan.gpu.devices = ["/dev/dri:/dev/dri"];
+      plan.gpu.services = pickGpuServices(services, serviceNames);
     } else {
       warnings.push(GPU_UNAVAILABLE_WARNING);
-    }
-  }
-
-  // ── storage.dataRoot ───────────────────────────────────────────────────
-  if (opts.dataRoot !== undefined) {
-    if (!plan.dataRoot.declared) {
-      warnings.push("Ignoring data folder choice — this app does not declare a movable data root.");
-    } else {
-      const error = validateHostFolder(opts.dataRoot);
-      if (error) blockers.push(`Data folder: ${error}.`);
-      else {
-        plan.dataRoot.hostPath = normalizeTarget(opts.dataRoot);
-        ensureDirs.add(plan.dataRoot.hostPath);
-      }
     }
   }
 
@@ -790,31 +911,34 @@ export function planUmbrelV2Install(
 
 // ── Applying ─────────────────────────────────────────────────────────────────
 
-const APP_DATA_DATA_PREFIX = /^(?:\$\{APP_DATA_DIR\}|\$APP_DATA_DIR(?![A-Za-z0-9_]))\/data(?=\/|$)/;
-
 function rewriteSource(source: string, plan: UmbrelV2Plan): string {
   const mapped = mapUmbrelRootSource(source, plan.paths);
-  if (mapped) return mapped.hostPath;
-  if (plan.dataRoot.hostPath && APP_DATA_DATA_PREFIX.test(source)) {
-    const sub = safeSubPath(source.replace(APP_DATA_DATA_PREFIX, ""));
-    return joinBase(plan.dataRoot.hostPath, sub);
-  }
-  return source;
+  return mapped ? mapped.hostPath : redirectDataRoot(source, plan.dataRoot.hostPath);
+}
+
+/**
+ * Compose interpolates `$` in every string of the file — escape literal values
+ * so `pa$word` stays intact and `${TALOME_SECRET}` is never expanded from
+ * Talome's own process environment.
+ */
+export function escapeComposeLiteral(value: string): string {
+  return value.replace(/\$/g, () => "$$");
 }
 
 function setServiceEnv(svc: ComposeService, values: Record<string, string>): void {
+  const escaped = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, escapeComposeLiteral(value)]));
   const env = svc.environment;
   if (Array.isArray(env)) {
     const next = env.filter((entry) => {
       if (typeof entry !== "string") return true;
       const key = entry.split("=")[0];
-      return !(key in values);
+      return !(key in escaped);
     });
-    for (const [key, value] of Object.entries(values)) next.push(`${key}=${value}`);
+    for (const [key, value] of Object.entries(escaped)) next.push(`${key}=${value}`);
     svc.environment = next;
     return;
   }
-  svc.environment = { ...(isRecord(env) ? env : {}), ...values };
+  svc.environment = { ...(isRecord(env) ? env : {}), ...escaped };
 }
 
 /**
@@ -867,7 +991,8 @@ export function applyUmbrelV2Plan(
     const env = plan.serviceEnv[name];
     if (env && Object.keys(env).length > 0) setServiceEnv(svc, env);
 
-    if (plan.gpu.devices.length > 0) {
+    const gpuServices = plan.gpu.services ?? [];
+    if (plan.gpu.devices.length > 0 && (gpuServices.length === 0 || gpuServices.includes(name))) {
       const devices = Array.isArray(svc.devices) ? [...svc.devices] : [];
       for (const device of plan.gpu.devices) {
         const hostSide = device.split(":")[0];
