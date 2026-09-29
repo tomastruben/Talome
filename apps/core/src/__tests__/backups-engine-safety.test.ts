@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { prepareBackupEnv, installFakeApp, resetDocker, dockerState } from "./helpers/backups-fixture.js";
 
@@ -10,7 +11,7 @@ const env = prepareBackupEnv("backups-engine-safety");
 const { runMigrations } = await import("../db/migrate.js");
 runMigrations();
 const { createAppBackup, deleteBackup } = await import("../backup/engine.js");
-const { getBackupRow, listRecoveryRecords, saveRecoveryRecord, insertRestore } = await import("../backup/store.js");
+const { getBackupRow, listRecoveryRecords, saveRecoveryRecord, insertRestore, recoverInterruptedOperations } = await import("../backup/store.js");
 const { isContainerInBackupWindow, cancelAppBackup, acquireAppOperation, tryStartVerify, endVerify } = await import("../backup/state.js");
 const { loadManifest, verifyBackup } = await import("../backup/verify.js");
 const { recoverPendingOperations } = await import("../backup/recovery.js");
@@ -151,6 +152,96 @@ describe("crash recovery", () => {
     saveRecoveryRecord("inner-safety", "liveapp", "backup", { containers: [{ id: "x", name: "x" }] });
     const again = await recoverPendingOperations({ backups: new Set(["live-op"]), restores: new Set() });
     expect(again.some((o) => o.id === "inner-safety")).toBe(false);
+  });
+});
+
+describe("crash recovery — operations of other processes (MCP stdio)", () => {
+  async function foreignRestore(appId: string, id: string, opts: { ownerPid: number; heartbeatAgoMs: number }) {
+    const { db, schema } = await import("../db/index.js");
+    const { sql } = await import("drizzle-orm");
+    const { OWNER_HOST } = await import("../ops/operations.js");
+    const live = join(env.root, `foreign-${appId}`, "data");
+    const old = `${live}.talome-old-${id.slice(0, 8)}`;
+    mkdirSync(old, { recursive: true });
+    writeFileSync(join(old, "keep.txt"), "original");
+    mkdirSync(live, { recursive: true });
+    writeFileSync(join(live, "keep.txt"), "half restored");
+    const opId = `op-${id}`;
+    const now = new Date().toISOString();
+    const heartbeat = new Date(Date.now() - opts.heartbeatAgoMs).toISOString();
+    db.insert(schema.appOperations)
+      .values({ id: opId, appId, kind: "restore", actor: "mcp_stdio", status: "running", step: "restoring-files", progress: 60, startedAt: now, updatedAt: now, heartbeatAt: heartbeat, ownerPid: opts.ownerPid, ownerHost: OWNER_HOST })
+      .run();
+    insertRestore(id, "some-backup", appId);
+    // Written just now by the other process (after this "server" started)
+    const state = { swaps: [{ hostPath: live, old, existed: true, carried: [] }], restartApp: true, owner: { pid: opts.ownerPid, host: OWNER_HOST, operationId: opId } };
+    db.run(sql`INSERT INTO backup_recovery (id, app_id, kind, state, updated_at) VALUES (${id}, ${appId}, 'restore', ${JSON.stringify(state)}, ${now})`);
+    return { live, old, opId };
+  }
+
+  function deadPid(): number {
+    const pid = spawnSync(process.execPath, ["-e", ""]).pid;
+    if (!pid) throw new Error("no pid");
+    return pid;
+  }
+
+  it("never undoes a restore another live process is still running — even at a later server boot", async () => {
+    const { live } = await foreignRestore("foreignlive", "f1111111-restore", { ownerPid: process.ppid, heartbeatAgoMs: 1_000 });
+    resetDocker([{ id: "fl1", name: "foreignlive", service: "app", image: "x", status: "exited" }]);
+    // A server that started after the record was written
+    const out = await recoverPendingOperations({ backups: new Set(), restores: new Set() }, Date.now() + 1000);
+    expect(out.some((o) => o.id === "f1111111-restore")).toBe(false);
+    expect(readFileSync(join(live, "keep.txt"), "utf-8")).toBe("half restored");
+    expect(listRecoveryRecords().some((r) => r.id === "f1111111-restore")).toBe(true);
+    expect(dockerState.events).not.toContain("startApp");
+  });
+
+  it("undoes the work of a process that died, while the server keeps running", async () => {
+    const pid = deadPid();
+    const { live, old } = await foreignRestore("foreigndead", "f2222222-restore", { ownerPid: pid, heartbeatAgoMs: 5 * 60_000 });
+    resetDocker([{ id: "fd1", name: "foreigndead", service: "app", image: "x", status: "exited" }]);
+    // Default startedAt: this process started before the record was written
+    const out = await recoverPendingOperations({ backups: new Set(), restores: new Set() });
+    expect(out.find((o) => o.id === "f2222222-restore")?.undone).toBe(true);
+    expect(readFileSync(join(live, "keep.txt"), "utf-8")).toBe("original");
+    expect(existsSync(old)).toBe(false);
+    expect(dockerState.events).toContain("startApp");
+  });
+
+  it("does not mark the rows of a live foreign operation as interrupted", async () => {
+    const { db, schema } = await import("../db/index.js");
+    const { sql } = await import("drizzle-orm");
+    const { OWNER_HOST, hasLiveOperation } = await import("../ops/operations.js");
+    const now = new Date().toISOString();
+    db.insert(schema.appOperations)
+      .values({ id: "op-busy", appId: "busyapp", kind: "backup", actor: "mcp_stdio", status: "running", step: "archiving", progress: 40, startedAt: now, updatedAt: now, heartbeatAt: now, ownerPid: process.ppid, ownerHost: OWNER_HOST })
+      .run();
+    db.run(sql`INSERT INTO backups (id, app_id, status, started_at, triggered_by) VALUES ('busy-backup', 'busyapp', 'running', ${now}, 'manual')`);
+    db.run(sql`INSERT INTO backups (id, app_id, status, started_at, triggered_by) VALUES ('dead-backup', 'deadapp', 'running', ${now}, 'manual')`);
+    recoverInterruptedOperations({ backups: new Set(), restores: new Set(), verifies: new Set() }, { isAppBusy: hasLiveOperation });
+    expect(getBackupRow("busy-backup")!.status).toBe("running");
+    expect(getBackupRow("dead-backup")!.status).toBe("failed");
+  });
+
+  it("the server's recovery pass leaves a live stdio backup alone", async () => {
+    const { db } = await import("../db/index.js");
+    const { sql } = await import("drizzle-orm");
+    const { OWNER_HOST } = await import("../ops/operations.js");
+    const { runBackupRecovery } = await import("../backup/scheduler.js");
+    const now = new Date().toISOString();
+    const { schema } = await import("../db/index.js");
+    db.insert(schema.appOperations)
+      .values({ id: "op-stdio-backup", appId: "stdiobackup", kind: "backup", actor: "mcp_stdio", status: "running", step: "archiving", progress: 40, startedAt: now, updatedAt: now, heartbeatAt: now, ownerPid: process.ppid, ownerHost: OWNER_HOST })
+      .run();
+    db.run(sql`INSERT INTO backups (id, app_id, status, started_at, triggered_by) VALUES ('stdio-b1', 'stdiobackup', 'running', ${now}, 'manual')`);
+    const state = { containers: [{ id: "sb1", name: "stdiobackup" }], owner: { pid: process.ppid, host: OWNER_HOST, operationId: "op-stdio-backup" } };
+    db.run(sql`INSERT INTO backup_recovery (id, app_id, kind, state, updated_at) VALUES ('stdio-b1', 'stdiobackup', 'backup', ${JSON.stringify(state)}, ${now})`);
+    resetDocker([{ id: "sb1", name: "stdiobackup", service: "app", image: "x", status: "exited" }]);
+    await runBackupRecovery();
+    // containers stay stopped for the archive, and the row is not failed
+    expect(dockerState.containers[0].status).toBe("exited");
+    expect(getBackupRow("stdio-b1")!.status).toBe("running");
+    expect(listRecoveryRecords().some((r) => r.id === "stdio-b1")).toBe(true);
   });
 });
 

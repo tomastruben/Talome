@@ -24,6 +24,7 @@ import { runTrustMigrations } from "./db/migrations/trust.js";
 import { runWireBackendMigrations } from "./db/migrations/wire-backend.js";
 import { stdioActorFromEnv } from "./agent-loop/remediation-actor.js";
 import { installStdioShutdown } from "./mcp-stdio-lifecycle.js";
+import { inFlightAppWork } from "./mcp-stdio-pending.js";
 
 /** How often to re-evaluate configured domains / disabled tools. */
 const TOOL_SYNC_INTERVAL_MS = 15_000;
@@ -55,6 +56,8 @@ const lifecycle = installStdioShutdown({
   signals: process,
   getPpid: () => process.ppid,
   exit: (code) => process.exit(code),
+  // A backup, restore or update this process started is finished before exiting (bounded)
+  pendingWork: inFlightAppWork,
   onShutdown: async () => {
     if (syncTimer) clearInterval(syncTimer);
     await session.server.close().catch(() => {});
