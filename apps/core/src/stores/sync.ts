@@ -6,6 +6,8 @@ import { homedir } from "node:os";
 import { db, schema } from "../db/index.js";
 import { eq, sql } from "drizzle-orm";
 import { detectStoreType, getAdapter, type StoreAdapter } from "./adapters/index.js";
+import { notifyCatalogChanged } from "./catalog-events.js";
+import { backfillUmbrelBackupIgnore } from "./umbrel-v2-install.js";
 import type { AppManifest, StoreSource, StoreType } from "@talome/types";
 
 const exec = promisify(execCb);
@@ -226,6 +228,8 @@ export function replaceStoreCatalog(storeId: string, manifests: AppManifest[]): 
       }
     }
   });
+  // The container list memoizes catalog lookups (icons, names) — serve the new catalog now.
+  notifyCatalogChanged();
   return inserted;
 }
 
@@ -424,6 +428,7 @@ export function removeStore(storeId: string): void {
   db.delete(schema.storeSources)
     .where(eq(schema.storeSources.id, storeId))
     .run();
+  notifyCatalogChanged();
 }
 
 export type BootSyncAction = "skip" | "reparse" | "sync";
@@ -486,6 +491,7 @@ export function initializeStores(options: { force?: boolean } = {}): void {
 
   if (work.length === 0) {
     console.log(`[stores] Catalog is fresh (< 24h) — skipping startup sync for ${sources.length} store(s)`);
+    scheduleCatalogBackfills();
     return;
   }
 
@@ -495,9 +501,29 @@ export function initializeStores(options: { force?: boolean } = {}): void {
       if (!result.success) {
         console.error(`[stores] Startup sync failed for ${source.id}: ${result.error ?? "Unknown error"}`);
       }
+      return { type: source.type, success: result.success };
     }),
-  ).catch((err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[stores] Startup sync-all failed: ${message}`);
+  )
+    .then((settled) => {
+      // Backfills read Umbrel metadata from the catalog: only run them once
+      // every Umbrel store parsed with the current parser, else retry next boot.
+      const umbrelFailed = settled.some((r) =>
+        r.status === "rejected" || (r.value.type === "umbrel" && !r.value.success),
+      );
+      if (!umbrelFailed) scheduleCatalogBackfills();
+    })
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[stores] Startup sync-all failed: ${message}`);
+    });
+}
+
+/**
+ * One-time data backfills that need a current catalog (runs after migrations,
+ * off the startup path). Each backfill is idempotent and guards itself.
+ */
+function scheduleCatalogBackfills(): void {
+  setImmediate(() => {
+    backfillUmbrelBackupIgnore();
   });
 }

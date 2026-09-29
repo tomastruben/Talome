@@ -16,7 +16,7 @@ import {
 import { installProgress, emitProgress, type InstallProgressEvent } from "../stores/install-emitter.js";
 import { listAppOperations, hasLiveOperation } from "../ops/operations.js";
 import { UmbrelInstallOptionsSchema } from "../stores/umbrel-v2.js";
-import { runWithUmbrelInstallOptions } from "../stores/umbrel-v2-install.js";
+import { getInstallAccessWarnings, runWithUmbrelInstallOptions } from "../stores/umbrel-v2-install.js";
 import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus } from "@talome/types";
 import { listContainers } from "../docker/client.js";
 import os from "node:os";
@@ -377,11 +377,13 @@ apps.post("/:storeId/:appId/install", async (c) => {
     return operationError(c, result);
   }
 
+  const warnings = getInstallAccessWarnings(appId);
   return c.json({
     ok: true,
     message: `${appId} installed`,
     remappedPorts: result.remappedPorts,
     operationId: result.operationId,
+    ...(warnings.length > 0 ? { warnings } : {}),
   });
 });
 

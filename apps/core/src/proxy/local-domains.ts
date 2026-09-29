@@ -19,6 +19,7 @@ import { ensureDnsRunning, stopDns, getDnsStatus, startIpMonitor } from "./dns.j
 import { ensureCaddyRunning, writeCaddyfileAndReload, getCaddyStatus } from "./caddy.js";
 import { connectContainerToProxyNetwork } from "./network.js";
 import { ensureAvahiRunning, stopAvahi, getAvahiStatus } from "./mdns.js";
+import { appRequiresHttps } from "../stores/umbrel-v2-install.js";
 
 /* ── Proxy route creation for all apps ─────────────────────────────────────── */
 
@@ -80,8 +81,10 @@ async function createProxyRoutesForApps(baseDomain: string, tlsMode: string): Pr
     const domain = `${appId}.${baseDomain}`;
     const upstream = `http://${appId}:${port}`;
     const id = randomUUID();
+    // Apps that declare requiresHttps are never served over plain HTTP.
+    const appTlsMode = tlsMode === "off" && appRequiresHttps(appId) ? "selfsigned" : tlsMode;
 
-    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId}, ${domain}, ${upstream}, ${tlsMode}, ${now})`);
+    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId}, ${domain}, ${upstream}, ${appTlsMode}, ${now})`);
 
     try {
       await connectContainerToProxyNetwork(appId);

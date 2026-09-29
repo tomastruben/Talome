@@ -16,15 +16,18 @@ import yaml from "js-yaml";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { atomicWriteFileSync, TALOME_HOME } from "../utils/filesystem.js";
-import { getSetting } from "../utils/settings.js";
+import { getSetting, setSetting } from "../utils/settings.js";
 import { writeNotification } from "../db/notifications.js";
 import { createLogger } from "../utils/logger.js";
+import { getAppBackupConfig, setAppBackupConfig } from "../backup/store.js";
+import { requiresHttpsInstallWarning } from "../proxy/https-policy.js";
 import { APP_DATA_DIR, getCatalogApp } from "./compose-exec.js";
 import type { DependencyCheck } from "./lifecycle.js";
 import {
   applyUmbrelV2Plan,
   GPU_UNAVAILABLE_WARNING,
   hostFolderPolicyFor,
+  REQUIRES_HTTPS_WARNING,
   normalizeBackupIgnore,
   planUmbrelV2Install,
   resolveUmbrelDependencies,
@@ -236,7 +239,23 @@ export function applyUmbrelV2Install(
   // User-provided env (the `env` install parameter) wins over manifest choices.
   const env = { ...plan.interpolationEnv, ...envOverrides };
 
+  // No TLS route for an app that requires HTTPS: say so plainly instead of
+  // the generic "open it through the reverse proxy" note.
+  const httpsWarning = requiresHttpsInstallWarning(appId, app.name, {
+    webPort: app.webPort,
+    requiresHttps: plan.requiresHttps,
+  });
+  if (httpsWarning) {
+    const idx = plan.warnings.indexOf(REQUIRES_HTTPS_WARNING);
+    if (idx >= 0) plan.warnings.splice(idx, 1, httpsWarning);
+    else plan.warnings.push(httpsWarning);
+  }
+
   saveInstallOptions(appId, app.storeSourceId, options, plan);
+
+  // Umbrel `backupIgnore` (caches, thumbnails, …) becomes part of the app's
+  // backup excludes — merged with anything the user configured, never replacing it.
+  mergeAppBackupIgnore(appId, plan.backupIgnore);
 
   // The GPU warning is already raised by lifecycle's permission validation.
   const notes = plan.warnings.filter((w) => w !== GPU_UNAVAILABLE_WARNING);
@@ -313,6 +332,87 @@ function pruneStaleInstallOptions(keepAppId: string): void {
   for (const row of rows) {
     if (row.appId === keepAppId || installed.has(row.appId)) continue;
     db.delete(schema.appInstallOptions).where(eq(schema.appInstallOptions.appId, row.appId)).run();
+  }
+}
+
+// ── Backups: Umbrel backupIgnore → app backup excludes ───────────────────────
+
+/** Upper bound of the backup config schema (backup/types.ts). */
+const MAX_BACKUP_EXCLUDE_PATTERNS = 200;
+const MAX_BACKUP_EXCLUDE_PATTERN_LENGTH = 512;
+
+/**
+ * Add an app's Umbrel `backupIgnore` patterns to its backup excludes. The
+ * result is the union of what is configured and the manifest's patterns
+ * (existing order first, de-duplicated) — user-set patterns are never removed
+ * or rewritten. Returns the patterns that were added. Never throws.
+ */
+export function mergeAppBackupIgnore(appId: string, patterns: readonly string[]): string[] {
+  try {
+    const wanted = normalizeBackupIgnore([...patterns]).filter((p) => p.length <= MAX_BACKUP_EXCLUDE_PATTERN_LENGTH);
+    if (wanted.length === 0) return [];
+    const current = getAppBackupConfig(appId).excludePatterns;
+    const have = new Set(current.map((p) => p.trim()));
+    const room = Math.max(0, MAX_BACKUP_EXCLUDE_PATTERNS - current.length);
+    const added = wanted.filter((p) => !have.has(p)).slice(0, room);
+    if (added.length === 0) return [];
+    setAppBackupConfig(appId, { excludePatterns: [...current, ...added] });
+    return added;
+  } catch (err: unknown) {
+    log.warn(`merging backupIgnore into backup config for ${appId}`, err);
+    return [];
+  }
+}
+
+/** Settings marker: set once every installed Umbrel app's backupIgnore was merged. */
+export const UMBREL_BACKUP_IGNORE_BACKFILL_KEY = "umbrel_backup_ignore_backfilled_at";
+
+/**
+ * One-time backfill for Umbrel apps installed before `backupIgnore` reached
+ * the backup engine. Idempotent (union merge) and guarded by a settings
+ * marker; call it after migrations and after the catalog carries Umbrel
+ * metadata (see stores/sync.ts initializeStores). Never throws.
+ */
+export function backfillUmbrelBackupIgnore(): { ran: boolean; updated: string[] } {
+  try {
+    if (getSetting(UMBREL_BACKUP_IGNORE_BACKFILL_KEY)) return { ran: false, updated: [] };
+    const updated: string[] = [];
+    const installed = db.select().from(schema.installedApps).all();
+    for (const app of installed) {
+      if (app.status === "installing") continue;
+      const row = getCatalogRow(app.appId, app.storeSourceId);
+      if (row?.source !== "umbrel") continue;
+      const added = mergeAppBackupIgnore(app.appId, getAppBackupIgnore(app.appId));
+      if (added.length > 0) updated.push(app.appId);
+    }
+    setSetting(UMBREL_BACKUP_IGNORE_BACKFILL_KEY, new Date().toISOString());
+    if (updated.length > 0) log.info(`Added Umbrel backupIgnore patterns to backup excludes for: ${updated.join(", ")}`);
+    return { ran: true, updated };
+  } catch (err: unknown) {
+    log.warn("Umbrel backupIgnore backfill", err);
+    return { ran: false, updated: [] };
+  }
+}
+
+// ── HTTPS access ─────────────────────────────────────────────────────────────
+
+/**
+ * Warnings an install result should carry about how the app can be reached —
+ * currently: an app that requires HTTPS but has no TLS route. Empty for
+ * everything else. Call after a successful install.
+ */
+export function getInstallAccessWarnings(appId: string, appName?: string): string[] {
+  try {
+    if (!appRequiresHttps(appId)) return [];
+    const installed = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, appId)).get();
+    const row = installed ? getCatalogRow(appId, installed.storeSourceId) : undefined;
+    const warning = requiresHttpsInstallWarning(appId, appName ?? row?.name ?? appId, {
+      webPort: row?.webPort ?? null,
+      requiresHttps: true,
+    });
+    return warning ? [warning] : [];
+  } catch {
+    return [];
   }
 }
 

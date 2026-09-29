@@ -1,9 +1,79 @@
+# Immich v3.2.4 — mirrors the official upstream docker/docker-compose.yml
+# (server + machine-learning + valkey + VectorChord postgres).
+#
+# Talome adaptations:
+# - Every container joins Talome's shared "talome" network, so the internal
+#   services use unique names (immich-redis / immich-postgres) and the server
+#   reaches them by those names — generic "redis"/"database" aliases would
+#   collide with other apps on the shared network.
+# - Server and machine-learning must run the same release; bump both together.
+# - DB_PASSWORD has no default on purpose: it is generated per install and
+#   passed as an install env value (the install is refused without it).
+# - ./library is the upload library (mounted at /data since Immich 1.133);
+#   map it to a drive with room for the whole camera roll.
+# - ./postgres must stay on a local disk — Postgres on SMB/NFS shares is not
+#   supported and corrupts data.
 services:
-  immich:
-    image: ghcr.io/immich-app/immich-server:latest
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:v3.2.4
     container_name: immich
-    restart: unless-stopped
+    restart: always
     ports:
       - "2283:2283"
     volumes:
-      - ./upload:/usr/src/app/upload
+      - ./library:/data
+    environment:
+      - TZ=${TZ:-UTC}
+      - DB_HOSTNAME=immich-postgres
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_DATABASE_NAME=immich
+      - REDIS_HOSTNAME=immich-redis
+    depends_on:
+      - immich-redis
+      - immich-postgres
+    healthcheck:
+      disable: false
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:v3.2.4
+    container_name: immich-machine-learning
+    restart: always
+    volumes:
+      - model-cache:/cache
+    environment:
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      disable: false
+
+  immich-redis:
+    image: docker.io/valkey/valkey:9
+    container_name: immich-redis
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  immich-postgres:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+    container_name: immich-postgres
+    restart: always
+    shm_size: 128mb
+    volumes:
+      - ./postgres:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=immich
+      - POSTGRES_INITDB_ARGS=--data-checksums
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --dbname=immich --username=postgres || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  model-cache:

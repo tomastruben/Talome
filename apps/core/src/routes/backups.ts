@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { snapshotNow } from "../services/self-backup.js";
+import { snapshotNowAsync } from "../services/self-backup.js";
 import { requireRole } from "../middleware/role-guard.js";
 import {
   createAppBackup,
@@ -79,8 +79,9 @@ backups.get("/self", (c) => {
   }
 });
 
-backups.post("/self", (c) => {
-  const result = snapshotNow();
+backups.post("/self", async (c) => {
+  // Online backup API in page steps — never blocks the event loop for the whole copy.
+  const result = await snapshotNowAsync();
   if (!result.ok) return c.json({ error: result.error }, 500);
   return c.json({ ok: true, path: result.path });
 });
