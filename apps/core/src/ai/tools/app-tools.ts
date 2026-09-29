@@ -19,6 +19,7 @@ import { getCatalogApp } from "../../stores/compose-exec.js";
 import { UmbrelInstallOptionsSchema } from "../../stores/umbrel-v2.js";
 import { getInstallAccessWarnings, reconcileUmbrelDependencies, runWithUmbrelInstallOptions } from "../../stores/umbrel-v2-install.js";
 import { writeAuditEntry } from "../../db/audit.js";
+import { volumeMountsError } from "../../stores/host-mounts.js";
 import { checkForUpdates } from "../../stores/update-checker.js";
 import os from "node:os";
 
@@ -189,6 +190,10 @@ All apps are placed on the shared 'talome' Docker network so they can reach each
     umbrel: UmbrelInstallOptionsSchema.optional().describe("Umbrel 2.0 apps only: { folders: { <folderAccess id>: '/host/path' }, environment: { <NAME>: <allowed value> }, dataRoot: '/host/path', dependencies: { <dependency>: <installed provider app id> } }. Omit to use defaults."),
   }),
   execute: async ({ appId, storeId, env, volumeMounts, umbrel }) => {
+    // Protected host folders are refused; the Docker socket and folders outside
+    // the configured media/data roots need approval (execution.ts).
+    const mountError = volumeMountsError(appId, volumeMounts || {});
+    if (mountError) return { success: false, error: mountError };
     const installed = await runWithUmbrelInstallOptions(umbrel, () => installApp(appId, storeId, env || {}, volumeMounts || {}));
     // e.g. an app that requires HTTPS but has no TLS route — surface it, never serve HTTP silently.
     const accessWarnings = installed.success ? getInstallAccessWarnings(appId) : [];

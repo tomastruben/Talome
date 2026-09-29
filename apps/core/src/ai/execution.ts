@@ -44,6 +44,7 @@ import { APPROVAL_ARG, consumeApproval, hashArgs, requestApproval, type ConsumeF
 import { invalidateSecretValueCache, redactedPreview, redactText } from "../approval/redact.js";
 import { isApprovalExemptShellCommand } from "../approval/shell-safety.js";
 import { isSecretSettingKey } from "../utils/crypto.js";
+import { hostMountsNeedApproval } from "../stores/host-mounts.js";
 import {
   getExecutionContext,
   runInActorContext,
@@ -320,6 +321,11 @@ export function getEffectiveTier(toolName: string, args: Record<string, unknown>
   // Skipping the pre-update backup removes the data-rollback path: treat it
   // like any other destructive action so cautious mode asks the owner first.
   if (toolName === "update_app" && args.force === true) return "destructive";
+  // Mounting the Docker socket, or a host folder outside the configured
+  // media/data roots, into an app hands it far more than a media folder.
+  if ((toolName === "add_volume_mount" || toolName === "install_app") && hostMountsNeedApproval(toolName, args)) {
+    return "destructive";
+  }
   return tier;
 }
 
@@ -338,6 +344,7 @@ export function requiresApprovalInCautious(toolName: string, tier: ToolTier, arg
 /** Tools that may need approval → their input schema accepts `approval_id`. */
 export function acceptsApprovalArg(toolName: string, baseTier?: ToolTier): boolean {
   if (toolName === "set_setting" || toolName === "revert_setting" || toolName === "update_app") return true;
+  if (toolName === "add_volume_mount" || toolName === "install_app") return true;
   return requiresApprovalInCautious(toolName, getToolMeta(toolName, baseTier).tier);
 }
 
