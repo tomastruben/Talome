@@ -24,6 +24,7 @@
 // the caller's own operation (e.g. a restore starting the app it restored)
 // continues on the held operation instead of opening a new one.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
