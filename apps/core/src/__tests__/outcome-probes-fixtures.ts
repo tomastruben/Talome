@@ -194,9 +194,11 @@ export function healthyMediaRoutes(): Record<string, RouteHandler | "hang"> {
     ]),
     [`GET ${URLS.jellyfin}/Items/Counts`]: jsonResponse({ MovieCount: 12, SeriesCount: 3, EpisodeCount: 40 }),
     [`POST ${URLS.jellyfin}/Environment/ValidatePath`]: textResponse("", 204),
-    // Overseerr
-    [`GET ${URLS.overseerr}/api/v1/status`]: jsonResponse({ version: "1.33.2" }),
-    [`GET ${URLS.overseerr}/api/v1/settings/main`]: jsonResponse({ applicationTitle: "Overseerr" }),
+    // Request app at overseerr_url. Jellyfin-connected, so it is Jellyseerr
+    // (Talome's overseerr tools drive both): upstream Overseerr is Plex-only
+    // and has no /settings/jellyfin — see plexOnlyOverseerrRoutes().
+    [`GET ${URLS.overseerr}/api/v1/status`]: jsonResponse({ version: "2.7.3" }),
+    [`GET ${URLS.overseerr}/api/v1/settings/main`]: jsonResponse({ applicationTitle: "Jellyseerr" }),
     [`GET ${URLS.overseerr}/api/v1/settings/jellyfin`]: jsonResponse({ ip: "jellyfin", port: 8096, libraries: [{ name: "Shows", enabled: true }, { name: "Movies", enabled: true }] }),
     [`GET ${URLS.overseerr}/api/v1/settings/sonarr`]: jsonResponse([{ id: 0, name: "Sonarr", hostname: "sonarr", port: 8989, apiKey: SECRETS.sonarr, isDefault: true, is4k: false }]),
     [`GET ${URLS.overseerr}/api/v1/settings/radarr`]: jsonResponse([{ id: 0, name: "Radarr", hostname: "radarr", port: 7878, apiKey: SECRETS.radarr, isDefault: true, is4k: false }]),
@@ -241,4 +243,18 @@ export function makeDeps(opts: {
 
 export function allSecretValues(): string[] {
   return Object.values(SECRETS);
+}
+
+/**
+ * Upstream Overseerr (sctx/overseerr:1.33.2, what the Media Server stack
+ * installs): Plex-only. /settings/jellyfin does not exist (404) and
+ * /settings/plex returns the unconfigured defaults until Plex is connected.
+ */
+export function plexOnlyOverseerrRoutes(plex: Record<string, unknown> = { name: "", ip: "", port: 32400, useSsl: false, libraries: [] }): Record<string, RouteHandler | "hang"> {
+  const routes = { ...healthyMediaRoutes() };
+  delete routes[`GET ${URLS.overseerr}/api/v1/settings/jellyfin`];
+  routes[`GET ${URLS.overseerr}/api/v1/status`] = jsonResponse({ version: "1.33.2" });
+  routes[`GET ${URLS.overseerr}/api/v1/settings/main`] = jsonResponse({ applicationTitle: "Overseerr" });
+  routes[`GET ${URLS.overseerr}/api/v1/settings/plex`] = jsonResponse(plex);
+  return routes;
 }

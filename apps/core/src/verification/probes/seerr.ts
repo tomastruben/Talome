@@ -51,9 +51,16 @@ export async function evaluateSeerrAuth(ctx: ProbeCallContext, appId: SeerrAppId
 export async function evaluateSeerrMediaServer(ctx: ProbeCallContext, appId: SeerrAppId): Promise<CheckOutcome> {
   const name = getAppName(appId);
   const tried: string[] = [];
+  /**
+   * Upstream Overseerr (sctx/overseerr) is Plex-only: it has no
+   * /settings/jellyfin route. Jellyseerr — often saved as overseerr_url,
+   * since Talome's overseerr tools drive both — does.
+   */
+  let jellyfinUnsupported = false;
   for (const server of ["jellyfin", "plex"] as const) {
     const res = await appRequest(ctx, appId, `/api/v1/settings/${server}`);
     if (!res.ok) {
+      if (server === "jellyfin" && res.status === 404) jellyfinUnsupported = true;
       tried.push(`${server}: ${res.error ?? `HTTP ${res.status}`}`);
       continue;
     }
@@ -70,6 +77,22 @@ export async function evaluateSeerrMediaServer(ctx: ProbeCallContext, appId: See
       );
     }
     return outcome.pass(`${name} is connected to ${serverName} at ${where} with ${listPreview(enabled.map((l) => l.name ?? "library"))} enabled.`);
+  }
+  if (jellyfinUnsupported) {
+    if (ctx.env.getSetting("plex_url") || !ctx.env.getSetting("jellyfin_url")) {
+      return outcome.fail(
+        `${name} is not connected to Plex (it only supports Plex).`,
+        `Connect Plex in ${name} → Settings → Plex, then enable your libraries and run a library sync.`,
+      );
+    }
+    // A Jellyfin setup with Plex-only Overseerr (what the Media Server stack
+    // installs): no setting can connect them. Requests still reach
+    // Sonarr/Radarr, so this is degraded, not a broken chain — and the
+    // remediation must not send the assistant to a tool that cannot work.
+    return outcome.warn(
+      `${name} only supports Plex, so it can't read your Jellyfin library — requests still go to Sonarr/Radarr, but it can't show what you already have.`,
+      "Replace Overseerr with Jellyseerr (the Jellyfin edition of Overseerr) and save it as jellyseerr_url / jellyseerr_api_key under Settings → Connections. overseerr_configure_jellyfin cannot work with Overseerr.",
+    );
   }
   return outcome.fail(
     `${name} is not connected to a media server${tried.length === 2 ? ` (${tried.join("; ")})` : ""}.`,

@@ -22,6 +22,7 @@ import {
   jsonResponse,
   makeDeps,
   mediaSettings,
+  plexOnlyOverseerrRoutes,
   textResponse,
   type RouteHandler,
 } from "./outcome-probes-fixtures.js";
@@ -332,6 +333,26 @@ describe("overseerr/jellyseerr probe", () => {
     const { result } = await run("overseerr", { routes });
     expect(check(result, "arr").status).toBe("warn");
     expect(check(result, "media-server").status).toBe("fail");
+  });
+
+  it("checks Plex for upstream (Plex-only) Overseerr", async () => {
+    const connected = await run("overseerr", {
+      routes: plexOnlyOverseerrRoutes({ name: "home", ip: "plex", port: 32400, libraries: [{ name: "Movies", enabled: true }] }),
+    });
+    expect(check(connected.result, "media-server").status).toBe("pass");
+    expect(check(connected.result, "media-server").evidence).toContain("Plex at plex:32400");
+
+    // Plex is the user's media server but Overseerr isn't connected to it: a real, fixable failure.
+    const notConnected = await run("overseerr", { settings: { ...mediaSettings(), plex_url: "http://plex:32400" }, routes: plexOnlyOverseerrRoutes() });
+    const c = check(notConnected.result, "media-server");
+    expect(c.status).toBe("fail");
+    expect(c.remediation).toContain("Settings → Plex");
+    expect(c.remediation).not.toContain("overseerr_configure_jellyfin");
+
+    // Jellyfin only: nothing to connect Overseerr to — say so instead of pointing at a tool that can't work.
+    const jellyfinOnly = check((await run("overseerr", { routes: plexOnlyOverseerrRoutes() })).result, "media-server");
+    expect(jellyfinOnly.status).toBe("warn");
+    expect(jellyfinOnly.remediation).toContain("Jellyseerr");
   });
 
   it("jellyseerr falls back to the overseerr connection settings", async () => {
