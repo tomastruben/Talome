@@ -23,6 +23,7 @@ import { localStdioActor } from "./ai/execution.js";
 import { runTrustMigrations } from "./db/migrations/trust.js";
 import { runWireBackendMigrations } from "./db/migrations/wire-backend.js";
 import { stdioActorFromEnv } from "./agent-loop/remediation-actor.js";
+import { remediationMcpSessionOptions } from "./agent-loop/remediation-guard.js";
 import { installStdioShutdown } from "./mcp-stdio-lifecycle.js";
 
 /** How often to re-evaluate configured domains / disabled tools. */
@@ -43,8 +44,10 @@ try {
 }
 
 // Claude Code remediation (agent-loop/remediation.ts) launches this server
-// with TALOME_MCP_ACTOR so its calls run as the agent loop, not the owner.
-const session = createMcpSession(stdioActorFromEnv(process.env, localStdioActor()));
+// with TALOME_MCP_ACTOR so its calls run as the agent loop, not the owner —
+// and its write calls wait for app operations (remediation-guard.ts).
+const actor = stdioActorFromEnv(process.env, localStdioActor());
+const session = createMcpSession(actor, remediationMcpSessionOptions(actor));
 const transport = new StdioServerTransport();
 
 let syncTimer: ReturnType<typeof setInterval> | undefined;

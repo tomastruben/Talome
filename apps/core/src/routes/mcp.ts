@@ -214,12 +214,21 @@ export interface McpSession {
   sync: () => { added: string[]; removed: string[] };
 }
 
+export interface McpSessionOptions {
+  /**
+   * Checked before every call, after argument validation: a returned reason
+   * refuses the call without running it (the agent loop defers remediation
+   * writes while an app operation runs — agent-loop/remediation-guard.ts).
+   */
+  beforeCall?: (toolName: string, args: Record<string, unknown>) => string | null;
+}
+
 /**
  * Build an MCP server for one actor. Only tools the actor is authorized for
  * are registered; each handler routes through executeTool(), so grants,
  * security mode, approvals, and audit apply to every call.
  */
-export function createMcpSession(actor: Actor): McpSession {
+export function createMcpSession(actor: Actor, options: McpSessionOptions = {}): McpSession {
   const server = new McpServer({ name: "talome", version: "0.1.0" });
   const registered = new Map<string, RegisteredTool>();
 
@@ -236,6 +245,11 @@ export function createMcpSession(actor: Actor): McpSession {
         annotations: toolAnnotations(entry.meta),
       },
       (async (args: unknown) => {
+        const refusal = options.beforeCall?.(
+          entry.name,
+          args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {},
+        );
+        if (refusal) return { content: [text(`[deferred] ${refusal}`)], isError: true } satisfies CallToolResult;
         // The whole call — grant checks, approvals, the tool and any app
         // operation it starts — runs as this MCP actor.
         const result = await withExecutionContext(actor, "mcp", () =>

@@ -83,6 +83,35 @@ export function spawnProcess(
 }
 
 /**
+ * A restricted Claude Code session: instead of --dangerously-skip-permissions,
+ * only `allowedTools` run (in --print mode nobody can approve anything else,
+ * so every other tool that needs permission is refused), `disallowedTools`
+ * are always refused (deny rules win over allow rules in any settings file),
+ * and only the MCP servers in `mcpConfig` are loaded.
+ */
+export interface ClaudeToolPolicy {
+  allowedTools: string[];
+  disallowedTools: string[];
+  /** JSON for --mcp-config; with it, --strict-mcp-config ignores .mcp.json and user MCP servers. */
+  mcpConfig?: string;
+}
+
+/** CLI arguments for spawnClaudeStreaming: unrestricted by default, or restricted by `policy`. */
+export function buildClaudeStreamingArgs(policy?: ClaudeToolPolicy): string[] {
+  const io = ["--print", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose"];
+  if (!policy) return ["--dangerously-skip-permissions", ...io];
+  return [
+    ...io,
+    // Explicit, so a user/project defaultMode of bypassPermissions is not inherited.
+    // (acceptEdits only auto-approves file edits, which the policy denies.)
+    "--permission-mode", "acceptEdits",
+    "--allowedTools", policy.allowedTools.join(","),
+    "--disallowedTools", policy.disallowedTools.join(","),
+    ...(policy.mcpConfig ? ["--mcp-config", policy.mcpConfig, "--strict-mcp-config"] : []),
+  ];
+}
+
+/**
  * Spawn Claude Code with stream-json I/O so we get real-time output chunks.
  * Parses NDJSON lines from stdout and calls onData with human-readable text snippets.
  * Returns the final result text and stderr.
@@ -94,6 +123,8 @@ export function spawnClaudeStreaming(
   abortSignal?: AbortSignal,
   /** Extra environment for the claude process (and the MCP servers it launches). */
   extraEnv?: Record<string, string>,
+  /** Restrict the session's tools (see ClaudeToolPolicy). Omitted: --dangerously-skip-permissions. */
+  policy?: ClaudeToolPolicy,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     let resultText = "";
@@ -108,13 +139,7 @@ export function spawnClaudeStreaming(
 
     const proc = spawn(
       "claude",
-      [
-        "--dangerously-skip-permissions",
-        "--print",
-        "--output-format", "stream-json",
-        "--input-format", "stream-json",
-        "--verbose",
-      ],
+      buildClaudeStreamingArgs(policy),
       // detached: true so we can SIGTERM the whole process group on timeout.
       // claude may spawn tool subprocesses (bash, git, etc.) — killing only
       // the top-level PID leaves orphans.
