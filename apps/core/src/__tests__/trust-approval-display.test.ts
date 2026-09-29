@@ -26,7 +26,7 @@ import { setSetting } from "../utils/settings.js";
 import { executeTool, type Actor } from "../ai/execution.js";
 import { approvals } from "../routes/approvals.js";
 import { FULL_ACCESS_SCOPES } from "../approval/grants.js";
-import { approvalArgsPreview, approvalSummaryCommand, invalidateSecretValueCache, REDACTED } from "../approval/redact.js";
+import { approvalArgsPreview, approvalSummaryCommand, invalidateSecretValueCache, redactText, REDACTED } from "../approval/redact.js";
 import { registerFakeDomains } from "./helpers/trust-fixtures.js";
 
 const owner: Actor = { kind: "mcp_token", id: "tok-display", label: "Display token", scopes: FULL_ACCESS_SCOPES };
@@ -166,6 +166,13 @@ describe("approval display of executable arguments", () => {
 
     const clean = await executeTool({ actor: owner, source: "mcp", toolName: "run_shell", tool: fakeShell, args: { command: "ls && touch /tmp/x" } });
     expect(clean.approval!.summary).toBe(`${owner.label} wants to run "Run shell": ls && touch /tmp/x (destructive).`);
+  });
+
+  it("masks passwords embedded in URLs in audit text", () => {
+    const text = redactText("fetch failed for http://admin:S3cretBasicPw@ha.local:8123/api/ (TypeError)");
+    expect(text).not.toContain("S3cretBasicPw");
+    expect(text).toContain("ha.local:8123/api/");
+    expect(redactText("see https://github.com/tomastruben/Talome and git@github.com:x/y")).toBe("see https://github.com/tomastruben/Talome and git@github.com:x/y");
   });
 
   it("keeps audit-style redaction for non-executable arguments", () => {

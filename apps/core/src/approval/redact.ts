@@ -106,9 +106,12 @@ function isPresent(v: unknown): boolean {
 const SECRET_ASSIGNMENT_PATTERN =
   /\b([A-Za-z0-9_.-]*(?:pass(?:word)?|secret|token|api[_-]?key|auth|cookie|credential|private|bearer)[A-Za-z0-9_.-]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'&;,]+)/gi;
 const BEARER_PATTERN = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{4,}/gi;
+/** `scheme://user:password@host` — a password embedded in a URL (e.g. echoed by a fetch error). */
+const URL_USERINFO_PATTERN = /(\/\/)[^\s/@"'<>]+:[^\s"'<>]*@/g;
 
 function redactAssignments(text: string): string {
   return text
+    .replace(URL_USERINFO_PATTERN, (_m, slashes: string) => `${slashes}${REDACTED}@`)
     .replace(BEARER_PATTERN, (_m, scheme: string) => `${scheme} ${REDACTED}`)
     .replace(SECRET_ASSIGNMENT_PATTERN, (match, key: string, sep: string, value: string) => {
       if (value === REDACTED || value.startsWith("[REDACTED")) return match;
