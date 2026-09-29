@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import { CORE_URL } from "@/lib/constants";
-import { livePending, type ApprovalItem, type TokenScopes } from "@/components/trust/format";
+import { useVisibleInterval } from "@/lib/polling";
+import { livePending, msUntil, type ApprovalItem, type TokenScopes } from "@/components/trust/format";
 
 export const MCP_TOKENS_URL = `${CORE_URL}/api/integrations/mcp/tokens`;
 export const MCP_CATALOG_URL = `${CORE_URL}/api/integrations/mcp/tokens/catalog`;
@@ -106,14 +107,35 @@ export function usePendingApprovals(enabled: boolean, refreshInterval = 15_000) 
   return { pending, count: pending.length, error, isLoading, mutate };
 }
 
-/** Current time, re-read every `intervalMs` while `active` (for countdowns). */
+/**
+ * Current time, re-read every `intervalMs` while `active` (for countdowns).
+ * The tick pauses while the tab is hidden and catches up when it is shown.
+ */
 export function useNow(active: boolean, intervalMs = 1000): number {
   const [now, setNow] = useState(() => Date.now());
+  const tick = useCallback(() => setNow(Date.now()), []);
+  useVisibleInterval(tick, active ? intervalMs : null);
+  return now;
+}
+
+/** Longest delay setTimeout accepts (~24.8 days). */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * Current time, re-read once when `deadline` (ISO) passes while `active`.
+ *
+ * A single timeout instead of a per-second tick: a view can flip to
+ * "expired" on time without re-rendering every second. Render a visible
+ * countdown in a small child with `useNow` instead.
+ */
+export function useNowAtDeadline(deadline: string, active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!active) return;
-    const tick = () => setNow(Date.now());
-    const id = setInterval(tick, intervalMs);
-    return () => clearInterval(id);
-  }, [active, intervalMs]);
+    // Done once `now` is past the deadline; re-armed if a timer fired early
+    // (or was clamped to the setTimeout maximum).
+    if (!active || msUntil(deadline, now) <= 0) return;
+    const id = setTimeout(() => setNow(Date.now()), Math.min(msUntil(deadline), MAX_TIMEOUT_MS));
+    return () => clearTimeout(id);
+  }, [deadline, active, now]);
   return now;
 }

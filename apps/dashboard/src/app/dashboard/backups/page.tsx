@@ -29,10 +29,14 @@ import {
   Settings01Icon,
 } from "@/components/icons";
 import { relativeTime } from "@/components/settings/settings-primitives";
+import { useUser } from "@/hooks/use-user";
 import { cn } from "@/lib/utils";
 import {
+  BackupRequestError,
   METHOD_LABELS,
+  backupErrorMessage,
   formatBytes,
+  isForbiddenError,
   lastAttemptFailed,
   needsAttention,
   stageLabel,
@@ -57,8 +61,8 @@ async function postJson(url: string, body?: unknown): Promise<void> {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: unknown };
-    throw new Error(typeof data.error === "string" ? data.error : `Request failed (${res.status})`);
+    const data: unknown = await res.json().catch(() => null);
+    throw new BackupRequestError(backupErrorMessage(res.status, data, `Request failed (${res.status})`), res.status);
   }
 }
 
@@ -103,7 +107,7 @@ function LastBackupCell({ app }: { app: AppBackupOverview }) {
   );
 }
 
-function RowSkeleton() {
+function RowSkeleton({ actions }: { actions: boolean }) {
   return (
     <TableRow>
       <TableCell className="pl-4">
@@ -117,7 +121,7 @@ function RowSkeleton() {
       </TableCell>
       <TableCell><Skeleton className="h-4 w-16" /></TableCell>
       <TableCell className="hidden md:table-cell"><Skeleton className="h-4 w-20" /></TableCell>
-      <TableCell><Skeleton className="h-8 w-40 ml-auto" /></TableCell>
+      {actions && <TableCell><Skeleton className="h-8 w-40 ml-auto" /></TableCell>}
     </TableRow>
   );
 }
@@ -125,6 +129,9 @@ function RowSkeleton() {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function BackupsPage() {
+  // Reads are open to every signed-in user; every change is admin-only on the
+  // server, so members get a read-only status view.
+  const { isAdmin: canManage, mutate: refreshUser } = useUser();
   const [restoreApp, setRestoreApp] = useState<AppBackupOverview | null>(null);
   const [settingsApp, setSettingsApp] = useState<AppBackupOverview | null>(null);
   const [storageOpen, setStorageOpen] = useState(false);
@@ -159,13 +166,20 @@ export default function BackupsPage() {
 
   const refresh = useCallback(() => void mutate(), [mutate]);
 
+  function actionFailed(e: unknown, fallback: string) {
+    toast.error(e instanceof Error ? e.message : fallback);
+    // The role we hold is stale (e.g. changed in another tab): re-read it so
+    // the admin-only actions disappear.
+    if (isForbiddenError(e)) void refreshUser();
+  }
+
   async function backupNow(app: AppBackupOverview) {
     try {
       await postJson(`${CORE_URL}/api/backups/trigger`, { appId: app.appId });
       toast.success(`Backing up ${app.name}`);
       refresh();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Backup failed to start");
+      actionFailed(e, "Backup failed to start");
     }
   }
 
@@ -177,7 +191,7 @@ export default function BackupsPage() {
       pendingVerify.current.set(backup.id, app.name);
       refresh();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Verification failed to start");
+      actionFailed(e, "Verification failed to start");
     }
   }
 
@@ -211,9 +225,11 @@ export default function BackupsPage() {
               )}
             </p>
           )}
-          <Button variant="ghost" size="sm" className="sm:ml-auto text-muted-foreground" onClick={() => setStorageOpen(true)}>
-            Storage &amp; retention
-          </Button>
+          {canManage && (
+            <Button variant="ghost" size="sm" className="sm:ml-auto text-muted-foreground" onClick={() => setStorageOpen(true)}>
+              Storage &amp; retention
+            </Button>
+          )}
         </div>
 
         {error ? (
@@ -237,12 +253,12 @@ export default function BackupsPage() {
                   <TableHead className="pl-4">App</TableHead>
                   <TableHead>Last backup</TableHead>
                   <TableHead className="hidden md:table-cell">Verification</TableHead>
-                  <TableHead className="sr-only">Actions</TableHead>
+                  {canManage && <TableHead className="sr-only">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading
-                  ? Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)
+                  ? Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} actions={canManage} />)
                   : sorted.map((app) => {
                       const ok = app.lastSuccessfulBackup;
                       const busyApp = app.operation !== null;
@@ -268,64 +284,66 @@ export default function BackupsPage() {
                           <TableCell className="hidden md:table-cell py-3">
                             <VerificationBadge backup={ok} />
                           </TableCell>
-                          <TableCell className="py-3 pr-3">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="hidden sm:inline-flex"
-                                disabled={!ok?.hasManifest || verifying || busyApp}
-                                onClick={() => void verifyNow(app)}
-                              >
-                                <HugeiconsIcon icon={SecurityCheckIcon} size={16} />
-                                Verify now
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="hidden sm:inline-flex"
-                                disabled={!ok || busyApp}
-                                onClick={() => setRestoreApp(app)}
-                              >
-                                <HugeiconsIcon icon={DatabaseRestoreIcon} size={16} />
-                                Restore
-                              </Button>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon-sm" aria-label={`More actions for ${app.name}`}>
-                                    <HugeiconsIcon icon={MoreHorizontalIcon} size={16} />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="min-w-44">
-                                  <DropdownMenuItem disabled={busyApp} onSelect={() => void backupNow(app)}>
-                                    <HugeiconsIcon icon={ArchiveIcon} size={16} />
-                                    Back up now
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className="sm:hidden"
-                                    disabled={!ok?.hasManifest || verifying || busyApp}
-                                    onSelect={() => void verifyNow(app)}
-                                  >
-                                    <HugeiconsIcon icon={SecurityCheckIcon} size={16} />
-                                    Verify now
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className="sm:hidden"
-                                    disabled={!ok || busyApp}
-                                    onSelect={() => setRestoreApp(app)}
-                                  >
-                                    <HugeiconsIcon icon={DatabaseRestoreIcon} size={16} />
-                                    Restore
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem onSelect={() => setSettingsApp(app)}>
-                                    <HugeiconsIcon icon={Settings01Icon} size={16} />
-                                    Backup settings
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          </TableCell>
+                          {canManage && (
+                            <TableCell className="py-3 pr-3">
+                              <div className="flex items-center justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="hidden sm:inline-flex"
+                                  disabled={!ok?.hasManifest || verifying || busyApp}
+                                  onClick={() => void verifyNow(app)}
+                                >
+                                  <HugeiconsIcon icon={SecurityCheckIcon} size={16} />
+                                  Verify now
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="hidden sm:inline-flex"
+                                  disabled={!ok || busyApp}
+                                  onClick={() => setRestoreApp(app)}
+                                >
+                                  <HugeiconsIcon icon={DatabaseRestoreIcon} size={16} />
+                                  Restore
+                                </Button>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon-sm" aria-label={`More actions for ${app.name}`}>
+                                      <HugeiconsIcon icon={MoreHorizontalIcon} size={16} />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="min-w-44">
+                                    <DropdownMenuItem disabled={busyApp} onSelect={() => void backupNow(app)}>
+                                      <HugeiconsIcon icon={ArchiveIcon} size={16} />
+                                      Back up now
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="sm:hidden"
+                                      disabled={!ok?.hasManifest || verifying || busyApp}
+                                      onSelect={() => void verifyNow(app)}
+                                    >
+                                      <HugeiconsIcon icon={SecurityCheckIcon} size={16} />
+                                      Verify now
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="sm:hidden"
+                                      disabled={!ok || busyApp}
+                                      onSelect={() => setRestoreApp(app)}
+                                    >
+                                      <HugeiconsIcon icon={DatabaseRestoreIcon} size={16} />
+                                      Restore
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onSelect={() => setSettingsApp(app)}>
+                                      <HugeiconsIcon icon={Settings01Icon} size={16} />
+                                      Backup settings
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            </TableCell>
+                          )}
                         </TableRow>
                       );
                     })}
@@ -337,6 +355,7 @@ export default function BackupsPage() {
         <p className={cn("text-sm text-muted-foreground", isLoading && "invisible")}>
           Every backup records a checksum for each file. Verification unpacks it into a scratch folder, compares every
           file and checks each database, and runs automatically once a week.
+          {!canManage && " Only an admin can back up, verify or restore apps."}
         </p>
       </div>
 

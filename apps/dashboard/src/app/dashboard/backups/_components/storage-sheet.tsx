@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { HugeiconsIcon, Add01Icon, CloudServerIcon, Delete02Icon, HardDriveIcon } from "@/components/icons";
-import { parseCredentials, parseKeepCount, retentionSummary } from "../_lib/backup-status";
+import { backupErrorMessage, parseCredentials, parseKeepCount, retentionSummary } from "../_lib/backup-status";
 import type { BackupDestination, BackupSchedule } from "../_lib/types";
 
 const fetcher = (url: string) =>
@@ -29,17 +29,8 @@ async function send(url: string, method: string, body?: unknown): Promise<unknow
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const data = (await res.json().catch(() => ({}))) as { error?: unknown };
-  if (!res.ok) {
-    const err = data.error;
-    const message =
-      typeof err === "string"
-        ? err
-        : res.status === 403
-          ? "Only admins can change backup storage"
-          : `Request failed (${res.status})`;
-    throw new Error(message);
-  }
+  const data: unknown = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(backupErrorMessage(res.status, data, `Request failed (${res.status})`));
   return data;
 }
 

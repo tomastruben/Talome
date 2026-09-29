@@ -3,6 +3,7 @@
 import useSWR, { mutate } from "swr";
 import { useCallback, useRef } from "react";
 import { CORE_URL } from "@/lib/constants";
+import { APPROVALS_PATH, approvalHref } from "@/components/trust/format";
 
 export interface AppNotification {
   id: number;
@@ -80,6 +81,16 @@ export interface NotificationAction {
   external: boolean;
 }
 
+/** Who is looking at the notification. Approvals can only be reviewed by admins. */
+export interface NotificationViewer {
+  isAdmin: boolean;
+}
+
+type ActionableNotification = Pick<AppNotification, "title" | "body" | "sourceId"> & {
+  link?: string | null;
+  fullBody?: string;
+};
+
 const APPROVAL_REF = /approval:([A-Za-z0-9_-]{1,128})/;
 
 /** A same-origin path ("/dashboard/…"), never protocol-relative ("//host") or a backslash trick. */
@@ -96,33 +107,53 @@ function isSafeExternalUrl(value: string): boolean {
   }
 }
 
+function approvalReference(n: ActionableNotification): string | null {
+  const match =
+    APPROVAL_REF.exec(n.sourceId ?? "") ?? APPROVAL_REF.exec(n.title) ?? APPROVAL_REF.exec(n.fullBody ?? n.body ?? "");
+  return match ? match[1] : null;
+}
+
+function notificationLink(n: ActionableNotification): string {
+  return typeof n.link === "string" ? n.link.trim() : "";
+}
+
+function isApprovalsPath(link: string): boolean {
+  return link.startsWith(APPROVALS_PATH);
+}
+
+/** True for an "Approval needed" notification (links to, or references, an approval). */
+export function isApprovalNotification(n: ActionableNotification): boolean {
+  const link = notificationLink(n);
+  return (isSafeInternalPath(link) && isApprovalsPath(link)) || approvalReference(n) !== null;
+}
+
 /**
  * The clickable action for a notification: its `link` when the server sent
  * one, else — for approval notifications written before `link` existed — the
  * approvals page for the `approval:<id>` reference in its source or text.
  * Returns null when there is nothing safe to link to.
+ *
+ * The approvals page is admin-only, so members get no approval action at all
+ * (it would only bounce them to the Settings index).
  */
 export function getNotificationAction(
-  n: Pick<AppNotification, "title" | "body" | "sourceId"> & { link?: string | null; fullBody?: string },
+  n: ActionableNotification,
+  viewer: NotificationViewer,
 ): NotificationAction | null {
-  const approvalMatch =
-    APPROVAL_REF.exec(n.sourceId ?? "") ?? APPROVAL_REF.exec(n.title) ?? APPROVAL_REF.exec(n.fullBody ?? n.body ?? "");
   const approvalLabel = "Review approval";
 
-  const link = typeof n.link === "string" ? n.link.trim() : "";
+  const link = notificationLink(n);
   if (link) {
     if (isSafeInternalPath(link)) {
-      return { href: link, label: link.startsWith("/dashboard/settings/approvals") ? approvalLabel : "Open", external: false };
+      if (isApprovalsPath(link)) return viewer.isAdmin ? { href: link, label: approvalLabel, external: false } : null;
+      return { href: link, label: "Open", external: false };
     }
     if (isSafeExternalUrl(link)) return { href: link, label: "Open link", external: true };
   }
 
-  if (approvalMatch) {
-    return {
-      href: `/dashboard/settings/approvals?id=${encodeURIComponent(approvalMatch[1])}`,
-      label: approvalLabel,
-      external: false,
-    };
+  const approvalId = approvalReference(n);
+  if (approvalId && viewer.isAdmin) {
+    return { href: approvalHref(approvalId), label: approvalLabel, external: false };
   }
   return null;
 }
@@ -132,8 +163,8 @@ export function getNotificationAction(
  * View-only events go to a dashboard page; actionable events go to the
  * assistant with a prompt that explains the situation and asks before acting.
  */
-export function getNotificationRoute(n: AppNotification): string {
-  const action = getNotificationAction(n);
+export function getNotificationRoute(n: AppNotification, viewer: NotificationViewer): string {
+  const action = getNotificationAction(n, viewer);
   if (action && !action.external) return action.href;
 
   const t = n.title.toLowerCase();

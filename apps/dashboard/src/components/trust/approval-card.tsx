@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner";
@@ -9,7 +9,7 @@ import { HugeiconsIcon, SecurityCheckIcon, Clock01Icon, CheckmarkCircle01Icon, C
 import { cn } from "@/lib/utils";
 import { useUser } from "@/hooks/use-user";
 import { useAssistant } from "@/components/assistant/assistant-context";
-import { APPROVALS_URL, decideApproval, trustFetcher, useNow } from "@/components/trust/api";
+import { APPROVALS_URL, decideApproval, trustFetcher, useNow, useNowAtDeadline } from "@/components/trust/api";
 import {
   approvalHref,
   approvalPollInterval,
@@ -36,22 +36,27 @@ function ApprovalCardInner({ request }: { request: NonNullable<ReturnType<typeof
   const { handleSubmit, status: chatStatus, isSubmitting } = useAssistant();
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const [continued, setContinued] = useState(false);
+  const { approvalStatus: requestedStatus, expiresAt: requestedExpiry } = request;
 
-  // Poll while the decision (or the agent's retry) is outstanding.
+  // Poll while the decision (or the agent's retry) is outstanding, so a
+  // decision made elsewhere (Settings → Approvals, another tab or device)
+  // shows up here. Stop once the row is decided, consumed or past its TTL
+  // (the server only flips stale rows to "expired" lazily). The function
+  // must keep a stable identity: SWR restarts its poll timer whenever
+  // `refreshInterval` changes, and this card re-renders on every chat update.
+  const refreshInterval = useCallback(
+    (latest?: ApprovalItem) => approvalPollInterval(latest ?? { status: requestedStatus, expiresAt: requestedExpiry }),
+    [requestedStatus, requestedExpiry],
+  );
   const { data: live, mutate } = useSWR<ApprovalItem>(
     isAdmin ? `${APPROVALS_URL}/${encodeURIComponent(request.approvalId)}` : null,
     trustFetcher,
-    {
-      // Stop once the row is decided, consumed or past its TTL (the server
-      // only flips stale rows to "expired" lazily).
-      refreshInterval: (latest) =>
-        approvalPollInterval(latest ?? { status: request.approvalStatus, expiresAt: request.expiresAt }),
-      revalidateOnFocus: true,
-    },
+    { refreshInterval, refreshWhenHidden: false, revalidateOnFocus: true },
   );
 
-  const current = live ?? { status: request.approvalStatus, expiresAt: request.expiresAt };
-  const now = useNow(current.status === "pending");
+  const current = live ?? { status: requestedStatus, expiresAt: requestedExpiry };
+  // Re-evaluated once at the TTL; the per-second countdown lives in <TimeLeft>.
+  const now = useNowAtDeadline(current.expiresAt, current.status === "pending" || current.status === "approved");
   const status: ApprovalStatus = effectiveApprovalStatus(current, now);
   const expiresAt = current.expiresAt;
   const tool = humanToolName(request.tool);
@@ -123,10 +128,7 @@ function ApprovalCardInner({ request }: { request: NonNullable<ReturnType<typeof
           )}
         </div>
         {status === "pending" && !expired && expiresAt && (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums shrink-0">
-            <HugeiconsIcon icon={Clock01Icon} size={12} />
-            {formatTimeLeft(expiresAt, now)}
-          </span>
+          <TimeLeft expiresAt={expiresAt} />
         )}
       </div>
 
@@ -158,5 +160,16 @@ function ApprovalCardInner({ request }: { request: NonNullable<ReturnType<typeof
         </div>
       )}
     </div>
+  );
+}
+
+/** Live countdown; ticks every second (paused while the tab is hidden). */
+function TimeLeft({ expiresAt }: { expiresAt: string }) {
+  const now = useNow(true);
+  return (
+    <span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums shrink-0">
+      <HugeiconsIcon icon={Clock01Icon} size={12} />
+      {formatTimeLeft(expiresAt, now)}
+    </span>
   );
 }

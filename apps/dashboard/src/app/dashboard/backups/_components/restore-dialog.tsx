@@ -21,6 +21,7 @@ import { relativeTime } from "@/components/settings/settings-primitives";
 import { cn } from "@/lib/utils";
 import {
   METHOD_LABELS,
+  backupErrorMessage,
   defaultRestoreChoice,
   formatBytes,
   restorableBackups,
@@ -101,7 +102,7 @@ export function RestoreDialog({ app, onOpenChange, onFinished }: RestoreDialogPr
         body: JSON.stringify({ confirm: true }),
       });
       const body = (await res.json().catch(() => ({}))) as { restoreId?: string; error?: string };
-      if (!res.ok || !body.restoreId) throw new Error(body.error ?? "Could not start the restore");
+      if (!res.ok || !body.restoreId) throw new Error(backupErrorMessage(res.status, body, "Could not start the restore"));
       setRestoreId(body.restoreId);
       setPhase("running");
       onFinished();
