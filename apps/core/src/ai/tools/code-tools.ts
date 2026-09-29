@@ -1,10 +1,11 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { readFile, readdir, stat, copyFile, realpath } from "node:fs/promises";
-import { resolve, relative, join, dirname, isAbsolute, sep } from "node:path";
+import { resolve, relative, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeAuditEntry } from "../../db/audit.js";
 import { redactValue } from "../../approval/redact.js";
+import { isSameOrInside, secretPathReason } from "../../utils/secret-paths.js";
 
 const THIS_DIR = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT =
@@ -21,51 +22,17 @@ const BACKUP_DIR = join(
 // mode and automations reach them. The workspace also holds runtime state that
 // is not source code — apps/core/.env (TALOME_SECRET, which signs sessions and
 // encrypts every stored credential), the SQLite database under data/, keys —
-// so those paths are refused and never listed.
+// so those paths are refused and never listed (utils/secret-paths.ts).
 
-/** Directory names whose contents are runtime data, VCS internals or credentials. */
-const DENIED_DIR_NAMES = new Set([
-  "data", ".git", ".ssh", ".gnupg", ".aws", ".kube", ".docker", ".talome", "secrets", ".secrets",
-]);
-
-/** Exact file names that hold credentials. */
-const DENIED_FILE_NAMES = new Set([
-  ".npmrc", ".netrc", ".git-credentials", ".pgpass", ".htpasswd", ".pypirc", ".dockercfg",
-  "credentials", "credentials.json", "secrets.json", "secrets.yaml", "secrets.yml", "auth.json",
-]);
-
-const DENIED_FILE_PATTERNS: readonly RegExp[] = [
-  /^\.env($|\.)/, // .env, .env.local, .env.production …
-  /\.env$/, // talome.env, prod.env
-  /\.(db|db3|sqlite|sqlite3)(-wal|-shm|-journal)?$/, // databases and their journals
-  /\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|age)$/, // keys and key stores
-  /^id_(rsa|dsa|ecdsa|ed25519)/, // SSH private keys
-  /\.secrets?$/,
-];
-
-/** Templates that document variables without values stay readable. */
-const ALLOWED_ENV_TEMPLATES = new Set([".env.example", ".env.sample", ".env.template"]);
+/** Workspace folders that hold runtime state rather than source code. */
+const RUNTIME_DIR_NAMES: ReadonlySet<string> = new Set(["data", ".talome"]);
 
 /** Why `relPath` (relative to the workspace) may not be read or listed, or null when it may. */
 export function deniedCodePathReason(relPath: string): string | null {
-  const segments = relPath.split(/[\\/]+/).filter((s) => s && s !== ".");
-  for (let i = 0; i < segments.length; i++) {
-    const name = segments[i].toLowerCase();
-    const isLast = i === segments.length - 1;
-    if (DENIED_DIR_NAMES.has(name)) return `"${segments[i]}" holds runtime data or credentials`;
-    if (!isLast) continue;
-    if (ALLOWED_ENV_TEMPLATES.has(name)) return null;
-    if (DENIED_FILE_NAMES.has(name) || DENIED_FILE_PATTERNS.some((re) => re.test(name))) {
-      return `"${segments[i]}" may hold secrets`;
-    }
-  }
-  return null;
+  return secretPathReason(relPath, RUNTIME_DIR_NAMES);
 }
 
-function isInside(root: string, target: string): boolean {
-  const rel = relative(root, target);
-  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
-}
+const isInside = isSameOrInside;
 
 function safePath(userPath: string): string {
   const resolved = resolve(REPO_ROOT, userPath);
@@ -182,7 +149,8 @@ export const rollbackFileTool = tool({
   }),
   execute: async ({ path: userPath }) => {
     try {
-      const abs = safePath(userPath);
+      // The real path too: restoring through a symlink must not write outside the workspace.
+      const abs = await safeRealPath(userPath);
       const prefix = relative(REPO_ROOT, abs).replace(/\//g, "__");
 
       let files: string[];

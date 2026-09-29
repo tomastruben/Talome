@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { readdir, stat, readFile, unlink, mkdir, rename, rm } from "node:fs/promises";
+import { readdir, stat, readFile, unlink, mkdir, rename, rm, realpath } from "node:fs/promises";
 import { join, resolve, basename, dirname, extname } from "node:path";
 import { existsSync } from "node:fs";
 import { writeAuditEntry } from "../../db/audit.js";
@@ -10,6 +10,7 @@ import {
   isAllowed,
   sanitizePath,
 } from "../../utils/filesystem.js";
+import { protectedFileReason } from "../../utils/secret-paths.js";
 
 function assertAllowed(absPath: string): void {
   if (!isAllowed(absPath)) {
@@ -136,6 +137,10 @@ For binary files (images, videos, etc.), returns metadata instead of contents. M
     try {
       const abs = resolve(path);
       assertAllowed(abs);
+      // The allowed roots include ~/.talome, which also holds the install's
+      // .env (TALOME_SECRET) and the database directory: never hand those out.
+      const blocked = protectedFileReason(abs) ?? protectedFileReason(await realpath(abs).catch(() => abs));
+      if (blocked) return { error: `Access denied: ${blocked}.` };
 
       const s = await stat(abs);
       if (s.isDirectory()) {

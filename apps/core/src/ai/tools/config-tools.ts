@@ -1,12 +1,13 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import { resolve, join, dirname, isAbsolute, extname } from "node:path";
+import { resolve, join, dirname, isAbsolute, extname, basename } from "node:path";
 import { writeAuditEntry } from "../../db/audit.js";
 import { db, schema } from "../../db/index.js";
 import { eq } from "drizzle-orm";
+import { isSameOrInside } from "../../utils/secret-paths.js";
 
 const BACKUP_DIR = join(process.env.HOME || "/tmp", ".talome", "backups", "config-files");
 
@@ -62,15 +63,37 @@ function getAppVolumeMounts(appId: string): string[] {
   }
 }
 
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    // A file that does not exist yet: resolve its folder instead.
+    try {
+      return join(realpathSync(dirname(path)), basename(path));
+    } catch {
+      return path;
+    }
+  }
+}
+
 /**
- * Check that the resolved file path is inside one of the app's volume mounts.
- * Falls back to allowing the path if no mounts are configured (edge case for
- * new installs not yet in the DB).
+ * Check that the file is inside one of the app's volume mounts — both as
+ * given and where it really points (a symlink inside a volume must not lead
+ * out of it). With no known mounts there is nothing to confine the path to,
+ * so it is refused: read_app_config_file is read tier, and allowing any host
+ * file here would hand out ~/.talome's .env or ~/.ssh.
  */
 function assertFileInVolume(filePath: string, mounts: string[]): void {
-  if (mounts.length === 0) return; // no mounts to validate against — allow
+  if (mounts.length === 0) {
+    throw new Error(
+      `No bind-mounted volumes are known for this app, so "${filePath}" is not inside any of this app's volume mounts. Check that the app is installed by Talome.`,
+    );
+  }
   const resolved = resolve(filePath);
-  const allowed = mounts.some((m) => resolved.startsWith(resolve(m)));
+  const real = realOrSelf(resolved);
+  const roots = mounts.flatMap((m) => [resolve(m), realOrSelf(resolve(m))]);
+  const inside = (p: string) => roots.some((root) => isSameOrInside(root, p));
+  const allowed = inside(resolved) && inside(real);
   if (!allowed) {
     throw new Error(
       `File "${filePath}" is not inside any of this app's volume mounts. Allowed roots: ${mounts.join(", ")}`
