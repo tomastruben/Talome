@@ -608,7 +608,8 @@ export function IntelligenceSection() {
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium">Auto-execute policy</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Each auto-improvement runs Claude Code. Failed changes are automatically rolled back.
+                Off unless you turn it on. Suggestions come from logs and events, so each run may only
+                edit files in the Talome repo — no shell, web or MCP access. Failed changes are rolled back.
               </p>
             </div>
             <Select
