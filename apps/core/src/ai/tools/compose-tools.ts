@@ -6,6 +6,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeAuditEntry } from "../../db/audit.js";
+import { atomicWriteFileSync } from "../../utils/filesystem.js";
 import { db, schema } from "../../db/index.js";
 import { eq } from "drizzle-orm";
 import { listContainers } from "../../docker/client.js";
@@ -101,7 +102,113 @@ export const getAppConfigTool = tool({
   },
 });
 
+// ── Locked compose edits ──────────────────────────────────────────────────────
+
+type ComposeDoc = Record<string, unknown>;
+type ComposeService = Record<string, unknown>;
+
+/** What an edit did to one parsed compose file. */
+type EditOutcome<R> = { ok: true; changed: boolean; value: R } | { ok: false; error: string };
+
+type ComposeEditResult<R> =
+  | {
+    success: true;
+    changed: boolean;
+    value: R;
+    /** Update snapshots whose compose could not take the edit (rolling back to them reverts it). */
+    snapshotsNotUpdated: number;
+  }
+  | { success: false; error: string; conflict?: boolean; operationId?: string };
+
+function composeServices(doc: ComposeDoc): Record<string, ComposeService> | null {
+  const services = doc.services;
+  return services && typeof services === "object" && !Array.isArray(services)
+    ? (services as Record<string, ComposeService>)
+    : null;
+}
+
+/**
+ * Edit a Talome-installed app's compose file as a journaled "configure"
+ * operation under the per-app lock, like the REST compose edit: it fails fast
+ * while an install/update/rollback/backup/restore runs on the app (whose
+ * automatic rollback would otherwise silently overwrite the edit) and never
+ * interleaves with one. With `keepInRollbacks` the same edit is applied to the
+ * compose files the app's update snapshots would restore, so rolling an
+ * update back later restores the previous images without undoing this change.
+ */
+async function editInstalledCompose<R>(
+  appId: string,
+  composePath: string,
+  toolName: string,
+  edit: (doc: ComposeDoc) => EditOutcome<R>,
+  opts: { keepInRollbacks: boolean },
+): Promise<ComposeEditResult<R>> {
+  const { withAppMaintenance, applyComposeEditToUpdateSnapshots } = await import("../../stores/lifecycle.js");
+  const result = await withAppMaintenance(appId, "configure", async (ctx): Promise<ComposeEditResult<R>> => {
+    ctx.step("edit_compose", 50, `${toolName}: editing the compose file`);
+    const safe = safePath(composePath);
+    const content = await readFile(safe, "utf-8");
+    const doc = parseYaml(content) as ComposeDoc;
+    const outcome = edit(doc);
+    if (!outcome.ok) return { success: false, error: outcome.error };
+    if (!outcome.changed) return { success: true, changed: false, value: outcome.value, snapshotsNotUpdated: 0 };
+
+    await backupCompose(safe, appId);
+    atomicWriteFileSync(safe, stringifyYaml(doc), "utf-8");
+
+    let snapshotsNotUpdated = 0;
+    if (opts.keepInRollbacks) {
+      const carried = applyComposeEditToUpdateSnapshots(appId, (snapshotDoc) => edit(snapshotDoc).ok);
+      snapshotsNotUpdated = carried.skipped;
+      ctx.setDetail({ tool: toolName, snapshotsUpdated: carried.refreshed, snapshotsNotUpdated });
+    } else {
+      ctx.setDetail({ tool: toolName });
+    }
+    return { success: true, changed: true, value: outcome.value, snapshotsNotUpdated };
+  });
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error,
+      ...(result.conflict ? { conflict: true } : {}),
+      ...(result.operationId ? { operationId: result.operationId } : {}),
+    };
+  }
+  return result;
+}
+
+function rollbackNote(result: { snapshotsNotUpdated: number }): string {
+  return result.snapshotsNotUpdated > 0
+    ? " Note: rolling back an earlier update of this app would not keep this change (that version's compose file does not have this setting's service or port)."
+    : "";
+}
+
+function toolError(err: unknown): { success: false; error: string } {
+  return { success: false, error: err instanceof Error ? err.message : String(err) };
+}
+
 // ── set_app_env ───────────────────────────────────────────────────────────────
+
+function setEnvEdit(serviceName: string, key: string, value: string) {
+  return (doc: ComposeDoc): EditOutcome<null> => {
+    const service = composeServices(doc)?.[serviceName];
+    if (!service) return { ok: false, error: `Service '${serviceName}' not found in compose file.` };
+    const env = service.environment;
+    if (Array.isArray(env)) {
+      // Array format: ["KEY=VALUE", ...]
+      const idx = env.findIndex((e: unknown) => typeof e === "string" && e.startsWith(`${key}=`));
+      if (idx >= 0) env[idx] = `${key}=${value}`;
+      else env.push(`${key}=${value}`);
+    } else if (env && typeof env === "object") {
+      // Object format: { KEY: "VALUE" }
+      (env as Record<string, string>)[key] = value;
+    } else {
+      // No existing environment block — create one
+      service.environment = { [key]: value };
+    }
+    return { ok: true, changed: true, value: null };
+  };
+}
 
 export const setAppEnvTool = tool({
   description:
@@ -118,36 +225,8 @@ export const setAppEnvTool = tool({
       return { success: false, error: `No compose path found for '${appId}'.` };
     }
     try {
-      const safe = safePath(composePath);
-      const content = await readFile(safe, "utf-8");
-      const parsed = parseYaml(content) as Record<string, unknown>;
-
-      const services = parsed.services as Record<string, Record<string, unknown>>;
-      if (!services?.[serviceName]) {
-        return { success: false, error: `Service '${serviceName}' not found in compose file.` };
-      }
-
-      const service = services[serviceName];
-      let env = service.environment;
-
-      if (Array.isArray(env)) {
-        // Array format: ["KEY=VALUE", ...]
-        const idx = env.findIndex((e: string) => e.startsWith(`${key}=`));
-        if (idx >= 0) {
-          env[idx] = `${key}=${value}`;
-        } else {
-          env.push(`${key}=${value}`);
-        }
-      } else if (env && typeof env === "object") {
-        // Object format: { KEY: "VALUE" }
-        (env as Record<string, string>)[key] = value;
-      } else {
-        // No existing environment block — create one
-        service.environment = { [key]: value };
-      }
-
-      await backupCompose(safe, appId);
-      await writeFile(safe, stringifyYaml(parsed), "utf-8");
+      const result = await editInstalledCompose(appId, composePath, "set_app_env", setEnvEdit(serviceName, key, value), { keepInRollbacks: true });
+      if (!result.success) return result;
       writeAuditEntry(`AI: set_app_env(${appId})`, "modify", `${key}=${value}`);
 
       return {
@@ -155,15 +234,39 @@ export const setAppEnvTool = tool({
         appId,
         serviceName,
         key,
-        message: `Updated ${key} in ${appId}. Recreate the container to apply: restart the app from the Services page or ask me to restart it.`,
+        message: `Updated ${key} in ${appId}. Recreate the container to apply: restart the app from the Services page or ask me to restart it.${rollbackNote(result)}`,
       };
     } catch (err: unknown) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return toolError(err);
     }
   },
 });
 
 // ── change_port_mapping ───────────────────────────────────────────────────────
+
+function portMappingEdit(serviceName: string, containerPort: number, newHostPort: number) {
+  return (doc: ComposeDoc): EditOutcome<null> => {
+    const service = composeServices(doc)?.[serviceName];
+    if (!service) return { ok: false, error: `Service '${serviceName}' not found.` };
+
+    const ports = service.ports;
+    if (!Array.isArray(ports)) return { ok: false, error: `No ports defined for '${serviceName}'.` };
+
+    let changed = false;
+    service.ports = ports.map((p: unknown) => {
+      if (typeof p !== "string") return p;
+      const [, container] = p.split(":");
+      if (Number(container) === containerPort) {
+        changed = true;
+        return `${newHostPort}:${container}`;
+      }
+      return p;
+    });
+
+    if (!changed) return { ok: false, error: `Port ${containerPort} not found in ${serviceName} ports.` };
+    return { ok: true, changed: true, value: null };
+  };
+}
 
 export const changePortMappingTool = tool({
   description:
@@ -180,51 +283,45 @@ export const changePortMappingTool = tool({
       return { success: false, error: `No compose path found for '${appId}'.` };
     }
     try {
-      const safe = safePath(composePath);
-      const content = await readFile(safe, "utf-8");
-      const parsed = parseYaml(content) as Record<string, unknown>;
-
-      const services = parsed.services as Record<string, Record<string, unknown>>;
-      const service = services?.[serviceName];
-      if (!service) {
-        return { success: false, error: `Service '${serviceName}' not found.` };
-      }
-
-      const ports = service.ports as string[] | undefined;
-      if (!ports) {
-        return { success: false, error: `No ports defined for '${serviceName}'.` };
-      }
-
-      let changed = false;
-      service.ports = ports.map((p: string) => {
-        const [host, container] = p.split(":");
-        if (Number(container) === containerPort) {
-          changed = true;
-          return `${newHostPort}:${container}`;
-        }
-        return p;
-      });
-
-      if (!changed) {
-        return { success: false, error: `Port ${containerPort} not found in ${serviceName} ports.` };
-      }
-
-      await backupCompose(safe, appId);
-      await writeFile(safe, stringifyYaml(parsed), "utf-8");
+      const result = await editInstalledCompose(
+        appId, composePath, "change_port_mapping", portMappingEdit(serviceName, containerPort, newHostPort), { keepInRollbacks: true },
+      );
+      if (!result.success) return result;
       writeAuditEntry(`AI: change_port_mapping(${appId})`, "modify", `${containerPort} → ${newHostPort}`);
 
       return {
         success: true,
         appId,
-        message: `Changed ${serviceName} host port from previous → ${newHostPort}:${containerPort}. Recreate the container to apply.`,
+        message: `Changed ${serviceName} host port from previous → ${newHostPort}:${containerPort}. Recreate the container to apply.${rollbackNote(result)}`,
       };
     } catch (err: unknown) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return toolError(err);
     }
   },
 });
 
 // ── add_volume_mount ──────────────────────────────────────────────────────────
+
+function volumeMountEdit(serviceName: string, hostPath: string, containerPath: string, mount: string) {
+  return (doc: ComposeDoc): EditOutcome<{ alreadyPresent: boolean }> => {
+    const services = composeServices(doc);
+    const service = services?.[serviceName];
+    if (!service) {
+      const available = Object.keys(services ?? {}).join(", ");
+      return { ok: false, error: `Service '${serviceName}' not found. Available: ${available}` };
+    }
+
+    // Check for duplicate mounts
+    const volumes = Array.isArray(service.volumes) ? (service.volumes as unknown[]) : [];
+    if (volumes.some((v) => typeof v === "string" && v.startsWith(`${hostPath}:${containerPath}`))) {
+      return { ok: true, changed: false, value: { alreadyPresent: true } };
+    }
+
+    if (!Array.isArray(service.volumes)) service.volumes = [];
+    (service.volumes as unknown[]).push(mount);
+    return { ok: true, changed: true, value: { alreadyPresent: false } };
+  };
+}
 
 export const addVolumeMountTool = tool({
   description:
@@ -238,7 +335,8 @@ export const addVolumeMountTool = tool({
   }),
   execute: async ({ appId, serviceName, hostPath, containerPath, readOnly }) => {
     // Try Talome's DB first, then fall back to Docker label discovery
-    let composePath = getInstalledAppComposePath(appId);
+    const installedComposePath = getInstalledAppComposePath(appId);
+    let composePath = installedComposePath;
     let effectiveServiceName = serviceName ?? appId;
 
     if (!composePath) {
@@ -255,33 +353,33 @@ export const addVolumeMountTool = tool({
         error: `No compose path found for '${appId}'. The app must be managed by Docker Compose (Talome, CasaOS, or manual). Use inspect_container to verify.`,
       };
     }
+    const mount = readOnly ? `${hostPath}:${containerPath}:ro` : `${hostPath}:${containerPath}`;
+    const edit = volumeMountEdit(effectiveServiceName, hostPath, containerPath, mount);
     try {
-      const safe = safePath(composePath);
-      const content = await readFile(safe, "utf-8");
-      const parsed = parseYaml(content) as Record<string, unknown>;
-
-      const services = parsed.services as Record<string, Record<string, unknown>>;
-      const service = services?.[effectiveServiceName];
-      if (!service) {
-        const available = Object.keys(services ?? {}).join(", ");
-        return { success: false, error: `Service '${effectiveServiceName}' not found. Available: ${available}` };
+      let alreadyPresent: boolean;
+      let note = "";
+      if (installedComposePath) {
+        // A Talome app: journaled, locked, kept across update rollbacks.
+        const result = await editInstalledCompose(appId, composePath, "add_volume_mount", edit, { keepInRollbacks: true });
+        if (!result.success) return result;
+        alreadyPresent = result.value.alreadyPresent;
+        note = rollbackNote(result);
+      } else {
+        // An external compose project (CasaOS, manual): Talome runs no operations on it.
+        const safe = safePath(composePath);
+        const doc = parseYaml(await readFile(safe, "utf-8")) as ComposeDoc;
+        const outcome = edit(doc);
+        if (!outcome.ok) return { success: false, error: outcome.error };
+        alreadyPresent = outcome.value.alreadyPresent;
+        if (outcome.changed) {
+          await backupCompose(safe, appId);
+          atomicWriteFileSync(safe, stringifyYaml(doc), "utf-8");
+        }
       }
 
-      const mount = readOnly ? `${hostPath}:${containerPath}:ro` : `${hostPath}:${containerPath}`;
-
-      // Check for duplicate mounts
-      const volumes = Array.isArray(service.volumes) ? (service.volumes as string[]) : [];
-      if (volumes.some((v) => v.startsWith(`${hostPath}:${containerPath}`))) {
+      if (alreadyPresent) {
         return { success: true, appId, mount, message: `Mount ${mount} already exists. No changes made.` };
       }
-
-      if (!Array.isArray(service.volumes)) {
-        service.volumes = [];
-      }
-      (service.volumes as string[]).push(mount);
-
-      await backupCompose(safe, appId);
-      await writeFile(safe, stringifyYaml(parsed), "utf-8");
       writeAuditEntry(`AI: add_volume_mount(${appId})`, "modify", mount);
 
       return {
@@ -289,15 +387,36 @@ export const addVolumeMountTool = tool({
         appId,
         mount,
         composePath,
-        message: `Added volume mount ${mount}. Recreate the container to apply (use restart_container or docker compose up -d).`,
+        message: `Added volume mount ${mount}. Recreate the container to apply (use restart_container or docker compose up -d).${note}`,
       };
     } catch (err: unknown) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return toolError(err);
     }
   },
 });
 
 // ── set_resource_limits ───────────────────────────────────────────────────────
+
+function resourceLimitsEdit(serviceName: string, memoryLimit: string | undefined, cpuLimit: number | undefined) {
+  return (doc: ComposeDoc): EditOutcome<Record<string, unknown>> => {
+    const service = composeServices(doc)?.[serviceName];
+    if (!service) return { ok: false, error: `Service '${serviceName}' not found.` };
+
+    if (!service.deploy || typeof service.deploy !== "object") {
+      service.deploy = {};
+    }
+    const deploy = service.deploy as Record<string, unknown>;
+    if (!deploy.resources || typeof deploy.resources !== "object") {
+      deploy.resources = { limits: {} };
+    }
+    const resources = deploy.resources as Record<string, Record<string, unknown>>;
+    if (!resources.limits) resources.limits = {};
+
+    if (memoryLimit) resources.limits.memory = memoryLimit;
+    if (cpuLimit !== undefined) resources.limits.cpus = String(cpuLimit);
+    return { ok: true, changed: true, value: resources.limits };
+  };
+}
 
 export const setResourceLimitsTool = tool({
   description:
@@ -314,41 +433,36 @@ export const setResourceLimitsTool = tool({
       return { success: false, error: `No compose path found for '${appId}'.` };
     }
     try {
-      const safe = safePath(composePath);
-      const content = await readFile(safe, "utf-8");
-      const parsed = parseYaml(content) as Record<string, unknown>;
-
-      const services = parsed.services as Record<string, Record<string, unknown>>;
-      const service = services?.[serviceName];
-      if (!service) {
-        return { success: false, error: `Service '${serviceName}' not found.` };
-      }
-
-      if (!service.deploy || typeof service.deploy !== "object") {
-        service.deploy = {};
-      }
-      const deploy = service.deploy as Record<string, unknown>;
-      if (!deploy.resources || typeof deploy.resources !== "object") {
-        deploy.resources = { limits: {} };
-      }
-      const resources = deploy.resources as Record<string, Record<string, unknown>>;
-      if (!resources.limits) resources.limits = {};
-
-      if (memoryLimit) resources.limits.memory = memoryLimit;
-      if (cpuLimit !== undefined) resources.limits.cpus = String(cpuLimit);
-
-      await backupCompose(safe, appId);
-      await writeFile(safe, stringifyYaml(parsed), "utf-8");
+      const result = await editInstalledCompose(
+        appId, composePath, "set_resource_limits", resourceLimitsEdit(serviceName, memoryLimit, cpuLimit), { keepInRollbacks: true },
+      );
+      if (!result.success) return result;
       writeAuditEntry(`AI: set_resource_limits(${appId})`, "modify", `mem=${memoryLimit} cpu=${cpuLimit}`);
 
-      return { success: true, appId, limits: resources.limits, message: "Resource limits updated. Recreate the container to apply." };
+      return { success: true, appId, limits: result.value, message: `Resource limits updated. Recreate the container to apply.${rollbackNote(result)}` };
     } catch (err: unknown) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return toolError(err);
     }
   },
 });
 
 // ── upgrade_app_image ─────────────────────────────────────────────────────────
+
+function imageTagEdit(serviceName: string, newImageTag: string) {
+  return (doc: ComposeDoc): EditOutcome<{ previousImage: string; newImage: string }> => {
+    const service = composeServices(doc)?.[serviceName];
+    if (!service) return { ok: false, error: `Service '${serviceName}' not found.` };
+
+    const currentImage = service.image;
+    if (typeof currentImage !== "string" || !currentImage) {
+      return { ok: false, error: `No image defined for '${serviceName}'.` };
+    }
+
+    const [imageName] = currentImage.split(":");
+    service.image = `${imageName}:${newImageTag}`;
+    return { ok: true, changed: true, value: { previousImage: currentImage, newImage: service.image as string } };
+  };
+}
 
 export const upgradeAppImageTool = tool({
   description:
@@ -364,37 +478,22 @@ export const upgradeAppImageTool = tool({
       return { success: false, error: `No compose path found for '${appId}'.` };
     }
     try {
-      const safe = safePath(composePath);
-      const content = await readFile(safe, "utf-8");
-      const parsed = parseYaml(content) as Record<string, unknown>;
-
-      const services = parsed.services as Record<string, Record<string, unknown>>;
-      const service = services?.[serviceName];
-      if (!service) {
-        return { success: false, error: `Service '${serviceName}' not found.` };
-      }
-
-      const currentImage = service.image as string | undefined;
-      if (!currentImage) {
-        return { success: false, error: `No image defined for '${serviceName}'.` };
-      }
-
-      const [imageName] = currentImage.split(":");
-      service.image = `${imageName}:${newImageTag}`;
-
-      await backupCompose(safe, appId);
-      await writeFile(safe, stringifyYaml(parsed), "utf-8");
-      writeAuditEntry(`AI: upgrade_app_image(${appId})`, "modify", `${currentImage} → ${service.image}`);
+      // Not carried into update snapshots: rolling an update back restores
+      // the previous version's image, which is what a rollback is for.
+      const result = await editInstalledCompose(appId, composePath, "upgrade_app_image", imageTagEdit(serviceName, newImageTag), { keepInRollbacks: false });
+      if (!result.success) return result;
+      const { previousImage, newImage } = result.value;
+      writeAuditEntry(`AI: upgrade_app_image(${appId})`, "modify", `${previousImage} → ${newImage}`);
 
       return {
         success: true,
         appId,
-        previousImage: currentImage,
-        newImage: service.image,
-        message: `Updated image to ${service.image}. Recreate the container to pull and apply the new image.`,
+        previousImage,
+        newImage,
+        message: `Updated image to ${newImage}. Recreate the container to pull and apply the new image.`,
       };
     } catch (err: unknown) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return toolError(err);
     }
   },
 });

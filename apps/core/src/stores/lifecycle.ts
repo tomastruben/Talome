@@ -952,6 +952,51 @@ function recordUpdateSnapshot(
   }
 }
 
+/**
+ * Carry a configuration edit (env, ports, mounts, limits) made to an installed
+ * app's compose into the compose files its rollback snapshots would restore,
+ * so rolling an update back restores the previous images without silently
+ * undoing configuration changed after the update. `edit` mutates a parsed
+ * compose and returns false when it does not apply to that version (e.g. the
+ * service does not exist there) — such snapshots are left as they are and
+ * counted in `skipped` (rolling back to them would revert the edit). Call it
+ * while holding the app's operation. Never throws.
+ */
+export function applyComposeEditToUpdateSnapshots(
+  appId: string,
+  edit: (compose: Record<string, unknown>) => boolean,
+): { refreshed: number; skipped: number } {
+  const counts = { refreshed: 0, skipped: 0 };
+  try {
+    const snapshots = db
+      .select({ id: schema.updateSnapshots.id, previousCompose: schema.updateSnapshots.previousCompose })
+      .from(schema.updateSnapshots)
+      .where(and(eq(schema.updateSnapshots.appId, appId), eq(schema.updateSnapshots.rolledBack, false)))
+      .all();
+    for (const snap of snapshots) {
+      if (!snap.previousCompose) continue;
+      try {
+        const doc = yaml.load(snap.previousCompose);
+        if (!doc || typeof doc !== "object" || Array.isArray(doc) || !edit(doc as Record<string, unknown>)) {
+          counts.skipped++;
+          continue;
+        }
+        db.update(schema.updateSnapshots)
+          .set({ previousCompose: yaml.dump(doc, { lineWidth: -1 }) })
+          .where(eq(schema.updateSnapshots.id, snap.id))
+          .run();
+        counts.refreshed++;
+      } catch (err) {
+        log.warn(`Could not carry a compose edit into update snapshot #${snap.id} of ${appId}`, err);
+        counts.skipped++;
+      }
+    }
+  } catch (err) {
+    log.warn(`Could not read the update snapshots of ${appId}`, err);
+  }
+  return counts;
+}
+
 function pruneUpdateSnapshots(appId: string): void {
   try {
     const keep = db
