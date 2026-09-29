@@ -289,6 +289,20 @@ describe("jellyfin probe", () => {
     expect(result.status).toBe("degraded");
   });
 
+  it("warns — never passes — when Jellyfin could not confirm some library folders", async () => {
+    const routes = {
+      ...healthyMediaRoutes(),
+      [`POST ${URLS.jellyfin}/Environment/ValidatePath`]: (_url: URL, init: RequestInit) =>
+        JSON.parse(String(init.body)).Path === "/data/media/movies" ? jsonResponse({ message: "boom" }, 500) : textResponse("", 204),
+    };
+    const { result } = await run("jellyfin", { routes });
+    const c = check(result, "library-paths");
+    expect(c.status).toBe("warn");
+    expect(c.evidence).toContain("/data/media/movies");
+    expect(c.evidence).not.toMatch(/^All /);
+    expect(c.evidence).toContain("1 library folder exists (/data/media/tv)");
+  });
+
   it("fails when there are no libraries", async () => {
     const { result } = await run("jellyfin", { routes: { ...healthyMediaRoutes(), [`GET ${URLS.jellyfin}/Library/VirtualFolders`]: jsonResponse([]) } });
     expect(check(result, "libraries").status).toBe("fail");

@@ -102,7 +102,14 @@ export async function evaluateJellyfinLibraryPaths(ctx: ProbeCallContext): Promi
   if (unknown.length === locations.length) {
     return outcome.warn(`Could not confirm ${plural(locations.length, "library folder")} (Jellyfin did not answer the path check).`);
   }
-  return outcome.pass(`All ${plural(locations.length - unknown.length, "library folder")} exist: ${listPreview(locations)}.`);
+  const confirmed = locations.filter((loc) => !unknown.includes(loc));
+  if (unknown.length > 0) {
+    return outcome.warn(
+      `${plural(confirmed.length, "library folder")} ${confirmed.length === 1 ? "exists" : "exist"} (${listPreview(confirmed)}), but Jellyfin did not answer the path check for ${listPreview(unknown)}.`,
+      "Run the check again; if it keeps failing, check that the drive holding those folders is mounted into the Jellyfin container.",
+    );
+  }
+  return outcome.pass(`All ${plural(confirmed.length, "library folder")} exist: ${listPreview(confirmed)}.`);
 }
 
 export function jellyfinChecks(): CheckDefinition[] {
