@@ -78,7 +78,7 @@ import { tmpdir } from "node:os";
 import { eq, desc } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
-import { updateApp, restartApp, rollbackUpdate, bulkAction, syncOverrideImageRefs } from "../stores/lifecycle.js";
+import { updateApp, restartApp, startApp, rollbackUpdate, bulkAction, syncOverrideImageRefs } from "../stores/lifecycle.js";
 import { decryptSetting, isEncrypted } from "../utils/crypto.js";
 import { deleteUserApp } from "../stores/creator.js";
 import {
@@ -562,5 +562,86 @@ describe("dependency auto-start under the fail-fast lock", () => {
     expect(commands().filter((c) => c.includes("qbt.yml") && c.includes(" up -d"))).toHaveLength(1);
     const qbt = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, "qbittorrent")).get();
     expect(qbt?.status).toBe("running");
+  });
+});
+
+describe("Umbrel dependencies met by a provider at start time", () => {
+  const UMBREL_STORE = "umbrel-store";
+
+  /** An installed Umbrel app; `implementsDeps` makes it a provider. */
+  function addUmbrelApp(appId: string, opts: { status: string; dependencies?: string[]; implementsDeps?: string[] }): string {
+    const path = join(composeDir, `${appId}.yml`);
+    writeFileSync(path, `services:\n  ${appId}:\n    image: example/${appId}:1\n`);
+    db.insert(schema.appCatalog).values({
+      appId,
+      storeSourceId: UMBREL_STORE,
+      name: appId,
+      version: "1",
+      source: "umbrel",
+      composePath: path,
+      ...(opts.dependencies ? { dependencies: JSON.stringify(opts.dependencies) } : {}),
+      ...(opts.implementsDeps ? { umbrelMeta: JSON.stringify({ implements: opts.implementsDeps }) } : {}),
+    }).run();
+    const now = new Date().toISOString();
+    db.insert(schema.installedApps).values({
+      appId, storeSourceId: UMBREL_STORE, status: opts.status, envConfig: "{}", containerIds: "[]",
+      version: "1", overrideComposePath: path, installedAt: now, updatedAt: now,
+    }).run();
+    return path;
+  }
+
+  function statusOf(appId: string): string | undefined {
+    return db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, appId)).get()?.status;
+  }
+
+  beforeEach(() => {
+    db.delete(schema.appInstallOptions).run();
+    db.insert(schema.storeSources).values({ id: UMBREL_STORE, name: "Umbrel", type: "umbrel" }).run();
+  });
+
+  it("starts an app whose dependency is implemented by another installed app, auto-starting that provider", async () => {
+    const ollama = addUmbrelApp("ollama", { status: "stopped", implementsDeps: ["llm-runtime"] });
+    const chat = addUmbrelApp("chat-ui", { status: "stopped", dependencies: ["llm-runtime"] });
+
+    const result = await startApp("chat-ui");
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    // The provider was started first, then the app itself.
+    const ups = commands().filter((c) => c.endsWith(" up -d"));
+    expect(ups.findIndex((c) => c.includes(ollama))).toBeGreaterThanOrEqual(0);
+    expect(ups.findIndex((c) => c.includes(ollama))).toBeLessThan(ups.findIndex((c) => c.includes(chat)));
+    expect(statusOf("ollama")).toBe("running");
+    expect(statusOf("chat-ui")).toBe("running");
+  });
+
+  it("uses the provider chosen at install (saved install options), even after a failed start", async () => {
+    const alpha = addUmbrelApp("alpha-llm", { status: "stopped", implementsDeps: ["llm-runtime"] });
+    const zeta = addUmbrelApp("zeta-llm", { status: "stopped", implementsDeps: ["llm-runtime"] });
+    addUmbrelApp("chat-ui", { status: "error", dependencies: ["llm-runtime"] });
+    db.insert(schema.appInstallOptions).values({
+      appId: "chat-ui",
+      storeSourceId: UMBREL_STORE,
+      options: JSON.stringify({ dependencies: { "llm-runtime": "zeta-llm" } }),
+      plan: "{}",
+      updatedAt: new Date().toISOString(),
+    }).run();
+
+    const result = await startApp("chat-ui");
+
+    expect(result.success).toBe(true);
+    expect(commands().some((c) => c.includes(zeta) && c.endsWith(" up -d"))).toBe(true);
+    // Not the alphabetically-first implementer.
+    expect(commands().some((c) => c.includes(alpha))).toBe(false);
+    expect(statusOf("zeta-llm")).toBe("running");
+    expect(statusOf("alpha-llm")).toBe("stopped");
+  });
+
+  it("still refuses to start when no installed app provides the dependency", async () => {
+    addUmbrelApp("chat-ui", { status: "stopped", dependencies: ["llm-runtime"] });
+    const result = await startApp("chat-ui");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Missing dependencies: llm-runtime");
+    expect(commands().some((c) => c.includes(" up -d"))).toBe(false);
   });
 });

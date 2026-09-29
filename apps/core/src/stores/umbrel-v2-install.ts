@@ -142,12 +142,19 @@ export function previewUmbrelV2Install(
 /**
  * Dependency hook: dependencies satisfied by an installed app that
  * `implements` them (or an explicit provider choice) are moved from
- * `missing` to `installed`. Non-Umbrel apps pass through untouched.
+ * `missing` to `installed`, under the provider's app id. Non-Umbrel apps pass
+ * through untouched. Provider choices default to the running install's
+ * options; start/restart passes the ones saved at install
+ * ({@link getSavedDependencySelections}).
  */
-export function reconcileUmbrelDependencies(app: CatalogRow, depCheck: DependencyCheck): DependencyCheck {
+export function reconcileUmbrelDependencies(
+  app: CatalogRow,
+  depCheck: DependencyCheck,
+  selectionsOverride?: Record<string, string>,
+): DependencyCheck {
   if (app.source !== "umbrel" || depCheck.satisfied) return depCheck;
   try {
-    const selections = getActiveUmbrelInstallOptions().dependencies ?? {};
+    const selections = selectionsOverride ?? getActiveUmbrelInstallOptions().dependencies ?? {};
     const providers = listInstalledProviders();
     const resolved = resolveUmbrelDependencies(
       depCheck.missing.map((d) => d.appId),
@@ -579,6 +586,24 @@ export function appRequiresHttps(appId: string): boolean {
     return installedCatalogMeta(appId)?.requiresHttps === true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Dependency provider choices (`dependency → provider app id`) saved when the
+ * app was installed from `storeSourceId`, so starting it later resolves its
+ * dependencies the way the install did. Unlike getAppInstallOptions this does
+ * not depend on the app's status (a failed start leaves it "error"). Never
+ * throws; empty when nothing was chosen.
+ */
+export function getSavedDependencySelections(appId: string, storeSourceId: string): Record<string, string> {
+  try {
+    const row = db.select().from(schema.appInstallOptions).where(eq(schema.appInstallOptions.appId, appId)).get();
+    if (!row || row.storeSourceId !== storeSourceId) return {};
+    const parsed = UmbrelInstallOptionsSchema.safeParse(JSON.parse(row.options));
+    return parsed.success ? (parsed.data.dependencies ?? {}) : {};
+  } catch {
+    return {};
   }
 }
 

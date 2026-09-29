@@ -70,7 +70,7 @@ import {
 import { isPreUpdateBackupEnabled, takePreUpdateBackup, findPreUpdateBackupId, backupTriggerForActor, type PreUpdateBackupResult } from "../ops/pre-update-backup.js";
 import { getSemanticBaseline, hasSemanticProbe, runSemanticVerification, type SemanticVerification } from "../ops/semantic-verify.js";
 import { holdAppMaintenance } from "../backup/state.js";
-import { reconcileUmbrelDependencies, applyUmbrelV2Install } from "./umbrel-v2-install.js";
+import { reconcileUmbrelDependencies, applyUmbrelV2Install, getSavedDependencySelections } from "./umbrel-v2-install.js";
 
 // ── Re-exports (preserve public API) ─────────────────────────────────────
 export { checkPortConflicts } from "./port-resolution.js";
@@ -735,9 +735,16 @@ async function composeActionInner(
     }
 
     if (action === "start") {
-      // Check that dependencies are installed and running before starting
+      // Check that dependencies are installed and running before starting —
+      // resolved the way the install resolved them: an Umbrel dependency may
+      // be met by an app that `implements` it or by the provider the user
+      // chose at install, and that provider is the app to start.
       if (installed.storeSourceId) {
-        const depCheck = resolveDependencies(appId, installed.storeSourceId);
+        const depCheck = reconcileUmbrelDependencies(
+          app,
+          resolveDependencies(appId, installed.storeSourceId),
+          getSavedDependencySelections(appId, installed.storeSourceId),
+        );
         const stoppedDeps = depCheck.installed.filter((d) => d.status !== "running");
         if (depCheck.missing.length > 0) {
           return {
