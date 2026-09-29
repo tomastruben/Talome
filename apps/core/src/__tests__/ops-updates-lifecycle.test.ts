@@ -75,7 +75,7 @@ vi.mock("../app-registry/index.js", () => ({ getAppCapabilities: vi.fn(() => nul
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, like } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
 import { updateApp, restartApp, startApp, rollbackUpdate, bulkAction, syncOverrideImageRefs } from "../stores/lifecycle.js";
@@ -88,6 +88,7 @@ import {
   __resetActiveOperationsForTests,
 } from "../ops/operations.js";
 import type { ServiceImageState } from "../ops/docker-probe.js";
+import { imageRepository, readImageRefState, recordImagePin, recordManagedImages, resetImageRefState } from "../ops/image-refs.js";
 
 const APP_ID = "sonarr";
 const STORE_ID = "test-store";
@@ -143,6 +144,8 @@ beforeEach(() => {
   db.delete(schema.installedApps).run();
   db.delete(schema.appCatalog).run();
   db.delete(schema.storeSources).run();
+  // Image-ref records (ops/image-refs.ts) belong to the app being recreated here.
+  db.delete(schema.settings).where(like(schema.settings.key, "app_image_refs:%")).run();
 
   db.insert(schema.storeSources).values({ id: STORE_ID, name: "Test", type: "talome" }).run();
   db.insert(schema.appCatalog).values({
@@ -437,6 +440,83 @@ describe("safe update pipeline", () => {
     expect(getOperation(ok.operationId!)!.detail?.imageRefChanges).toEqual([
       { service: "sonarr", from: "linuxserver/sonarr:4", to: "linuxserver/sonarr:4.1" },
     ]);
+  });
+
+  describe("image refs the user chose survive update_app", () => {
+    let overridePath = "";
+
+    function overrideImage(): string {
+      return /image: (\S+)/.exec(readFileSync(overridePath, "utf-8"))![1];
+    }
+
+    beforeEach(() => {
+      overridePath = join(composeDir, "override-pins.yml");
+      writeFileSync(composePath, "services:\n  sonarr:\n    image: linuxserver/sonarr:4.1\n");
+      db.update(schema.installedApps).set({ overrideComposePath: overridePath }).where(eq(schema.installedApps.appId, APP_ID)).run();
+      m.verifyAppHealth.mockResolvedValue(healthy);
+    });
+
+    it("keeps a tag pinned with upgrade_app_image, and moves it only when asked for the catalog's", async () => {
+      resetImageRefState(APP_ID, { sonarr: "linuxserver/sonarr:4" });
+      writeFileSync(overridePath, "services:\n  sonarr:\n    image: linuxserver/sonarr:4.0.1\n    ports:\n      - 18989:8989\n");
+      recordImagePin(APP_ID, "sonarr", "linuxserver/sonarr:4.0.1");
+
+      const kept = await updateApp(APP_ID);
+      expect(overrideImage()).toBe("linuxserver/sonarr:4.0.1");
+      expect(kept.imagesKept).toEqual([
+        { service: "sonarr", image: "linuxserver/sonarr:4.0.1", catalogImage: "linuxserver/sonarr:4.1", reason: "pinned" },
+      ]);
+      expect(kept.warning).toContain("useCatalogImages");
+      expect(getOperation(kept.operationId!)!.detail?.imageRefChanges).toBeUndefined();
+
+      m.captureServiceImages.mockReset();
+      m.captureServiceImages.mockResolvedValueOnce(BASELINE).mockResolvedValue(AFTER);
+      const moved = await updateApp(APP_ID, { useCatalogImages: true });
+      expect(moved.outcome).toBe("updated");
+      expect(overrideImage()).toBe("linuxserver/sonarr:4.1");
+      expect(moved.imagesKept).toBeUndefined();
+      expect(readImageRefState(APP_ID)?.pinned).toEqual({});
+    });
+
+    it("keeps a hand-edited tag, but still moves the refs Talome wrote (including older ones a rollback brought back)", async () => {
+      resetImageRefState(APP_ID, { sonarr: "linuxserver/sonarr:3" });
+      recordManagedImages(APP_ID, { sonarr: "linuxserver/sonarr:4" });
+
+      writeFileSync(overridePath, "services:\n  sonarr:\n    image: linuxserver/sonarr:4-custom\n");
+      const custom = await updateApp(APP_ID);
+      expect(overrideImage()).toBe("linuxserver/sonarr:4-custom");
+      expect(custom.imagesKept?.[0]).toMatchObject({ service: "sonarr", reason: "customised" });
+
+      // An older ref Talome wrote (e.g. restored by a rollback) is Talome's to move.
+      writeFileSync(overridePath, "services:\n  sonarr:\n    image: linuxserver/sonarr:3\n");
+      m.captureServiceImages.mockReset();
+      m.captureServiceImages.mockResolvedValueOnce(BASELINE).mockResolvedValue(AFTER);
+      const moved = await updateApp(APP_ID);
+      expect(moved.outcome).toBe("updated");
+      expect(overrideImage()).toBe("linuxserver/sonarr:4.1");
+      expect(readImageRefState(APP_ID)?.managed.sonarr).toContain("linuxserver/sonarr:4.1");
+    });
+
+    it("an app installed before refs were recorded keeps a different image (a fork) but follows tag changes", async () => {
+      writeFileSync(overridePath, "services:\n  sonarr:\n    image: ghcr.io/someone/sonarr-fork:4\n");
+      const fork = await updateApp(APP_ID);
+      expect(overrideImage()).toBe("ghcr.io/someone/sonarr-fork:4");
+      expect(fork.imagesKept?.[0]).toMatchObject({ reason: "different_image" });
+
+      writeFileSync(overridePath, "services:\n  sonarr:\n    image: docker.io/linuxserver/sonarr:4\n");
+      m.captureServiceImages.mockReset();
+      m.captureServiceImages.mockResolvedValueOnce(BASELINE).mockResolvedValue(AFTER);
+      await updateApp(APP_ID);
+      expect(overrideImage()).toBe("linuxserver/sonarr:4.1");
+    });
+  });
+
+  it("compares image repositories without tag, digest or the implicit Docker Hub prefix", () => {
+    expect(imageRepository("linuxserver/sonarr:4.1")).toBe("linuxserver/sonarr");
+    expect(imageRepository("docker.io/library/redis:7@sha256:" + "c".repeat(64))).toBe("redis");
+    expect(imageRepository("registry.local:5000/team/app:2")).toBe("registry.local:5000/team/app");
+    expect(imageRepository("registry.local:5000/team/app")).toBe("registry.local:5000/team/app");
+    expect(imageRepository("lscr.io/linuxserver/sonarr:4")).not.toBe(imageRepository("linuxserver/sonarr:4"));
   });
 
   it("syncOverrideImageRefs leaves services missing from the catalog alone", () => {

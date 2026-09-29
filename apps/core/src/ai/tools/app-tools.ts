@@ -277,13 +277,14 @@ export const restartAppTool = tool({
 });
 
 export const updateAppTool = tool({
-  description: "Update an installed app by pulling the latest image and recreating containers. If the app's update policy takes a pre-update backup and that backup fails, the update is aborted before anything changes — only pass force: true when the user explicitly accepts updating without a backup.",
+  description: "Update an installed app by pulling the latest image and recreating containers. If the app's update policy takes a pre-update backup and that backup fails, the update is aborted before anything changes — only pass force: true when the user explicitly accepts updating without a backup. Image tags the user pinned or customised are kept (reported in imagesKept) unless useCatalogImages is true.",
   inputSchema: z.object({
     appId: z.string().describe("App ID to update"),
     force: z.boolean().optional().describe("Proceed even if the pre-update backup fails (only with the user's explicit consent)"),
+    useCatalogImages: z.boolean().optional().describe("Also move image tags the user pinned or customised to the catalog's (only when the user asks for that)"),
   }),
-  execute: async ({ appId, force }) => {
-    const result = await updateApp(appId, { force: force === true });
+  execute: async ({ appId, force, useCatalogImages }) => {
+    const result = await updateApp(appId, { force: force === true, useCatalogImages: useCatalogImages === true });
     if (result.success) writeAuditEntry("Updated app", "modify", appId);
     return result;
   },

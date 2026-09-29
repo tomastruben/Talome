@@ -71,6 +71,17 @@ import { isPreUpdateBackupEnabled, takePreUpdateBackup, findPreUpdateBackupId, b
 import { getSemanticBaseline, hasSemanticProbe, runSemanticVerification, type SemanticVerification } from "../ops/semantic-verify.js";
 import { holdAppMaintenance } from "../backup/state.js";
 import { reconcileUmbrelDependencies, applyUmbrelV2Install, getSavedDependencySelections } from "./umbrel-v2-install.js";
+import {
+  clearImagePins,
+  composeServiceImages,
+  decideImageRef,
+  describeKeptImages,
+  readImageRefState,
+  recordManagedImages,
+  resetImageRefState,
+  type ImageRefDecision,
+  type KeptImageRef,
+} from "../ops/image-refs.js";
 
 // ── Re-exports (preserve public API) ─────────────────────────────────────
 export { checkPortConflicts } from "./port-resolution.js";
@@ -92,6 +103,12 @@ export interface UpdateOptions extends LifecycleOptions {
    * container is recreated.
    */
   force?: boolean;
+  /**
+   * Also move image refs the user pinned or customised (upgrade_app_image, a
+   * hand-edited tag or a fork image) to the catalog's. Without it those refs
+   * are kept and reported in `imagesKept`.
+   */
+  useCatalogImages?: boolean;
 }
 
 export interface OperationResultMeta {
@@ -479,6 +496,8 @@ async function installAppInner(
 
     // Pin image digest for reproducible deploys
     pinImageDigest(appId, composePath);
+    // Every image ref in this compose is Talome's: updates may move them (ops/image-refs.ts).
+    resetImageRefState(appId, composeServiceImages(composePath));
 
     // Execute postInstall hook (best-effort)
     void executeHook("postInstall", appId, app.hooks, { composePath, env });
@@ -897,6 +916,8 @@ export interface UpdateResult {
   dataRestoreHint?: string;
   /** Outcome-probe result after the update (apps with outcome probes only) */
   semanticVerification?: { status: string; baseline: string | null; regression: boolean; summary: string };
+  /** Image refs the user pinned or customised that the update left alone (see useCatalogImages) */
+  imagesKept?: KeptImageRef[];
 }
 
 function parseSnapshotImages(raw: string | null | undefined): ServiceImageState[] {
@@ -1022,10 +1043,14 @@ function pruneUpdateSnapshots(appId: string): void {
  * would just re-run the old image. Only `image:` of services present in both
  * files changes; every other override edit (ports, volumes, network) is kept.
  * The pre-update compose is in the snapshot, so a rollback restores the old refs.
+ *
+ * `decide` may keep a service's ref (a user pin or custom image, see
+ * ops/image-refs.ts); kept services are appended to `kept`.
  */
 export function syncOverrideImageRefs(
   overridePath: string,
   catalogPath: string,
+  opts: { decide?: (service: string, from: string, to: string) => ImageRefDecision; kept?: KeptImageRef[] } = {},
 ): { service: string; from: string; to: string }[] {
   if (overridePath === catalogPath || !existsSync(overridePath) || !existsSync(catalogPath)) return [];
   const override = yaml.load(readFileSync(overridePath, "utf-8")) as { services?: Record<string, Record<string, unknown> | null> } | null;
@@ -1039,6 +1064,11 @@ export function syncOverrideImageRefs(
     const from = svc?.image;
     const to = catalogServices[name]?.image;
     if (svc && typeof from === "string" && typeof to === "string" && to.trim() && from !== to) {
+      const decision = opts.decide?.(name, from, to) ?? { move: true };
+      if (!decision.move) {
+        opts.kept?.push({ service: name, image: from, catalogImage: to, reason: decision.reason });
+        continue;
+      }
       svc.image = to;
       changes.push({ service: name, from, to });
     }
@@ -1269,7 +1299,11 @@ export function updateApp(appId: string, opts?: UpdateOptions): Promise<UpdateRe
       maintenance.release ??= holdAppMaintenance(appId, "update", keys);
     };
     try {
-      return await updateAppInner(appId, ctx, { force: opts?.force === true, beginMaintenance });
+      return await updateAppInner(appId, ctx, {
+        force: opts?.force === true,
+        useCatalogImages: opts?.useCatalogImages === true,
+        beginMaintenance,
+      });
     } finally {
       maintenance.release?.();
     }
@@ -1278,6 +1312,7 @@ export function updateApp(appId: string, opts?: UpdateOptions): Promise<UpdateRe
 
 interface UpdateRunOptions {
   force: boolean;
+  useCatalogImages: boolean;
   beginMaintenance: (keys: Array<string | null | undefined>) => void;
 }
 
@@ -1408,10 +1443,25 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
 
   // The override compose froze the image refs at install — move them to the
   // catalog's current refs (restored from the snapshot on any failure).
+  // Refs the user pinned or customised stay unless they asked for the catalog's.
   let imageRefChanges: { service: string; from: string; to: string }[] = [];
+  const imagesKept: KeptImageRef[] = [];
   try {
-    imageRefChanges = syncOverrideImageRefs(effectiveCompose, app.composePath);
-    if (imageRefChanges.length > 0) ctx.setDetail({ imageRefChanges });
+    const refState = readImageRefState(appId);
+    imageRefChanges = syncOverrideImageRefs(effectiveCompose, app.composePath, {
+      decide: (service, from, to) => decideImageRef(refState, service, from, to, { adoptCatalog: runOpts.useCatalogImages }),
+      kept: imagesKept,
+    });
+    if (imageRefChanges.length > 0) {
+      ctx.setDetail({ imageRefChanges });
+      // Both are Talome's now: `from` was judged movable (a first record for an
+      // app installed before records existed must keep treating it so, e.g.
+      // after this update fails and the compose is restored), `to` is written here.
+      recordManagedImages(appId, Object.fromEntries(imageRefChanges.map((c) => [c.service, c.from])));
+      recordManagedImages(appId, Object.fromEntries(imageRefChanges.map((c) => [c.service, c.to])));
+      if (runOpts.useCatalogImages) clearImagePins(appId, imageRefChanges.map((c) => c.service));
+    }
+    if (imagesKept.length > 0) ctx.setDetail({ imagesKept });
   } catch (err: unknown) {
     log.warn(`Could not sync image refs from the catalog compose for ${appId}`, err);
   }
@@ -1567,6 +1617,9 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   const backupLine = backup.success && backup.backupFile
     ? ` A pre-update backup is available at ${backup.backupFile}${backup.backupId ? ` (backup ${backup.backupId})` : ""}.`
     : " No pre-update backup was taken.";
+  const keptNote = describeKeptImages(imagesKept);
+  const keptLine = keptNote ? ` ${keptNote}` : "";
+  const keptResult = imagesKept.length > 0 ? { imagesKept } : {};
 
   if (!failureReason) {
     ctx.step("finalize", 95, "Recording new version");
@@ -1581,11 +1634,13 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
         .where(eq(schema.installedApps.appId, appId))
         .run();
       ctx.setDetail({ outcome: "no_change", snapshotId: null });
-      const note = app.version !== installed.version
-        ? `No new image was published for ${app.name} ${app.version}, so it still runs version ${installed.version}.`
-        : `${app.name} is already on the latest image.`;
+      const note = (imagesKept.length > 0 && imageRefChanges.length === 0
+        ? `${app.name} still runs version ${installed.version}.`
+        : app.version !== installed.version
+          ? `No new image was published for ${app.name} ${app.version}, so it still runs version ${installed.version}.`
+          : `${app.name} is already on the latest image.`) + keptLine;
       writeNotification("info", `${app.name} unchanged`, note, appId);
-      return { success: true, verified: verification?.healthy ?? false, outcome: "no_change", warning: note };
+      return { success: true, verified: verification?.healthy ?? false, outcome: "no_change", warning: note, ...keptResult };
     }
 
     db.update(schema.updateSnapshots)
@@ -1613,10 +1668,10 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
       const warning =
         `Updated to version ${app.version}, but it was not verified healthy yet (${verification.reason}). ` +
         `It was not rolled back automatically because it may still be starting or migrating data. ` +
-        `If it does not recover, roll back the update.${backupLine}`;
+        `If it does not recover, roll back the update.${backupLine}${keptLine}`;
       ctx.setDetail({ outcome: "unverified" });
       writeNotification("warning", `${app.name} updated, not yet verified`, warning, appId);
-      return { success: true, verified: false, outcome: "unverified", warning, ...backupResult };
+      return { success: true, verified: false, outcome: "unverified", warning, ...backupResult, ...keptResult };
     }
 
     if (semantic?.regression && semanticNotRolledBack) {
@@ -1624,10 +1679,10 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
       const warning =
         `Updated to version ${app.version} and its containers are healthy, but it passed its outcome checks before the update ` +
         `and fails them now (${semantic.summary ?? "checks failed"}). It was not rolled back automatically: ${semanticNotRolledBack}` +
-        `${backupLine}`;
+        `${backupLine}${keptLine}`;
       ctx.setDetail({ outcome: "regressed" });
       writeNotification("critical", `${app.name} updated, outcome checks now failing`, warning, appId);
-      return { success: true, verified: true, outcome: "unverified", warning, ...semanticResult, ...backupResult };
+      return { success: true, verified: true, outcome: "unverified", warning, ...semanticResult, ...backupResult, ...keptResult };
     }
 
     ctx.setDetail({ outcome: "updated" });
@@ -1640,12 +1695,12 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
         ? `Updated to version ${app.version} and healthy, but its outcome checks could not confirm it works: ${summary}`
         : `Updated to version ${app.version} and healthy, but its outcome checks report ${status}: ${summary}` +
           (status === "failed" ? ` (they were not passing before the update either).` : "");
-      writeNotification(status === "unknown" ? "info" : "warning", `${app.name} updated, outcome checks ${status}`, warning, appId);
-      return { success: true, verified: true, outcome: "updated", warning, ...semanticResult, ...backupResult };
+      writeNotification(status === "unknown" ? "info" : "warning", `${app.name} updated, outcome checks ${status}`, `${warning}${keptLine}`, appId);
+      return { success: true, verified: true, outcome: "updated", warning: `${warning}${keptLine}`, ...semanticResult, ...backupResult, ...keptResult };
     }
     const outcomeNote = semantic?.ran && semantic.status === "verified" ? "; outcome checks pass" : "";
-    writeNotification("info", `${app.name} updated`, `Updated to version ${app.version} and verified healthy${outcomeNote}`, appId);
-    return { success: true, verified: true, outcome: "updated", ...semanticResult, ...backupResult };
+    writeNotification("info", `${app.name} updated`, `Updated to version ${app.version} and verified healthy${outcomeNote}${keptLine ? `.${keptLine}` : ""}`, appId);
+    return { success: true, verified: true, outcome: "updated", ...(keptNote ? { warning: keptNote } : {}), ...semanticResult, ...backupResult, ...keptResult };
   }
 
   // ── 6. Automatic rollback ───────────────────────────────────────────────

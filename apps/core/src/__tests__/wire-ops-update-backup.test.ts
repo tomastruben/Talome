@@ -138,6 +138,7 @@ async function setupApp(compose = COMPOSE, preBackup = true, catalogCompose: str
   db.run(sql`DELETE FROM app_update_policies`);
   db.run(sql`DELETE FROM app_catalog`);
   db.run(sql`DELETE FROM store_sources`);
+  db.run(sql`DELETE FROM settings WHERE key LIKE 'app_image_refs:%'`);
   const { composePath } = await installFakeApp(env.root, APP, compose, { "config/settings.xml": "<x/>" });
   appComposePath = composePath;
   // A separate catalog compose makes the installed one an override whose image refs the update moves.

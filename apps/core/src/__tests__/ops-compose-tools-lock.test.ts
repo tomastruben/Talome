@@ -63,13 +63,14 @@ import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parse as parseYaml } from "yaml";
-import { eq } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
 import { updateApp, rollbackUpdate } from "../stores/lifecycle.js";
 import { listAppOperations, withAppOperation, __resetActiveOperationsForTests } from "../ops/operations.js";
 import { setAppEnvTool, changePortMappingTool, upgradeAppImageTool } from "../ai/tools/compose-tools.js";
 import { apps as appsRoute } from "../routes/apps.js";
+import { readImageRefState } from "../ops/image-refs.js";
 import type { ServiceImageState } from "../ops/docker-probe.js";
 
 const APP_ID = "sonarr";
@@ -118,6 +119,7 @@ beforeEach(() => {
   db.delete(schema.installedApps).run();
   db.delete(schema.appCatalog).run();
   db.delete(schema.storeSources).run();
+  db.delete(schema.settings).where(like(schema.settings.key, "app_image_refs:%")).run();
   db.insert(schema.storeSources).values({ id: STORE_ID, name: "Test", type: "talome" }).run();
   db.insert(schema.appCatalog).values({
     appId: APP_ID, storeSourceId: STORE_ID, name: "Sonarr", version: "4.1.0", source: "talome", composePath: catalogPath, webPort: 8989,
@@ -212,5 +214,23 @@ describe("AI compose edits run under the per-app operation lock", () => {
     await rollbackUpdate(APP_ID);
     expect(sonarrService().image).toBe("linuxserver/sonarr:4.0.0");
     expect(sonarrService().ports).toEqual(["18989:8989"]);
+  });
+
+  it("update_app keeps a tag pinned with upgrade_app_image (reported), until asked to use the catalog's", async () => {
+    const pin = await upgradeAppImageTool.execute!({ appId: APP_ID, serviceName: "sonarr", newImageTag: "4.0.5" }, callOpts) as ToolResult;
+    expect(pin.success).toBe(true);
+    expect(pin.message).toContain("useCatalogImages");
+    expect(readImageRefState(APP_ID)?.pinned).toEqual({ sonarr: "linuxserver/sonarr:4.0.5" });
+
+    const update = await updateApp(APP_ID);
+    expect(sonarrService().image).toBe("linuxserver/sonarr:4.0.5");
+    expect(update.imagesKept).toEqual([
+      { service: "sonarr", image: "linuxserver/sonarr:4.0.5", catalogImage: "linuxserver/sonarr:4.1.0", reason: "pinned" },
+    ]);
+
+    m.captureServiceImages.mockReset();
+    m.captureServiceImages.mockResolvedValueOnce(BASELINE).mockResolvedValue(AFTER);
+    await updateApp(APP_ID, { useCatalogImages: true });
+    expect(sonarrService().image).toBe("linuxserver/sonarr:4.1.0");
   });
 });

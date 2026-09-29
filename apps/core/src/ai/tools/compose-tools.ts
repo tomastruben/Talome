@@ -7,6 +7,7 @@ import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeAuditEntry } from "../../db/audit.js";
 import { atomicWriteFileSync } from "../../utils/filesystem.js";
+import { recordImagePin } from "../../ops/image-refs.js";
 import { db, schema } from "../../db/index.js";
 import { eq } from "drizzle-orm";
 import { listContainers } from "../../docker/client.js";
@@ -141,7 +142,7 @@ async function editInstalledCompose<R>(
   composePath: string,
   toolName: string,
   edit: (doc: ComposeDoc) => EditOutcome<R>,
-  opts: { keepInRollbacks: boolean },
+  opts: { keepInRollbacks: boolean; onWritten?: (value: R) => void },
 ): Promise<ComposeEditResult<R>> {
   const { withAppMaintenance, applyComposeEditToUpdateSnapshots } = await import("../../stores/lifecycle.js");
   const result = await withAppMaintenance(appId, "configure", async (ctx): Promise<ComposeEditResult<R>> => {
@@ -164,6 +165,7 @@ async function editInstalledCompose<R>(
     } else {
       ctx.setDetail({ tool: toolName });
     }
+    opts.onWritten?.(outcome.value);
     return { success: true, changed: true, value: outcome.value, snapshotsNotUpdated };
   });
   if (!result.success) {
@@ -479,8 +481,13 @@ export const upgradeAppImageTool = tool({
     }
     try {
       // Not carried into update snapshots: rolling an update back restores
-      // the previous version's image, which is what a rollback is for.
-      const result = await editInstalledCompose(appId, composePath, "upgrade_app_image", imageTagEdit(serviceName, newImageTag), { keepInRollbacks: false });
+      // the previous version's image, which is what a rollback is for. The
+      // choice is remembered as a pin, so update_app keeps it instead of
+      // moving the service back to the catalog's tag (ops/image-refs.ts).
+      const result = await editInstalledCompose(appId, composePath, "upgrade_app_image", imageTagEdit(serviceName, newImageTag), {
+        keepInRollbacks: false,
+        onWritten: ({ newImage }) => recordImagePin(appId, serviceName, newImage),
+      });
       if (!result.success) return result;
       const { previousImage, newImage } = result.value;
       writeAuditEntry(`AI: upgrade_app_image(${appId})`, "modify", `${previousImage} → ${newImage}`);
@@ -490,7 +497,8 @@ export const upgradeAppImageTool = tool({
         appId,
         previousImage,
         newImage,
-        message: `Updated image to ${newImage}. Recreate the container to pull and apply the new image.`,
+        message: `Updated image to ${newImage}. Recreate the container to pull and apply the new image. ` +
+          "App updates keep this image until the user asks to move to the catalog's (update_app with useCatalogImages).",
       };
     } catch (err: unknown) {
       return toolError(err);
