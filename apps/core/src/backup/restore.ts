@@ -34,7 +34,17 @@ import {
   type AppContainer,
 } from "./docker-ops.js";
 import { loadCommand, readinessCommand, significantLoadErrors } from "./dumps.js";
-import { appRelative, restartContainers, runBackup, slugify, sortForStop } from "./engine.js";
+import {
+  appRelative,
+  containerForService,
+  deleteBackup,
+  dumpableServices,
+  restartContainers,
+  runBackup,
+  slugify,
+  sortForStop,
+  type InternalBackupResult,
+} from "./engine.js";
 import { errorMessage, getBackupRoot, isWithin, sha256File } from "./fs-utils.js";
 import { compileExcludePatterns, type ExcludeMatcher } from "./glob.js";
 import { acquireAppOperation, getAppOperation, markContainersInMaintenance, releaseAppMaintenance } from "./state.js";
@@ -465,11 +475,14 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
   const swaps: SwapRecord[] = [];
   const temps: string[] = [];
   let inPlace = false;
+  /** Database services whose dump was loaded into the existing (named-volume) database */
+  const inPlaceDbServices: string[] = [];
   let composeBefore: Buffer | null = null;
   let versionBefore: string | null = null;
   const warnings: string[] = [];
   let safetyBackupId: string | null = null;
   let stoppedBySafety: AppContainer[] = [];
+  let committed = false;
 
   // Pending work is persisted so a server restart mid-restore can undo it
   const persist = () => {
@@ -480,6 +493,7 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
       inPlace,
       safetyBackupId,
       containers: stoppedBySafety.map((c) => ({ id: c.id, name: c.name })),
+      ...(committed ? { committed: true, stagingDir } : {}),
     });
   };
   persist();
@@ -493,20 +507,21 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
       warnings.push("None of the app's data paths existed — no safety backup was needed");
     } else {
       p.stage("safety-backup");
-      const safety = await runBackup(appId, randomUUID(), {
-        method: namedVolumeDb ? "dump" : "stop",
-        purpose: "pre-restore",
+      const safety = await takeSafetyBackup({
+        appId,
+        ctx,
         volumes,
-        exactVolumes: true,
-        ignoreExcludes: true,
-        includeDbData: true,
-        leaveStopped: true,
+        before,
+        restoring: manifest,
+        dbReadyTimeoutMs: opts.dbReadyTimeoutMs ?? 180_000,
+        pollMs,
       });
-      if (!safety.result.success) {
-        return failResult(backupId, appId, `Safety backup failed — nothing was changed: ${safety.result.error}`);
+      if (!safety.ok) {
+        return failResult(backupId, appId, `Safety backup failed — nothing was changed: ${safety.error}`);
       }
-      safetyBackupId = safety.result.backupId;
-      stoppedBySafety = safety.stoppedContainers;
+      safetyBackupId = safety.backupId;
+      stoppedBySafety = safety.stopped;
+      warnings.push(...safety.warnings);
       persist();
       p.stage("stopping", safetyBackupId);
     }
@@ -663,6 +678,7 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
       const loadInPlace = d.replacesVolumes.length === 0;
       if (loadInPlace) {
         inPlace = true;
+        inPlaceDbServices.push(d.service);
         persist();
       }
       await composeUp({ appId, composePath: ctx.composePath, envOverrides: ctx.envOverrides, services: [d.service] });
@@ -704,8 +720,23 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
       health = { healthy: true, containers: [], detail: "App was stopped before the restore and was left stopped" };
     }
 
-    // ── Success: drop the previous data ──────────────────────────────────
-    for (const s of swaps) if (s.existed) await rm(s.old, { recursive: true, force: true }).catch(() => {});
+    // ── Commit, then drop the previous data ──────────────────────────────
+    // The restore has succeeded. Record that before deleting anything, so a
+    // restart during the (possibly long) cleanup only finishes the cleanup —
+    // it must never move half-deleted previous data back into place.
+    committed = true;
+    persist();
+    const leftovers: string[] = [];
+    for (const s of swaps) {
+      if (!s.existed) continue;
+      await rm(s.old, { recursive: true, force: true }).catch(() => {});
+      if (await pathExists(s.old)) leftovers.push(s.old);
+    }
+    if (leftovers.length > 0) {
+      warnings.push(
+        `Could not delete the previous data at ${leftovers.join(", ")} (files owned by another user, e.g. a database) — delete it by hand to free the space`,
+      );
+    }
     await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
     return { success: true, restoreId: p.restoreId, backupId, appId, safetyBackupId, health, warnings };
   } catch (err) {
@@ -720,22 +751,29 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
     // ── Rollback ─────────────────────────────────────────────────────────
     p.stage("rolling-back");
     let rolledBack = false;
+    const problems: string[] = [];
     try {
       await stopAll(ctx).catch(() => {});
-      if (!inPlace) {
-        const errors = await undoSwaps(swaps, short);
-        if (composeBefore) {
-          await writeFile(ctx.composePath, composeBefore);
-          if (versionBefore) db.update(schema.installedApps).set({ version: versionBefore }).where(eq(schema.installedApps.appId, appId)).run();
-        }
-        rolledBack = errors.length === 0;
-        if (errors.length > 0) log.error(`${appId}: rollback errors`, errors);
-      } else if (safetyBackupId) {
-        const safetyRow = getBackupRow(safetyBackupId);
-        if (safetyRow?.file_path && safetyRow.manifest_path) {
-          // Previous swaps first (cheap, exact), then the safety backup for in-place data
-          await undoSwaps(swaps, short);
-          if (composeBefore) await writeFile(ctx.composePath, composeBefore);
+      // Directory swaps are always undone first (cheap, exact) — also when
+      // other data was changed in place and there is no safety backup.
+      const errors = await undoSwaps(swaps, short);
+      if (errors.length > 0) {
+        log.error(`${appId}: rollback errors`, errors);
+        problems.push(`putting the previous data back failed: ${errors.join("; ")}`);
+      }
+      if (composeBefore) await writeFile(ctx.composePath, composeBefore);
+      if (versionBefore !== null) {
+        db.update(schema.installedApps).set({ version: versionBefore }).where(eq(schema.installedApps.appId, appId)).run();
+      }
+      if (inPlace) {
+        // Data changed in place (mount points, a database loaded over its
+        // existing data) can only be put back from the safety backup.
+        const safetyRow = safetyBackupId ? getBackupRow(safetyBackupId) : null;
+        if (!safetyBackupId || !safetyRow?.file_path || !safetyRow.manifest_path) {
+          problems.push("data changed in place could not be put back (no safety backup)");
+        } else {
+          const safetyManifest = await loadManifest(safetyRow.manifest_path);
+          const uncovered = safetyManifest.ok ? uncoveredInPlaceDatabases(safetyManifest.manifest, inPlaceDbServices, ctx) : inPlaceDbServices;
           const r = await performRestore({
             backupId: safetyBackupId,
             appId,
@@ -746,20 +784,171 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
             stage: p.stage,
             allowRollback: false,
           });
-          rolledBack = r.success;
+          if (!r.success) problems.push(`restoring the safety backup failed: ${r.error}`);
+          if (uncovered.length > 0) {
+            problems.push(`the database of ${uncovered.join(", ")} could not be put back (the safety backup has no copy of it)`);
+          }
         }
       }
+      rolledBack = problems.length === 0;
       if (wasRunning) {
         const started = await startAppViaLifecycle(appId);
         if (!started.success && stoppedBySafety.length > 0) await restartContainers(appId, stoppedBySafety);
       }
     } catch (rollbackErr) {
       log.error(`${appId}: rollback failed`, rollbackErr);
+      problems.push(`rollback failed: ${errorMessage(rollbackErr)}`);
       rolledBack = false;
     }
     await cleanupTemps(temps, stagingDir);
-    return failResult(backupId, appId, message, { rolledBack, safetyBackupId, health: failedHealth });
+    const error = problems.length > 0 ? `${message}. The previous state could not be fully restored: ${problems.join("; ")}` : message;
+    return failResult(backupId, appId, error, { rolledBack, safetyBackupId, health: failedHealth });
   }
+}
+
+/**
+ * Database services loaded in place whose data the safety backup cannot put
+ * back: it holds neither a dump of the service nor a copy of all of the
+ * service's raw (bind-mounted) data directories.
+ */
+export function uncoveredInPlaceDatabases(safety: BackupManifest, services: string[], ctx: Pick<AppContext, "compose">): string[] {
+  return services.filter((name) => {
+    if (safety.dumps.some((d) => d.service === name && d.path)) return false;
+    const svc = ctx.compose.services.find((s) => s.name === name);
+    const raw = svc?.dbDataPaths ?? [];
+    return !(raw.length > 0 && raw.every((p) => safety.volumes.some((v) => v.hostPath === p)));
+  });
+}
+
+// ── Safety backup ───────────────────────────────────────────────────────────
+
+interface SafetyBackupParams {
+  appId: string;
+  ctx: AppContext;
+  /** Host paths the restore is about to replace (existing ones) */
+  volumes: string[];
+  /** Containers before the restore started */
+  before: AppContainer[];
+  /** Manifest of the backup being restored */
+  restoring: BackupManifest;
+  dbReadyTimeoutMs: number;
+  pollMs: number;
+}
+
+type SafetyBackupOutcome =
+  | { ok: true; backupId: string; stopped: AppContainer[]; warnings: string[] }
+  | { ok: false; error: string };
+
+/** Host paths of the entries a backup could not read (manifest.unreadable). */
+export function unreadableHostPaths(m: Pick<BackupManifest, "volumes" | "unreadable">): string[] {
+  const byKey = new Map(m.volumes.map((v) => [v.key, v.hostPath]));
+  const out: string[] = [];
+  for (const u of m.unreadable) {
+    if (!u.startsWith(`${ARCHIVE_VOLUMES_DIR}/`)) continue;
+    const [key, ...rest] = u.slice(ARCHIVE_VOLUMES_DIR.length + 1).split("/");
+    const host = key ? byKey.get(key) : undefined;
+    if (host) out.push(rest.length > 0 && rest.join("/") ? join(host, ...rest) : host);
+  }
+  return out;
+}
+
+async function stopServices(ctx: AppContext, services: string[]): Promise<void> {
+  const containers = await listAppContainers({ appId: ctx.appId, composePath: ctx.composePath, projectName: ctx.compose.projectName }).catch(
+    () => [] as AppContainer[],
+  );
+  for (const c of containers) {
+    if (c.status === "running" && c.service && services.includes(c.service)) await stopContainerGracefully(c.id).catch(() => {});
+  }
+}
+
+/**
+ * Pre-restore safety backup. It must be able to undo the restore, so:
+ *
+ *  - databases are captured as logical dumps, which work whether the raw data
+ *    directory is a named volume or a bind mount owned by the database's own
+ *    user (unreadable to Talome on a non-root install). Databases of a stopped
+ *    app are started for the dump and stopped again;
+ *  - files are copied cold (the app is stopped while they are archived);
+ *  - when a dump is impossible, the raw database directories are copied cold
+ *    instead — but only when every database keeps its data in a bind mount;
+ *  - a backup that could not read part of the data it protects is refused
+ *    (unless the restore keeps that data anyway).
+ */
+async function takeSafetyBackup(s: SafetyBackupParams): Promise<SafetyBackupOutcome> {
+  const { appId, ctx } = s;
+  const common = {
+    purpose: "pre-restore" as const,
+    volumes: s.volumes,
+    exactVolumes: true,
+    ignoreExcludes: true,
+    leaveStopped: true,
+  };
+  const runningBefore = s.before.filter((c) => c.status === "running");
+  const wasRunningBefore = (c: AppContainer) => runningBefore.some((b) => b.id === c.id || containerKey(b) === containerKey(c));
+  const dumpable = dumpableServices(ctx);
+  const warnings: string[] = [];
+  const dumpErrors: string[] = [];
+  let result: InternalBackupResult | null = null;
+
+  if (dumpable.length > 0) {
+    const toStart = dumpable.filter((svc) => !containerForService(runningBefore, svc));
+    try {
+      if (toStart.length > 0) {
+        await composeUp({ appId, composePath: ctx.composePath, envOverrides: ctx.envOverrides, services: toStart.map((svc) => svc.name) });
+        for (const svc of toStart) {
+          await waitForDbReady(ctx, svc.name, svc.dbEngine as "postgres" | "mysql", s.dbReadyTimeoutMs, Math.min(s.pollMs, 2000));
+        }
+      }
+      const attempt = await runBackup(appId, randomUUID(), {
+        ...common,
+        method: "dump",
+        includeDbData: false,
+        requireDumps: true,
+        stopAfterDump: true,
+      });
+      if (attempt.result.success) result = attempt;
+      else dumpErrors.push(attempt.result.error);
+    } catch (err) {
+      dumpErrors.push(errorMessage(err));
+    }
+    // Databases started only for the dump go back to being stopped
+    if (!result && toStart.length > 0) await stopServices(ctx, toStart.map((svc) => svc.name));
+    if (!result) {
+      const rawCopyPossible = dumpable.every((svc) => svc.dbDataPaths.length > 0);
+      if (!rawCopyPossible) return { ok: false, error: `could not dump the database: ${dumpErrors.join("; ")}` };
+    }
+  }
+
+  if (!result) {
+    const attempt = await runBackup(appId, randomUUID(), { ...common, method: "stop", includeDbData: true });
+    if (!attempt.result.success) return { ok: false, error: [...dumpErrors, attempt.result.error].join("; ") };
+    if (dumpErrors.length > 0) warnings.push(`The safety backup copied the raw database files (the dump failed: ${dumpErrors[0]})`);
+    result = attempt;
+  }
+  if (!result.result.success) return { ok: false, error: result.result.error };
+  const safety = result.result;
+
+  // Everything the restore replaces must be in the safety backup
+  const loaded = await loadManifest(safety.manifestPath);
+  const kept = unreadableHostPaths(s.restoring);
+  const gaps = loaded.ok
+    ? unreadableHostPaths(loaded.manifest).filter((p) => !kept.some((k) => isWithin(k, p)))
+    : [`safety backup manifest: ${loaded.error}`];
+  if (gaps.length > 0) {
+    const toRestart = result.stoppedContainers.filter(wasRunningBefore);
+    if (toRestart.length > 0) await restartContainers(appId, toRestart);
+    releaseAppMaintenance(appId);
+    const del = await deleteBackup(safety.backupId);
+    if (!del.ok) log.warn(`${appId}: could not delete incomplete safety backup ${safety.backupId}: ${del.error}`);
+    const more = gaps.length > 3 ? ` and ${gaps.length - 3} more` : "";
+    return {
+      ok: false,
+      error:
+        `Talome cannot read ${gaps.slice(0, 3).join(", ")}${more}, so the current data there could not be protected. ` +
+        "Fix the permissions, or restore without a safety backup.",
+    };
+  }
+  return { ok: true, backupId: safety.backupId, stopped: result.stoppedContainers, warnings };
 }
 
 async function cleanupTemps(temps: string[], stagingDir: string): Promise<void> {

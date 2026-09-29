@@ -206,3 +206,197 @@ describe("restore — nested volumes", () => {
     expect(readdirSync(appDir).filter((n) => n.includes(".talome-"))).toEqual([]);
   });
 });
+
+describe("restore — the safety backup can undo the restore", () => {
+  const NAMED_PG = `services:
+  web:
+    image: example/web:1
+    volumes:
+      - ./config:/config
+  db:
+    image: postgres:16
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+`;
+  const BIND_PG = `services:
+  web:
+    image: example/web:1
+    volumes:
+      - ./config:/config
+  db:
+    image: postgres:16
+    volumes:
+      - ./postgres:/var/lib/postgresql/data
+`;
+
+  async function safetyManifest(safetyBackupId: string | null) {
+    const { getBackupRow } = await import("../backup/store.js");
+    const { loadManifest } = await import("../backup/verify.js");
+    const row = getBackupRow(safetyBackupId!)!;
+    const m = await loadManifest(row.manifest_path!);
+    if (!m.ok) throw new Error(m.error);
+    return m.manifest;
+  }
+
+  it("dumps the database of a stopped app (named volume) and puts it back when the load fails", async () => {
+    const { appDir } = await installFakeApp(env.root, "stoppedpg", NAMED_PG, { "config/a.txt": "a1" });
+    resetDocker([
+      { id: "sp-web", name: "stoppedpg-web", service: "web", image: "example/web:1" },
+      { id: "sp-db", name: "stoppedpg-db", service: "db", image: "postgres:16" },
+    ]);
+    const backup = await createAppBackup("stoppedpg");
+    if (!backup.success) throw new Error(backup.error);
+    expect(backup.method).toBe("dump");
+    write(join(appDir, "config/a.txt"), "a2");
+    // The user stops the app, then restores
+    for (const c of dockerState.containers) c.status = "exited";
+    dockerState.events = [];
+    // The restore's load fails for real; loading the safety dump back works
+    dockerState.loadStderrQueue = ['psql:/tmp/x.sql:40: ERROR:  relation "items" already exists'];
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    const safety = await safetyManifest(r.safetyBackupId);
+    // The safety backup holds a dump of the database that is about to be overwritten
+    expect(safety.dumps.some((d) => d.service === "db" && d.path)).toBe(true);
+    expect(dockerState.events.indexOf("dump:db")).toBeGreaterThan(dockerState.events.indexOf("composeUp:db"));
+    expect(r.rolledBack).toBe(true);
+    // loaded twice: the restore (failed), then the safety dump
+    expect(dockerState.events.filter((e) => e === "exec:psql")).toHaveLength(2);
+    expect(readFileSync(join(appDir, "config/a.txt"), "utf-8")).toBe("a2");
+    // the app was stopped before and is stopped again
+    expect(dockerState.containers.every((c) => c.status !== "running")).toBe(true);
+  });
+
+  it("refuses the restore (and changes nothing) when a named-volume database cannot be dumped", async () => {
+    const { appDir } = await installFakeApp(env.root, "nodumppg", NAMED_PG, { "config/a.txt": "a1" });
+    resetDocker([
+      { id: "nd-web", name: "nodumppg-web", service: "web", image: "example/web:1" },
+      { id: "nd-db", name: "nodumppg-db", service: "db", image: "postgres:16" },
+    ]);
+    const backup = await createAppBackup("nodumppg");
+    if (!backup.success) throw new Error(backup.error);
+    write(join(appDir, "config/a.txt"), "a2");
+    for (const c of dockerState.containers) c.status = "exited";
+    dockerState.events = [];
+    dockerState.failDumpServices.add("db");
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toMatch(/Safety backup failed — nothing was changed/);
+    expect(r.rolledBack).toBe(false);
+    expect(dockerState.events).not.toContain("exec:psql");
+    expect(readFileSync(join(appDir, "config/a.txt"), "utf-8")).toBe("a2");
+    // the database started for the dump is stopped again
+    expect(dockerState.containers.every((c) => c.status !== "running")).toBe(true);
+  });
+
+  it("captures a bind-mounted database Talome cannot read as a dump (non-root install)", async () => {
+    if (process.getuid?.() === 0) return; // permissions don't apply to root
+    const { appDir } = await installFakeApp(env.root, "rootlesspg", BIND_PG, {
+      "config/a.txt": "a1",
+      "postgres/PG_VERSION": "16",
+    });
+    resetDocker([
+      { id: "rl-web", name: "rootlesspg-web", service: "web", image: "example/web:1" },
+      { id: "rl-db", name: "rootlesspg-db", service: "db", image: "postgres:16" },
+    ]);
+    const backup = await createAppBackup("rootlesspg");
+    if (!backup.success) throw new Error(backup.error);
+    expect(backup.method).toBe("dump");
+    // Postgres owns its data directory (uid 999, mode 0700)
+    const pgdata = join(appDir, "postgres");
+    chmodSync(pgdata, 0o000);
+    try {
+      const r = await restoreAppBackup(backup.backupId, FAST);
+      expect(r.success).toBe(true);
+      if (!r.success) return;
+      const safety = await safetyManifest(r.safetyBackupId);
+      expect(safety.dumps.find((d) => d.service === "db")).toMatchObject({ replacesVolumes: [pgdata] });
+      expect(safety.dumps.find((d) => d.service === "db")?.path).toBeTruthy();
+      expect(safety.unreadable).toEqual([]);
+      // files were archived with the app stopped
+      expect(safety.method).toBe("dump");
+      // the old data directory could not be deleted — the user is told instead of silently keeping a full copy
+      expect(r.warnings.join(" ")).toMatch(/Could not delete the previous data/);
+    } finally {
+      for (const name of readdirSync(appDir)) {
+        if (name.startsWith("postgres")) chmodSync(join(appDir, name), 0o755);
+      }
+    }
+  });
+
+  it("refuses the restore when the safety backup cannot read data the restore would replace", async () => {
+    if (process.getuid?.() === 0) return;
+    const { appDir } = await installFakeApp(env.root, "unreadnow", SIMPLE, {
+      "config/app.conf": "version=1",
+      "config/private/key.pem": "old key",
+    });
+    resetDocker([{ id: "un", name: "unreadnow", service: "app", image: "example/app:1.0" }]);
+    const backup = await createAppBackup("unreadnow");
+    if (!backup.success) throw new Error(backup.error);
+    write(join(appDir, "config/private/key.pem"), "new key");
+    write(join(appDir, "config/app.conf"), "version=2");
+    chmodSync(join(appDir, "config/private"), 0o000);
+    const before = listAppBackups("unreadnow").length;
+    try {
+      const r = await restoreAppBackup(backup.backupId, FAST);
+      expect(r.success).toBe(false);
+      if (r.success) return;
+      expect(r.error).toMatch(/Safety backup failed — nothing was changed/);
+      expect(r.error).toContain(join(appDir, "config/private"));
+      expect(readFileSync(join(appDir, "config/app.conf"), "utf-8")).toBe("version=2");
+      // the incomplete safety backup is not kept, and the app runs again
+      expect(listAppBackups("unreadnow").filter((b) => b.status === "completed")).toHaveLength(before);
+      expect(dockerState.containers[0].status).toBe("running");
+    } finally {
+      chmodSync(join(appDir, "config/private"), 0o755);
+    }
+    expect(readFileSync(join(appDir, "config/private/key.pem"), "utf-8")).toBe("new key");
+  });
+
+  it("allows unreadable paths the restore keeps anyway", async () => {
+    if (process.getuid?.() === 0) return;
+    const { appDir } = await installFakeApp(env.root, "unreadboth", SIMPLE, {
+      "config/app.conf": "version=1",
+      "config/private/key.pem": "key",
+    });
+    resetDocker([{ id: "ub", name: "unreadboth", service: "app", image: "example/app:1.0" }]);
+    // unreadable (no read bit) but still movable
+    chmodSync(join(appDir, "config/private"), 0o300);
+    try {
+      const backup = await createAppBackup("unreadboth");
+      if (!backup.success) throw new Error(backup.error);
+      write(join(appDir, "config/app.conf"), "version=2");
+      const r = await restoreAppBackup(backup.backupId, FAST);
+      expect(r.success ? "" : r.error).toBe("");
+      expect(readFileSync(join(appDir, "config/app.conf"), "utf-8")).toBe("version=1");
+    } finally {
+      chmodSync(join(appDir, "config/private"), 0o755);
+    }
+    expect(readFileSync(join(appDir, "config/private/key.pem"), "utf-8")).toBe("key");
+  });
+
+  it("reports a rollback as incomplete when the safety backup has no copy of a database loaded in place", async () => {
+    const { uncoveredInPlaceDatabases } = await import("../backup/restore.js");
+    const ctx = {
+      compose: {
+        projectName: null,
+        services: [
+          { name: "db", image: "postgres:16", containerName: null, environment: {}, volumes: [], dbEngine: "postgres" as const, dbDataPaths: [] },
+          { name: "raw", image: "postgres:16", containerName: null, environment: {}, volumes: [], dbEngine: "postgres" as const, dbDataPaths: ["/d/raw"] },
+        ],
+      },
+    };
+    const base = { volumes: [] as Array<{ hostPath: string }>, dumps: [] as Array<{ service: string; path: string | null }> };
+    const m = (x: Partial<typeof base>) => ({ ...base, ...x }) as never;
+    expect(uncoveredInPlaceDatabases(m({}), ["db"], ctx)).toEqual(["db"]);
+    expect(uncoveredInPlaceDatabases(m({ dumps: [{ service: "db", path: "dumps/db.sql" }] }), ["db"], ctx)).toEqual([]);
+    expect(uncoveredInPlaceDatabases(m({ volumes: [{ hostPath: "/d/raw" }] }), ["raw"], ctx)).toEqual([]);
+    expect(uncoveredInPlaceDatabases(m({}), ["raw"], ctx)).toEqual(["raw"]);
+  });
+});

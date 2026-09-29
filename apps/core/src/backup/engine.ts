@@ -99,6 +99,14 @@ export interface InternalBackupOptions extends CreateAppBackupOptions {
   leaveStopped?: boolean;
   /** Treat `volumes` as the exact selection — an empty list archives no volumes */
   exactVolumes?: boolean;
+  /**
+   * Dump method only: fail instead of falling back to the stop method when a
+   * database container is not running (a safety backup must hold the data a
+   * restore is about to replace).
+   */
+  requireDumps?: boolean;
+  /** Dump method only: after dumping, stop the app while its files are archived (cold copy) */
+  stopAfterDump?: boolean;
   signal?: AbortSignal;
   onStage?: (stage: string) => void;
 }
@@ -137,6 +145,11 @@ export function appRelative(ctx: AppContext, absPath: string): string | null {
 export function sortForStop(containers: AppContainer[], ctx: AppContext): AppContainer[] {
   const isDb = (c: AppContainer) => ctx.compose.services.some((s) => s.name === c.service && s.dbEngine !== null);
   return [...containers].sort((a, b) => Number(isDb(a)) - Number(isDb(b)));
+}
+
+/** Services whose database can be captured with a logical dump (postgres, mysql/mariadb). */
+export function dumpableServices(ctx: Pick<AppContext, "compose">): ComposeService[] {
+  return ctx.compose.services.filter((s) => s.dbEngine !== null && DUMPABLE.has(s.dbEngine));
 }
 
 export function containerForService(containers: AppContainer[], svc: ComposeService): AppContainer | undefined {
@@ -335,6 +348,9 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
         (s) => s.dbEngine !== null && DUMPABLE.has(s.dbEngine) && !containerForService(running, s),
       );
       if (missing.length > 0) {
+        if (opts.requireDumps) {
+          throw new Error(`Database container not running (${missing.map((s) => s.name).join(", ")}) — cannot take a database dump`);
+        }
         warnings.push(`Database container not running (${missing.map((s) => s.name).join(", ")}) — used the stop method`);
         method = "stop";
         if (!opts.includeDbData) {
@@ -426,7 +442,8 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
     let maintenanceMarked = false;
 
     try {
-      if (method === "stop" && running.length > 0) {
+      const stopForArchive = method === "stop" || (method === "dump" && opts.stopAfterDump === true);
+      if (stopForArchive && running.length > 0) {
         setStage("pausing");
         for (const c of sortForStop(running, ctx)) {
           checkCancelled();

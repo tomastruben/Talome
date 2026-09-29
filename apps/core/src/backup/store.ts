@@ -5,6 +5,7 @@
 
 import { sql } from "drizzle-orm";
 import { db } from "../db/index.js";
+import { OWNER_HOST, getHeldOperation } from "../ops/operations.js";
 import {
   appBackupConfigSchema,
   type AppBackupConfig,
@@ -201,24 +202,50 @@ export function listRestores(appId?: string, limit = 20): RestoreRow[] {
   return db.all(sql`SELECT * FROM backup_restores ORDER BY started_at DESC LIMIT ${limit}`) as RestoreRow[];
 }
 
-/** Mark rows left "running" by a crashed/restarted server as failed. */
-export function recoverInterruptedOperations(active: { backups: Set<string>; restores: Set<string>; verifies: Set<string> }): number {
+export interface InterruptedSweepOptions {
+  /**
+   * True while an operation on the app is running (in this process or in
+   * another live one, e.g. the MCP stdio server). Its rows are left alone.
+   */
+  isAppBusy?: (appId: string) => boolean;
+  /** Also reset "running" verifications (only safe at startup) */
+  verifies?: boolean;
+}
+
+/**
+ * Mark rows left "running" by an operation that is no longer running (server
+ * restarted, or the process that ran it died) as failed.
+ */
+export function recoverInterruptedOperations(
+  active: { backups: Set<string>; restores: Set<string>; verifies: Set<string> },
+  opts: InterruptedSweepOptions = {},
+): number {
   const now = new Date().toISOString();
+  const busy = (appId: string | null) => {
+    if (!appId || !opts.isAppBusy) return false;
+    try {
+      return opts.isAppBusy(appId);
+    } catch {
+      return true;
+    }
+  };
   let recovered = 0;
-  const running = db.all(sql`SELECT id FROM backups WHERE status IN ('running', 'pending')`) as Array<{ id: string }>;
+  const running = db.all(sql`SELECT id, app_id FROM backups WHERE status IN ('running', 'pending')`) as Array<{ id: string; app_id: string | null }>;
   for (const r of running) {
-    if (active.backups.has(r.id)) continue;
+    if (active.backups.has(r.id) || busy(r.app_id)) continue;
     db.run(sql`UPDATE backups SET status = 'failed', error = COALESCE(error, 'Interrupted (server restarted)'), completed_at = ${now} WHERE id = ${r.id}`);
     recovered++;
   }
-  const verifying = db.all(sql`SELECT id FROM backups WHERE verify_status = 'running'`) as Array<{ id: string }>;
-  for (const r of verifying) {
-    if (active.verifies.has(r.id)) continue;
-    db.run(sql`UPDATE backups SET verify_status = NULL WHERE id = ${r.id}`);
+  if (opts.verifies !== false) {
+    const verifying = db.all(sql`SELECT id FROM backups WHERE verify_status = 'running'`) as Array<{ id: string }>;
+    for (const r of verifying) {
+      if (active.verifies.has(r.id)) continue;
+      db.run(sql`UPDATE backups SET verify_status = NULL WHERE id = ${r.id}`);
+    }
   }
-  const restores = db.all(sql`SELECT id FROM backup_restores WHERE status = 'running'`) as Array<{ id: string }>;
+  const restores = db.all(sql`SELECT id, app_id FROM backup_restores WHERE status = 'running'`) as Array<{ id: string; app_id: string }>;
   for (const r of restores) {
-    if (active.restores.has(r.id)) continue;
+    if (active.restores.has(r.id) || busy(r.app_id)) continue;
     db.run(sql`UPDATE backup_restores SET status = 'failed', stage = NULL, error = COALESCE(error, 'Interrupted (server restarted)'), completed_at = ${now} WHERE id = ${r.id}`);
     recovered++;
   }
@@ -244,6 +271,22 @@ export interface RecoveryState {
   /** Data was changed in place — only the safety backup can undo it */
   inPlace?: boolean;
   safetyBackupId?: string | null;
+  /**
+   * The restore succeeded and only the previous data (the swaps' old copies,
+   * the staging dir) remained to be deleted. Recovery finishes the cleanup
+   * instead of undoing the restore.
+   */
+  committed?: boolean;
+  stagingDir?: string;
+  /** Process running the operation — recovery never touches a live owner's work */
+  owner?: RecoveryOwner;
+}
+
+export interface RecoveryOwner {
+  pid: number;
+  host: string;
+  /** Journal id (app_operations) of the operation the work runs in, if any */
+  operationId: string | null;
 }
 
 export interface RecoveryRecord {
@@ -257,7 +300,8 @@ export interface RecoveryRecord {
 /** Persist pending work for an operation. Best effort — never throws. */
 export function saveRecoveryRecord(id: string, appId: string, kind: RecoveryRecord["kind"], state: RecoveryState): void {
   try {
-    const json = JSON.stringify(state);
+    const owner: RecoveryOwner = { pid: process.pid, host: OWNER_HOST, operationId: getHeldOperation(appId)?.id ?? null };
+    const json = JSON.stringify({ ...state, owner });
     const now = new Date().toISOString();
     db.run(sql`INSERT INTO backup_recovery (id, app_id, kind, state, updated_at) VALUES (${id}, ${appId}, ${kind}, ${json}, ${now})
       ON CONFLICT(id) DO UPDATE SET state = ${json}, updated_at = ${now}`);
