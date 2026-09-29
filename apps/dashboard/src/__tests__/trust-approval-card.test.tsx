@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SWRConfig } from "swr";
 
 vi.mock("@/components/icons", () => ({
@@ -24,6 +24,7 @@ vi.mock("@/components/assistant/assistant-context", () => ({
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 import { ApprovalCard } from "@/components/trust/approval-card";
+import { APPROVAL_POLL_MS } from "@/components/trust/format";
 
 const APPROVAL_ID = "apr_0123456789abcdef0123456789abcdef";
 
@@ -41,7 +42,7 @@ function output() {
   };
 }
 
-function approvalRow(status: string) {
+function approvalRow(status: string, expiresAt = new Date(Date.now() + 10 * 60_000).toISOString()) {
   return {
     id: APPROVAL_ID,
     actor: { kind: "user", id: "dashboard", label: "Dashboard chat" },
@@ -51,19 +52,23 @@ function approvalRow(status: string) {
     argsPreview: "{}",
     status,
     createdAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    expiresAt,
     decidedBy: status === "pending" ? null : "admin",
     decidedAt: status === "pending" ? null : new Date().toISOString(),
     consumedAt: null,
   };
 }
 
-function renderCard(out: unknown) {
-  return render(
+function Harness({ out }: { out: unknown }) {
+  return (
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
       <ApprovalCard output={out} />
-    </SWRConfig>,
+    </SWRConfig>
   );
+}
+
+function renderCard(out: unknown) {
+  return render(<Harness out={out} />);
 }
 
 const fetchMock = vi.fn();
@@ -86,6 +91,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -133,5 +139,84 @@ describe("ApprovalCard", () => {
     renderCard({ ...output(), expiresAt: new Date(Date.now() - 1000).toISOString() });
     expect(screen.getByText("Approval for Uninstall app expired")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+
+  describe("while pending", () => {
+    let serverStatus = "pending";
+    let expiresAt = "";
+    const getCalls = () => fetchMock.mock.calls.filter(([, init]) => !init?.method).length;
+    const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+    /** Advance in 1 s steps so React renders between countdown ticks, as in a browser. */
+    const advanceBySeconds = async (seconds: number) => {
+      for (let i = 0; i < seconds; i++) await advance(1_000);
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      serverStatus = "pending";
+      expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+      fetchMock.mockImplementation(async () => new Response(JSON.stringify(approvalRow(serverStatus, expiresAt)), { status: 200 }));
+    });
+
+    it("picks up a decision made elsewhere", async () => {
+      renderCard({ ...output(), expiresAt });
+      await advance(100);
+      expect(screen.getByText("Approve Uninstall app?")).toBeInTheDocument();
+
+      // Approved in Settings → Approvals (or on another device).
+      serverStatus = "approved";
+      await advanceBySeconds(APPROVAL_POLL_MS / 1_000 + 1);
+
+      expect(screen.getByText("Uninstall app approved")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    });
+
+    it("keeps polling while the chat re-renders the card", async () => {
+      const out = { ...output(), expiresAt };
+      const { rerender } = renderCard(out);
+      await advance(100);
+      const before = getCalls();
+
+      // Streaming chat updates re-render the card far more often than the
+      // poll interval; the poll timer must survive them.
+      for (let i = 0; i < 12; i++) {
+        rerender(<Harness out={{ ...out }} />);
+        await advance(1_000);
+      }
+
+      expect(getCalls() - before).toBeGreaterThanOrEqual(2);
+    });
+
+    it("pauses polling while the tab is hidden", async () => {
+      renderCard({ ...output(), expiresAt });
+      await advance(100);
+      const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+      try {
+        const before = getCalls();
+        await advance(APPROVAL_POLL_MS * 3);
+        expect(getCalls()).toBe(before);
+      } finally {
+        visibility.mockRestore();
+      }
+    });
+
+    it("counts down every second and stops polling once expired", async () => {
+      renderCard({ ...output(), expiresAt });
+      await advance(100);
+      expect(screen.getByText("10:00 left")).toBeInTheDocument();
+      await advance(1_000);
+      expect(screen.getByText("9:59 left")).toBeInTheDocument();
+      await advance(1_000);
+      expect(screen.getByText("9:58 left")).toBeInTheDocument();
+
+      await advance(10 * 60_000);
+      expect(screen.getByText("Approval for Uninstall app expired")).toBeInTheDocument();
+      expect(screen.queryByText(/left$/)).not.toBeInTheDocument();
+
+      const after = getCalls();
+      await advance(APPROVAL_POLL_MS * 3);
+      expect(getCalls()).toBe(after);
+    });
   });
 });
