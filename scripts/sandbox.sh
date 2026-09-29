@@ -43,8 +43,8 @@ case "$1" in
     cd "$ROOT/apps/dashboard"
     exec env \
       CORE_BACKEND_URL="http://127.0.0.1:$CORE_PORT" \
-      NEXT_PUBLIC_CORE_URL="http://localhost:$CORE_PORT" \
-      pnpm exec next dev --webpack --port "$DASHBOARD_PORT"
+      NEXT_PUBLIC_CORE_PORT="$CORE_PORT" \
+      pnpm exec next dev --webpack --hostname localhost --port "$DASHBOARD_PORT"
     ;;
   *)
     echo "usage: $0 core|dashboard" >&2

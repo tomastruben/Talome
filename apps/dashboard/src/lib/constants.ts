@@ -1,7 +1,8 @@
 function resolveCoreUrl(): string {
   if (process.env.NEXT_PUBLIC_CORE_URL) return process.env.NEXT_PUBLIC_CORE_URL;
   if (typeof window !== "undefined") return "";
-  return "http://127.0.0.1:4000";
+  // Server side: the same backend the proxy forwards to.
+  return process.env.CORE_BACKEND_URL || "http://127.0.0.1:4000";
 }
 
 export const CORE_URL = resolveCoreUrl();
