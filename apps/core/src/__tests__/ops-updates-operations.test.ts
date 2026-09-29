@@ -443,7 +443,7 @@ describe("boot recovery", () => {
 
       const findings = await result.reconciled;
       const note = findings.find((f) => f.appId === "sonarr")!.note;
-      expect(note).toContain("keeps running version 4.0.0");
+      expect(note).toContain("stays on version 4.0.0");
       expect(note).toContain("compose file was restored");
       expect(db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, "sonarr")).get()?.status).toBe("running");
     });

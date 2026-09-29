@@ -113,7 +113,7 @@ export interface InterruptedUpdateRestore {
   appId: string;
   /** True when the compose file was written back (false: it already matched). */
   composeRestored: boolean;
-  /** Version the app keeps running. */
+  /** Version the app stays on. */
   previousVersion: string;
 }
 
@@ -265,7 +265,7 @@ async function reconcileApp(
   );
   if (restoredUpdate) {
     parts.push(
-      `The update was interrupted before any container was recreated, so the app keeps running version ${restoredUpdate.previousVersion}` +
+      `The update was interrupted before any container was recreated, so the app stays on version ${restoredUpdate.previousVersion}` +
         (restoredUpdate.composeRestored ? "; its compose file was restored to that version." : ".") +
         " Update it again when ready.",
     );
