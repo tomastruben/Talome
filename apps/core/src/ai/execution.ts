@@ -225,6 +225,8 @@ const PROTECTED_SETTING_KEYS = new Set([
   "file_manager_drives",
   "evolution_auto_execute",
   "evolution_execution_mode",
+  "telegram_bot_token",
+  "discord_bot_token",
   "proxy_auth_enabled",
   "proxy_auth_bypass_apps",
 ]);

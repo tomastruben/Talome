@@ -5,10 +5,18 @@ import { eq } from "drizzle-orm";
 import { startTelegramBot, stopTelegramBot, getTelegramBotStatus } from "../messaging/telegram.js";
 import { startDiscordBot, stopDiscordBot, getDiscordBotStatus } from "../messaging/discord-bot.js";
 import { serverError } from "../middleware/request-logger.js";
+import { requireRole } from "../middleware/role-guard.js";
 import { mcpTokens } from "./mcp-tokens.js";
 import { messagingSenders } from "./messaging-senders.js";
 
 const integrations = new Hono();
+
+// Starting, stopping or re-pointing a chat bot (its token decides which bot
+// the owner's agent answers through) is an admin action.
+for (const platform of ["telegram", "discord"] as const) {
+  integrations.use(`/${platform}/restart`, requireRole("admin"));
+  integrations.use(`/${platform}/stop`, requireRole("admin"));
+}
 
 /* ── Request schemas ─────────────────────────────────────────────────────── */
 
