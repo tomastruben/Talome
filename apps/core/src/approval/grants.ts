@@ -87,6 +87,9 @@ export function checkToolGrant(scopes: TokenScopes, meta: ToolGrantMeta): GrantD
   if (TIER_RANK[meta.tier] > TIER_RANK[scopes.maxTier]) {
     return deny(`This token lacks the '${meta.tier}' tier (it is limited to '${scopes.maxTier}').`);
   }
+  if (scopes.apps !== "all" && Object.hasOwn(APP_LIMITED_DENIED_TOOLS, meta.name)) {
+    return deny(`This token is limited to specific apps, and '${meta.name}' ${APP_LIMITED_DENIED_TOOLS[meta.name]}.`);
+  }
   return { ok: true };
 }
 
@@ -113,8 +116,9 @@ export function allowsTerminalAccess(scopes: TokenScopes): boolean {
  * automation name, store name, ...).
  */
 const TOOL_TARGET_KEYS: Record<string, readonly string[]> = {
-  connect_container_to_network: ["container"],
-  disconnect_container: ["container"],
+  // Joining another app's network reaches that app's containers.
+  connect_container_to_network: ["container", "network"],
+  disconnect_container: ["container", "network"],
   wire_apps: ["sourceAppId", "targetAppId"],
   test_app_connectivity: ["sourceAppId", "targetAppId"],
   create_group: ["appIds"],
@@ -160,7 +164,7 @@ const APP_ARG_DOMAINS = new Set(["arr"]);
  * match an allowed app by stack prefix (`<appId>-<svc>`); app-id arguments
  * must match exactly.
  */
-const CONTAINER_KEYS = new Set(["containerId", "container_id", "containerIds", "container", "containerName"]);
+const CONTAINER_KEYS = new Set(["containerId", "container_id", "containerIds", "container", "containerName", "network"]);
 
 export type TargetKind = "app" | "container";
 
@@ -213,7 +217,76 @@ export function extractCallTargets(
     for (const value of values) targets.push({ value, kind });
   }
 
+  // A proxy route publishes whatever its upstream points at.
+  if (toolName === "proxy_add_route" && args.upstream !== undefined) {
+    if (typeof args.upstream !== "string") return null;
+    targets.push({ value: upstreamHost(args.upstream), kind: "container" });
+  }
+  // Umbrel dependencies wire the new app to other installed apps.
+  if (toolName === "install_app" && args.umbrel && typeof args.umbrel === "object") {
+    const deps = (args.umbrel as Record<string, unknown>).dependencies;
+    if (deps !== undefined && deps !== null) {
+      if (typeof deps !== "object" || Array.isArray(deps)) return null;
+      for (const provider of Object.values(deps as Record<string, unknown>)) {
+        if (typeof provider !== "string" || !provider.trim()) return null;
+        targets.push({ value: provider.trim(), kind: "app" });
+      }
+    }
+  }
+
   return targets.length > 0 ? targets : null;
+}
+
+/**
+ * The host part of a proxy upstream ("jellyfin:8096", "http://jellyfin:8096/x").
+ * Anything that is not a plain container name — localhost, an IP address, a
+ * domain, userinfo — comes back as given, so it never matches an app.
+ */
+function upstreamHost(upstream: string): string {
+  const trimmed = upstream.trim();
+  const withoutScheme = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const authority = withoutScheme.split(/[/?#]/, 1)[0] ?? "";
+  if (authority.includes("@") || authority.startsWith("[")) return trimmed;
+  const host = authority.split(":", 1)[0] ?? "";
+  if (!/^[a-z0-9][a-z0-9_-]*$/i.test(host) || host.toLowerCase() === "localhost") return trimmed;
+  return host;
+}
+
+// ── Host reach for app-limited tokens ────────────────────────────────────────
+// An app grant limits which app a call names — but some calls reach past the
+// app through their other arguments. A token limited to apps never gets them.
+
+/** Tools an app-limited token may not call at all, and why. */
+const APP_LIMITED_DENIED_TOOLS: Record<string, string> = {
+  exec_container:
+    "runs arbitrary commands inside a container, which can reach the host through the container's mounts (e.g. docker.sock)",
+  add_volume_mount: "bind-mounts a host path into the app",
+};
+
+/**
+ * Why a call's other arguments reach beyond an app grant (host paths, backups
+ * from elsewhere), or null. Only consulted for app-limited tokens.
+ */
+function hostReachReason(toolName: string, args: Record<string, unknown>): string | null {
+  const present = (v: unknown) =>
+    v !== undefined && v !== null && v !== "" && !(typeof v === "object" && Object.keys(v as object).length === 0);
+  if (toolName === "install_app") {
+    if (present(args.volumeMounts)) return "binds host paths (volumeMounts)";
+    const umbrel = args.umbrel && typeof args.umbrel === "object" ? (args.umbrel as Record<string, unknown>) : {};
+    if (present(umbrel.folders)) return "binds host folders (umbrel.folders)";
+    if (present(umbrel.dataRoot)) return "chooses a host data folder (umbrel.dataRoot)";
+    // Env overrides feed compose interpolation (e.g. APP_DATA_DIR in volumes):
+    // a path there re-points the app's bind mounts at the host.
+    if (args.env && typeof args.env === "object") {
+      for (const [key, value] of Object.entries(args.env as Record<string, unknown>)) {
+        if (typeof value !== "string" || /^\s*[/~]/.test(value) || value.includes("..") || value.includes("$")) {
+          return `sets a path-like environment override (${key})`;
+        }
+      }
+    }
+  }
+  if (toolName === "restore_app" && present(args.backupFile)) return "restores from a file path (backupFile)";
+  return null;
 }
 
 /** Target values only (see extractCallTargets). */
@@ -284,6 +357,10 @@ export function checkCallGrant(
   if (scopes.apps === "all") return { ok: true };
 
   const allowed = scopes.apps;
+  const reach = hostReachReason(meta.name, args);
+  if (reach) {
+    return deny(`This token is limited to specific apps (${allowed.join(", ") || "none"}), and this '${meta.name}' call ${reach}.`);
+  }
   const targets = extractCallTargets(meta.name, meta.domain, args);
 
   if (!targets) {
