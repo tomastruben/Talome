@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { CORE_URL } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,8 @@ import { Shimmer } from "@/components/ai-elements/shimmer";
 import { SettingsGroup, SettingsRow, relativeTime } from "@/components/settings/settings-primitives";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 import { useInstalledApps } from "@/hooks/use-installed-apps";
+// Stage names written by core backup/** (dumping, uploading, restore stages, …).
+import { stageLabel } from "@/app/dashboard/backups/_lib/backup-status";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -70,13 +73,6 @@ function formatSize(bytes: number | null): string {
   return `${bytes} B`;
 }
 
-const STAGE_LABELS: Record<string, string> = {
-  preparing: "Preparing",
-  pausing: "Pausing services",
-  archiving: "Archiving volumes",
-  validating: "Validating",
-  resuming: "Resuming services",
-};
 
 type Frequency = "6h" | "12h" | "daily" | "weekly" | "monthly";
 type TimeSlot = "midnight" | "2am" | "4am" | "6am" | "noon";
@@ -398,6 +394,20 @@ export function BackupsSection() {
         Schedule automatic backups for your apps and data. Backups can also be triggered manually through the assistant.
       </p>
 
+      <SettingsGroup>
+        <Link href="/dashboard/backups" className="block hover:bg-muted/30 transition-colors">
+          <SettingsRow>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">Backups overview</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Per-app status, verification, off-site storage and restore
+              </p>
+            </div>
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="text-dim-foreground shrink-0" />
+          </SettingsRow>
+        </Link>
+      </SettingsGroup>
+
       {/* Active schedules */}
       {scheduleList.length > 0 && (
         <SettingsGroup>
@@ -539,7 +549,7 @@ export function BackupsSection() {
                           {b.status === "failed" && <HugeiconsIcon icon={Cancel01Icon} size={10} className="mr-0.5" />}
                           {b.status === "cancelled" && <HugeiconsIcon icon={Cancel01Icon} size={10} className="mr-0.5" />}
                           {b.status === "running" ? (
-                            <Shimmer as="span" duration={1.5}>{b.stage ? STAGE_LABELS[b.stage] ?? b.stage : "running"}</Shimmer>
+                            <Shimmer as="span" duration={1.5}>{b.stage ? stageLabel(b.stage) : "running"}</Shimmer>
                           ) : (
                             b.status
                           )}

@@ -14,6 +14,7 @@ import {
 import { toast } from "sonner";
 import { SettingsGroup, ToggleRow } from "@/components/settings/settings-primitives";
 import { useAvailableUpdates, type AppUpdateInfo } from "@/hooks/use-available-updates";
+import { describeUpdateResponse, updateOutcomeFromOperation, type UpdateOutcome } from "@/lib/app-operations";
 
 interface UpdatePolicy {
   app_id: string;
@@ -22,6 +23,18 @@ interface UpdatePolicy {
 }
 
 const policyFetcher = (url: string) => fetch(url, { credentials: "include" }).then((r) => r.json());
+
+/** The journaled outcome of a finished update (the update route only returns `verified`). */
+async function fetchUpdateOutcome(appId: string, operationId: string | null): Promise<UpdateOutcome | null> {
+  try {
+    const res = await fetch(`${CORE_URL}/api/updates/${encodeURIComponent(appId)}`, { credentials: "include" });
+    if (!res.ok) return null;
+    const info = (await res.json()) as { lastUpdateOperation?: unknown } | null;
+    return updateOutcomeFromOperation(info?.lastUpdateOperation ?? null, operationId);
+  } catch {
+    return null;
+  }
+}
 
 function UpdateRow({ app, onUpdated }: { app: AppUpdateInfo; onUpdated: () => void }) {
   const [updating, setUpdating] = useState(false);
@@ -40,8 +53,21 @@ function UpdateRow({ app, onUpdated }: { app: AppUpdateInfo; onUpdated: () => vo
         method: "POST",
         credentials: "include",
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Update failed");
-      toast.success(`${app.name} updated to v${app.availableVersion}`);
+      const body: unknown = await res.json().catch(() => null);
+      const operationId =
+        body && typeof body === "object" && typeof (body as { operationId?: unknown }).operationId === "string"
+          ? (body as { operationId: string }).operationId
+          : null;
+      const journaled = res.ok ? await fetchUpdateOutcome(app.appId, operationId) : null;
+      // Success, already up to date, verified-or-not, rolled back (with reason) or busy (409).
+      const outcome = describeUpdateResponse(app.name, res.status, body, {
+        outcome: journaled,
+        toVersion: app.availableVersion,
+      });
+      const options = outcome.description ? { description: outcome.description } : undefined;
+      if (outcome.kind === "success") toast.success(outcome.title, options);
+      else if (outcome.kind === "warning") toast.warning(outcome.title, options);
+      else toast.error(outcome.title, options);
       onUpdated();
     } catch (err) {
       toast.error(`Failed to update ${app.name}`, {
@@ -137,13 +163,16 @@ export function UpdatesSection() {
     setUpdatingAll(true);
     let succeeded = 0;
     let failed = 0;
+    const rolledBack: string[] = [];
     for (const app of appsWithUpdates) {
       try {
         const res = await fetch(`${CORE_URL}/api/apps/${app.storeId}/${app.appId}/update`, {
           method: "POST",
           credentials: "include",
         });
+        const body: unknown = await res.json().catch(() => null);
         if (res.ok) succeeded++;
+        else if (body && typeof body === "object" && (body as { rolledBack?: unknown }).rolledBack === true) rolledBack.push(app.name);
         else failed++;
       } catch {
         failed++;
@@ -152,10 +181,15 @@ export function UpdatesSection() {
     setUpdatingAll(false);
     refresh();
     mutateAll();
-    if (failed === 0) {
+    if (failed === 0 && rolledBack.length === 0) {
       toast.success(`Updated ${succeeded} app${succeeded !== 1 ? "s" : ""}`);
     } else {
-      toast.warning(`Updated ${succeeded}, failed ${failed}`);
+      const parts = [`Updated ${succeeded}`];
+      if (rolledBack.length > 0) parts.push(`rolled back ${rolledBack.length}`);
+      if (failed > 0) parts.push(`failed ${failed}`);
+      toast.warning(parts.join(", "), {
+        description: rolledBack.length > 0 ? `Kept the previous version of ${rolledBack.join(", ")}.` : undefined,
+      });
     }
   }
 

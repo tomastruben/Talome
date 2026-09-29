@@ -121,6 +121,22 @@ describe("AssistantProvider", () => {
     expect(transports).toHaveLength(1);
   });
 
+  it("sends the active conversation id in the request body", () => {
+    modelsConfig.current = TWO_PROVIDERS;
+    render(
+      <AssistantProvider>
+        <Probe />
+      </AssistantProvider>,
+    );
+    expect(transports[0].body()).not.toHaveProperty("conversationId");
+
+    act(() => api!.setActiveId("conv-1"));
+    expect(transports[0].body()).toEqual({ model: "gpt-a", provider: "openai", conversationId: "conv-1" });
+
+    act(() => api!.startNew());
+    expect(transports[0].body()).toEqual({ model: "gpt-a", provider: "openai" });
+  });
+
   it("falls back to the server's active model when the pick is no longer offered", () => {
     modelsConfig.current = TWO_PROVIDERS;
     const { rerender } = render(

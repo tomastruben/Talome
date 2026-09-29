@@ -34,6 +34,7 @@ import {
   ComputerTerminal01Icon,
   SecurityCheckIcon,
   Activity01Icon,
+  Database01Icon,
 } from "@/components/icons";
 import { useUser } from "@/hooks/use-user";
 import { CORE_URL } from "@/lib/constants";
@@ -68,6 +69,7 @@ const AI_ITEMS: SettingsLink[] = [
 const INFRASTRUCTURE_ITEMS: SettingsLink[] = [
   { slug: "security", icon: Shield01Icon, title: "Security", description: "Control AI access level and shell permissions", adminOnly: true },
   { slug: "audit", icon: Activity01Icon, title: "Audit Log", description: "Every action by the assistant, agents, and automations", adminOnly: true },
+  { slug: "data-retention", icon: Database01Icon, title: "Data Retention", description: "How long logs, events and notifications are kept", adminOnly: true },
   { slug: "notifications", icon: AlertCircleIcon, title: "Notifications", description: "Alert thresholds and notification channels" },
   { slug: "networking", icon: Globe02Icon, title: "Networking", description: "Reverse proxy, remote access, Docker networks", adminOnly: true },
   { slug: "backups", icon: ArchiveIcon, title: "Backups", description: "Scheduled backups and restore history" },
