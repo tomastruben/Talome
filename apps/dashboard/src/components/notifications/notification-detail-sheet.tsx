@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Sheet,
@@ -16,6 +17,7 @@ import { Streamdown } from "streamdown";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { getNotificationAction } from "@/hooks/use-notifications";
 
 interface NotificationDetailSheetProps {
   open: boolean;
@@ -23,8 +25,11 @@ interface NotificationDetailSheetProps {
   notification: {
     type: "info" | "warning" | "critical";
     title: string;
+    body?: string;
     fullBody: string;
     createdAt: string;
+    sourceId?: string | null;
+    link?: string | null;
   } | null;
 }
 
@@ -44,6 +49,14 @@ export function NotificationDetailSheet({
   const { handleSubmit } = useAssistant();
 
   if (!notification) return null;
+
+  const action = getNotificationAction({
+    title: notification.title,
+    body: notification.body ?? "",
+    fullBody: notification.fullBody,
+    sourceId: notification.sourceId ?? null,
+    link: notification.link,
+  });
 
   const askAssistant = () => {
     const userMessage = `Discuss this notification: **${notification.title}**`;
@@ -105,7 +118,20 @@ export function NotificationDetailSheet({
           </div>
         </ScrollArea>
 
-        <div className="shrink-0 px-5 py-3 border-t border-border/60">
+        <div className="shrink-0 px-5 py-3 border-t border-border/60 grid gap-2">
+          {action && (
+            <Button size="sm" className="w-full text-xs" asChild>
+              {action.external ? (
+                <a href={action.href} target="_blank" rel="noopener noreferrer" onClick={() => onOpenChange(false)}>
+                  {action.label}
+                </a>
+              ) : (
+                <Link href={action.href} onClick={() => onOpenChange(false)}>
+                  {action.label}
+                </Link>
+              )}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"

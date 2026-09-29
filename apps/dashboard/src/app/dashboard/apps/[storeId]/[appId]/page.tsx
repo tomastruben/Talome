@@ -8,18 +8,39 @@ import Link from "next/link";
 import { useAtom } from "jotai";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { toast } from "sonner";
-import useSWR from "swr";
+import useSWR, { mutate as globalMutate } from "swr";
 import { motion, AnimatePresence } from "framer-motion";
-import { HugeiconsIcon, Cancel01Icon, AiChat02Icon, CloudUploadIcon, Edit02Icon, Share04Icon, ArrowUp01Icon, SystemUpdate01Icon, Refresh01Icon } from "@/components/icons";
+import { HugeiconsIcon, Cancel01Icon, AiChat02Icon, CloudUploadIcon, Edit02Icon, Share04Icon, SystemUpdate01Icon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Progress } from "@/components/ui/progress";
+import { Spinner } from "@/components/ui/spinner";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { CORE_URL, getHostUrl } from "@/lib/constants";
 import { isTransitionalInstallStatus, useAdaptiveInterval, POLL_ACTIVE_MS, POLL_IDLE_MS } from "@/lib/polling";
-import { talomePost, talomeDelete, talomePatch } from "@/hooks/use-talome-api";
+import { talomePost, talomeDelete, talomePatch, TalomeApiError } from "@/hooks/use-talome-api";
+import { useAppOperations } from "@/hooks/use-app-operations";
+import { useUser } from "@/hooks/use-user";
+import {
+  OPERATION_KIND_LABELS,
+  OPERATION_KIND_PROGRESS_LABELS,
+  describeUpdateResponse,
+  parseOperationConflict,
+  summarizeUpdateOperation,
+  type LifecycleOutcome,
+  type OperationEvent,
+} from "@/lib/app-operations";
+import {
+  installBlockReason,
+  parseInstallPlan,
+  planHasChoices,
+  type UmbrelInstallOptions,
+  type UmbrelInstallPlan,
+} from "@/lib/umbrel-install";
+import { OperationActivity, OperationProgress } from "@/components/app-detail/operation-panels";
+import { VerificationPanel, verificationUrl } from "@/components/app-detail/verification-panel";
+import { UmbrelInstallDialog } from "@/components/app-detail/umbrel-install-dialog";
 import { Streamdown } from "streamdown";
 import { PillIndicator } from "@/components/kibo-ui/pill";
 import { ClaudeTerminal } from "@/components/terminal/claude-terminal";
@@ -196,47 +217,27 @@ const SOURCE_LABELS: Record<string, string> = {
 /** Keep polling fast this long after an action finishes so the UI settles. */
 const ACTION_GRACE_MS = 20_000;
 
-type InstallStage = "queued" | "pulling" | "creating" | "starting" | "running" | "error";
+/** Lifecycle actions that run as journaled operations (409 when another one is running). */
+type LifecycleAction = "install" | "update" | "uninstall" | "start" | "stop" | "restart";
 
-const STAGE_LABELS: Record<InstallStage, string> = {
-  queued:   "Preparing...",
-  pulling:  "Pulling image...",
-  creating: "Starting containers...",
-  starting: "Starting...",
-  running:  "Ready",
-  error:    "Installation failed",
-};
+function showOutcomeToast(outcome: LifecycleOutcome) {
+  const options = outcome.description ? { description: outcome.description } : undefined;
+  if (outcome.kind === "success") toast.success(outcome.title, options);
+  else if (outcome.kind === "warning") toast.warning(outcome.title, options);
+  else toast.error(outcome.title, options);
+}
 
-const STAGE_PROGRESS: Record<InstallStage, number> = {
-  queued:   5,
-  pulling:  35,
-  creating: 75,
-  starting: 90,
-  running:  100,
-  error:    100,
-};
-
-function InstallProgress({ stage, message }: { stage: InstallStage; message: string }) {
-  const progress = STAGE_PROGRESS[stage];
-  const isError = stage === "error";
-  const isPreparing = stage === "queued";
-
-  return (
-    <div className="w-full max-w-xs grid gap-3">
-      <div className="grid gap-1.5">
-        {isPreparing ? (
-          <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-primary/20">
-            <div className="absolute inset-0 h-full w-full animate-[install-shimmer_1.8s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-transparent via-primary/60 to-transparent" />
-          </div>
-        ) : (
-          <Progress value={progress} className={`h-1.5 ${isError ? "[&>div]:bg-destructive" : ""}`} />
-        )}
-        <p className={`text-xs text-center transition-opacity duration-150 ${isError ? "text-destructive" : "text-muted-foreground"}`}>
-          {message || STAGE_LABELS[stage]}
-        </p>
-      </div>
-    </div>
-  );
+/** POST /api/stores/:storeId/apps/:appId/install-plan (admin only; null when unavailable). */
+async function fetchInstallPlan(storeId: string, appId: string, options?: UmbrelInstallOptions): Promise<UmbrelInstallPlan | null> {
+  try {
+    const response = await talomePost<unknown>(
+      `/api/stores/${encodeURIComponent(storeId)}/apps/${encodeURIComponent(appId)}/install-plan`,
+      options ?? {},
+    );
+    return parseInstallPlan(response);
+  } catch {
+    return null;
+  }
 }
 
 function needsAiSetup(app: CatalogApp): boolean {
@@ -252,11 +253,9 @@ function buildSetupPrompt(app: CatalogApp): string {
 export default function AppDetailPage() {
   const { storeId, appId } = useParams<{ storeId: string; appId: string }>();
   const [, setPageTitle] = useAtom(pageTitleAtom);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<LifecycleAction | null>(null);
   const [envValues, setEnvValues] = useState<Record<string, string>>({});
   const [volumeValues, setVolumeValues] = useState<Record<string, string>>({});
-  const [installStage, setInstallStage] = useState<InstallStage | null>(null);
-  const [installMessage, setInstallMessage] = useState("");
   const [externalUrl, setExternalUrl] = useState<string | null>(null);
   const [submittingCommunity, setSubmittingCommunity] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -269,13 +268,33 @@ export default function AppDetailPage() {
   const [draftPorts, setDraftPorts] = useState<Record<string, string>>({});
   const [savingPatch, setSavingPatch] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [umbrelDialog, setUmbrelDialog] = useState<{ plan: UmbrelInstallPlan; version: number } | null>(null);
   const quickLook = useQuickLook();
-  const sseRef = useRef<EventSource | null>(null);
+  const { isAdmin } = useUser();
 
-  // Poll fast (5s) only while an action / install is in flight (plus a short
+  const appKey = storeId && appId ? `${CORE_URL}/api/apps/${storeId}/${appId}` : null;
+  const stacksKey = `${CORE_URL}/api/containers?grouped=true`;
+  const updatesKey = `${CORE_URL}/api/updates/${appId}`;
+
+  // Whenever any operation on this app finishes (from this page, the
+  // assistant, an automation…), refresh everything it may have changed.
+  const onOperationSettled = useCallback(
+    (event: OperationEvent) => {
+      if (appKey) void globalMutate(appKey);
+      void globalMutate(stacksKey);
+      void globalMutate(updatesKey);
+      if (event.kind !== "uninstall") void globalMutate(verificationUrl("app", appId));
+    },
+    [appKey, stacksKey, updatesKey, appId],
+  );
+
+  // Live operation (SSE) + recent history from the operations journal.
+  const operations = useAppOperations(appId, { busy: !!actionLoading, onSettled: onOperationSettled });
+  const liveOperation = operations.isActive ? operations.live : null;
+
+  // Poll fast (5s) only while an action / operation is in flight (plus a short
   // grace window to catch the settled state); otherwise every 30s.
-  const actionInFlight =
-    !!actionLoading || (installStage !== null && installStage !== "running" && installStage !== "error");
+  const actionInFlight = !!actionLoading || operations.isActive;
   const actionPollMs = useAdaptiveInterval(actionInFlight, {
     fast: POLL_ACTIVE_MS,
     slow: POLL_IDLE_MS,
@@ -287,14 +306,14 @@ export default function AppDetailPage() {
   // while SSE progress / editor state re-renders the page.
   const appRefreshInterval = useCallback(
     (data: CatalogApp | undefined) => {
-      if (!data?.installed) return 0;
+      if (!data?.installed) return actionInFlight ? POLL_ACTIVE_MS : 0;
       return isTransitionalInstallStatus(data.installed.status) ? POLL_ACTIVE_MS : actionPollMs;
     },
-    [actionPollMs],
+    [actionPollMs, actionInFlight],
   );
 
   const { data: app, isLoading, mutate } = useSWR<CatalogApp>(
-    storeId && appId ? `${CORE_URL}/api/apps/${storeId}/${appId}` : null,
+    appKey,
     fetcher,
     {
       refreshInterval: appRefreshInterval,
@@ -322,7 +341,7 @@ export default function AppDetailPage() {
     [appId, appTransitional, actionPollMs],
   );
   const { data: stacks } = useSWR<ServiceStack[]>(
-    `${CORE_URL}/api/containers?grouped=true`,
+    stacksKey,
     fetcher,
     {
       refreshInterval: stacksRefreshInterval,
@@ -331,17 +350,30 @@ export default function AppDetailPage() {
   );
   const appStack = stacks?.find((s) => s.appId === appId || s.id === appId);
 
-  // Fetch available update info for this app
+  // Fetch available update info for this app (+ the last update/rollback result)
   const { data: updateInfo, mutate: mutateUpdateInfo } = useSWR<{
     currentVersion: string;
     availableVersion: string;
     hasUpdate: boolean;
     releaseNotes: string | null;
+    lastUpdateOperation?: unknown;
   }>(
-    app?.installed ? `${CORE_URL}/api/updates/${appId}` : null,
+    app?.installed ? updatesKey : null,
     fetcher,
     { refreshInterval: 5 * 60 * 1000, revalidateOnFocus: false },
   );
+  const lastUpdate = summarizeUpdateOperation(updateInfo?.lastUpdateOperation ?? null);
+
+  // Umbrel apps: preview the install plan (folders, env choices, dependency
+  // providers, unsupported reasons). The endpoint is admin-only; members
+  // install with the server's defaults.
+  const wantsInstallPlan = !!app && app.source === "umbrel" && !app.installed && isAdmin;
+  const { data: installPlan, mutate: mutateInstallPlan } = useSWR<UmbrelInstallPlan | null>(
+    wantsInstallPlan ? ["umbrel-install-plan", storeId, appId] : null,
+    () => fetchInstallPlan(storeId, appId),
+    { revalidateOnFocus: false },
+  );
+  const installBlocked = installBlockReason(installPlan);
 
   // Set title synchronously from URL, update when SWR data arrives.
   const resolvedName = app?.installed?.displayName || app?.name;
@@ -353,46 +385,8 @@ export default function AppDetailPage() {
     return () => setPageTitle(null);
   }, [resolvedName, appId, setPageTitle]);
 
-  // Clean up SSE on unmount
-  const cleanupSSE = () => {
-    sseRef.current?.close();
-    sseRef.current = null;
-  };
-
-  const startProgressSSE = () => {
-    cleanupSSE();
-    const es = new EventSource(`/api/apps/${storeId}/${appId}/progress`);
-    sseRef.current = es;
-
-    es.addEventListener("progress", (e) => {
-      const data = JSON.parse(e.data) as { stage: InstallStage; message: string };
-      setInstallStage(data.stage);
-      setInstallMessage(data.message);
-
-      if (data.stage === "running" || data.stage === "error") {
-        es.close();
-        sseRef.current = null;
-        if (data.stage === "running") {
-          mutate().then(() => {
-            setInstallStage(null);
-            setInstallMessage("");
-            toast.success(`${app?.name ?? "App"} installed successfully`);
-          });
-        } else {
-          toast.error(`Installation failed`, {
-            description: data.message || "An error occurred during installation.",
-          });
-        }
-      }
-    });
-
-    es.onerror = () => {
-      es.close();
-      sseRef.current = null;
-    };
-  };
-
-  const ACTION_SUCCESS: Record<string, string> = {
+  const ACTION_SUCCESS: Record<LifecycleAction, string> = {
+    install: "installed",
     start: "started",
     stop: "stopped",
     restart: "restarted",
@@ -400,42 +394,80 @@ export default function AppDetailPage() {
     uninstall: "removed",
   };
 
-  const runAction = async (action: string) => {
+  const runAction = async (action: LifecycleAction, options: { umbrel?: UmbrelInstallOptions } = {}) => {
     if (!app) return;
     setActionLoading(action);
     try {
       if (action === "install") {
-        startProgressSSE();
-        setInstallStage("queued");
-        setInstallMessage("Preparing...");
-        await talomePost(`/api/apps/${storeId}/${appId}/install`, { env: envValues, volumeMounts: volumeValues });
+        await talomePost(`/api/apps/${storeId}/${appId}/install`, {
+          env: envValues,
+          volumeMounts: volumeValues,
+          ...(options.umbrel ? { umbrel: options.umbrel } : {}),
+        });
+        await mutate();
+        toast.success(`${app.name} installed`);
       } else if (action === "uninstall") {
         await talomeDelete(`/api/apps/${storeId}/${appId}`);
         await mutate();
         toast.success(`${app.name} removed`);
+      } else if (action === "update") {
+        const response = await talomePost<unknown>(`/api/apps/${storeId}/${appId}/update`);
+        await Promise.all([mutate(), mutateUpdateInfo()]);
+        showOutcomeToast(describeUpdateResponse(app.name, 200, response));
       } else {
         await talomePost(`/api/apps/${storeId}/${appId}/${action}`);
         await mutate();
-        const verb = ACTION_SUCCESS[action] ?? action;
-        toast.success(`${app.name} ${verb}`);
+        toast.success(`${app.name} ${ACTION_SUCCESS[action]}`);
       }
     } catch (err) {
-      if (action === "install") {
-        setInstallStage("error");
-        setInstallMessage("Installation failed. Please try again.");
-        cleanupSSE();
-        toast.error("Installation failed", {
+      const conflict = err instanceof TalomeApiError ? parseOperationConflict(err.status, err.body) : null;
+      if (conflict) {
+        // Another operation owns the app: show it instead of guessing.
+        const running = conflict.operationId ? await operations.adopt(conflict.operationId) : null;
+        toast.error(
+          running ? `${app.name} is busy: ${OPERATION_KIND_PROGRESS_LABELS[running.kind].toLowerCase()}` : `${app.name} is busy`,
+          { description: conflict.message },
+        );
+      } else if (action === "update" && err instanceof TalomeApiError) {
+        await Promise.all([mutate(), mutateUpdateInfo()]);
+        showOutcomeToast(describeUpdateResponse(app.name, err.status, err.body));
+      } else {
+        const label = action === "install" ? "Installation failed" : `Failed to ${action} ${app.name}`;
+        toast.error(label, {
           description: err instanceof Error ? err.message : "Please try again.",
         });
-      } else {
-        const verb = ACTION_SUCCESS[action] ?? action;
-        toast.error(`Failed to ${verb === action ? action : action} ${app.name}`, {
-          description: err instanceof Error ? err.message : undefined,
-        });
+        if (action === "install") void mutate();
       }
     } finally {
       setActionLoading(null);
+      void operations.refresh();
     }
+  };
+
+  /** Install, first asking for Umbrel folder/env/dependency choices when the plan has any. */
+  const startInstall = async () => {
+    if (!app) return;
+    if (app.source === "umbrel" && isAdmin) {
+      const plan = installPlan ?? (await mutateInstallPlan());
+      if (plan && (planHasChoices(plan) || installBlockReason(plan))) {
+        setUmbrelDialog((prev) => ({ plan, version: (prev?.version ?? 0) + 1 }));
+        return;
+      }
+    }
+    void runAction("install");
+  };
+
+  const confirmUmbrelInstall = async (options: UmbrelInstallOptions | undefined): Promise<string[] | null> => {
+    if (options) {
+      // Re-plan with the choices so invalid folders/values are reported here,
+      // not as a failed install.
+      const checked = await fetchInstallPlan(storeId, appId, options);
+      const reason = installBlockReason(checked);
+      if (checked && reason) return checked.blockers.length > 0 ? checked.blockers : [reason];
+    }
+    setUmbrelDialog(null);
+    void runAction("install", { umbrel: options });
+    return null;
   };
 
   const submitToCommunity = async () => {
@@ -696,7 +728,7 @@ export default function AppDetailPage() {
         </div>
 
         {/* Update available banner */}
-        {updateInfo?.hasUpdate && status !== "updating" && (
+        {updateInfo?.hasUpdate && status !== "updating" && !liveOperation && (
           <div className="w-full max-w-sm rounded-xl border border-border bg-muted/30 px-4 py-3 grid gap-2">
             <div className="flex items-center gap-2.5">
               <HugeiconsIcon icon={SystemUpdate01Icon} size={16} className="text-muted-foreground shrink-0" />
@@ -718,7 +750,7 @@ export default function AppDetailPage() {
                 variant="secondary"
                 className="h-7 text-xs gap-1.5"
                 onClick={() => runAction("update")}
-                disabled={!!actionLoading}
+                disabled={actionInFlight}
               >
                 {actionLoading === "update" ? "Updating..." : "Update Now"}
               </Button>
@@ -728,8 +760,13 @@ export default function AppDetailPage() {
 
         {/* Primary action */}
         <div className="w-full max-w-xs grid gap-2 pt-1 place-items-center">
-          {installStage ? (
-            <InstallProgress stage={installStage} message={installMessage} />
+          {liveOperation ? (
+            <OperationProgress operation={liveOperation} />
+          ) : actionLoading === "install" ? (
+            <Button size="lg" className="w-full gap-2" disabled>
+              <Spinner className="size-4" />
+              Starting install...
+            </Button>
           ) : isInstalled ? (
             <>
               {isRunning && app.webPort ? (
@@ -747,7 +784,7 @@ export default function AppDetailPage() {
                   size="lg"
                   className="w-full"
                   onClick={() => runAction(isRunning ? "stop" : "start")}
-                  disabled={!!actionLoading}
+                  disabled={actionInFlight}
                 >
                   {actionLoading === "start"
                     ? "Starting..."
@@ -769,12 +806,17 @@ export default function AppDetailPage() {
           ) : (
             <Button
               size="lg"
-              onClick={() => runAction("install")}
-              disabled={!!actionLoading}
+              onClick={() => void startInstall()}
+              disabled={actionInFlight || !!installBlocked}
               className="w-full"
             >
               {app.detectedRunning ? "Reinstall with Talome" : "Install"}
             </Button>
+          )}
+          {!isInstalled && !requiresSetup && installBlocked && !liveOperation && (
+            <p className="text-xs text-status-critical text-center break-words" role="alert">
+              {installBlocked}
+            </p>
           )}
           {requiresSetup && (
             <p className="text-xs text-muted-foreground text-center">
@@ -1151,16 +1193,27 @@ export default function AppDetailPage() {
         </section>
       )}
 
+      {/* ── Outcome verification (installed only) ────────── */}
+      <VerificationPanel target="app" id={appId} enabled={isInstalled} />
+
+      {/* ── Last update result + recent operations ─────── */}
+      <OperationActivity lastUpdate={isInstalled ? lastUpdate : null} history={operations.history} />
+
       {/* ── Lifecycle controls (installed only) ────────── */}
       {isInstalled && (
         <section className="grid gap-2">
           <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Controls
           </h2>
+          {liveOperation && (
+            <p className="text-xs text-muted-foreground px-1">
+              Controls are unavailable until the current {OPERATION_KIND_LABELS[liveOperation.kind].toLowerCase()} finishes.
+            </p>
+          )}
           <div className="rounded-xl border border-border divide-y divide-border">
             <button
               onClick={() => runAction("restart")}
-              disabled={!!actionLoading}
+              disabled={actionInFlight}
               className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
             >
               <span>Restart</span>
@@ -1184,7 +1237,7 @@ export default function AppDetailPage() {
                   setCheckingUpdates(false);
                 }
               }}
-              disabled={!!actionLoading || checkingUpdates}
+              disabled={actionInFlight || checkingUpdates}
               className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
             >
               <span>Check for Updates</span>
@@ -1195,7 +1248,7 @@ export default function AppDetailPage() {
             {updateInfo?.hasUpdate && (
               <button
                 onClick={() => runAction("update")}
-                disabled={!!actionLoading}
+                disabled={actionInFlight}
                 className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
               >
                 <span>Update to v{updateInfo.availableVersion}</span>
@@ -1207,7 +1260,7 @@ export default function AppDetailPage() {
             {isRunning ? (
               <button
                 onClick={() => runAction("stop")}
-                disabled={!!actionLoading}
+                disabled={actionInFlight}
                 className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
               >
                 <span>Stop</span>
@@ -1218,7 +1271,7 @@ export default function AppDetailPage() {
             ) : (
               <button
                 onClick={() => runAction("start")}
-                disabled={!!actionLoading}
+                disabled={actionInFlight}
                 className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
               >
                 <span>Start</span>
@@ -1229,7 +1282,7 @@ export default function AppDetailPage() {
             )}
             <button
               onClick={() => runAction("uninstall")}
-              disabled={!!actionLoading}
+              disabled={actionInFlight}
               className="w-full flex justify-between items-center px-4 py-3 text-sm text-destructive hover:bg-destructive/5 transition-colors disabled:opacity-50"
             >
               <span>Uninstall</span>
@@ -1255,6 +1308,16 @@ export default function AppDetailPage() {
           url={externalUrl}
           open={!!externalUrl}
           onOpenChange={(open) => { if (!open) setExternalUrl(null); }}
+        />
+      )}
+      {umbrelDialog && (
+        <UmbrelInstallDialog
+          key={umbrelDialog.version}
+          open
+          onOpenChange={(open) => { if (!open) setUmbrelDialog(null); }}
+          appName={app.name}
+          plan={umbrelDialog.plan}
+          onConfirm={confirmUmbrelInstall}
         />
       )}
       <ImagePreviewDialog

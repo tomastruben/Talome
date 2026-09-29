@@ -12,6 +12,8 @@ export interface AppNotification {
   read: boolean;
   sourceId: string | null;
   createdAt: string;
+  /** Where the notification's action leads (newer cores; optional). */
+  link?: string | null;
 }
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -71,12 +73,69 @@ function formatNotificationTitle(notification: AppNotification): string {
   return title;
 }
 
+export interface NotificationAction {
+  href: string;
+  label: string;
+  /** Absolute http(s) URL — open in a new tab instead of client navigation. */
+  external: boolean;
+}
+
+const APPROVAL_REF = /approval:([A-Za-z0-9_-]{1,128})/;
+
+/** A same-origin path ("/dashboard/…"), never protocol-relative ("//host") or a backslash trick. */
+function isSafeInternalPath(value: string): boolean {
+  return value.startsWith("/") && !value.startsWith("//") && !value.includes("\\");
+}
+
+function isSafeExternalUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The clickable action for a notification: its `link` when the server sent
+ * one, else — for approval notifications written before `link` existed — the
+ * approvals page for the `approval:<id>` reference in its source or text.
+ * Returns null when there is nothing safe to link to.
+ */
+export function getNotificationAction(
+  n: Pick<AppNotification, "title" | "body" | "sourceId"> & { link?: string | null; fullBody?: string },
+): NotificationAction | null {
+  const approvalMatch =
+    APPROVAL_REF.exec(n.sourceId ?? "") ?? APPROVAL_REF.exec(n.title) ?? APPROVAL_REF.exec(n.fullBody ?? n.body ?? "");
+  const approvalLabel = "Review approval";
+
+  const link = typeof n.link === "string" ? n.link.trim() : "";
+  if (link) {
+    if (isSafeInternalPath(link)) {
+      return { href: link, label: link.startsWith("/dashboard/settings/approvals") ? approvalLabel : "Open", external: false };
+    }
+    if (isSafeExternalUrl(link)) return { href: link, label: "Open link", external: true };
+  }
+
+  if (approvalMatch) {
+    return {
+      href: `/dashboard/settings/approvals?id=${encodeURIComponent(approvalMatch[1])}`,
+      label: approvalLabel,
+      external: false,
+    };
+  }
+  return null;
+}
+
 /**
  * Build the navigation target for a notification click.
  * View-only events go to a dashboard page; actionable events go to the
  * assistant with a prompt that explains the situation and asks before acting.
  */
 export function getNotificationRoute(n: AppNotification): string {
+  const action = getNotificationAction(n);
+  if (action && !action.external) return action.href;
+
   const t = n.title.toLowerCase();
   const s = n.sourceId;
 

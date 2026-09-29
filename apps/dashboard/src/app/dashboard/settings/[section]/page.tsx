@@ -32,6 +32,7 @@ import { SecuritySection } from "@/components/settings/sections/security";
 import { UpdatesSection } from "@/components/settings/sections/updates";
 import { ApprovalsSection } from "@/components/settings/sections/approvals";
 import { AuditSection } from "@/components/settings/sections/audit";
+import { DataRetentionSection } from "@/components/settings/sections/data-retention";
 
 import type { ComponentType } from "react";
 
@@ -49,6 +50,7 @@ const SECTIONS: Record<string, SectionDef> = {
   "security":         { component: SecuritySection,        title: "Security", adminOnly: true },
   "approvals":        { component: ApprovalsSection,       title: "Approvals", adminOnly: true },
   "audit":            { component: AuditSection,           title: "Audit Log", adminOnly: true },
+  "data-retention":   { component: DataRetentionSection,   title: "Data Retention", adminOnly: true },
   "ai-prompt":        { component: AiPromptSection,       title: "System Prompt" },
   "ai-memory":        { component: AiMemorySection,       title: "Memory" },
   "connections":      { component: ConnectionsSection,    title: "Media Services" },

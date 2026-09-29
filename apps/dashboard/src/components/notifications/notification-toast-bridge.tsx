@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { useNotifications, type AppNotification } from "@/hooks/use-notifications";
+import { getNotificationAction, useNotifications, type AppNotification } from "@/hooks/use-notifications";
 
 /** Parse **bold** markers into <strong> elements. */
 function renderInlineBold(text: string): ReactNode {
@@ -26,6 +27,7 @@ function renderInlineBold(text: string): ReactNode {
 export function NotificationToastBridge() {
   // The always-mounted bridge is the single notifications poller.
   const { notifications, isMuted } = useNotifications({ poll: true });
+  const router = useRouter();
   const seenIds = useRef<Set<number>>(new Set());
   const initialized = useRef(false);
 
@@ -51,21 +53,32 @@ export function NotificationToastBridge() {
       // Suppress toasts when muted
       if (isMuted) continue;
 
-      showToast(n);
+      showToast(n, (href) => router.push(href));
     }
-  }, [notifications, isMuted]);
+  }, [notifications, isMuted, router]);
 
   return null;
 }
 
-function showToast(n: AppNotification) {
+function showToast(n: AppNotification & { fullBody?: string }, navigate: (href: string) => void) {
   const body = n.body ? renderInlineBold(n.body) : undefined;
+  const link = getNotificationAction(n);
+  const action = link
+    ? {
+        label: link.label,
+        onClick: () => {
+          if (link.external) window.open(link.href, "_blank", "noopener,noreferrer");
+          else navigate(link.href);
+        },
+      }
+    : undefined;
 
   switch (n.type) {
     case "critical":
       toast.error(n.title, {
         description: body,
         duration: Infinity,
+        action,
       });
       break;
 
@@ -73,6 +86,7 @@ function showToast(n: AppNotification) {
       toast.warning(n.title, {
         description: body,
         duration: 8000,
+        action,
       });
       break;
 

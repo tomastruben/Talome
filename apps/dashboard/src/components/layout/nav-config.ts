@@ -11,6 +11,8 @@ import {
   Bug01Icon,
   ComputerTerminal01Icon,
   Settings01Icon,
+  ArchiveIcon,
+  SecurityCheckIcon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import type { FeaturePermission } from "@talome/types";
@@ -44,6 +46,7 @@ export const contentNav: NavItem[] = [
 /** Operations — managing what runs */
 export const operationsNav: NavItem[] = [
   { title: "Automations", url: "/dashboard/automations", icon: FlashIcon, permission: "automations" },
+  { title: "Backups", url: "/dashboard/backups", icon: ArchiveIcon, permission: "apps" },
   { title: "Intelligence", url: "/dashboard/intelligence", icon: AiMagicIcon },
   { title: "Bug Hunt", url: "/dashboard/bug-hunt", icon: Bug01Icon, adminOnly: true, action: "bug-hunt" },
 ];
@@ -53,5 +56,13 @@ export const systemNav: NavItem[] = [
   { title: "Terminal", url: "/dashboard/terminal", icon: ComputerTerminal01Icon, adminOnly: true },
   { title: "Settings", url: "/dashboard/settings", icon: Settings01Icon },
 ];
+
+/** Shown in the sidebar only while agent actions wait for an admin's decision. */
+export const approvalsNavItem: NavItem = {
+  title: "Approvals",
+  url: "/dashboard/settings/approvals",
+  icon: SecurityCheckIcon,
+  adminOnly: true,
+};
 
 export const allNav: NavItem[] = [...startNav, ...contentNav, ...operationsNav, ...systemNav];

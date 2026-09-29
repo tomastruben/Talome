@@ -55,6 +55,7 @@ const STAGE_LABELS: Record<string, string> = {
   resuming: "Starting app",
   validating: "Checking archive",
   uploading: "Copying to destination",
+  verifying: "Verifying backup",
   checking: "Checking backup",
   "safety-backup": "Saving current data",
   stopping: "Stopping app",

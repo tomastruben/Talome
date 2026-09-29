@@ -233,19 +233,25 @@ interface ChatRequestBody {
  * Builds the chat transport together with the per-request body it sends.
  * The body lives in this closure (not a React ref) so it can be read lazily
  * at request time — including automatic resends — while effects keep it in
- * sync with the selected model/provider.
+ * sync with the selected model/provider. `getConversationId` is also read at
+ * request time so the server can key its per-conversation caches.
  */
 function createChatRequest(initial: ChatRequestBody) {
   let body: ChatRequestBody = { ...initial };
+  let conversationId: string | null = null;
   const transport = new DefaultChatTransport({
     api: `${getDirectCoreUrl()}/api/chat`,
     credentials: "include",
-    body: () => ({ ...body }),
+    body: () => (conversationId ? { ...body, conversationId } : { ...body }),
   });
   return {
     transport,
     update(patch: Partial<ChatRequestBody>) {
       body = { ...body, ...patch };
+    },
+    /** Set synchronously wherever the active conversation changes (before any send). */
+    setConversationId(id: string | null) {
+      conversationId = id;
     },
   };
 }
@@ -293,7 +299,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     activeIdRef.current = activeId;
-  }, [activeId]);
+    chatRequest.setConversationId(activeId);
+  }, [activeId, chatRequest]);
 
   useEffect(() => {
     chatRequest.update({ model });
@@ -486,10 +493,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       const conv: ConversationItem = await res.json();
       setActiveIdState(conv.id);
       activeIdRef.current = conv.id;
+      chatRequest.setConversationId(conv.id);
       mutate(`${CORE_URL}/api/conversations`);
       return conv.id;
     },
-    []
+    [chatRequest]
   );
 
   const handleSubmit = useCallback(
@@ -538,8 +546,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     (id: string | null) => {
       setActiveIdState(id);
       activeIdRef.current = id;
+      chatRequest.setConversationId(id);
     },
-    []
+    [chatRequest]
   );
 
   const startNew = useCallback(() => {

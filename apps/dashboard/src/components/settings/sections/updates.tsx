@@ -14,6 +14,7 @@ import {
 import { toast } from "sonner";
 import { SettingsGroup, ToggleRow } from "@/components/settings/settings-primitives";
 import { useAvailableUpdates, type AppUpdateInfo } from "@/hooks/use-available-updates";
+import { describeUpdateResponse } from "@/lib/app-operations";
 
 interface UpdatePolicy {
   app_id: string;
@@ -40,8 +41,13 @@ function UpdateRow({ app, onUpdated }: { app: AppUpdateInfo; onUpdated: () => vo
         method: "POST",
         credentials: "include",
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Update failed");
-      toast.success(`${app.name} updated to v${app.availableVersion}`);
+      const body: unknown = await res.json().catch(() => null);
+      // Success, verified-or-not, rolled back (with reason) or busy (409).
+      const outcome = describeUpdateResponse(app.name, res.status, body);
+      const options = outcome.description ? { description: outcome.description } : undefined;
+      if (outcome.kind === "success") toast.success(`${app.name} updated to v${app.availableVersion}`);
+      else if (outcome.kind === "warning") toast.warning(outcome.title, options);
+      else toast.error(outcome.title, options);
       onUpdated();
     } catch (err) {
       toast.error(`Failed to update ${app.name}`, {
@@ -137,13 +143,16 @@ export function UpdatesSection() {
     setUpdatingAll(true);
     let succeeded = 0;
     let failed = 0;
+    const rolledBack: string[] = [];
     for (const app of appsWithUpdates) {
       try {
         const res = await fetch(`${CORE_URL}/api/apps/${app.storeId}/${app.appId}/update`, {
           method: "POST",
           credentials: "include",
         });
+        const body: unknown = await res.json().catch(() => null);
         if (res.ok) succeeded++;
+        else if (body && typeof body === "object" && (body as { rolledBack?: unknown }).rolledBack === true) rolledBack.push(app.name);
         else failed++;
       } catch {
         failed++;
@@ -152,10 +161,15 @@ export function UpdatesSection() {
     setUpdatingAll(false);
     refresh();
     mutateAll();
-    if (failed === 0) {
+    if (failed === 0 && rolledBack.length === 0) {
       toast.success(`Updated ${succeeded} app${succeeded !== 1 ? "s" : ""}`);
     } else {
-      toast.warning(`Updated ${succeeded}, failed ${failed}`);
+      const parts = [`Updated ${succeeded}`];
+      if (rolledBack.length > 0) parts.push(`rolled back ${rolledBack.length}`);
+      if (failed > 0) parts.push(`failed ${failed}`);
+      toast.warning(parts.join(", "), {
+        description: rolledBack.length > 0 ? `Kept the previous version of ${rolledBack.join(", ")}.` : undefined,
+      });
     }
   }
 
