@@ -11,6 +11,8 @@ import {
   stopCaddy,
 } from "../proxy/caddy.js";
 import { connectContainerToProxyNetwork } from "../proxy/network.js";
+import { resolveAppTlsMode } from "../proxy/https-policy.js";
+import { appRequiresHttps } from "../stores/umbrel-v2-install.js";
 
 export const proxy = new Hono();
 
@@ -117,12 +119,18 @@ proxy.post("/apply-domain", async (c) => {
   if (!body.success) return c.json({ error: body.error.flatten() }, 400);
 
   const { baseDomain, tlsMode } = body.data;
-  const isLocal = baseDomain.endsWith(".local") || baseDomain.endsWith(".lan") || baseDomain.endsWith(".home");
-  const effectiveTls = isLocal ? "selfsigned" : tlsMode;
 
   // Get existing app routes to avoid duplicates
-  const existingRoutes = db.all(sql`SELECT app_id FROM proxy_routes WHERE app_id IS NOT NULL`) as { app_id: string }[];
+  const existingRoutes = db.all(sql`SELECT id, app_id, tls_mode FROM proxy_routes WHERE app_id IS NOT NULL`) as { id: string; app_id: string; tls_mode: string }[];
   const existingAppIds = new Set(existingRoutes.map((r) => r.app_id));
+
+  // Existing HTTP-only routes of apps that require HTTPS are switched to TLS.
+  let upgraded = 0;
+  for (const route of existingRoutes) {
+    if (route.tls_mode !== "off" || !appRequiresHttps(route.app_id)) continue;
+    db.run(sql`UPDATE proxy_routes SET tls_mode = ${resolveAppTlsMode(baseDomain, "off", true)} WHERE id = ${route.id}`);
+    upgraded++;
+  }
 
   // Collect all apps: { appId, port }
   const appPorts = new Map<string, number>();
@@ -165,6 +173,8 @@ proxy.post("/apply-domain", async (c) => {
     const upstream = `http://${appId}:${port}`;
     const id = randomUUID();
 
+    // Local domains use the internal CA; apps that require HTTPS never get an HTTP-only route.
+    const effectiveTls = resolveAppTlsMode(baseDomain, tlsMode, appRequiresHttps(appId));
     db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId}, ${domain}, ${upstream}, ${effectiveTls}, ${now})`);
 
     try {
@@ -176,7 +186,7 @@ proxy.post("/apply-domain", async (c) => {
     created.push(domain);
   }
 
-  if (created.length > 0) {
+  if (created.length > 0 || upgraded > 0) {
     await ensureCaddyRunning();
     await writeCaddyfileAndReload();
   }

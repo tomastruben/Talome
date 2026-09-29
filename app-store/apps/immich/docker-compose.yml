@@ -7,8 +7,9 @@
 #   reaches them by those names — generic "redis"/"database" aliases would
 #   collide with other apps on the shared network.
 # - Server and machine-learning must run the same release; bump both together.
-# - DB_PASSWORD has no default on purpose: it is generated per install and
-#   passed as an install env value (the install is refused without it).
+# - DB_PASSWORD has no default on purpose: Talome generates it for each
+#   install (manifest env "generate": "alnum32") and writes it to the app's
+#   .env; a reinstall reuses it so the kept ./postgres cluster still opens.
 # - ./library is the upload library (mounted at /data since Immich 1.133);
 #   map it to a drive with room for the whole camera roll.
 # - ./postgres must stay on a local disk — Postgres on SMB/NFS shares is not

@@ -41,6 +41,7 @@ import { runMigrations } from "../db/migrate.js";
 import { setSetting } from "../utils/settings.js";
 import { autoRegisterProxyRoute } from "../proxy/caddy.js";
 import { createProxyRoutesForApps } from "../proxy/local-domains.js";
+import { proxy } from "../routes/proxy.js";
 import { requiresHttpsInstallWarning, resolveAppTlsMode } from "../proxy/https-policy.js";
 import { applyUmbrelV2Install, getInstallAccessWarnings } from "../stores/umbrel-v2-install.js";
 import { REQUIRES_HTTPS_WARNING } from "../stores/umbrel-v2.js";
@@ -178,9 +179,42 @@ describe("install warnings when no TLS path exists", () => {
     setSetting("proxy_enabled", "false");
     expect(getInstallAccessWarnings("plain-app")).toEqual([]);
     expect(requiresHttpsInstallWarning("x", "X", { webPort: 1, requiresHttps: false })).toBeNull();
+    enableProxy("example.com", "auto");
     db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at)
       VALUES ('r3', 'secure-app', 'photos.example.com', 'secure-app:8443', 'auto', ${new Date().toISOString()})`);
     expect(getInstallAccessWarnings("secure-app")).toEqual([]);
+  });
+
+  it("warns when a TLS route exists but the reverse proxy is off (the route is not served)", () => {
+    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at)
+      VALUES ('r4', 'secure-app', 'photos.example.com', 'secure-app:8443', 'selfsigned', ${new Date().toISOString()})`);
+    expect(getInstallAccessWarnings("secure-app")[0]).toMatch(/reverse proxy is not enabled/);
+  });
+
+  it("warns about a disabled route, which auto-registration leaves disabled", async () => {
+    enableProxy("example.com", "auto");
+    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, enabled, created_at)
+      VALUES ('r5', 'secure-app', 'photos.example.com', 'secure-app:8443', 'selfsigned', 0, ${new Date().toISOString()})`);
+    const warnings = getInstallAccessWarnings("secure-app");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/route \(photos\.example\.com\) is disabled/);
+
+    expect(await autoRegisterProxyRoute("secure-app", "Secure App", 8443)).toMatchObject({ registered: false, reason: "exists" });
+    expect(db.get(sql`SELECT enabled FROM proxy_routes WHERE id = 'r5'`)).toEqual({ enabled: 0 });
+    expect(getInstallAccessWarnings("secure-app")).toHaveLength(1);
+  });
+
+  it("prefers the app's enabled route over a disabled one", async () => {
+    enableProxy("example.com", "off");
+    const now = new Date().toISOString();
+    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, enabled, created_at)
+      VALUES ('r6', 'secure-app', 'old.example.com', 'secure-app:8443', 'off', 0, ${now})`);
+    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, enabled, created_at)
+      VALUES ('r7', 'secure-app', 'photos.example.com', 'secure-app:8443', 'off', 1, ${now})`);
+    expect(getInstallAccessWarnings("secure-app")).toEqual([]);
+    const result = await autoRegisterProxyRoute("secure-app", "Secure App", 8443);
+    expect(result).toMatchObject({ upgraded: true, domain: "photos.example.com", tlsMode: "selfsigned" });
+    expect(db.get(sql`SELECT tls_mode FROM proxy_routes WHERE id = 'r7'`)).toEqual({ tls_mode: "selfsigned" });
   });
 
   it("replaces the generic HTTPS note in the Umbrel install plan", () => {
@@ -195,5 +229,28 @@ describe("install warnings when no TLS path exists", () => {
     const on = applyUmbrelV2Install(row, "secure-new", COMPOSE, {});
     if (!on.ok || !on.plan) throw new Error("expected a plan");
     expect(on.plan.warnings).toContain(REQUIRES_HTTPS_WARNING);
+  });
+});
+
+describe("POST /api/proxy/apply-domain", () => {
+  const apply = (body: Record<string, unknown>) =>
+    proxy.request("/apply-domain", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("never creates HTTP-only routes for requiresHttps apps on a public domain", async () => {
+    const res = await apply({ baseDomain: "example.com", tlsMode: "off" });
+    expect(res.status).toBe(200);
+    expect(routeFor("secure-app")?.tls_mode).toBe("selfsigned");
+    expect(routeFor("plain-app")?.tls_mode).toBe("off");
+  });
+
+  it("upgrades an existing HTTP-only route of a requiresHttps app", async () => {
+    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at)
+      VALUES ('r8', 'secure-app', 'photos.example.com', 'secure-app:8443', 'off', ${new Date().toISOString()})`);
+    await apply({ baseDomain: "example.com", tlsMode: "off" });
+    expect(db.get(sql`SELECT tls_mode FROM proxy_routes WHERE id = 'r8'`)).toEqual({ tls_mode: "selfsigned" });
   });
 });

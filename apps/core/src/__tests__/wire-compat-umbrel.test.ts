@@ -65,6 +65,11 @@ vi.mock("../app-registry/auto-configure.js", () => ({
 }));
 vi.mock("../automation/engine.js", () => ({ fireTrigger: vi.fn(async () => {}) }));
 
+vi.mock("../backup/store.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../backup/store.js")>();
+  return { ...actual, setAppBackupConfig: vi.fn(actual.setAppBackupConfig) };
+});
+
 vi.mock("../stores/compose-exec.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../stores/compose-exec.js")>()),
   run: vi.fn(async () => ({ stdout: "", stderr: "" })),
@@ -79,11 +84,20 @@ import { fileURLToPath } from "node:url";
 import { eq, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
-import { CATALOG_PARSER_VERSION, initializeStores, removeStore, replaceStoreCatalog, syncStore } from "../stores/sync.js";
-import { installApp } from "../stores/lifecycle.js";
+import {
+  CATALOG_PARSER_VERSION,
+  initializeStores,
+  isStoreCatalogCurrent,
+  removeStore,
+  replaceStoreCatalog,
+  syncStore,
+} from "../stores/sync.js";
+import { installApp, uninstallApp } from "../stores/lifecycle.js";
+import { validateCompose } from "../stores/compose-exec.js";
 import {
   backfillUmbrelBackupIgnore,
   mergeAppBackupIgnore,
+  UMBREL_BACKUP_IGNORE_ADDED_PREFIX,
   UMBREL_BACKUP_IGNORE_BACKFILL_KEY,
 } from "../stores/umbrel-v2-install.js";
 import { getAppBackupConfig, setAppBackupConfig } from "../backup/store.js";
@@ -92,6 +106,7 @@ import { onCatalogChanged } from "../stores/catalog-events.js";
 import { checkDependenciesTool } from "../ai/tools/app-tools.js";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "umbrel-apps");
+const APP_STORE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "app-store");
 const STORE = "fx";
 const OTHER_STORE = "fx-copy";
 
@@ -167,13 +182,13 @@ describe("one-time backfill for already-installed Umbrel apps", () => {
     setAppBackupConfig("immich", { excludePatterns: ["keep/me"] });
 
     const first = backfillUmbrelBackupIgnore();
-    expect(first).toEqual({ ran: true, updated: ["immich"] });
+    expect(first).toEqual({ ran: true, updated: ["immich"], pending: [] });
     expect(getAppBackupConfig("immich").excludePatterns).toEqual(["keep/me", "data/model-cache/*"]);
     expect(getSetting(UMBREL_BACKUP_IGNORE_BACKFILL_KEY)).toBeTruthy();
 
     // User deliberately drops the Umbrel pattern — the guarded backfill leaves it alone.
     setAppBackupConfig("immich", { excludePatterns: ["keep/me"] });
-    expect(backfillUmbrelBackupIgnore()).toEqual({ ran: false, updated: [] });
+    expect(backfillUmbrelBackupIgnore()).toEqual({ ran: false, updated: [], pending: [] });
     expect(getAppBackupConfig("immich").excludePatterns).toEqual(["keep/me"]);
   });
 
@@ -270,5 +285,82 @@ describe("check_dependencies resolves Umbrel implements like install_app", () =>
   it("keeps working for non-Umbrel apps and unknown apps", async () => {
     const unknown = await check({ appId: "does-not-exist", storeId: STORE });
     expect(unknown.satisfied).toBe(true);
+  });
+});
+
+function resetImmichBackupConfig(): void {
+  db.run(sql`DELETE FROM app_backup_configs WHERE app_id = 'immich'`);
+  db.delete(schema.settings).where(eq(schema.settings.key, `${UMBREL_BACKUP_IGNORE_ADDED_PREFIX}immich`)).run();
+}
+
+describe("backfill retries instead of marking itself done", () => {
+  it("leaves the marker unset when a merge fails, then completes on the next run", () => {
+    clearMarker();
+    resetImmichBackupConfig();
+    vi.mocked(setAppBackupConfig).mockImplementationOnce(() => {
+      throw new Error("SQLITE_BUSY: database is locked");
+    });
+    expect(backfillUmbrelBackupIgnore()).toEqual({ ran: true, updated: [], pending: ["immich"] });
+    expect(getSetting(UMBREL_BACKUP_IGNORE_BACKFILL_KEY)).toBeUndefined();
+
+    expect(backfillUmbrelBackupIgnore()).toEqual({ ran: true, updated: ["immich"], pending: [] });
+    expect(getSetting(UMBREL_BACKUP_IGNORE_BACKFILL_KEY)).toBeTruthy();
+  });
+
+  it("waits for a store whose catalog is not current (e.g. disabled, older parser)", () => {
+    clearMarker();
+    resetImmichBackupConfig();
+    const result = backfillUmbrelBackupIgnore({ isCatalogCurrent: (id) => id !== STORE });
+    expect(result.pending).toContain("immich");
+    expect(getAppBackupConfig("immich").excludePatterns).toEqual([]);
+    expect(getSetting(UMBREL_BACKUP_IGNORE_BACKFILL_KEY)).toBeUndefined();
+  });
+
+  it("isStoreCatalogCurrent: enabled stores and current parses are current, stale disabled ones are not", () => {
+    expect(isStoreCatalogCurrent(STORE)).toBe(true); // enabled
+    expect(isStoreCatalogCurrent("no-such-store")).toBe(true); // removed: nothing to wait for
+    db.insert(schema.storeSources)
+      .values({ id: "stale-off", name: "Stale", type: "umbrel", branch: "main", localPath: FIXTURES, enabled: false, appCount: 1, lastParsedRev: "abc:umbrel:v1" })
+      .run();
+    expect(isStoreCatalogCurrent("stale-off")).toBe(false);
+    db.update(schema.storeSources)
+      .set({ lastParsedRev: `abc:umbrel:v${CATALOG_PARSER_VERSION}` })
+      .where(eq(schema.storeSources.id, "stale-off"))
+      .run();
+    expect(isStoreCatalogCurrent("stale-off")).toBe(true);
+    removeStore("stale-off");
+  });
+});
+
+describe("backupIgnore follows the install outcome", () => {
+  it("a failed Umbrel install leaves no backup config behind", async () => {
+    expect((await uninstallApp("immich")).success).toBe(true);
+    resetImmichBackupConfig();
+    vi.mocked(validateCompose).mockResolvedValueOnce({ valid: false, error: "services.immich: invalid" });
+    const failed = await installApp("immich", STORE, {}, {});
+    expect(failed.success).toBe(false);
+    expect(db.all(sql`SELECT app_id FROM app_backup_configs WHERE app_id = 'immich'`)).toEqual([]);
+    expect(getSetting(`${UMBREL_BACKUP_IGNORE_ADDED_PREFIX}immich`)).toBeUndefined();
+  });
+
+  it("a successful Umbrel install merges and remembers what it added", async () => {
+    setAppBackupConfig("immich", { excludePatterns: ["user/keep"] });
+    const result = await installApp("immich", STORE, {}, {});
+    expect(result.success).toBe(true);
+    expect(getAppBackupConfig("immich").excludePatterns).toEqual(["user/keep", "data/model-cache/*"]);
+    expect(JSON.parse(getSetting(`${UMBREL_BACKUP_IGNORE_ADDED_PREFIX}immich`) ?? "[]")).toEqual(["data/model-cache/*"]);
+  });
+
+  it("installing the same app id from a non-Umbrel store drops only the Umbrel patterns", async () => {
+    expect((await uninstallApp("immich")).success).toBe(true);
+    db.insert(schema.storeSources)
+      .values({ id: "talome-fx", name: "Talome app store", type: "talome", branch: "main", localPath: APP_STORE, enabled: false, appCount: 0 })
+      .run();
+    expect((await syncStore("talome-fx")).success).toBe(true);
+
+    const result = await installApp("immich", "talome-fx", {}, {});
+    expect(result.success).toBe(true);
+    expect(getAppBackupConfig("immich").excludePatterns).toEqual(["user/keep"]);
+    expect(JSON.parse(getSetting(`${UMBREL_BACKUP_IGNORE_ADDED_PREFIX}immich`) ?? "[]")).toEqual([]);
   });
 });

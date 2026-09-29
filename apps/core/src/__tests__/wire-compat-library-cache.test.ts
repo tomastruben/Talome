@@ -21,6 +21,7 @@ vi.mock("../utils/settings.js", () => ({ getSetting: (k: string) => settings.val
 import { getOrBuildLibrary, invalidateLibraryCache } from "../media/library-cache.js";
 import { arrGetStatusTool, arrRunCommandTool, arrSetMonitoringTool, prowlarrManageIndexersTool } from "../ai/tools/arr-tools.js";
 import { requestMediaTool } from "../ai/tools/media-tools.js";
+import { appApiCallTool } from "../ai/tools/universal-tools.js";
 
 type Handler = (url: string, init?: RequestInit) => unknown;
 
@@ -142,5 +143,37 @@ describe("request_media invalidates the library after adding", () => {
     await expect((requestMediaTool.execute as Function)({ type: "tv", tvdbId: 1, title: "Show", qualityTier: "standard" }, {})).rejects.toThrow();
     await readLibrary();
     expect(builds).toBe(1);
+  });
+});
+
+describe("app_api_call invalidates the library after Sonarr/Radarr mutations", () => {
+  const call = (input: Record<string, unknown>) =>
+    (appApiCallTool.execute as Function)({ timeoutMs: 1000, ...input }, {}) as Promise<{ success: boolean }>;
+
+  it("DELETE /api/v3/series/{id} on Sonarr drops the cache", async () => {
+    await readLibrary();
+    routes = () => ({});
+    const result = await call({ appId: "sonarr", method: "DELETE", path: "/api/v3/series/12" });
+    expect(result.success).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toContain("sonarr.test/api/v3/series/12");
+    await readLibrary();
+    expect(builds).toBe(2);
+  });
+
+  it("a Radarr PUT drops the cache; reads, failures and other apps do not", async () => {
+    await readLibrary();
+    routes = () => ({ id: 7 });
+    await call({ appId: "Radarr", method: "PUT", path: "/api/v3/movie/7", body: { monitored: false } });
+    await readLibrary();
+    expect(builds).toBe(2);
+
+    await call({ appId: "sonarr", method: "GET", path: "/api/v3/series" });
+    routes = () => new Response("nope", { status: 500 });
+    const failed = await call({ appId: "sonarr", method: "DELETE", path: "/api/v3/series/1" });
+    expect(failed.success).toBe(false);
+    routes = () => ({});
+    await call({ appId: "prowlarr", method: "DELETE", path: "/api/v1/indexer/4" });
+    await readLibrary();
+    expect(builds).toBe(2);
   });
 });

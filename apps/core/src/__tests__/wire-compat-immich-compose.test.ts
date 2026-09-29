@@ -48,7 +48,7 @@ const manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf-8")) as {
   image: string;
   category: string;
   ports: Array<{ host: number; container: number }>;
-  env: Array<{ key: string; required?: boolean; secret?: boolean; default?: string }>;
+  env: Array<{ key: string; required?: boolean; secret?: boolean; default?: string; generate?: string }>;
   volumes: Array<{ name: string; containerPath: string; mediaVolume?: boolean }>;
 };
 
@@ -152,9 +152,9 @@ describe("app-store Immich manifest", () => {
     expect(manifest.volumes.find((v) => v.containerPath === "/data")).toMatchObject({ name: "library", mediaVolume: true });
   });
 
-  it("requires a secret DB password with no default", () => {
+  it("has Talome generate a secret DB password (no default, not asked from the installer)", () => {
     const pw = manifest.env.find((e) => e.key === "DB_PASSWORD");
-    expect(pw).toMatchObject({ required: true, secret: true });
+    expect(pw).toMatchObject({ required: false, secret: true, generate: "alnum32" });
     expect(pw?.default).toBeUndefined();
   });
 
@@ -162,8 +162,8 @@ describe("app-store Immich manifest", () => {
     const apps = talomeAdapter.parse(APP_STORE, "talome-test");
     const immich = apps.find((a) => a.id === "immich");
     expect(immich).toMatchObject({ version: "3.2.4", webPort: 2283, source: "talome", category: "media" });
-    expect(immich?.env.find((e) => e.key === "DB_PASSWORD")).toMatchObject({ required: true, secret: true });
-    expect(immich?.installNotes).toMatch(/random/);
+    expect(immich?.env.find((e) => e.key === "DB_PASSWORD")).toMatchObject({ required: false, secret: true });
+    expect(immich?.installNotes).toMatch(/generates the internal database password/);
   });
 });
 

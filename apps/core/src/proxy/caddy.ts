@@ -216,9 +216,11 @@ export async function autoRegisterProxyRoute(appId: string, appName: string, por
   const tlsMode = resolveAppTlsMode(baseDomain, getSetting("proxy_default_tls"), requiresHttps);
 
   // Check if route already exists
-  const existing = db.get(sql`SELECT id, domain, tls_mode FROM proxy_routes WHERE app_id = ${appId}`) as
-    | { id: string; domain: string; tls_mode: ProxyTlsMode }
-    | undefined;
+  // An enabled route first — the same lookup the install HTTPS warning uses
+  // (proxy/https-policy.ts). A route the user disabled is left disabled.
+  const existing = db.get(
+    sql`SELECT id, domain, tls_mode FROM proxy_routes WHERE app_id = ${appId} ORDER BY enabled DESC LIMIT 1`,
+  ) as { id: string; domain: string; tls_mode: ProxyTlsMode } | undefined;
   if (existing) {
     if (!requiresHttps || existing.tls_mode !== "off") {
       return { registered: false, reason: "exists", domain: existing.domain, tlsMode: existing.tls_mode };

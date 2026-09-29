@@ -7,7 +7,7 @@ import { db, schema } from "../db/index.js";
 import { eq, sql } from "drizzle-orm";
 import { detectStoreType, getAdapter, type StoreAdapter } from "./adapters/index.js";
 import { notifyCatalogChanged } from "./catalog-events.js";
-import { backfillUmbrelBackupIgnore } from "./umbrel-v2-install.js";
+import { backfillUmbrelBackupIgnore, watchInstallsForBackupIgnore } from "./umbrel-v2-install.js";
 import type { AppManifest, StoreSource, StoreType } from "@talome/types";
 
 const exec = promisify(execCb);
@@ -462,6 +462,9 @@ function isForcedBootSync(): boolean {
 }
 
 export function initializeStores(options: { force?: boolean } = {}): void {
+  // Umbrel backupIgnore merges settle when install operations finish.
+  watchInstallsForBackupIgnore();
+
   // One-time cleanup for legacy local built-in store rows.
   const legacyBuiltinStores = db
     .select()
@@ -524,6 +527,17 @@ export function initializeStores(options: { force?: boolean } = {}): void {
  */
 function scheduleCatalogBackfills(): void {
   setImmediate(() => {
-    backfillUmbrelBackupIgnore();
+    backfillUmbrelBackupIgnore({ isCatalogCurrent: isStoreCatalogCurrent });
   });
+}
+
+/**
+ * Enabled stores were just synced (or verified fresh) by initializeStores;
+ * a disabled store's catalog is only current when its last parse used the
+ * current parser. A removed store has nothing left to wait for.
+ */
+export function isStoreCatalogCurrent(storeSourceId: string): boolean {
+  const source = db.select().from(schema.storeSources).where(eq(schema.storeSources.id, storeSourceId)).get();
+  if (!source) return true;
+  return source.enabled || !!source.lastParsedRev?.endsWith(`:v${CATALOG_PARSER_VERSION}`);
 }

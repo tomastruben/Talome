@@ -45,21 +45,27 @@ export function resolveAppTlsMode(
 
 export type AppHttpsRoute =
   | { available: true; domain: string; tlsMode: ProxyTlsMode }
-  | { available: false; reason: "proxy-disabled" | "no-web-port" };
+  | { available: false; reason: "proxy-disabled" | "no-web-port" | "route-disabled"; domain?: string };
 
 /**
  * Where an app is (or will be, once auto-registration runs) served over TLS
  * by Talome's reverse proxy. Reads settings and existing routes only.
+ *
+ * Mirrors autoRegisterProxyRoute: routes are only served while the proxy is
+ * enabled; any existing route for the app (enabled or not) blocks a new one,
+ * and only an HTTP-only enabled route is upgraded — a route the user disabled
+ * stays disabled, so the app has no TLS route.
  */
 export function getAppHttpsRoute(appId: string, opts: { webPort: number | null | undefined; requiresHttps: boolean }): AppHttpsRoute {
+  const baseDomain = getSetting("proxy_base_domain")?.trim();
+  if (getSetting("proxy_enabled") !== "true" || !baseDomain) return { available: false, reason: "proxy-disabled" };
+
   const existing = readAppRoute(appId);
+  if (existing && !existing.enabled) return { available: false, reason: "route-disabled", domain: existing.domain };
   if (existing && existing.tls_mode !== "off") {
     return { available: true, domain: existing.domain, tlsMode: existing.tls_mode };
   }
-
-  const baseDomain = getSetting("proxy_base_domain")?.trim();
-  if (getSetting("proxy_enabled") !== "true" || !baseDomain) return { available: false, reason: "proxy-disabled" };
-  if (!opts.webPort) return { available: false, reason: "no-web-port" };
+  if (!existing && !opts.webPort) return { available: false, reason: "no-web-port" };
 
   // Auto-registration upgrades an existing HTTP-only route for such apps.
   const tlsMode = resolveAppTlsMode(baseDomain, getSetting("proxy_default_tls"), opts.requiresHttps);
@@ -80,6 +86,9 @@ export function requiresHttpsInstallWarning(
   if (!opts.requiresHttps) return null;
   const route = getAppHttpsRoute(appId, opts);
   if (route.available) return null;
+  if (route.reason === "route-disabled") {
+    return `${appName} requires HTTPS, but its reverse-proxy route (${route.domain ?? appId}) is disabled, so it is only reachable over plain HTTP and may not work. Re-enable the route in Settings → Networking to serve it over HTTPS.`;
+  }
   if (route.reason === "no-web-port") {
     return `${appName} requires HTTPS, but it has no web port Talome's reverse proxy can serve over TLS, so it is only reachable over plain HTTP and may not work.`;
   }
@@ -90,11 +99,15 @@ export function requiresHttpsInstallWarning(
 interface AppRouteRow {
   domain: string;
   tls_mode: ProxyTlsMode;
+  enabled: number;
 }
 
+/** The app's route — an enabled one first. Same lookup rule as autoRegisterProxyRoute (any route blocks a new one). */
 function readAppRoute(appId: string): AppRouteRow | undefined {
   try {
-    return db.get(sql`SELECT domain, tls_mode FROM proxy_routes WHERE app_id = ${appId} AND enabled = 1 LIMIT 1`) as AppRouteRow | undefined;
+    return db.get(
+      sql`SELECT domain, tls_mode, enabled FROM proxy_routes WHERE app_id = ${appId} ORDER BY enabled DESC LIMIT 1`,
+    ) as AppRouteRow | undefined;
   } catch {
     return undefined;
   }
