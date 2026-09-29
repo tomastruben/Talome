@@ -109,6 +109,36 @@ describe("restore rollback", () => {
   });
 });
 
+describe("restore in place", () => {
+  it("keeps nested excluded paths (Umbrel backupIgnore) when a volume is restored in place", async () => {
+    const { setAppBackupConfig } = await import("../backup/store.js");
+    const { appDir } = await installFakeApp(env.root, "inplaceexcl", TWO_VOLUMES, {
+      "config/app.conf": "version=1",
+      "data/items.json": "[1]",
+      "data/cache/thumb-1.jpg": "thumb 1",
+    });
+    setAppBackupConfig("inplaceexcl", { excludePatterns: ["data/cache/*"] });
+    resetDocker([{ id: "ie", name: "inplaceexcl", service: "app", image: "example/app:1.0" }]);
+    const backup = await createAppBackup("inplaceexcl");
+    if (!backup.success) throw new Error(backup.error);
+    write(join(appDir, "data/items.json"), "[1,2]");
+    write(join(appDir, "data/new.txt"), "created later");
+    write(join(appDir, "data/cache/thumb-2.jpg"), "thumb 2");
+    write(join(appDir, "data/later/deep/file.txt"), "later");
+    const dataDir = join(appDir, "data");
+    fsHooks.failRename = (from) => from === dataDir; // ./data is a mount point
+
+    const r = await restoreAppBackup(backup.backupId, { ...FAST, skipSafetyBackup: true });
+    expect(r.success ? "" : r.error).toBe("");
+    expect(readFileSync(join(dataDir, "items.json"), "utf-8")).toBe("[1]");
+    expect(existsSync(join(dataDir, "new.txt"))).toBe(false);
+    expect(existsSync(join(dataDir, "later"))).toBe(false);
+    // excluded content was never in the backup — it must survive the restore
+    expect(readFileSync(join(dataDir, "cache/thumb-1.jpg"), "utf-8")).toBe("thumb 1");
+    expect(readFileSync(join(dataDir, "cache/thumb-2.jpg"), "utf-8")).toBe("thumb 2");
+  });
+});
+
 describe("restore commit", () => {
   it("records the restore as committed before deleting the previous data", async () => {
     const { appDir, backup } = await prepare("commitfirst");

@@ -244,6 +244,31 @@ async function carryOverExcluded(
 }
 
 /**
+ * Empty a volume that is restored in place (it cannot be swapped), keeping
+ * what the backup did not capture — excluded paths at any depth (e.g. an
+ * Umbrel backupIgnore "data/cache/*") and paths unreadable at backup time —
+ * exactly like the swap path carries them over.
+ */
+async function clearForInPlaceRestore(root: string, matcher: ExcludeMatcher, ctx: AppContext, unreadable: string[], rel = ""): Promise<void> {
+  for (const name of await readdir(rel ? join(root, rel) : root)) {
+    const childRel = rel ? `${rel}/${name}` : name;
+    const abs = join(root, childRel);
+    const st = await lstat(abs);
+    const isDir = st.isDirectory();
+    if (matcher(childRel, isDir, appRelative(ctx, abs))) continue;
+    // Never delete what the backup could not capture
+    if (unreadable.includes(childRel)) continue;
+    const mayKeepInside = isDir && (matcher.patterns.length > 0 || unreadable.some((u) => u.startsWith(`${childRel}/`)));
+    if (!mayKeepInside) {
+      await rm(abs, { recursive: true, force: true });
+      continue;
+    }
+    await clearForInPlaceRestore(root, matcher, ctx, unreadable, childRel);
+    if ((await readdir(abs)).length === 0) await rm(abs, { recursive: true, force: true });
+  }
+}
+
+/**
  * Put previous data back. With `keepFailed`, the restored data is moved aside
  * instead of deleted (used by crash recovery, where the list of carried-over
  * paths may be incomplete) and the kept paths are reported in `keptAside`.
@@ -628,14 +653,7 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
       if (t.kind === "file") {
         await cp(t.temp, t.hostPath, { force: true, preserveTimestamps: true });
       } else {
-        for (const name of await readdir(t.hostPath)) {
-          const abs = join(t.hostPath, name);
-          const st = await lstat(abs);
-          if (matcher(name, st.isDirectory(), appRelative(ctx, abs))) continue;
-          // Never delete what the backup could not capture
-          if (t.unreadable.some((u) => u === name || u.startsWith(`${name}/`))) continue;
-          await rm(abs, { recursive: true, force: true });
-        }
+        await clearForInPlaceRestore(t.hostPath, matcher, ctx, t.unreadable);
         await cp(t.temp, t.hostPath, { recursive: true, force: true, preserveTimestamps: true });
       }
       await rm(t.temp, { recursive: true, force: true });
