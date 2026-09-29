@@ -12,13 +12,15 @@
  * history byte-identical from turn to turn (Anthropic caches tools → system →
  * messages, so any change in the system block re-writes the whole history):
  * - a memories snapshot taken on the conversation's first turn, so memories
- *   extracted after each reply do not reshuffle the system block
+ *   extracted after each reply do not reshuffle the system block. Additions
+ *   are ignored, but the snapshot is re-taken as soon as one of its memories
+ *   is deleted, disabled or edited — from any write path or process
  * - turn notes: turn-scoped context (page context, saved screenshot paths)
  *   attached to the user message it belongs to, and replayed verbatim on
  *   later turns
  */
 
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { getTopMemories } from "../db/memories.js";
 import { getFeatureStackStatus } from "../stacks/feature-stacks.js";
@@ -161,15 +163,47 @@ function conversationContext(key: string, create: boolean): ConversationContext 
 }
 
 /**
+ * Whether every memory in a snapshot still exists, is enabled and has the same
+ * content. Checked against the database (a primary-key lookup of at most
+ * `limit` rows) rather than relying on invalidation calls, so deletes, "clear
+ * all", edits and disables made from Settings, MCP (another process) or
+ * another conversation are all seen. New memories do not invalidate it.
+ */
+function snapshotStillValid(snapshot: Memory[]): boolean {
+  if (snapshot.length === 0) return true;
+  try {
+    const rows = db
+      .select({
+        id: schema.memories.id,
+        content: schema.memories.content,
+        enabled: schema.memories.enabled,
+      })
+      .from(schema.memories)
+      .where(inArray(schema.memories.id, snapshot.map((m) => m.id)))
+      .all();
+    const current = new Map(rows.map((r) => [r.id, r]));
+    return snapshot.every((m) => {
+      const row = current.get(m.id);
+      return !!row && !!row.enabled && row.content === m.content;
+    });
+  } catch {
+    // Cannot confirm the snapshot: re-take it rather than risk replaying a
+    // memory the user removed.
+    return false;
+  }
+}
+
+/**
  * Top memories as of the conversation's first turn. Later turns reuse the
  * snapshot, so memories extracted after each reply do not change the system
- * block (and bust the cached history) mid-conversation. Without a key this is
- * just getCachedTopMemories().
+ * block (and bust the cached history) mid-conversation. The snapshot is
+ * re-taken when one of its memories was deleted, disabled or edited. Without
+ * a key this is just getCachedTopMemories().
  */
 export async function getConversationMemories(conversationKey: string | undefined, limit = 10): Promise<Memory[]> {
   if (!conversationKey) return getCachedTopMemories(limit);
   const existing = conversationContext(conversationKey, false)?.memories;
-  if (existing && existing.limit === limit) return existing.value;
+  if (existing && existing.limit === limit && snapshotStillValid(existing.value)) return existing.value;
   const value = await getCachedTopMemories(limit);
   const entry = conversationContext(conversationKey, true) as ConversationContext;
   entry.memories = { limit, value };

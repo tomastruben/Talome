@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { fingerprintRow, getTopMemoriesMock, getFeatureStackStatusMock } = vi.hoisted(() => ({
+const { fingerprintRow, memoryRows, getTopMemoriesMock, getFeatureStackStatusMock } = vi.hoisted(() => ({
   fingerprintRow: { current: { n: 2, maxId: 2, maxUpdated: "2026-01-01T00:00:00.000Z" } as Record<string, unknown> },
+  /** Rows of the memories table, as the snapshot check reads them (null = the query fails). */
+  memoryRows: { current: null as Array<{ id: number; content: string; enabled: boolean }> | null },
   getTopMemoriesMock: vi.fn(),
   getFeatureStackStatusMock: vi.fn(),
 }));
@@ -10,7 +12,13 @@ vi.mock("../db/index.js", () => ({
   db: {
     select: () => ({
       from: () => ({
-        where: () => ({ get: () => fingerprintRow.current }),
+        where: () => ({
+          get: () => fingerprintRow.current,
+          all: () => {
+            if (!memoryRows.current) throw new Error("no such table: memories");
+            return memoryRows.current;
+          },
+        }),
       }),
     }),
   },
@@ -38,6 +46,7 @@ beforeEach(() => {
   getTopMemoriesMock.mockReset();
   getFeatureStackStatusMock.mockReset();
   fingerprintRow.current = { n: 2, maxId: 2, maxUpdated: "2026-01-01T00:00:00.000Z" };
+  memoryRows.current = [];
 });
 
 afterEach(() => {
@@ -147,6 +156,7 @@ describe("top memories cache", () => {
 
 describe("per-conversation context", () => {
   it("snapshots memories per conversation so new memories do not change a running conversation", async () => {
+    memoryRows.current = [{ id: 1, content: "a", enabled: true }, { id: 2, content: "b", enabled: true }];
     getTopMemoriesMock.mockResolvedValueOnce([{ id: 1, content: "a" }]).mockResolvedValue([{ id: 1, content: "a" }, { id: 2, content: "b" }]);
     expect((await getConversationMemories("conv-1")).map((m) => m.id)).toEqual([1]);
     fingerprintRow.current = { n: 3, maxId: 2, maxUpdated: "2026-01-02T00:00:00.000Z" };
@@ -156,6 +166,54 @@ describe("per-conversation context", () => {
     // After an explicit invalidation the conversation reloads.
     invalidateConversationMemories("conv-1");
     expect((await getConversationMemories("conv-1")).map((m) => m.id)).toEqual([1, 2]);
+  });
+
+  it("re-takes a snapshot whose memory was deleted outside the conversation (Settings, clear all, MCP)", async () => {
+    memoryRows.current = [{ id: 1, content: "wrong fact", enabled: true }, { id: 2, content: "b", enabled: true }];
+    getTopMemoriesMock.mockResolvedValueOnce([{ id: 1, content: "wrong fact" }, { id: 2, content: "b" }]);
+    expect((await getConversationMemories("conv-1")).map((m) => m.content)).toEqual(["wrong fact", "b"]);
+
+    // Settings → Memories → delete #1 (no invalidation call reaches this module).
+    memoryRows.current = [{ id: 2, content: "b", enabled: true }];
+    fingerprintRow.current = { n: 1, maxId: 2, maxUpdated: "2026-01-01T00:00:00.000Z" };
+    getTopMemoriesMock.mockResolvedValueOnce([{ id: 2, content: "b" }]);
+    expect((await getConversationMemories("conv-1")).map((m) => m.content)).toEqual(["b"]);
+
+    // "Clear all".
+    memoryRows.current = [];
+    fingerprintRow.current = { n: 0, maxId: null, maxUpdated: null };
+    getTopMemoriesMock.mockResolvedValueOnce([]);
+    expect(await getConversationMemories("conv-1")).toEqual([]);
+  });
+
+  it("re-takes a snapshot whose memory was edited or disabled, in every open conversation", async () => {
+    memoryRows.current = [{ id: 1, content: "likes 1080p", enabled: true }, { id: 2, content: "b", enabled: true }];
+    getTopMemoriesMock.mockResolvedValue([{ id: 1, content: "likes 1080p" }, { id: 2, content: "b" }]);
+    await getConversationMemories("conv-1");
+    await getConversationMemories("conv-2");
+
+    // Edited in Settings (or by update_memory in another conversation).
+    memoryRows.current = [{ id: 1, content: "likes 4K", enabled: true }, { id: 2, content: "b", enabled: true }];
+    fingerprintRow.current = { n: 2, maxId: 2, maxUpdated: "2026-01-05T00:00:00.000Z" };
+    getTopMemoriesMock.mockResolvedValue([{ id: 1, content: "likes 4K" }, { id: 2, content: "b" }]);
+    expect((await getConversationMemories("conv-1")).map((m) => m.content)).toEqual(["likes 4K", "b"]);
+    expect((await getConversationMemories("conv-2")).map((m) => m.content)).toEqual(["likes 4K", "b"]);
+
+    // Disabled.
+    memoryRows.current = [{ id: 1, content: "likes 4K", enabled: false }, { id: 2, content: "b", enabled: true }];
+    fingerprintRow.current = { n: 1, maxId: 2, maxUpdated: "2026-01-06T00:00:00.000Z" };
+    getTopMemoriesMock.mockResolvedValue([{ id: 2, content: "b" }]);
+    expect((await getConversationMemories("conv-2")).map((m) => m.content)).toEqual(["b"]);
+  });
+
+  it("re-takes the snapshot when it cannot be checked", async () => {
+    memoryRows.current = [{ id: 1, content: "a", enabled: true }];
+    getTopMemoriesMock.mockResolvedValue([{ id: 1, content: "a" }]);
+    await getConversationMemories("conv-1");
+    memoryRows.current = null;
+    fingerprintRow.current = undefined as unknown as Record<string, unknown>;
+    await getConversationMemories("conv-1");
+    expect(getTopMemoriesMock).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to the global cache without a conversation key", async () => {
