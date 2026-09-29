@@ -7,6 +7,8 @@ import {
   parseNetstatIb,
   parseProcNetDev,
   execFileTracked,
+  diskUsageFromStatfs,
+  readDiskUsage,
 } from "../platform/index.js";
 import { createLimiter, createSkipIfRunning, mapWithConcurrency, settleWithin } from "../platform/concurrency.js";
 import type os from "node:os";
@@ -96,6 +98,26 @@ describe("platform output parsers", () => {
       "  wlan0: 500 5 0 0 0 0 0 0 700 7 0 0 0 0 0 0",
     ].join("\n");
     expect(parseProcNetDev(out)).toEqual({ rx: 2500, tx: 3700 });
+  });
+});
+
+describe("root disk usage via statfs", () => {
+  it("computes usage like parseDfOutput (used = total - available)", () => {
+    // 1000 blocks of 4 KiB, 250 available to unprivileged users (root reserve excluded).
+    expect(diskUsageFromStatfs({ bsize: 4096, blocks: 1000, bavail: 250 })).toEqual({
+      usedBytes: 750 * 4096,
+      totalBytes: 1000 * 4096,
+      percent: 75,
+    });
+    expect(diskUsageFromStatfs({ bsize: 4096, blocks: 0, bavail: 0 })).toBeNull();
+  });
+
+  it("reads the root filesystem directly and resolves null instead of rejecting", async () => {
+    const root = await readDiskUsage("/");
+    expect(root?.totalBytes).toBeGreaterThan(0);
+    expect(root?.percent).toBeGreaterThanOrEqual(0);
+    expect(root?.percent).toBeLessThanOrEqual(100);
+    expect(await readDiskUsage("/definitely/not/a/real/path")).toBeNull();
   });
 });
 

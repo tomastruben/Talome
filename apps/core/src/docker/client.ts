@@ -8,10 +8,12 @@ import {
   getAppMemoryUsedAsync,
   sampleNetworkBytesAsync,
   readDiskMountsTracked,
+  readDiskUsage,
   sampleCpuTimes,
   computeCpuUsage,
   type CpuTimesSample,
   type DiskMountInfo,
+  type DiskUsage,
 } from "../platform/index.js";
 import { createLimiter, settleWithin } from "../platform/concurrency.js";
 import { createLogger } from "../utils/logger.js";
@@ -463,13 +465,16 @@ async function getSystemStatsImpl(): Promise<SystemStats> {
   const cpus = os.cpus();
   const totalMem = os.totalmem();
 
+  // CPU goes first: with a warm baseline its sample is taken synchronously,
+  // before vm_stat / df / netstat are spawned, so Talome's own helper
+  // processes are not what the reading measures.
   // On macOS, use vm_stat to get real app memory (excludes reclaimable file cache).
   // On Linux, os.freemem() already excludes buffers/cache (reads from MemAvailable).
-  const [appMemUsed, diskInfo, network, cpuUsage] = await Promise.all([
+  const [cpuUsage, appMemUsed, diskInfo, network] = await Promise.all([
+    getCpuUsage(),
     getAppMemoryUsedAsync().catch(() => null),
     getDiskInfo(),
     getNetworkThroughput(),
-    getCpuUsage(),
   ]);
   const usedMem = appMemUsed ?? (totalMem - os.freemem());
 
@@ -493,7 +498,16 @@ async function getSystemStatsImpl(): Promise<SystemStats> {
   };
 }
 
-// ── Disk (df) — stale-while-revalidate ──────────────────────────────────────
+// ── Disk — root via statfs, mount list via df (stale-while-revalidate) ─────
+// The headline figures (usedBytes / totalBytes / percent — what the disk
+// alerts, automations and the dashboard disk widget read) come from statfs("/"),
+// which only touches the root filesystem. The mount list comes from `df`,
+// which walks the whole mount table: GNU df blocks on a hard-mounted NFS/SMB
+// share whose server is gone, and a slow first df after a restart used to
+// report 0% (so alerts never fired, and the monitor's first-run rule was
+// bypassed once the real value arrived). A dead mount now only makes the
+// mount list stale.
+//
 // `df` can stall for a long time on unreachable SMB/NFS mounts. It runs
 // async with a timeout and callers get the last known result immediately
 // while a refresh happens in the background.
@@ -516,22 +530,34 @@ const DISK_FIRST_WAIT_MS = 5_000;
 const DISK_DF_TIMEOUT_MS = 5_000;
 /** Upper bound for the retry backoff after consecutive df failures. */
 const DISK_BACKOFF_MAX_MS = 5 * 60_000;
+/** Consecutive df failures before the stale mount list is logged. */
+const DISK_FAILURES_BEFORE_WARNING = 3;
+/** statfs("/") answers in microseconds; this only bounds a pathological root. */
+const ROOT_STATFS_TIMEOUT_MS = 2_000;
 
-let diskCache: { info: DiskInfo; at: number } | null = null;
+const diskLog = createLogger("disk");
+
+let diskCache: { mounts: DiskMountInfo[]; at: number } | null = null;
 /** Result of the latest df run (settles within the timeout). */
-let diskRefresh: Promise<DiskInfo | null> | null = null;
+let diskRefresh: Promise<DiskMountInfo[] | null> | null = null;
 /** True from spawn until the df child has really exited. */
 let dfChildAlive = false;
 let diskFailures = 0;
 let diskNextAttemptAt = 0;
+let diskFailureWarned = false;
 
-function summarizeMounts(mounts: DiskMountInfo[]): DiskInfo {
-  if (mounts.length === 0) return { usedBytes: 0, totalBytes: 0, percent: 0, mounts: [] };
-  const rootMount = mounts.find((m) => m.mount === "/") ?? mounts[0];
+/** Last successful statfs("/") reading. */
+let rootUsageCache: DiskUsage | null = null;
+/** The statfs("/") call still pending, if any — never more than one at a time. */
+let rootStatfsPending: Promise<DiskUsage | null> | null = null;
+
+function summarizeDisk(root: DiskUsage | null, mounts: DiskMountInfo[]): DiskInfo {
+  const usage = root ?? mounts.find((m) => m.mount === "/") ?? mounts[0];
+  if (!usage) return { usedBytes: 0, totalBytes: 0, percent: 0, mounts };
   return {
-    usedBytes: rootMount.usedBytes,
-    totalBytes: rootMount.totalBytes,
-    percent: rootMount.percent,
+    usedBytes: usage.usedBytes,
+    totalBytes: usage.totalBytes,
+    percent: usage.percent,
     mounts,
   };
 }
@@ -540,9 +566,23 @@ function recordDiskFailure(): void {
   diskFailures++;
   const backoff = Math.min(DISK_REFRESH_MS * 2 ** (diskFailures - 1), DISK_BACKOFF_MAX_MS);
   diskNextAttemptAt = Date.now() + backoff;
+  if (diskFailures >= DISK_FAILURES_BEFORE_WARNING && !diskFailureWarned) {
+    diskFailureWarned = true;
+    diskLog.warn(
+      `df failed ${diskFailures} times in a row (timeout ${DISK_DF_TIMEOUT_MS}ms) — a network or USB mount may be ` +
+      "unreachable. The mount list is stale; root disk usage is still measured directly.",
+    );
+  }
 }
 
-function refreshDiskInfo(): Promise<DiskInfo | null> {
+function recordDiskSuccess(): void {
+  if (diskFailureWarned) diskLog.info("df answers again — mount list refreshed");
+  diskFailures = 0;
+  diskNextAttemptAt = 0;
+  diskFailureWarned = false;
+}
+
+function refreshDiskMounts(): Promise<DiskMountInfo[] | null> {
   // Never stack df processes: a wedged child keeps this closed until it exits.
   if (dfChildAlive) return diskRefresh ?? Promise.resolve(null);
   if (Date.now() < diskNextAttemptAt) return Promise.resolve(null);
@@ -564,11 +604,9 @@ function refreshDiskInfo(): Promise<DiskInfo | null> {
         recordDiskFailure();
         return null;
       }
-      diskFailures = 0;
-      diskNextAttemptAt = 0;
-      const info = summarizeMounts(mounts);
-      diskCache = { info, at: Date.now() };
-      return info;
+      recordDiskSuccess();
+      diskCache = { mounts, at: Date.now() };
+      return mounts;
     })
     .catch(() => {
       recordDiskFailure();
@@ -579,21 +617,53 @@ function refreshDiskInfo(): Promise<DiskInfo | null> {
   return promise;
 }
 
-async function getDiskInfo(): Promise<DiskInfo> {
+/** Mount list from df: fresh cache, else stale cache (refreshing in the background), else a bounded first read. */
+async function getDiskMounts(): Promise<DiskMountInfo[]> {
   const cached = diskCache;
-  if (cached && Date.now() - cached.at < DISK_REFRESH_MS) return cached.info;
-  const refresh = refreshDiskInfo();
-  if (cached) return cached.info; // serve stale, refresh in background
-  const info = await settleWithin(refresh, DISK_FIRST_WAIT_MS, null);
-  return info ?? { usedBytes: 0, totalBytes: 0, percent: 0, mounts: [] };
+  if (cached && Date.now() - cached.at < DISK_REFRESH_MS) return cached.mounts;
+  const refresh = refreshDiskMounts();
+  if (cached) return cached.mounts; // serve stale, refresh in background
+  return (await settleWithin(refresh, DISK_FIRST_WAIT_MS, null)) ?? [];
+}
+
+/** statfs("/"), falling back to the last good reading while a call is stuck or failing. */
+async function getRootDiskUsage(): Promise<DiskUsage | null> {
+  if (!rootStatfsPending) {
+    const pending: Promise<DiskUsage | null> = readDiskUsage("/")
+      .catch(() => null)
+      .then((usage) => {
+        // A failed statfs drops the old reading (df's "/" takes over); a slow
+        // one keeps serving it (see below).
+        rootUsageCache = usage;
+        return usage;
+      })
+      .finally(() => {
+        if (rootStatfsPending === pending) rootStatfsPending = null;
+      });
+    rootStatfsPending = pending;
+  }
+  const usage = await settleWithin(rootStatfsPending, ROOT_STATFS_TIMEOUT_MS, null);
+  return usage ?? rootUsageCache;
+}
+
+async function getDiskInfo(): Promise<DiskInfo> {
+  const [root, mounts] = await Promise.all([getRootDiskUsage(), getDiskMounts()]);
+  return summarizeDisk(root, mounts);
 }
 
 // ── CPU — real utilisation from deltas between samples ─────────────────────
 // os.cpus() ticks are cumulative since boot; (1 - idle/total) over them is
 // the lifetime average, not current load. We diff consecutive samples.
 
-/** Baselines older than this are replaced by a short fresh measurement window. */
-const CPU_BASELINE_MAX_AGE_MS = 30_000;
+/**
+ * Baselines older than this are replaced by a short fresh measurement window.
+ * It spans the monitor's and agent loop's 60s cadence (with room for a slow
+ * tick), so background readings — metrics history, CPU threshold alerts,
+ * high_cpu detection — are the average since the previous sample instead of
+ * a 250 ms snapshot of whatever was busy at that instant. The dashboard's 3s
+ * stream keeps its 3s windows.
+ */
+const CPU_BASELINE_MAX_AGE_MS = 3 * 60_000;
 const CPU_MEASURE_WINDOW_MS = 250;
 
 let lastCpuSample: (CpuTimesSample & { at: number }) | null = null;
@@ -654,6 +724,9 @@ export function __resetDockerClientCachesForTests(): void {
   dfChildAlive = false;
   diskFailures = 0;
   diskNextAttemptAt = 0;
+  diskFailureWarned = false;
+  rootUsageCache = null;
+  rootStatfsPending = null;
   lastCpuSample = null;
   lastCpuUsage = 0;
   lastNetSample = null;

@@ -6,7 +6,7 @@
  */
 
 import { execSync, execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, statfs } from "node:fs/promises";
 import os from "node:os";
 
 export const isDarwin = process.platform === "darwin";
@@ -269,6 +269,38 @@ export function readDiskMountsTracked(timeoutMs = 5_000): TrackedDiskRead {
     mounts: run.output.then((out) => (out ? parseDfOutput(out) : null)),
     exited: run.exited,
   };
+}
+
+/** Usage of one filesystem, in the same form {@link parseDfOutput} reports. */
+export interface DiskUsage {
+  usedBytes: number;
+  totalBytes: number;
+  percent: number;
+}
+
+/**
+ * Convert statfs() figures to {@link DiskUsage}. Like parseDfOutput, "used" is
+ * total − available (APFS volumes share their container's free space), and
+ * the percentage has one decimal. Null when the figures are unusable.
+ */
+export function diskUsageFromStatfs(s: { bsize: number; blocks: number; bavail: number }): DiskUsage | null {
+  const totalBytes = s.blocks * s.bsize;
+  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return null;
+  const availBytes = Math.min(Math.max(s.bavail * s.bsize, 0), totalBytes);
+  const usedBytes = totalBytes - availBytes;
+  return { usedBytes, totalBytes, percent: Math.round((usedBytes / totalBytes) * 1000) / 10 };
+}
+
+/**
+ * statfs() a single path — "/" by default. Unlike `df`, which walks the whole
+ * mount table (and on Linux blocks on a hard-mounted NFS/SMB share whose
+ * server is gone), this only asks the filesystem holding `path`, so one dead
+ * network mount cannot hide the root disk. Resolves null on failure; never
+ * rejects. It is not bounded here: callers race it against a timeout and must
+ * not start another one while it is still pending.
+ */
+export function readDiskUsage(path = "/"): Promise<DiskUsage | null> {
+  return statfs(path).then(diskUsageFromStatfs, () => null);
 }
 
 // ── CPU utilisation ──────────────────────────────────────────────────────
