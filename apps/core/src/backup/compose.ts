@@ -125,14 +125,29 @@ function imageRepoName(image: string): string {
   return repo.toLowerCase();
 }
 
+/**
+ * Images that work WITH a database but are not one: metrics exporters,
+ * backup/dump jobs, poolers, admin UIs, upgrade helpers
+ * (prometheuscommunity/postgres-exporter, prodrigestivill/postgres-backup-local,
+ * tianon/postgres-upgrade, …). Dumping them fails and would fail every backup.
+ */
+const DB_SIDECAR_WORD = /(^|[-_.])(exporter|backups?|dump(er)?|restore|admin|metrics|monitor(ing)?|operator|proxy|pooler|bouncer|upgrade|migrate|migrations?|cli|client|tools?)([-_.]|$)/;
+
 export function detectDbEngine(image: string | null | undefined): DbEngine | null {
+  return detectDbEngineDetailed(image)?.engine ?? null;
+}
+
+/** `exact`: a well-known database image name (not just a name containing "postgres"). */
+function detectDbEngineDetailed(image: string | null | undefined): { engine: DbEngine; exact: boolean } | null {
   if (!image) return null;
   const repo = imageRepoName(image);
   const last = repo.split("/").pop() ?? repo;
-  if (/^(postgres|postgresql|postgis|timescaledb(-ha)?|pgvecto-rs|pgvector|pgvecto\.rs)$/.test(last)) return "postgres";
-  if (repo.includes("immich-app/postgres") || /(^|[-_])postgres(ql)?([-_]|$)/.test(last)) return "postgres";
-  if (/^(mariadb|mysql|mysql-server|percona|percona-server)$/.test(last)) return "mysql";
-  if (/^(redis|valkey|keydb|redis-stack|redis-stack-server)$/.test(last)) return "redis";
+  if (/^(postgres|postgresql|postgis|timescaledb(-ha)?|pgvecto-rs|pgvector|pgvecto\.rs)$/.test(last)) return { engine: "postgres", exact: true };
+  if (/^(mariadb|mysql|mysql-server|percona|percona-server)$/.test(last)) return { engine: "mysql", exact: true };
+  if (/^(redis|valkey|keydb|redis-stack|redis-stack-server)$/.test(last)) return { engine: "redis", exact: true };
+  if (DB_SIDECAR_WORD.test(last)) return null;
+  if (repo.includes("immich-app/postgres")) return { engine: "postgres", exact: true };
+  if (/(^|[-_])postgres(ql)?([-_]|$)/.test(last)) return { engine: "postgres", exact: false };
   return null;
 }
 
@@ -199,9 +214,11 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
     const image = typeof svc.image === "string" ? interpolate(svc.image, opts.env) : null;
     const environment = normalizeEnvironment(svc.environment);
     for (const [k, v] of Object.entries(environment)) environment[k] = interpolate(v, opts.env);
-    const dbEngine = detectDbEngine(image);
+    const detected = detectDbEngineDetailed(image);
+    let dbEngine = detected?.engine ?? null;
     const volumes: ComposeVolume[] = [];
     const dbDataPaths: string[] = [];
+    let hasDataTarget = false;
 
     for (const vol of (Array.isArray(svc.volumes) ? svc.volumes : []) as unknown[]) {
       let raw: string;
@@ -230,6 +247,7 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
       if (source.startsWith("~")) source = join(homedir(), source.slice(1));
       const isBind =
         explicitType === "bind" || source.startsWith("/") || source.startsWith(".") || (explicitType !== "volume" && source.includes("/"));
+      if (dbEngine && isDbDataTarget(dbEngine, target, environment, image)) hasDataTarget = true;
       if (!isBind) {
         volumes.push({ service: name, raw, hostPath: null, target, kind: "named", readOnly, type: "config", exists: false });
         continue;
@@ -259,6 +277,12 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
       volumes.push(entry);
     }
 
+    // A name that merely contains "postgres" counts as a database only when it
+    // keeps database data (a volume at the data directory)
+    if (detected && !detected.exact && !hasDataTarget) {
+      dbEngine = null;
+      dbDataPaths.length = 0;
+    }
     services.push({
       name,
       image,
