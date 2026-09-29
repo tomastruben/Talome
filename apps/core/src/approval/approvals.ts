@@ -30,6 +30,20 @@ const HASH_EXCLUDED_KEYS = new Set([APPROVAL_ARG, "confirmed"]);
 
 export const APPROVAL_TTL_MS = 15 * 60 * 1000;
 
+/**
+ * Unattended actors (automations, the agent loop) cannot retry while the owner
+ * is looking: a nightly run only comes back the next night. Their requests
+ * stay open — and, once approved, consumable — for a day, so an approval is
+ * neither expired before the owner sees it nor before the next run.
+ */
+export const UNATTENDED_APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
+const UNATTENDED_ACTOR_KINDS = new Set(["automation", "agent_loop"]);
+
+/** Pending (and post-approval) lifetime for requests made by this kind of actor. */
+export function approvalTtlMs(actorKind: string): number {
+  return UNATTENDED_ACTOR_KINDS.has(actorKind) ? UNATTENDED_APPROVAL_TTL_MS : APPROVAL_TTL_MS;
+}
+
 export type ApprovalStatus = "pending" | "approved" | "denied" | "consumed" | "expired";
 export type ApprovalRow = typeof schema.approvals.$inferSelect;
 
@@ -124,7 +138,7 @@ export function requestApproval(params: {
     summary: params.summary,
     status: "pending",
     createdAt: now,
-    expiresAt: new Date(Date.now() + APPROVAL_TTL_MS).toISOString(),
+    expiresAt: new Date(Date.now() + approvalTtlMs(params.actor.kind)).toISOString(),
     decidedBy: null,
     decidedAt: null,
     consumedAt: null,
@@ -207,7 +221,7 @@ export type DecideResult =
 /**
  * Approve or deny a pending approval. Only callable from an authenticated
  * admin session (see routes/approvals.ts). Approving restarts the TTL so the
- * agent has a full window to retry.
+ * agent has a full window to retry (a day for unattended actors).
  */
 export function decideApproval(id: string, decision: "approved" | "denied", decidedBy: string): DecideResult {
   expireStaleApprovals();
@@ -223,7 +237,7 @@ export function decideApproval(id: string, decision: "approved" | "denied", deci
       status: decision,
       decidedBy,
       decidedAt: now,
-      ...(decision === "approved" ? { expiresAt: new Date(Date.now() + APPROVAL_TTL_MS).toISOString() } : {}),
+      ...(decision === "approved" ? { expiresAt: new Date(Date.now() + approvalTtlMs(row.actorKind)).toISOString() } : {}),
     })
     .where(and(eq(schema.approvals.id, id), eq(schema.approvals.status, "pending"), gt(schema.approvals.expiresAt, now)))
     .run();

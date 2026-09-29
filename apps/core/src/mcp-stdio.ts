@@ -11,7 +11,8 @@
  * Trust model: the caller is the local owner (localStdioActor) — this process
  * already has the DB file and Docker socket, so per-token grants would not
  * constrain it. Security mode and approvals still apply to every call, and
- * every call is audited as actor "mcp_stdio".
+ * every call is audited as actor "mcp_stdio" — or as agent_loop:remediation
+ * when the agent loop launched Claude Code (TALOME_MCP_ACTOR).
  *
  * Nothing may be written to stdout except MCP frames — log to stderr.
  */
@@ -20,6 +21,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createMcpSession } from "./routes/mcp.js";
 import { localStdioActor } from "./ai/execution.js";
 import { runTrustMigrations } from "./db/migrations/trust.js";
+import { runWireBackendMigrations } from "./db/migrations/wire-backend.js";
+import { stdioActorFromEnv } from "./agent-loop/remediation-actor.js";
 import { installStdioShutdown } from "./mcp-stdio-lifecycle.js";
 
 /** How often to re-evaluate configured domains / disabled tools. */
@@ -32,8 +35,16 @@ try {
 } catch (err) {
   process.stderr.write(`[mcp-stdio] trust migrations failed: ${err instanceof Error ? err.message : String(err)}\n`);
 }
+// Columns this process reads and writes (notifications.link, automations.actor_scopes, …).
+try {
+  runWireBackendMigrations();
+} catch (err) {
+  process.stderr.write(`[mcp-stdio] wire-backend migrations failed: ${err instanceof Error ? err.message : String(err)}\n`);
+}
 
-const session = createMcpSession(localStdioActor());
+// Claude Code remediation (agent-loop/remediation.ts) launches this server
+// with TALOME_MCP_ACTOR so its calls run as the agent loop, not the owner.
+const session = createMcpSession(stdioActorFromEnv(process.env, localStdioActor()));
 const transport = new StdioServerTransport();
 
 let syncTimer: ReturnType<typeof setInterval> | undefined;

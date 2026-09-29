@@ -6,6 +6,17 @@ import { eq, desc } from "drizzle-orm";
 import { writeAuditEntry } from "../../db/audit.js";
 import { getAutomationSafeTools } from "../automation-safe-tools.js";
 import { executedStepRuns } from "../../automation/step-run-view.js";
+import { getExecutionContext } from "../actor-context.js";
+
+/**
+ * The grants of the actor writing an automation (an MCP token), stored on the
+ * automation so its steps — and its model's tool calls — run under them and a
+ * token cannot escape its grants by scheduling work. Owner writers have none.
+ */
+function writerScopes(): string | null {
+  const scopes = getExecutionContext()?.actor.scopes;
+  return scopes ? JSON.stringify(scopes) : null;
+}
 
 // ── Schema helpers ────────────────────────────────────────────────────────────
 
@@ -104,6 +115,7 @@ export const createAutomationTool = tool({
       actions: "[]",
       workflowVersion: 2,
       steps: JSON.stringify(steps),
+      actorScopes: writerScopes(),
     }).run();
     writeAuditEntry(`AI: create_automation "${name}"`, "modify", id);
     return { ok: true, id, name, stepCount: steps.length };
@@ -123,7 +135,11 @@ export const updateAutomationTool = tool({
     const existing = db.select().from(schema.automations).where(eq(schema.automations.id, id)).get();
     if (!existing) return { ok: false, error: "automation_not_found" };
 
+    // A scoped writer (MCP token) that changes the steps makes the automation
+    // run under its grants; owner edits keep whatever grants it already has.
+    const scopes = steps !== undefined ? writerScopes() : null;
     db.update(schema.automations).set({
+      ...(scopes ? { actorScopes: scopes } : {}),
       ...(name !== undefined ? { name: name.trim() } : {}),
       ...(enabled !== undefined ? { enabled } : {}),
       ...(trigger !== undefined ? { trigger: JSON.stringify(trigger) } : {}),

@@ -897,7 +897,7 @@ export function runMigrations() {
   recordMigration(19, "Store compat: app_catalog.umbrel_meta, store_sources.last_parsed_rev, app_install_options, catalog store index");
   recordMigration(21, "AI chat: conversation_tool_domains for per-conversation tool routing");
   recordMigration(22, "Outcome probes: verification_results for semantic app/stack verification");
-  recordMigration(23, "Wire backend: notifications.link for first-class in-app links (approvals)");
+  recordMigration(23, "Wire backend: notifications.link, automations.actor_scopes, remediation_escalations");
 
   console.log("Database migrations complete");
 }

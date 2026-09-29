@@ -93,6 +93,14 @@ function decide(decision: "approved" | "denied") {
           outcome: "success",
         },
       );
+      // An escalated agent-loop remediation runs its approved call now, not on a
+      // next event that a persistent problem never produces.
+      if (decision === "approved" && result.approval.actorKind === "agent_loop") {
+        const approvalId = result.approval.id;
+        void import("../agent-loop/remediation.js")
+          .then(({ resumeApprovedRemediation }) => resumeApprovedRemediation(approvalId))
+          .catch((err) => console.warn("[approvals] remediation resume failed:", err instanceof Error ? err.message : err));
+      }
       return c.json({ ok: true, approval: serialize(result.approval) });
     } catch (err) {
       return serverError(c, err, { message: `Failed to ${decision === "approved" ? "approve" : "deny"} request` });

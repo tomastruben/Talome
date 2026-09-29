@@ -330,7 +330,7 @@ import {
   rememberTurnNote,
 } from "./chat-context-cache.js";
 import { gateToolExecution, getSecurityMode } from "./tool-gateway.js";
-import { automationActor, isApprovalRequiredResult, withExecutionContext, type ApprovalRequired } from "./execution.js";
+import { automationActor, isApprovalRequiredResult, withExecutionContext, type Actor, type ApprovalRequired } from "./execution.js";
 
 // getSetting imported from ../utils/settings.js
 
@@ -1708,13 +1708,15 @@ export async function runAutomationPrompt(params: {
    * run cannot wait for a human.
    */
   onApprovalRequired?: (approval: ApprovalRequired) => void;
+  /** The automation actor, carrying its grants (automations.actor_scopes). Built from id/name when omitted. */
+  actor?: Actor;
 }): Promise<string> {
   const provider = getActiveProvider();
   const modelId = resolveModel(provider);
   const model = createModelInstance(provider, modelId);
   const isAnthropic = provider === "anthropic";
   // Every tool the model calls goes through executeTool as this automation.
-  const actor = automationActor(params.automationId ?? params.automationName, params.automationName);
+  const actor = params.actor ?? automationActor(params.automationId ?? params.automationName, params.automationName);
   const activeTools = withExecutionContext(actor, "automation", () => getActiveTools());
 
   // Use provided allowedTools, or fall back to all automation-safe tools

@@ -3,7 +3,7 @@
 import { generateText, stepCountIs, type Tool } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { db, schema } from "../db/index.js";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc, gte, inArray, sql } from "drizzle-orm";
 import { checkBudget, logAiUsage, shouldRunService } from "./budget.js";
 import { writeNotification } from "../db/notifications.js";
 import { writeAuditEntry } from "../db/audit.js";
@@ -12,13 +12,22 @@ import { isClaudeCodeAvailable, spawnClaudeStreaming } from "../ai/claude-proces
 import { resolve } from "node:path";
 import type { SystemEvent, TriageResult, RemediationResult, RemediationOutcome } from "./types.js";
 import {
-  agentLoopActor,
+  approvalLink,
   executeTool,
+  gateToolsForUnattendedActor,
+  isApprovalRequiredResult,
   withExecutionContext,
-  type Actor,
   type ApprovalRequired,
 } from "../ai/execution.js";
-import { getApproval } from "../approval/approvals.js";
+import { getApproval, hashArgs, type ApprovalRow } from "../approval/approvals.js";
+import {
+  MCP_ACTOR_ENV,
+  REMEDIATION_ACTOR,
+  REMEDIATION_ACTOR_HINT,
+  REMEDIATION_DIAGNOSE_ACTOR_HINT,
+  REMEDIATION_TOOL_NAMES,
+  REMEDIATION_WRITE_TOOLS,
+} from "./remediation-actor.js";
 
 // Import tool definitions for the remediation agent to use
 import { listContainersTool, getContainerLogsTool, restartContainerTool, checkServiceHealthTool } from "../ai/tools/docker-tools.js";
@@ -43,7 +52,7 @@ function getModel(): string {
 /** Project root for Claude Code — two levels up from apps/core */
 const PROJECT_ROOT = resolve(import.meta.dirname ?? process.cwd(), "..", "..", "..", "..");
 
-const WRITE_TOOLS = new Set(["restart_container", "cleanup_docker", "jellyfin_scan_library", "rollback_update"]);
+const WRITE_TOOLS = REMEDIATION_WRITE_TOOLS;
 
 /** Tools available to the remediation agent — read-heavy, limited writes */
 const REMEDIATION_TOOLS = {
@@ -76,111 +85,262 @@ const REMEDIATION_TOOLS = {
 
 // ── Execution path ──────────────────────────────────────────────────────────
 // Every remediation tool call goes through executeTool() as the agent loop
-// (actor agent_loop:remediation, source "agent_loop"): security mode, approvals
-// and audit apply, and app operations it starts (rollback_update) are
-// journaled under this actor. A call that needs the owner's approval is
-// escalated once — the execution service notifies the owner with a link — and
-// the run stops; it is never retried in a loop. The Claude Code path reaches
-// the same executeTool() through Talome's MCP stdio server.
+// (actor agent_loop:remediation): security mode, approvals and audit apply,
+// and app operations it starts (rollback_update) are journaled under this
+// actor. The API path wraps the tools here (source "agent_loop"); the Claude
+// Code path reaches the same executeTool() through Talome's MCP stdio server,
+// which Claude Code launches with TALOME_MCP_ACTOR so it runs as the same
+// actor (source "mcp", limited to the remediation tools).
+//
+// A call that needs the owner's approval is escalated once — one notification
+// with the approval link — and the run stops; it is never retried in a loop.
+// The escalation is persisted (remediation_escalations): the source is held
+// while the approval is pending (and for a while after it is denied or
+// expires unanswered), and when the owner approves, the exact proposed call
+// runs right away (resumeApprovedRemediation, called from the approvals route)
+// instead of waiting for a new event that a persistent issue never produces.
 
-export const REMEDIATION_ACTOR: Actor = agentLoopActor("remediation", "Agent loop remediation");
+export { REMEDIATION_ACTOR };
 
 interface RemediationRunState {
   /** Tools that actually executed (success or tool error) — drives the outcome. */
   executed: string[];
   /** Approvals requested during the run (escalated to the owner). */
   approvals: ApprovalRequired[];
+  /** The exact arguments of each escalated call, by approval id. */
+  approvalArgs: Map<string, Record<string, unknown>>;
 }
 
 const ESCALATED_RESULT_MESSAGE =
   "Escalated to the owner for approval. Do not call this or any other write tool again in this run; finish with your diagnosis and say that approval is pending.";
+
+function withoutApprovalArg(args: Record<string, unknown>): Record<string, unknown> {
+  const { approval_id: _approvalId, ...rest } = args;
+  return rest;
+}
 
 /** Wrap remediation tools so each call runs through executeTool as the agent loop. */
 export function buildRemediationTools(
   tools: Record<string, Tool>,
   state: RemediationRunState,
 ): Record<string, Tool> {
+  const gated = gateToolsForUnattendedActor(tools, REMEDIATION_ACTOR, "agent_loop", {
+    onExecuted: (name) => state.executed.push(name),
+    onApprovalRequired: (approval, _name, args) => {
+      state.approvals.push(approval);
+      state.approvalArgs.set(approval.approvalId, withoutApprovalArg(args));
+    },
+  });
   return Object.fromEntries(
-    Object.entries(tools).map(([name, t]) => {
-      if (typeof (t as { execute?: unknown }).execute !== "function") return [name, t];
-      const gated = {
+    Object.entries(gated).map(([name, t]) => {
+      const run = (t as { execute?: (args: unknown, options: unknown) => Promise<unknown> }).execute;
+      if (typeof run !== "function") return [name, t];
+      const guarded = {
         ...t,
         execute: async (args: unknown, options: unknown) => {
           // Once escalated, no further writes this run (parallel calls included).
           if (state.approvals.length > 0 && WRITE_TOOLS.has(name)) {
             return { status: "escalated", message: ESCALATED_RESULT_MESSAGE };
           }
-          const r = await executeTool({
-            actor: REMEDIATION_ACTOR,
-            source: "agent_loop",
-            toolName: name,
-            args,
-            tool: t,
-            toolCallOptions: options,
-          });
-          switch (r.outcome) {
-            case "success":
-              state.executed.push(name);
-              return r.result;
-            case "error":
-              state.executed.push(name);
-              return r.result ?? { error: r.error?.message ?? "Tool failed" };
-            case "approval_required":
-              if (r.approval) state.approvals.push(r.approval);
-              return {
-                status: "approval_required",
-                approvalId: r.approval?.approvalId,
-                approveUrl: r.approval?.approveUrl,
-                message: ESCALATED_RESULT_MESSAGE,
-              };
-            case "blocked":
-            default:
-              return { error: r.error?.hint ? `${r.error.message} ${r.error.hint}` : (r.error?.message ?? "Blocked") };
-          }
+          const out = await run(args, options);
+          return isApprovalRequiredResult(out) || (out as { status?: unknown } | null)?.status === "approval_required"
+            ? { ...(out as Record<string, unknown>), message: ESCALATED_RESULT_MESSAGE }
+            : out;
         },
       } as Tool;
-      return [name, gated];
+      return [name, guarded];
     }),
   );
 }
 
-// ── Escalations awaiting the owner ──────────────────────────────────────────
+// ── Escalations awaiting the owner (persisted) ──────────────────────────────
 // A source whose remediation was escalated is not re-investigated while the
-// approval is pending (or for the retry window after a denial): the agent loop
-// must not re-ask the model — and re-spend budget — every cycle.
+// approval is pending, nor for ESCALATION_HOLD_MS after it was denied or
+// expired unanswered: the agent loop must not re-ask the model — and re-spend
+// budget, and re-notify the owner — every cycle.
 
 const ESCALATION_HOLD_MS = 4 * 60 * 60 * 1000;
-const escalations = new Map<string, { approvalIds: string[]; at: number }>();
 
-function recordEscalation(source: string, approvals: ApprovalRequired[]): void {
-  if (approvals.length === 0) return;
-  escalations.set(source, { approvalIds: [...new Set(approvals.map((a) => a.approvalId))], at: Date.now() });
+function recordEscalation(event: SystemEvent, approvals: ApprovalRequired[], approvalArgs: Map<string, Record<string, unknown>>): void {
+  const now = new Date().toISOString();
+  for (const approval of new Map(approvals.map((a) => [a.approvalId, a])).values()) {
+    const args = approvalArgs.get(approval.approvalId);
+    try {
+      db.insert(schema.remediationEscalations)
+        .values({
+          approvalId: approval.approvalId,
+          source: event.source,
+          eventId: event.id,
+          tool: approval.tool,
+          args: args ? JSON.stringify(args) : null,
+          status: "open",
+          createdAt: now,
+        })
+        .onConflictDoUpdate({
+          target: schema.remediationEscalations.approvalId,
+          set: {
+            status: "open",
+            eventId: event.id,
+            args: args ? JSON.stringify(args) : sql`${schema.remediationEscalations.args}`,
+          },
+        })
+        .run();
+    } catch (err) {
+      console.warn("[agent-loop] could not persist escalation:", err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+function closeEscalation(approvalId: string, status: "closed" | "resumed"): void {
+  try {
+    db.update(schema.remediationEscalations)
+      .set({ status, resolvedAt: new Date().toISOString() })
+      .where(eq(schema.remediationEscalations.approvalId, approvalId))
+      .run();
+  } catch {
+    // best-effort
+  }
 }
 
 /** Why remediation for this source is on hold, or null when it may run. */
 export function escalationHold(source: string, now: number = Date.now()): string | null {
-  const entry = escalations.get(source);
-  if (!entry) return null;
-  let statuses: string[];
+  let rows: Array<typeof schema.remediationEscalations.$inferSelect>;
   try {
-    statuses = entry.approvalIds.map((id) => getApproval(id)?.status ?? "expired");
+    rows = db
+      .select()
+      .from(schema.remediationEscalations)
+      .where(and(eq(schema.remediationEscalations.source, source), eq(schema.remediationEscalations.status, "open")))
+      .orderBy(desc(schema.remediationEscalations.createdAt))
+      .limit(20)
+      .all();
   } catch {
     return null;
   }
-  if (statuses.includes("pending")) return "waiting for the owner's approval";
-  if (statuses.includes("approved")) {
-    // Approved: the next run may consume it (auto-consumed for the agent loop).
-    escalations.delete(source);
-    return null;
+  let hold: string | null = null;
+  for (const row of rows) {
+    let approval: ReturnType<typeof getApproval>;
+    try {
+      approval = getApproval(row.approvalId);
+    } catch {
+      return null;
+    }
+    const status = approval?.status;
+    if (status === "pending") {
+      hold ??= "waiting for the owner's approval";
+    } else if (status === "approved") {
+      // The next run may consume it (auto-consumed for the agent loop), or the
+      // approvals route already ran it (resumeApprovedRemediation).
+      continue;
+    } else if (status === "denied" && approval) {
+      const decidedAt = Date.parse(approval.decidedAt ?? row.createdAt);
+      if (now - decidedAt < ESCALATION_HOLD_MS) hold ??= "the owner denied the proposed action";
+      else closeEscalation(row.approvalId, "closed");
+    } else if (status === "expired" && approval && !approval.decidedAt) {
+      // Unanswered: do not re-ask right away (the owner may be away).
+      if (now - Date.parse(approval.expiresAt) < ESCALATION_HOLD_MS) hold ??= "the approval request expired unanswered";
+      else closeEscalation(row.approvalId, "closed");
+    } else {
+      // consumed or gone: nothing to wait for
+      closeEscalation(row.approvalId, "closed");
+    }
   }
-  if (statuses.includes("denied") && now - entry.at < ESCALATION_HOLD_MS) return "the owner denied the proposed action";
-  escalations.delete(source);
-  return null;
+  return hold;
 }
 
 /** Test-only: forget recorded escalations. */
 export function __resetEscalationsForTests(): void {
-  escalations.clear();
+  try {
+    db.delete(schema.remediationEscalations).run();
+  } catch {
+    // table may not exist yet
+  }
+}
+
+/**
+ * The owner approved an escalated remediation: run exactly the proposed call
+ * now (consuming the approval as the agent loop), record it as an attempted
+ * fix for the outcome tracker to verify, and tell the owner. Without stored
+ * arguments (Claude Code path, arguments not captured), the approval stays
+ * valid for the next remediation run of that source instead.
+ */
+export async function resumeApprovedRemediation(
+  approvalId: string,
+): Promise<{ ran: boolean; outcome?: string; reason?: string }> {
+  let row: typeof schema.remediationEscalations.$inferSelect | undefined;
+  try {
+    row = db.select().from(schema.remediationEscalations).where(eq(schema.remediationEscalations.approvalId, approvalId)).get();
+  } catch {
+    return { ran: false, reason: "escalations unavailable" };
+  }
+  if (!row) return { ran: false, reason: "not a remediation escalation" };
+  if (row.status !== "open") return { ran: false, reason: `escalation is ${row.status}` };
+  const approval = getApproval(approvalId);
+  if (approval?.status !== "approved") return { ran: false, reason: `approval is ${approval?.status ?? "missing"}` };
+  if (approval.actorKind !== REMEDIATION_ACTOR.kind || approval.actorId !== REMEDIATION_ACTOR.id) {
+    return { ran: false, reason: "approval belongs to another actor" };
+  }
+  const tool = (REMEDIATION_TOOLS as unknown as Record<string, Tool>)[row.tool];
+  if (!row.args || !tool) return { ran: false, reason: "the proposed call is not known; the next run may use the approval" };
+  let args: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(row.args);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ran: false, reason: "invalid stored arguments" };
+    args = parsed as Record<string, unknown>;
+  } catch {
+    return { ran: false, reason: "invalid stored arguments" };
+  }
+
+  // Claim the escalation first so a double click cannot run it twice.
+  const claimed = db
+    .update(schema.remediationEscalations)
+    .set({ status: "resumed", resolvedAt: new Date().toISOString() })
+    .where(and(eq(schema.remediationEscalations.approvalId, approvalId), eq(schema.remediationEscalations.status, "open")))
+    .run();
+  if (claimed.changes !== 1) return { ran: false, reason: "already resumed" };
+
+  const r = await withExecutionContext(REMEDIATION_ACTOR, "agent_loop", () =>
+    executeTool({ actor: REMEDIATION_ACTOR, source: "agent_loop", toolName: row.tool, args, tool }),
+  );
+
+  if (r.outcome === "success" || r.outcome === "error") {
+    try {
+      db.insert(schema.remediationLog)
+        .values({
+          id: crypto.randomUUID(),
+          eventId: row.eventId,
+          action: `Approved ${row.tool}`,
+          model: "owner-approved",
+          confidence: 0.5,
+          outcome: "pending_verification",
+          createdAt: new Date().toISOString(),
+        })
+        .run();
+    } catch {
+      // Non-fatal
+    }
+    writeNotification(
+      "info",
+      `Agent applied approved fix: ${row.source}`,
+      r.outcome === "success"
+        ? `Ran ${row.tool} after your approval. Verifying the result before reporting it as fixed.`
+        : `Ran ${row.tool} after your approval, but it reported an error: ${r.error?.message ?? "unknown error"}.`,
+      "agent-loop",
+    );
+    writeAuditEntry(
+      `Agent loop: ran approved ${row.tool} for ${row.source}`,
+      "modify",
+      JSON.stringify({ eventId: row.eventId, approvalId, outcome: r.outcome }),
+    );
+    return { ran: true, outcome: r.outcome };
+  }
+
+  writeNotification(
+    "warning",
+    `Approved fix could not run: ${row.source}`,
+    `${row.tool} did not run after your approval: ${r.error?.message ?? r.approval?.summary ?? r.outcome}.`,
+    "agent-loop",
+  );
+  return { ran: false, outcome: r.outcome, reason: r.error?.message ?? r.outcome };
 }
 
 /** Build the system prompt for both API and Claude Code paths */
@@ -251,6 +411,146 @@ export function normalizeToolName(name: string): string {
   return mcp ? mcp[1] : name;
 }
 
+export interface StreamedToolCall {
+  name: string;
+  /** The call's input, when the (possibly truncated) JSON parsed. */
+  input?: Record<string, unknown>;
+}
+
+/** Tool calls with their inputs from a spawnClaudeStreaming chunk ("[name] {json}"). */
+export function extractToolCallInputsFromChunk(chunk: string): StreamedToolCall[] {
+  const calls: StreamedToolCall[] = [];
+  for (const match of chunk.matchAll(/^[ \t]*\[([A-Za-z0-9_.:-]+)\](?:[ \t]+(.*))?$/gm)) {
+    const call: StreamedToolCall = { name: normalizeToolName(match[1]) };
+    if (match[2]) {
+      try {
+        const parsed: unknown = JSON.parse(match[2]);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) call.input = parsed as Record<string, unknown>;
+      } catch {
+        // truncated input — the call's arguments stay unknown
+      }
+    }
+    calls.push(call);
+  }
+  return calls;
+}
+
+function toApprovalRequired(row: ApprovalRow): ApprovalRequired {
+  const approveUrl = approvalLink(row.id);
+  return {
+    status: "approval_required",
+    approvalId: row.id,
+    approvalStatus: row.status === "approved" ? "approved" : "pending",
+    tool: row.tool,
+    summary: row.summary,
+    expiresAt: row.expiresAt,
+    approveUrl,
+    instructions: `Approve it in Talome Settings -> Approvals (${approveUrl}).`,
+  };
+}
+
+export interface ClaudeCodeRunOutcome {
+  /** Tools that actually ran (success or tool error). */
+  executed: string[];
+  /** Calls held for the owner's approval. */
+  approvals: ApprovalRequired[];
+  approvalArgs: Map<string, Record<string, unknown>>;
+  /** The execution service already notified the owner (calls ran as the interactive stdio owner). */
+  ownerNotified: boolean;
+}
+
+/**
+ * What a Claude Code remediation run actually did, from the audit log (every
+ * MCP call is audited with its actor and outcome) rather than from the tool
+ * calls in the stream: a write call that returned approval_required or was
+ * blocked took no action. Calls normally run as agent_loop:remediation (the
+ * TALOME_MCP_ACTOR hint); if Claude Code did not pass that to the stdio
+ * server, they ran as the local stdio owner.
+ */
+export function collectClaudeCodeRunOutcome(runStartedAt: string, streamed: StreamedToolCall[]): ClaudeCodeRunOutcome {
+  const remediationTools = [...REMEDIATION_TOOL_NAMES];
+  const auditRows = (actorKind: string, actorId: string) =>
+    db
+      .select({ toolName: schema.auditLog.toolName, outcome: schema.auditLog.outcome })
+      .from(schema.auditLog)
+      .where(
+        and(
+          gte(schema.auditLog.timestamp, runStartedAt),
+          eq(schema.auditLog.actorKind, actorKind),
+          eq(schema.auditLog.actorId, actorId),
+          eq(schema.auditLog.source, "mcp"),
+          inArray(schema.auditLog.toolName, remediationTools),
+        ),
+      )
+      .all();
+
+  let actor = { kind: REMEDIATION_ACTOR.kind as string, id: REMEDIATION_ACTOR.id };
+  let rows: Array<{ toolName: string | null; outcome: string | null }> = [];
+  try {
+    rows = auditRows(actor.kind, actor.id);
+    if (rows.length === 0) {
+      actor = { kind: "mcp_stdio", id: "local" };
+      rows = auditRows(actor.kind, actor.id);
+    }
+  } catch {
+    rows = [];
+  }
+
+  if (rows.length === 0) {
+    // No audit trail (older server DB): fall back to the streamed calls.
+    return { executed: streamed.map((c) => c.name), approvals: [], approvalArgs: new Map(), ownerNotified: true };
+  }
+
+  const executed = rows
+    .filter((r) => r.outcome === "success" || r.outcome === "error")
+    .map((r) => r.toolName ?? "")
+    .filter(Boolean);
+  const heldTools = [...new Set(rows.filter((r) => r.outcome === "approval_required").map((r) => r.toolName ?? "").filter(Boolean))];
+
+  const approvals: ApprovalRequired[] = [];
+  const approvalArgs = new Map<string, Record<string, unknown>>();
+  if (heldTools.length > 0) {
+    let approvalRows: ApprovalRow[] = [];
+    try {
+      approvalRows = db
+        .select()
+        .from(schema.approvals)
+        .where(
+          and(
+            eq(schema.approvals.actorKind, actor.kind),
+            eq(schema.approvals.actorId, actor.id),
+            inArray(schema.approvals.tool, heldTools),
+            inArray(schema.approvals.status, ["pending", "approved"]),
+          ),
+        )
+        .orderBy(desc(schema.approvals.createdAt))
+        .all();
+    } catch {
+      approvalRows = [];
+    }
+    for (const tool of heldTools) {
+      const candidates = approvalRows.filter((a) => a.tool === tool);
+      // Prefer the approval whose args hash matches a streamed call of this tool.
+      let chosen: ApprovalRow | undefined;
+      for (const call of streamed.filter((c) => c.name === tool && c.input)) {
+        const args = withoutApprovalArg(call.input ?? {});
+        const hash = hashArgs(args);
+        const match = candidates.find((a) => a.argsHash === hash);
+        if (match) {
+          chosen = match;
+          // Resuming is only possible for the agent loop's own approvals.
+          if (actor.kind === REMEDIATION_ACTOR.kind) approvalArgs.set(match.id, args);
+          break;
+        }
+      }
+      chosen ??= candidates[0];
+      if (chosen) approvals.push(toApprovalRequired(chosen));
+    }
+  }
+
+  return { executed, approvals, approvalArgs, ownerNotified: actor.kind !== REMEDIATION_ACTOR.kind };
+}
+
 /**
  * Outcome semantics for a finished remediation run:
  *  - a write tool ran → "pending_verification": the agent ATTEMPTED a fix. It is
@@ -264,26 +564,46 @@ export function classifyRemediationOutcome(toolsUsed: string[]): { tookAction: b
 }
 
 /** Common post-processing: notifications, audit, DB persistence */
+export interface FinalizeOptions {
+  /** Arguments of escalated calls — an approval with known args runs as soon as the owner approves. */
+  approvalArgs?: Map<string, Record<string, unknown>>;
+  /** The owner was already notified of the approval (skip the escalation notification). */
+  ownerNotified?: boolean;
+}
+
 export function finalizeRemediation(
   event: SystemEvent,
   responseText: string,
   toolsUsed: string[],
   model: string,
   approvals: ApprovalRequired[] = [],
+  options: FinalizeOptions = {},
 ): RemediationResult {
   const confidence = parseConfidence(responseText);
-  const { tookAction, outcome } = classifyRemediationOutcome(toolsUsed);
+  const { tookAction, outcome: actionOutcome } = classifyRemediationOutcome(toolsUsed);
   const escalated = approvals[0];
+  const approvalArgs = options.approvalArgs ?? new Map<string, Record<string, unknown>>();
+  // Escalated without acting: nothing ran, so there is nothing to verify (and
+  // the run must not count as a failed attempt toward the retry limit).
+  const outcome: RemediationOutcome = escalated && !tookAction ? "pending" : actionOutcome;
+
+  if (escalated) recordEscalation(event, approvals, approvalArgs);
 
   // Never announce "fixed" here — only the outcome tracker may, after verifying.
-  if (escalated) {
+  if (escalated && !options.ownerNotified) {
+    const next = approvalArgs.has(escalated.approvalId)
+      ? "Once you approve it, the agent runs exactly this action."
+      : "Once you approve it, the agent uses it on its next run for this issue.";
+    // One notification per escalation (executeTool does not notify for the agent loop).
     writeNotification(
       "warning",
       `Agent needs approval: ${event.source}`,
-      `The agent wants to run ${escalated.tool} to fix this and needs your approval: ${escalated.approveUrl}\n\n${responseText.slice(0, 1000)}`,
-      "agent-loop",
+      `${escalated.summary}\nReview it in Settings -> Approvals: ${escalated.approveUrl}\n${next}\n\n${responseText.slice(0, 1000)}`,
+      `approval:${escalated.approvalId}`,
       { link: escalated.approveUrl },
     );
+  } else if (escalated) {
+    writeNotification("info", `Agent diagnosed: ${event.source}`, responseText.slice(0, 1200), "agent-loop");
   } else {
     writeNotification(
       "info",
@@ -302,6 +622,7 @@ export function finalizeRemediation(
   );
 
   const rolledBack = toolsUsed.some((t) => normalizeToolName(t) === "rollback_update");
+  const awaitingOnly = !!escalated && !tookAction;
   const actionLabel = rolledBack
     ? "Rolled back + diagnosed"
     : tookAction ? "Restarted + diagnosed" : escalated ? "Awaiting approval" : "Diagnosis only";
@@ -324,6 +645,8 @@ export function finalizeRemediation(
         model,
         confidence,
         outcome,
+        // Awaiting approval: skip outcome verification — no fix was attempted.
+        verifiedAt: awaitingOnly ? new Date().toISOString() : null,
         createdAt: new Date().toISOString(),
       })
       .run();
@@ -441,7 +764,7 @@ async function remediateViaApi(
   const model = getModel();
   const anthropic = createAnthropic({ apiKey });
 
-  const state: RemediationRunState = { executed: [], approvals: [] };
+  const state: RemediationRunState = { executed: [], approvals: [], approvalArgs: new Map() };
   const result = await generateText({
     model: anthropic(model),
     system: buildSystemPrompt(autoRemediate, event.type),
@@ -460,8 +783,9 @@ async function remediateViaApi(
   });
 
   // Only tools that actually ran count — a call held for approval took no action.
-  recordEscalation(event.source, state.approvals);
-  return finalizeRemediation(event, result.text.trim(), state.executed, model, state.approvals);
+  return finalizeRemediation(event, result.text.trim(), state.executed, model, state.approvals, {
+    approvalArgs: state.approvalArgs,
+  });
 }
 
 // ── Tier 2b: Claude Code local remediation (subscription-included) ──────────
@@ -484,15 +808,29 @@ Do NOT use Read, Edit, Write, Bash, or any file-modification tools. Do NOT modif
 
 ${buildEventPrompt(event, triage, autoRemediate)}`;
 
-  const toolsUsed: string[] = [];
+  const streamed: StreamedToolCall[] = [];
+  const runStartedAt = new Date().toISOString();
 
+  // The MCP stdio server Claude Code launches runs as agent_loop:remediation
+  // (read-only when autoRemediate is off), limited to the remediation tools.
   const { code, stdout } = await spawnClaudeStreaming(
     prompt,
     PROJECT_ROOT,
     (chunk) => {
-      toolsUsed.push(...extractToolCallsFromChunk(chunk));
+      streamed.push(...extractToolCallInputsFromChunk(chunk));
     },
+    undefined,
+    { [MCP_ACTOR_ENV]: autoRemediate ? REMEDIATION_ACTOR_HINT : REMEDIATION_DIAGNOSE_ACTOR_HINT },
   );
+
+  // What actually ran — not what was asked for: calls held for approval took no action.
+  const run = collectClaudeCodeRunOutcome(runStartedAt, streamed);
+  const finalizeOptions: FinalizeOptions = { approvalArgs: run.approvalArgs, ownerNotified: run.ownerNotified };
+
+  if ((code !== 0 || !stdout.trim()) && run.approvals.length > 0) {
+    // Escalate even if the session ended badly: the approval request exists.
+    return finalizeRemediation(event, `Claude Code exited with code ${code}.`, run.executed, "claude-code", run.approvals, finalizeOptions);
+  }
 
   if (code !== 0 || !stdout.trim()) {
     return {
@@ -513,7 +851,7 @@ ${buildEventPrompt(event, triage, autoRemediate)}`;
     context: "agent_loop_remediation",
   });
 
-  return finalizeRemediation(event, stdout.trim(), toolsUsed, "claude-code");
+  return finalizeRemediation(event, stdout.trim(), run.executed, "claude-code", run.approvals, finalizeOptions);
 }
 
 // ── Public entry point: auto-selects API or Claude Code ─────────────────────

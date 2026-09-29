@@ -29,7 +29,7 @@ The list is evaluated live: over HTTP for every request, and over stdio every ~1
 
 ## Approvals
 
-In the default **cautious** security mode, destructive tools (uninstall, delete, prune, shell commands, protected settings) do not run straight away. The call returns `[approval_required]` with an approval id and a link to **Settings > Approvals**, and Talome sends you a notification with the same link. Approve it there, then ask the client to call the tool again with the same arguments plus `approval_id`. Approvals are bound to that client, tool and exact arguments, are single-use and expire after 15 minutes. In **locked** mode only read tools run; in **permissive** mode everything runs without approval.
+In the default **cautious** security mode, destructive tools (uninstall, delete, prune, shell commands, protected settings) do not run straight away. The call returns `[approval_required]` with an approval id and a link to **Settings > Approvals**, and Talome sends you a notification with the same link. Approve it there, then ask the client to call the tool again with the same arguments plus `approval_id`. Approvals are bound to that client, tool and exact arguments, are single-use and expire after 15 minutes. An automation a token creates runs under that token's grants. In **locked** mode only read tools run; in **permissive** mode everything runs without approval.
 
 ## Setup
 

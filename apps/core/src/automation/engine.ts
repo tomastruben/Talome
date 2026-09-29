@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Tool } from "ai";
 import { db, schema } from "../db/index.js";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { writeAuditEntry } from "../db/audit.js";
 import { writeNotification } from "../db/notifications.js";
 import { requiresApproval } from "../approval/engine.js";
+import { getApproval } from "../approval/approvals.js";
+import { parseTokenScopes, type TokenScopes } from "../approval/grants.js";
 import { runAutomationPrompt } from "../ai/agent.js";
 import { getAutomationSafeToolNames } from "../ai/automation-safe-tools.js";
 import { getAllRegisteredTools } from "../ai/tool-registry.js";
@@ -34,9 +36,16 @@ const log = createLogger("automation-engine");
 // "blocked_approval", and the execution service notifies the owner with a link
 // to the approval (/dashboard/settings/approvals?id=…). Once the owner
 // approves, the next run of the automation with the same step arguments —
-// typically "Run now" — consumes that approval (single-use, 15 min TTL) and
-// the step executes. ai_prompt steps with "require_approval" are gated as the
-// pseudo-tool "automation_ai_prompt".
+// typically "Run now", or the next scheduled run — consumes that approval
+// (single-use; automation approvals stay open, and once approved usable, for
+// 24 hours) and the step executes. ai_prompt steps with "require_approval" are
+// gated as the pseudo-tool "automation_ai_prompt"; when such a step last
+// stopped at a tool call its model made and the owner approved that call, the
+// re-run resumes without asking for the prompt approval again.
+//
+// Grants: an automation written by an MCP token runs under that token's grants
+// (automations.actor_scopes), checked on every step and every tool its model
+// calls. Owner-written automations are owner-level.
 
 /** Approval-gated pseudo-tool name for ai_prompt / ask_ai steps. */
 export const AUTOMATION_AI_PROMPT_TOOL = "automation_ai_prompt";
@@ -105,6 +114,8 @@ interface RunResult {
 interface ExecutionContext {
   automationId: string;
   automationName: string;
+  /** Grants the automation runs under (MCP-token-written); undefined = owner-level. */
+  actorScopes?: TokenScopes;
   triggerType: string;
   triggerData: Record<string, unknown>;
   stepOutputs: Record<string, string>;
@@ -151,8 +162,15 @@ export type AllowedAutomationTool = string;
 
 // ── executeTool adapters ──────────────────────────────────────────────────────
 
-function actorFor(ctx: { automationId: string; automationName: string }): Actor {
-  return automationActor(ctx.automationId, ctx.automationName);
+type AutomationRef = { automationId: string; automationName: string; actorScopes?: TokenScopes };
+
+function actorFor(ctx: AutomationRef): Actor {
+  return automationActor(ctx.automationId, ctx.automationName, ctx.actorScopes);
+}
+
+/** Stored actor_scopes → grants. Malformed JSON falls back to read-only (never widens). */
+export function parseAutomationScopes(raw: string | null | undefined): TokenScopes | undefined {
+  return raw ? parseTokenScopes(raw) : undefined;
 }
 
 function approvalRef(approval: ApprovalRequired): StepApprovalRef {
@@ -206,14 +224,14 @@ function outcomeFromExecution(r: ExecuteToolResult, successOutput?: (result: unk
   }
 }
 
-function automationAuditExtras(ctx: { automationId: string; automationName: string }) {
+function automationAuditExtras(ctx: AutomationRef) {
   const actor = actorFor(ctx);
   return { actorKind: actor.kind, actorId: actor.id, actorLabel: actor.label, source: "automation" };
 }
 
 /** Run a registered tool as the automation. */
 async function runToolAsAutomation(
-  ctx: { automationId: string; automationName: string },
+  ctx: AutomationRef,
   toolName: string,
   args: Record<string, unknown>,
   requireApproval: boolean,
@@ -232,8 +250,41 @@ async function runToolAsAutomation(
  * its template so a re-run can consume the approval); the tools its model
  * calls are always gated individually by executeTool.
  */
+/**
+ * True when this step's last run stopped at a tool call its model made and the
+ * owner has since approved exactly that call: the re-run resumes it without
+ * asking for the (single-use) prompt approval again, so approving the inner
+ * call is enough. The model is re-run, so it must make the same call to
+ * consume the approval — best effort for model-chosen arguments.
+ */
+function resumesApprovedInnerCall(automationId: string, stepId: string): boolean {
+  try {
+    const last = db
+      .select({ status: schema.automationRuns.status, resultSummary: schema.automationRuns.resultSummary })
+      .from(schema.automationRuns)
+      .where(and(eq(schema.automationRuns.automationId, automationId), isNotNull(schema.automationRuns.finishedAt)))
+      .orderBy(desc(schema.automationRuns.triggeredAt))
+      .limit(1)
+      .get();
+    if (last?.status !== "blocked_approval" || !last.resultSummary) return false;
+    const results = JSON.parse(last.resultSummary) as Array<{ stepId?: unknown; approvalRequired?: { approvalId?: unknown } }>;
+    const blocked = Array.isArray(results) ? results.find((r) => r?.stepId === stepId) : undefined;
+    const approvalId = blocked?.approvalRequired?.approvalId;
+    if (typeof approvalId !== "string") return false;
+    const approval = getApproval(approvalId);
+    return (
+      approval?.status === "approved" &&
+      approval.tool !== AUTOMATION_AI_PROMPT_TOOL &&
+      approval.actorKind === "automation" &&
+      approval.actorId === automationId
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function runPromptAsAutomation(
-  ctx: { automationId: string; automationName: string; triggerType: string },
+  ctx: AutomationRef & { triggerType: string },
   opts: { stepId: string; template: string; prompt: string; allowedTools: string[]; requireApproval: boolean },
 ): Promise<StepOutcome & { text?: string }> {
   let innerApproval: ApprovalRequired | undefined;
@@ -244,16 +295,20 @@ async function runPromptAsAutomation(
       automationId: ctx.automationId,
       triggerType: ctx.triggerType,
       allowedTools: opts.allowedTools,
+      // The model's tool calls are checked against the automation's grants.
+      actor: actorFor(ctx),
       onApprovalRequired: (approval) => {
         innerApproval ??= approval;
       },
     });
 
   let text: string;
-  if (opts.requireApproval) {
+  if (opts.requireApproval && !resumesApprovedInnerCall(ctx.automationId, opts.stepId)) {
     const pseudoTool = { execute: async () => ({ text: await run() }) } as unknown as Tool;
     const r = await executeTool({
-      actor: actorFor(ctx),
+      // The prompt gate is an approval, not a tool: grants apply to the
+      // tools the model calls, not to this pseudo-tool.
+      actor: automationActor(ctx.automationId, ctx.automationName),
       source: "automation",
       toolName: AUTOMATION_AI_PROMPT_TOOL,
       args: { id: opts.stepId, promptTemplate: opts.template },
@@ -408,7 +463,7 @@ async function runStep(
 
 export async function runSteps(
   steps: AutomationStep[],
-  context: { automationId: string; automationName: string; triggerType: string; triggerData?: Record<string, unknown> },
+  context: { automationId: string; automationName: string; actorScopes?: TokenScopes; triggerType: string; triggerData?: Record<string, unknown> },
   journal?: StepJournal,
 ): Promise<RunResult> {
   const ctx: ExecutionContext = {
@@ -463,7 +518,7 @@ export async function runSteps(
 
 export async function runActions(
   actions: AutomationAction[],
-  context: { automationId: string; automationName: string; triggerType: string },
+  context: { automationId: string; automationName: string; actorScopes?: TokenScopes; triggerType: string },
   journal?: StepJournal,
 ): Promise<RunResult> {
   let actionsRun = 0;
@@ -803,17 +858,20 @@ export async function fireTrigger(
         // Dispatch to v2 step runner or v1 legacy runner. The whole run —
         // every tool call and any app operation it starts — acts as the
         // automation (audit, approvals, app_operations.actor).
-        result = await withExecutionContext(automationActor(auto.id, auto.name), "automation", () =>
+        const actorScopes = parseAutomationScopes(auto.actorScopes);
+        result = await withExecutionContext(automationActor(auto.id, auto.name, actorScopes), "automation", () =>
           workflow.kind === "steps"
             ? runSteps(workflow.steps, {
               automationId: auto.id,
               automationName: auto.name,
+              actorScopes,
               triggerType: type,
               triggerData: data,
             }, journal)
             : runActions(workflow.actions, {
               automationId: auto.id,
               automationName: auto.name,
+              actorScopes,
               triggerType: type,
             }, journal));
       } catch (err) {

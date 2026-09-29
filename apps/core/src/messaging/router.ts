@@ -2,6 +2,7 @@ import { db, schema } from "../db/index.js";
 import { eq, and, desc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { createChatStream } from "../ai/agent.js";
+import { withExecutionContext, type Actor } from "../ai/execution.js";
 import { writeMemory } from "../db/memories.js";
 import type { UIMessage } from "ai";
 
@@ -130,7 +131,14 @@ export async function routeMessage(msg: InboundMessage): Promise<string> {
   const messages = loadMessages(conversationId);
   const context = `Platform: ${platform}${senderName ? `, user: ${senderName}` : ""}. Respond in plain text (no markdown, no backtick code blocks — the user is reading this in a chat app).`;
 
-  const result = await createChatStream(messages, context);
+  // Tool calls (audit, approvals, app operations) are attributed to the
+  // messaging user, not to the dashboard chat.
+  const actor: Actor = {
+    kind: "user",
+    id: `${platform}:${externalId}`,
+    label: `${senderName?.trim() || externalId} (${platform})`,
+  };
+  const result = await withExecutionContext(actor, "chat", () => createChatStream(messages, context));
 
   // Collect all streamed text chunks
   let fullText = "";

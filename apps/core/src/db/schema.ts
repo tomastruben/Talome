@@ -185,6 +185,8 @@ export const automations = sqliteTable("automations", {
   lastRunAt: text("last_run_at"),
   runCount: integer("run_count").notNull().default(0),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  /** Grants the automation runs under (JSON TokenScopes) when an MCP token wrote it; null = owner-level. Migration: db/migrations/wire-backend.ts */
+  actorScopes: text("actor_scopes"),
 });
 
 export const automationRuns = sqliteTable("automation_runs", {
@@ -615,3 +617,4 @@ export * from "./schema-backups.js";
 export * from "./schema-store-compat.js";
 export * from "./schema-ai-chat.js";
 export * from "./schema-outcome-probes.js";
+export * from "./schema-wire-backend.js";

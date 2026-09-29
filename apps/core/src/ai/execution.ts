@@ -39,7 +39,7 @@ import { getCustomTools } from "./custom-tools.js";
 import { getSetting } from "../utils/settings.js";
 import { writeAuditEntry, type AuditOutcome } from "../db/audit.js";
 import { writeNotification } from "../db/notifications.js";
-import { checkCallGrant, TIER_RANK, type ToolTier } from "../approval/grants.js";
+import { checkCallGrant, TIER_RANK, type TokenScopes, type ToolTier } from "../approval/grants.js";
 import { APPROVAL_ARG, consumeApproval, hashArgs, requestApproval, type ConsumeFailure } from "../approval/approvals.js";
 import { invalidateSecretValueCache, redactedPreview, redactText } from "../approval/redact.js";
 import { isApprovalExemptShellCommand } from "../approval/shell-safety.js";
@@ -121,6 +121,12 @@ export interface ExecuteToolParams {
    * agent_loop): their next run with the same arguments is the retry.
    */
   autoConsumeApproved?: boolean;
+  /**
+   * Write the "Approval needed" notification when a new approval request is
+   * created. Defaults to true, except for the agent loop: its callers
+   * escalate once themselves (one notification per decision, with context).
+   */
+  notifyApproval?: boolean;
 }
 
 // ── Actors ───────────────────────────────────────────────────────────────────
@@ -141,11 +147,14 @@ export function sessionChatActor(userId: unknown, username: unknown, role: unkno
 /**
  * An automation run: tool steps, ai_prompt steps and the tools their model
  * calls. `automationActor(id, name)`; the one-argument form (legacy) uses the
- * name as the id.
+ * name as the id. `scopes` are the grants of the MCP token that wrote the
+ * automation (automations.actor_scopes): every step — and every tool its
+ * model calls — is checked against them, so a token cannot escape its grants
+ * by scheduling work. Owner-written automations carry none.
  */
-export function automationActor(automationIdOrName: string, automationName?: string): Actor {
+export function automationActor(automationIdOrName: string, automationName?: string, scopes?: TokenScopes | null): Actor {
   const name = automationName ?? automationIdOrName;
-  return { kind: "automation", id: automationIdOrName, label: `Automation: ${name}` };
+  return { kind: "automation", id: automationIdOrName, label: `Automation: ${name}`, ...(scopes ? { scopes } : {}) };
 }
 
 /** The background agent loop (remediation). */
@@ -511,6 +520,18 @@ export async function executeTool(params: ExecuteToolParams): Promise<ExecuteToo
     });
   }
 
+  // Cautious-mode run_shell only runs allow-listed programs: refuse the rest
+  // before asking for an approval that could never be used.
+  if (mode === "cautious" && toolName === "run_shell" && typeof args.command === "string") {
+    const shell = await import("./tools/shell-tool.js");
+    if (!shell.isCautiousShellCommandAllowed(args.command)) {
+      return finish({
+        outcome: "blocked",
+        error: { code: "forbidden", message: shell.cautiousShellRefusal(args.command) },
+      });
+    }
+  }
+
   // 3. Server-issued approvals (cautious mode + destructive tier, or forced by the caller)
   let ownerApproved = false;
   const needsApproval = params.requireApproval === true || (mode === "cautious" && requiresApprovalInCautious(toolName, tier, args));
@@ -542,7 +563,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<ExecuteToo
         idToConsume = approval.id;
       } else {
         const approveUrl = approvalLink(approval.id);
-        if (created) {
+        if (created && (params.notifyApproval ?? actor.kind !== "agent_loop")) {
           // requestApproval already de-duplicates open requests, so every new
           // approval gets its own notification (no title-based suppression).
           writeNotification(
@@ -623,4 +644,64 @@ export async function executeTool(params: ExecuteToolParams): Promise<ExecuteToo
     return finish({ outcome: "error", result: output, error: { code: "tool_error", message: reported, hint: TOOL_ERROR_HINT } });
   }
   return finish({ outcome: "success", result: output });
+}
+
+// ── Unattended agents ────────────────────────────────────────────────────────
+
+export interface UnattendedToolHooks {
+  /** A call ran (success or tool error). */
+  onExecuted?: (toolName: string, args: Record<string, unknown>) => void;
+  /** A call needs the owner's approval — the caller escalates and stops. */
+  onApprovalRequired?: (approval: ApprovalRequired, toolName: string, args: Record<string, unknown>) => void;
+}
+
+/** What an unattended model sees when a call is held for the owner's approval. */
+export const UNATTENDED_APPROVAL_MESSAGE =
+  "Escalated to the owner for approval. Do not call this tool again in this run; finish and say that approval is pending.";
+
+/**
+ * Wrap tools for an unattended model (setup agent, agent loop) so every call
+ * runs through executeTool as `actor`: grants, security mode, approvals and
+ * audit apply. approval_required is reported through the hook (the caller
+ * stops the run) and returned to the model as a plain result it must not
+ * retry; blocked calls come back as errors.
+ */
+export function gateToolsForUnattendedActor(
+  tools: Record<string, Tool>,
+  actor: Actor,
+  source: ExecutionSource,
+  hooks: UnattendedToolHooks = {},
+): Record<string, Tool> {
+  return Object.fromEntries(
+    Object.entries(tools).map(([name, t]) => {
+      if (typeof (t as { execute?: unknown }).execute !== "function") return [name, t];
+      const gated = {
+        ...t,
+        execute: async (rawArgs: unknown, options: unknown) => {
+          const args = toArgsObject(rawArgs);
+          const r = await executeTool({ actor, source, toolName: name, args, tool: t, toolCallOptions: options });
+          switch (r.outcome) {
+            case "success":
+              hooks.onExecuted?.(name, args);
+              return r.result;
+            case "error":
+              hooks.onExecuted?.(name, args);
+              return r.result ?? { error: r.error?.message ?? "Tool failed" };
+            case "approval_required":
+              if (r.approval) hooks.onApprovalRequired?.(r.approval, name, args);
+              return {
+                status: "approval_required",
+                approvalId: r.approval?.approvalId,
+                approveUrl: r.approval?.approveUrl,
+                message: UNATTENDED_APPROVAL_MESSAGE,
+              };
+            case "blocked":
+            default:
+              return { error: r.error?.hint ? `${r.error.message} ${r.error.hint}` : (r.error?.message ?? "Blocked") };
+          }
+        },
+      } as Tool;
+      return [name, gated];
+    }),
+  );
 }
