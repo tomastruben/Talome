@@ -187,6 +187,8 @@ export const automations = sqliteTable("automations", {
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   /** Grants the automation runs under (JSON TokenScopes) when an MCP token wrote it; null = owner-level. Migration: db/migrations/wire-backend.ts */
   actorScopes: text("actor_scopes"),
+  /** The MCP token that last wrote it: each run re-checks that token (revoked/expired → blocked, current grants apply). Migration: db/migrations/wire-backend.ts */
+  actorTokenId: text("actor_token_id"),
 });
 
 export const automationRuns = sqliteTable("automation_runs", {

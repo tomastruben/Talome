@@ -405,6 +405,8 @@ describe("automation grants", () => {
       label: 'MCP token "Narrow"',
       scopes: { maxTier: "modify", domains: ["automations"], apps: "all" },
     };
+    // The token exists (each run re-checks the token that wrote the automation).
+    db.insert(schema.mcpTokens).values({ id: token.id, name: "Narrow", tokenHash: "hash-tok-narrow", scopes: JSON.stringify(token.scopes) }).run();
     const created = await executeTool({
       actor: token,
       source: "mcp",

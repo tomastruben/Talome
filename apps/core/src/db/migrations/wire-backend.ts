@@ -27,6 +27,18 @@ function ensureAutomationActorScopesColumn(): void {
   if (!columns.has("actor_scopes")) db.run(sql`ALTER TABLE automations ADD COLUMN actor_scopes TEXT`);
 }
 
+/**
+ * automations.actor_token_id — the MCP token that wrote the automation. Each
+ * run re-checks that token: revoked or expired blocks (and disables) the
+ * automation, and the token's current grants apply, so narrowing it takes
+ * effect on the next run.
+ */
+function ensureAutomationActorTokenColumn(): void {
+  const columns = columnsOf("automations");
+  if (columns.size === 0) return;
+  if (!columns.has("actor_token_id")) db.run(sql`ALTER TABLE automations ADD COLUMN actor_token_id TEXT`);
+}
+
 /** remediation_escalations — persisted agent-loop escalations awaiting the owner. */
 function ensureRemediationEscalationsTable(): void {
   db.run(sql`
@@ -48,5 +60,6 @@ function ensureRemediationEscalationsTable(): void {
 export function runWireBackendMigrations(): void {
   ensureNotificationLinkColumn();
   ensureAutomationActorScopesColumn();
+  ensureAutomationActorTokenColumn();
   ensureRemediationEscalationsTable();
 }
