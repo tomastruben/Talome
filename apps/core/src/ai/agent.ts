@@ -305,7 +305,7 @@ import {
   registerDomainWithOnDemandGroups,
   getAllRegisteredTools,
   getActiveRegisteredTools,
-  getActiveDomainNames,
+  getAllDomains,
   getBaseDomainNames,
   getOrderedDomainTools,
   getAllTiers,
@@ -1392,11 +1392,14 @@ interface ChatToolset {
 }
 
 /**
- * Chat toolset for one request. `tools` holds every configured tool so calls
- * from earlier turns and approvals keep executing; the model only sees
- * `activeToolNames()` — the conversation's routed domains, custom tools and
- * discover_tools. For Anthropic the last base tool carries a cache breakpoint
- * so the shared base prefix stays cached when a conversation adds domains.
+ * Chat toolset for one request. `tools` holds every registered tool — not
+ * only the configured ones — so calls from earlier turns and approvals keep
+ * executing, and an app configured during this request (install_app
+ * auto-configures it) can be loaded by discover_tools and called from the
+ * next step. The model only sees `activeToolNames()` — the conversation's
+ * routed (configured) domains, custom tools and discover_tools. For Anthropic
+ * the last base tool carries a cache breakpoint so the shared base prefix
+ * stays cached when a conversation adds domains.
  */
 function getChatToolset(session: ToolRoutingSession, isAnthropic: boolean): ChatToolset {
   const disabledTools = getDisabledTools();
@@ -1404,7 +1407,7 @@ function getChatToolset(session: ToolRoutingSession, isAnthropic: boolean): Chat
   const gate = (name: string, t: Tool) => gateToolExecution(t, name, TOOL_TIERS[name] ?? "read", mode);
 
   const tools: Record<string, Tool> = {};
-  for (const [name, t] of getOrderedDomainTools(getActiveDomainNames())) {
+  for (const [name, t] of getOrderedDomainTools(getAllDomains().map((d) => d.name))) {
     if (!disabledTools.has(name)) tools[name] = gate(name, t);
   }
   const baseToolNames = new Set(getOrderedDomainTools(getBaseDomainNames()).map(([name]) => name));

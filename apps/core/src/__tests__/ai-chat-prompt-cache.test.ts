@@ -9,6 +9,9 @@ const { streamTextMock, getTopMemoriesMock, getFeatureStackStatusMock, saveScree
   /** The memories table as the per-conversation snapshot check reads it. */
   memoriesTable: { rows: [] as Array<{ id: number; content: string; enabled: boolean }> },
 }));
+const { settingsRows } = vi.hoisted(() => ({
+  settingsRows: [{ key: "sonarr_url", value: "http://localhost:8989" }] as Array<{ key: string; value: string }>,
+}));
 
 vi.mock("ai", async (importOriginal) => {
   const actual = await importOriginal<typeof import("ai")>();
@@ -19,7 +22,7 @@ vi.mock("../db/index.js", () => {
   const memories = {};
   const from = (table: unknown) => ({
     where: () => ({ get: () => null, all: () => (table === memories ? memoriesTable.rows : []) }),
-    all: () => [{ key: "sonarr_url", value: "http://localhost:8989" }],
+    all: () => settingsRows,
     orderBy: () => ({ limit: () => ({ all: () => [] }) }),
   });
   return {
@@ -43,7 +46,7 @@ import {
 } from "../ai/prompt-cache.js";
 import { createChatStream, DEFAULT_SYSTEM_PROMPT } from "../ai/agent.js";
 import { invalidateChatContextCaches } from "../ai/chat-context-cache.js";
-import { getBaseDomainNames, getOrderedDomainTools } from "../ai/tool-registry.js";
+import { getBaseDomainNames, getOrderedDomainTools, invalidateSettingsCache } from "../ai/tool-registry.js";
 import { resetToolRoutingState } from "../ai/tool-discovery.js";
 
 const EPHEMERAL = { anthropic: { cacheControl: { type: "ephemeral" } } };
@@ -203,6 +206,28 @@ describe("createChatStream cache options", () => {
     const execute = args.tools.discover_tools.execute as (i: unknown, o: unknown) => Promise<unknown>;
     await execute({ query: "automation" }, { toolCallId: "d1", messages: [] });
     expect(args.prepareStep({ messages: history, stepNumber: 1 }).activeTools).toContain("create_automation");
+  });
+
+  it("lets discover_tools load an app configured earlier in the same request", async () => {
+    await createChatStream([{ id: "p1", role: "user", parts: [{ type: "text", text: "install plex" }] }], undefined, undefined, undefined, "anthropic");
+    const args = lastArgs();
+    expect(args.activeTools).not.toContain("plex_get_on_deck");
+
+    // Step 1: install_app auto-configures Plex; onStepFinish drops the settings cache.
+    settingsRows.push({ key: "plex_url", value: "http://localhost:32400" });
+    try {
+      args.onStepFinish({ toolCalls: [{ toolName: "install_app", args: { appId: "plex" } }], toolResults: [] });
+      // Step 2: the model loads the plex domain.
+      const execute = args.tools.discover_tools.execute as (i: unknown, o: unknown) => Promise<{ activatedDomains: string[] }>;
+      const result = await execute({ domain: "plex" }, { toolCallId: "d1", messages: [] });
+      expect(result.activatedDomains).toEqual(["plex"]);
+      // Step 3: its tools are sent to the model and callable.
+      expect(args.prepareStep({ messages: history, stepNumber: 2 }).activeTools).toContain("plex_get_on_deck");
+      expect(args.tools).toHaveProperty("plex_get_on_deck");
+    } finally {
+      settingsRows.pop();
+      invalidateSettingsCache();
+    }
   });
 
   const text = (m: ModelMessage) =>

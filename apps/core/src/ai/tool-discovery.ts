@@ -208,7 +208,10 @@ export interface ToolRoutingSession {
   readonly key: string | undefined;
   /** Domains currently routed into the conversation (base + conversation). Grows only. */
   readonly domains: ReadonlySet<string>;
-  /** Add domains (active, known ones only). Returns the names that were newly added. */
+  /**
+   * Add domains (known ones that are active now — including domains that
+   * became configured during this request). Returns the names newly added.
+   */
   activate(domainNames: Iterable<string>): string[];
   /** Tool names of the routed domains, in deterministic order. */
   toolNames(): string[];
@@ -217,17 +220,20 @@ export interface ToolRoutingSession {
 export function createToolRoutingSession(options: {
   conversationKey?: string;
   messages: readonly UIMessage[];
+  /** Fixed active set (tests). By default the configured domains are re-read at each activation. */
   activeDomains?: ReadonlySet<string>;
 }): ToolRoutingSession {
-  const active = options.activeDomains ?? getActiveDomainNames();
+  const currentActive = (): ReadonlySet<string> => options.activeDomains ?? getActiveDomainNames();
+  const active = currentActive();
   const key = options.conversationKey;
   const domains = new Set<string>(getBaseDomainNames().filter((n) => active.has(n)));
 
-  const accept = (name: string): boolean => active.has(name) && getDomain(name) !== undefined;
+  const accept = (name: string, activeNow: ReadonlySet<string>): boolean =>
+    activeNow.has(name) && getDomain(name) !== undefined;
 
   for (const name of deriveDomainsFromHistory(options.messages, active)) domains.add(name);
   if (key) {
-    for (const name of recall(key)) if (accept(name)) domains.add(name);
+    for (const name of recall(key)) if (accept(name, active)) domains.add(name);
     remember(key, [...domains].filter((n) => !isBaseDomain(getDomain(n) as ToolDomain)));
   }
 
@@ -235,9 +241,12 @@ export function createToolRoutingSession(options: {
     key,
     domains,
     activate(domainNames) {
+      // Re-read the configured domains: an app installed earlier in this
+      // request (install_app auto-configures it) must be loadable right away.
+      const activeNow = currentActive();
       const added: string[] = [];
       for (const name of domainNames) {
-        if (!accept(name) || domains.has(name)) continue;
+        if (!accept(name, activeNow) || domains.has(name)) continue;
         domains.add(name);
         added.push(name);
       }
