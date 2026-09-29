@@ -4,6 +4,7 @@ import type {
   ChatInputCommandInteraction,
 } from "discord.js";
 import { routeMessage } from "./router.js";
+import { authorizeSender } from "./allowlist.js";
 
 let activeClient: Client | null = null;
 let activeClientId: string | null = null;
@@ -31,7 +32,7 @@ export async function stopDiscordBot(): Promise<void> {
 export async function startDiscordBot(
   token: string
 ): Promise<{ ok: boolean; username?: string; error?: string }> {
-  const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = await import("discord.js");
+  const { Client, GatewayIntentBits, MessageFlags, REST, Routes, SlashCommandBuilder } = await import("discord.js");
 
   await stopDiscordBot();
 
@@ -82,6 +83,15 @@ export async function startDiscordBot(
       const userId = cmd.user.id;
       const userName = cmd.user.displayName || cmd.user.username;
 
+      // /talome is a global command: anyone sharing a server with the bot can
+      // run it. Only allowed senders reach the agent; others get a private
+      // reply with their user id (routeMessage checks again).
+      const decision = authorizeSender("discord", userId, userName);
+      if (!decision.allowed) {
+        await cmd.reply({ content: decision.reply, flags: MessageFlags.Ephemeral }).catch(() => {});
+        return;
+      }
+
       // Defer reply — agent may take a few seconds
       await cmd.deferReply();
 
@@ -91,6 +101,7 @@ export async function startDiscordBot(
           externalId: userId,
           text: message,
           senderName: userName,
+          senderId: userId,
         });
 
         // Discord has a 2000-char limit on messages

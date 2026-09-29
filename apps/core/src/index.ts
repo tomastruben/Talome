@@ -352,7 +352,7 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
-// ── Session auth (guards all /api/* except health + auth + mcp + terminal) ───
+// ── Session auth (guards all /api/* except health + auth + mcp + webhooks) ──
 app.use("/api/*", requireSession);
 
 // ── Health check ──────────────────────────────────────────────────────────────
@@ -466,7 +466,8 @@ app.route("/api/verification", verificationRoute);
 app.use("/api/mcp/*", rateLimit(60, 60_000));
 app.route("/api/mcp", mcp);
 
-// Terminal WebSocket — auth handled inside setupTerminal via bearerAuth
+// Terminal HTTP proxy — admin session required (routes/terminal.ts); the
+// WebSocket goes straight to the daemon with a token minted here
 setupTerminal(app, upgradeWebSocket);
 
 app.route("/api/automations", automations);

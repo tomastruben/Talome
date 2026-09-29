@@ -15,6 +15,7 @@ import { SettingsGroup, SettingsRow, SecretRow } from "@/components/settings/set
 import { Banner, BannerIcon, BannerTitle, BannerAction } from "@/components/kibo-ui/banner";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 import { LevelPicker } from "@/components/settings/sections/notifications";
+import { ChatBotSenders } from "@/components/settings/sections/chat-bot-senders";
 
 // ── Main integrations section (chat bots only) ──────────────────────────────
 
@@ -138,6 +139,7 @@ export function IntegrationsSection() {
               <LevelPicker value={telegramLevels} onChange={handleTelegramLevels} />
             </SettingsRow>
           )}
+          <ChatBotSenders platform="telegram" />
           <SettingsRow className="bg-muted/30 justify-end gap-2 py-3">
             {telegramStatus?.connected && (
               <Button
@@ -240,6 +242,7 @@ export function IntegrationsSection() {
               <LevelPicker value={discordLevels} onChange={handleDiscordLevels} />
             </SettingsRow>
           )}
+          <ChatBotSenders platform="discord" />
           <SettingsRow className="bg-muted/30 justify-end gap-2 py-3">
             {discordStatus?.connected && (
               <Button

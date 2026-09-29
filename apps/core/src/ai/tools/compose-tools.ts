@@ -9,6 +9,8 @@ import { writeAuditEntry } from "../../db/audit.js";
 import { db, schema } from "../../db/index.js";
 import { eq } from "drizzle-orm";
 import { listContainers } from "../../docker/client.js";
+import { checkHostMount } from "../../stores/host-mounts.js";
+import { normalizeHostPath } from "../../stores/host-folders.js";
 
 const THIS_DIR = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT =
@@ -236,7 +238,24 @@ export const addVolumeMountTool = tool({
     containerPath: z.string().describe("Path inside the container"),
     readOnly: z.boolean().default(false).describe("Mount as read-only"),
   }),
-  execute: async ({ appId, serviceName, hostPath, containerPath, readOnly }) => {
+  execute: async ({ appId, serviceName, hostPath: requestedHostPath, containerPath, readOnly }) => {
+    // System, credential and Talome folders are never mounted (the Docker
+    // socket and folders outside the configured media/data roots need the
+    // owner's approval — execution.ts makes those calls destructive).
+    const check = checkHostMount(appId, requestedHostPath);
+    if (check.error) {
+      return {
+        success: false,
+        error: `Refusing to mount ${requestedHostPath}: ${check.error}.`,
+        hint: "Mount a media or data folder instead (Settings -> Storage sets the media/downloads roots).",
+      };
+    }
+    // eslint-disable-next-line no-control-regex
+    if (!containerPath.startsWith("/") || /[:,\u0000-\u001f\u007f]/.test(containerPath)) {
+      return { success: false, error: `Container path "${containerPath}" must be absolute and must not contain ":" or ",".` };
+    }
+    const hostPath = normalizeHostPath(requestedHostPath);
+
     // Try Talome's DB first, then fall back to Docker label discovery
     let composePath = getInstalledAppComposePath(appId);
     let effectiveServiceName = serviceName ?? appId;

@@ -17,6 +17,7 @@ import { installProgress, emitProgress, type InstallProgressEvent } from "../sto
 import { listAppOperations, hasLiveOperation } from "../ops/operations.js";
 import { UmbrelInstallOptionsSchema } from "../stores/umbrel-v2.js";
 import { getInstallAccessWarnings, runWithUmbrelInstallOptions } from "../stores/umbrel-v2-install.js";
+import { volumeMountsError, volumeMountsNeedingApproval } from "../stores/host-mounts.js";
 import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus } from "@talome/types";
 import { listContainers } from "../docker/client.js";
 import os from "node:os";
@@ -362,6 +363,15 @@ apps.post("/:storeId/:appId/install", async (c) => {
   const parsed = installSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const { env, volumeMounts, umbrel } = parsed.data;
+
+  // Same host-folder rules as the agent's install_app: protected folders never,
+  // the Docker socket or folders outside the configured roots only for an admin.
+  const mountError = volumeMountsError(appId, volumeMounts);
+  if (mountError) return c.json({ error: mountError }, 400);
+  const risky = volumeMountsNeedingApproval(appId, volumeMounts);
+  if (risky.length > 0 && c.get("sessionRole" as never) !== "admin") {
+    return c.json({ error: `Only an admin can install with this mount: ${risky[0]}.` }, 403);
+  }
 
   // Don't reset the progress of an install that is already running (double-click, second tab).
   if (!hasLiveOperation(appId)) emitProgress(appId, { stage: "queued", message: "Preparing..." });

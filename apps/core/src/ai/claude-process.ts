@@ -83,6 +83,109 @@ export function spawnProcess(
 }
 
 /**
+ * A restricted Claude Code session: instead of --dangerously-skip-permissions,
+ * only `allowedTools` run (in --print mode nobody can approve anything else,
+ * so every other tool that needs permission is refused), `disallowedTools`
+ * are always refused (deny rules win over allow rules in any settings file),
+ * and only the MCP servers in `mcpConfig` are loaded.
+ */
+export interface ClaudeToolPolicy {
+  allowedTools: string[];
+  disallowedTools: string[];
+  /** JSON for --mcp-config; with it, --strict-mcp-config ignores .mcp.json and user MCP servers. */
+  mcpConfig?: string;
+}
+
+/** Claude Code's built-in tools. A session that must only answer in text denies every one. */
+export const CLAUDE_BUILTIN_TOOLS: readonly string[] = [
+  "Bash",
+  "BashOutput",
+  "KillShell",
+  "Edit",
+  "MultiEdit",
+  "Write",
+  "NotebookEdit",
+  "NotebookRead",
+  "Read",
+  "Glob",
+  "Grep",
+  "LS",
+  "WebFetch",
+  "WebSearch",
+  "Task",
+  "TodoWrite",
+  "SlashCommand",
+  "Skill",
+  "ExitPlanMode",
+  "ListMcpResourcesTool",
+  "ReadMcpResourceTool",
+];
+
+/** No MCP server at all: with --strict-mcp-config, .mcp.json and user-level servers are ignored. */
+export const NO_MCP_SERVERS = JSON.stringify({ mcpServers: {} });
+
+/**
+ * Text generation only (summaries, digests, diagnosis): every built-in tool is
+ * denied and no MCP server is loaded, so text in the prompt — logs, events,
+ * activity — cannot make the session run a command, touch a file or call Talome.
+ */
+export function textOnlyClaudePolicy(): ClaudeToolPolicy {
+  return { allowedTools: [], disallowedTools: [...CLAUDE_BUILTIN_TOOLS], mcpConfig: NO_MCP_SERVERS };
+}
+
+/** Claude Code's shell, web and sub-agent tools: never available to a headless code-editing session. */
+const NO_SHELL_OR_WEB = ["Bash", "BashOutput", "KillShell", "WebFetch", "WebSearch", "Task", "SlashCommand", "Skill"];
+
+/**
+ * Paths a code-editing session never writes, even inside its working
+ * directory: Claude Code's own settings and hooks (.claude), MCP server config
+ * (.mcp.json), git internals and hooks, env files and the repo's instructions
+ * to Claude — each of them would run a command or steer a later session.
+ */
+const PROTECTED_EDIT_PATTERNS = ["**/.claude/**", "**/.mcp.json", "**/.git/**", "**/.husky/**", "**/.env*", "**/CLAUDE.md"];
+
+/**
+ * Headless code editing (self-improvement, build autofix, app scaffolds):
+ * edits only inside the working directory — acceptEdits approves those, and
+ * anything outside it would need a permission prompt, which --print refuses —
+ * minus the protected paths above. No shell, no web, no MCP servers: the
+ * caller runs typecheck/build itself. `canEdit: false` is read-only (plans).
+ */
+export function codeEditingClaudePolicy(opts: { canEdit: boolean }): ClaudeToolPolicy {
+  const edits = opts.canEdit
+    ? PROTECTED_EDIT_PATTERNS.flatMap((p) => [`Edit(${p})`, `Write(${p})`, `MultiEdit(${p})`, `NotebookEdit(${p})`])
+    : ["Edit", "MultiEdit", "Write", "NotebookEdit"];
+  return {
+    // Bug-hunt screenshots are saved outside the repo for the session to read.
+    allowedTools: ["Read(~/.talome/evolution-screenshots/**)"],
+    disallowedTools: [...NO_SHELL_OR_WEB, "Read(**/.env*)", ...edits],
+    mcpConfig: NO_MCP_SERVERS,
+  };
+}
+
+/**
+ * Permission arguments for a restricted session. Headless Talome sessions never
+ * get --dangerously-skip-permissions: the permission mode is explicit (so a
+ * user/project defaultMode of bypassPermissions is not inherited), only the
+ * policy's allow rules apply, deny rules always win, and only the MCP servers
+ * in the policy are loaded.
+ */
+export function buildClaudePolicyArgs(policy: ClaudeToolPolicy): string[] {
+  return [
+    "--permission-mode", "acceptEdits",
+    ...(policy.allowedTools.length > 0 ? ["--allowedTools", policy.allowedTools.join(",")] : []),
+    ...(policy.disallowedTools.length > 0 ? ["--disallowedTools", policy.disallowedTools.join(",")] : []),
+    ...(policy.mcpConfig ? ["--mcp-config", policy.mcpConfig, "--strict-mcp-config"] : []),
+  ];
+}
+
+/** CLI arguments for spawnClaudeStreaming, restricted by `policy` (default: text only). */
+export function buildClaudeStreamingArgs(policy: ClaudeToolPolicy = textOnlyClaudePolicy()): string[] {
+  const io = ["--print", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose"];
+  return [...io, ...buildClaudePolicyArgs(policy)];
+}
+
+/**
  * Spawn Claude Code with stream-json I/O so we get real-time output chunks.
  * Parses NDJSON lines from stdout and calls onData with human-readable text snippets.
  * Returns the final result text and stderr.
@@ -94,6 +197,8 @@ export function spawnClaudeStreaming(
   abortSignal?: AbortSignal,
   /** Extra environment for the claude process (and the MCP servers it launches). */
   extraEnv?: Record<string, string>,
+  /** The session's tools (see ClaudeToolPolicy). Omitted: text only, no tools at all. */
+  policy?: ClaudeToolPolicy,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     let resultText = "";
@@ -108,13 +213,7 @@ export function spawnClaudeStreaming(
 
     const proc = spawn(
       "claude",
-      [
-        "--dangerously-skip-permissions",
-        "--print",
-        "--output-format", "stream-json",
-        "--input-format", "stream-json",
-        "--verbose",
-      ],
+      buildClaudeStreamingArgs(policy),
       // detached: true so we can SIGTERM the whole process group on timeout.
       // claude may spawn tool subprocesses (bash, git, etc.) — killing only
       // the top-level PID leaves orphans.
@@ -217,6 +316,28 @@ export function spawnClaudeStreaming(
       resolve({ code: 1, stdout: resultText, stderr: `${stderr}\n${err.message}`.trim() }),
     );
   });
+}
+
+/**
+ * One-shot text generation through Claude Code (subscription auth, $0) with
+ * no tools: for summaries and diagnosis built from logs or activity. Returns
+ * null when Claude Code fails, times out or answers with nothing — callers
+ * fall back to the API.
+ */
+export async function generateTextViaClaudeCode(
+  prompt: string,
+  opts: { cwd: string; timeoutMs: number },
+): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
+  try {
+    const { code, stdout } = await spawnClaudeStreaming(prompt, opts.cwd, undefined, controller.signal, undefined, textOnlyClaudePolicy());
+    if (controller.signal.aborted) return null;
+    const text = stdout.trim();
+    return code === 0 && text ? text : null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function getChangedFiles(cwd: string): Promise<string[]> {

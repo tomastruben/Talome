@@ -5,6 +5,7 @@
  * survives tsx watch restarts. All PTY session logic lives there.
  *
  * This route:
+ *  - Requires a logged-in admin for every /api/terminal/* request
  *  - Forwards all /api/terminal/* HTTP requests to the daemon
  *  - Exposes the daemon port so the frontend can connect WebSocket directly
  *
@@ -12,12 +13,13 @@
  * (no WS proxy needed — avoids bidirectional pipe complexity).
  */
 
-import type { Hono } from "hono";
+import type { Hono, MiddlewareHandler } from "hono";
 import { inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { db, schema } from "../db/index.js";
 import { DAEMON_PORT } from "../terminal-constants.js";
 import { ensureDaemonRunning } from "../terminal-spawn.js";
+import { getSetting } from "../utils/settings.js";
 
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
 
@@ -68,10 +70,34 @@ function enrichSessionsWithDisplayNames(
   return sessions;
 }
 
+/**
+ * A terminal is an unrestricted host shell, and this proxy adds the daemon's
+ * internal key to every request — so everything under /api/terminal/* needs
+ * a logged-in admin (requireSession sets the role; a request that skipped it
+ * has none and is refused). Minting a PTY token is also refused while the
+ * security mode is "locked", matching the daemon's rule for MCP tokens.
+ */
+export const requireTerminalAdmin: MiddlewareHandler = async (c, next) => {
+  const user = c.get("sessionUser" as never) as string | undefined;
+  if (!user) return c.json({ error: "Unauthorized — please log in" }, 401);
+  const role = c.get("sessionRole" as never) as string | undefined;
+  if (role !== "admin") return c.json({ error: "Forbidden — the terminal requires an admin account" }, 403);
+  if (c.req.method === "POST" && c.req.path === "/api/terminal/session" && getSetting("security_mode") === "locked") {
+    return c.json(
+      { error: 'The terminal is disabled while the security mode is "locked". An admin can change it in Settings -> Security.' },
+      423,
+    );
+  }
+  await next();
+};
+
 export function setupTerminal(
   app: Hono,
   _upgradeWebSocket: unknown,
 ) {
+  // Every terminal HTTP route (including ensure-daemon) is admin-only.
+  app.use("/api/terminal/*", requireTerminalAdmin);
+
   // Ensure the daemon is running — called by the frontend when it can't connect
   app.post("/api/terminal/ensure-daemon", async (c) => {
     const result = await ensureDaemonRunning();

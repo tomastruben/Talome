@@ -7,8 +7,15 @@ import { getUsageSummary } from "../agent-loop/budget.js";
 import { runAgentCycleOnce } from "../agent-loop/index.js";
 import { getDedupSnapshot } from "../agent-loop/event-dedup.js";
 import { recordGracefulError } from "../middleware/request-logger.js";
+import { getAutoExecutePolicy, setAutoExecutePolicy } from "../evolution/auto-execute.js";
+import { requireRole } from "../middleware/role-guard.js";
 
 export const agentLoop = new Hono();
+
+// Changing what the agent loop and self-improvement may do on their own
+// (auto-remediation, auto-executing code changes) is an admin decision.
+agentLoop.use("/config", requireRole("admin"));
+agentLoop.use("/evolution-config", requireRole("admin"));
 
 // ── Get agent loop status ─────────────────────────────────────────────────
 
@@ -65,7 +72,8 @@ agentLoop.get("/status", (c) => {
       .all();
     const evoMap = new Map(evoRows.map(r => [r.key, r.value]));
     const autoScan = evoMap.get("evolution_auto_scan") !== "false";
-    const autoExecutePolicy = evoMap.get("evolution_auto_execute") ?? "low";
+    // Off unless the owner turned it on (a stored value without the opt-in counts as off).
+    const autoExecutePolicy = getAutoExecutePolicy();
     const executionMode = evoMap.get("evolution_execution_mode") ?? "headless";
 
     return c.json({
@@ -79,7 +87,7 @@ agentLoop.get("/status", (c) => {
     recordGracefulError(c, err, { endpoint: "agent-loop/status" });
     return c.json({
       config: DEFAULT_AGENT_LOOP_CONFIG,
-      evolutionConfig: { autoScan: true, autoExecutePolicy: "low", executionMode: "headless" },
+      evolutionConfig: { autoScan: true, autoExecutePolicy: "none", executionMode: "headless" },
       usage: { totalCostUsd: 0, totalRequests: 0 },
       recentEvents: [],
       recentRemediations: [],
@@ -158,10 +166,7 @@ agentLoop.put("/evolution-config", async (c) => {
       .run();
   }
   if (parsed.data.autoExecutePolicy !== undefined) {
-    db.insert(schema.settings)
-      .values({ key: "evolution_auto_execute", value: parsed.data.autoExecutePolicy })
-      .onConflictDoUpdate({ target: schema.settings.key, set: { value: parsed.data.autoExecutePolicy } })
-      .run();
+    setAutoExecutePolicy(parsed.data.autoExecutePolicy);
   }
   if (parsed.data.executionMode !== undefined) {
     db.insert(schema.settings)

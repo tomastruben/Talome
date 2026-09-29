@@ -43,9 +43,12 @@ const log = createLogger("automation-engine");
 // stopped at a tool call its model made and the owner approved that call, the
 // re-run resumes without asking for the prompt approval again.
 //
-// Grants: an automation written by an MCP token runs under that token's grants
-// (automations.actor_scopes), checked on every step and every tool its model
-// calls. Owner-written automations are owner-level.
+// Grants: an automation written by an MCP token runs under that token's grants,
+// checked on every step and every tool its model calls. The token is re-read
+// on every run (automations.actor_token_id): revoked or expired → the run is
+// blocked and the automation disabled; narrowed → the current grants apply.
+// Rows with only a stored snapshot (automations.actor_scopes) use it.
+// Owner-written automations are owner-level.
 
 /** Approval-gated pseudo-tool name for ai_prompt / ask_ai steps. */
 export const AUTOMATION_AI_PROMPT_TOOL = "automation_ai_prompt";
@@ -171,6 +174,60 @@ function actorFor(ctx: AutomationRef): Actor {
 /** Stored actor_scopes → grants. Malformed JSON falls back to read-only (never widens). */
 export function parseAutomationScopes(raw: string | null | undefined): TokenScopes | undefined {
   return raw ? parseTokenScopes(raw) : undefined;
+}
+
+export type AutomationGrant =
+  | { ok: true; scopes?: TokenScopes }
+  | { ok: false; reason: string };
+
+/**
+ * The grants an automation runs under right now. An automation written by an
+ * MCP token (actor_token_id) follows that token's CURRENT state: revoked,
+ * expired or deleted → it must not run; otherwise the token's current grants
+ * apply (narrowing the token narrows the automation). Automations without a
+ * recorded token use the stored snapshot (actor_scopes); owner-written ones
+ * are owner-level.
+ */
+export function resolveAutomationGrant(
+  auto: { actorScopes: string | null; actorTokenId?: string | null },
+  now: number = Date.now(),
+): AutomationGrant {
+  if (!auto.actorTokenId) return { ok: true, scopes: parseAutomationScopes(auto.actorScopes) };
+  let token: typeof schema.mcpTokens.$inferSelect | undefined;
+  try {
+    token = db.select().from(schema.mcpTokens).where(eq(schema.mcpTokens.id, auto.actorTokenId)).get();
+  } catch {
+    return { ok: false, reason: "the MCP token that wrote it could not be verified" };
+  }
+  if (!token) return { ok: false, reason: "the MCP token that wrote it no longer exists" };
+  if (token.revokedAt) return { ok: false, reason: `the MCP token "${token.name}" that wrote it was revoked` };
+  if (token.expiresAt) {
+    const expires = Date.parse(token.expiresAt);
+    if (!Number.isFinite(expires) || expires <= now) {
+      return { ok: false, reason: `the MCP token "${token.name}" that wrote it has expired` };
+    }
+  }
+  return { ok: true, scopes: parseTokenScopes(token.scopes) };
+}
+
+/**
+ * The automation's writer token is gone: disable it (so it stops firing) and
+ * tell the owner once. It stays in the list for the owner to review, re-create
+ * or delete.
+ */
+function disableForRevokedWriter(auto: typeof schema.automations.$inferSelect, reason: string): void {
+  try {
+    db.update(schema.automations).set({ enabled: false }).where(eq(schema.automations.id, auto.id)).run();
+  } catch (err) {
+    log.error(`Failed to disable automation ${auto.id}`, err);
+  }
+  writeAuditEntry(`Automation disabled: ${auto.name}`, "modify", `Did not run: ${reason}.`, false);
+  writeNotification(
+    "warning",
+    `Automation "${auto.name}" disabled`,
+    `It did not run because ${reason}. Automations an MCP token writes run with that token's access, so they stop when the token is revoked or expires. Review it in Automations: re-create it yourself to keep it, or delete it.`,
+    auto.id,
+  );
 }
 
 function approvalRef(approval: ApprovalRequired): StepApprovalRef {
@@ -836,6 +893,30 @@ export async function fireTrigger(
       const runId = randomUUID();
       const triggeredAt = new Date().toISOString();
 
+      // Grants are resolved per run: a revoked or expired writer token stops
+      // the automation before any step runs.
+      const grant = resolveAutomationGrant(auto);
+      if (!grant.ok) {
+        const error = `Blocked: ${grant.reason}. The automation was disabled.`;
+        try {
+          db.insert(schema.automationRuns).values({
+            id: runId,
+            automationId: auto.id,
+            triggeredAt,
+            success: false,
+            error,
+            actionsRun: 0,
+            status: "failed",
+            finishedAt: new Date().toISOString(),
+          }).run();
+        } catch (err) {
+          log.error(`Failed to write run record for ${auto.id}`, err);
+        }
+        disableForRevokedWriter(auto, grant.reason);
+        runResults.push({ success: false, error, actionsRun: 0, results: [] });
+        continue;
+      }
+
       // Run row first — before any step executes.
       try {
         db.insert(schema.automationRuns).values({
@@ -858,7 +939,7 @@ export async function fireTrigger(
         // Dispatch to v2 step runner or v1 legacy runner. The whole run —
         // every tool call and any app operation it starts — acts as the
         // automation (audit, approvals, app_operations.actor).
-        const actorScopes = parseAutomationScopes(auto.actorScopes);
+        const actorScopes = grant.scopes;
         result = await withExecutionContext(automationActor(auto.id, auto.name, actorScopes), "automation", () =>
           workflow.kind === "steps"
             ? runSteps(workflow.steps, {
