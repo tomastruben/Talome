@@ -18,7 +18,8 @@ import { writeNotification } from "../db/notifications.js";
 import { getSetting, setSetting } from "../utils/settings.js";
 import { createLogger } from "../utils/logger.js";
 import { maxCronIntervalMs } from "./cron.js";
-import { createAppBackup, deleteBackup } from "./engine.js";
+import { deleteBackup } from "./engine.js";
+import { runBackupOperation } from "./operation.js";
 import { recoverPendingOperations } from "./recovery.js";
 import { applyRetentionPolicy, hasGfsRules } from "./retention.js";
 import { activeIds } from "./state.js";
@@ -80,13 +81,24 @@ export async function applyScheduleRetention(schedule: ScheduleRow, appId: strin
 
 /** Back up one app for a schedule, notify, and apply retention on success. */
 export async function runScheduledBackup(schedule: ScheduleRow, appId: string): Promise<CreateAppBackupResult> {
-  const result = await createAppBackup(appId, {
-    triggeredBy: "schedule",
-    purpose: "schedule",
-    scheduleId: schedule.id,
-    destinationId: schedule.destination_id ?? null,
-    cloudTarget: schedule.destination_id ? null : schedule.cloud_target,
-  });
+  // A journaled "backup" operation: never stops an app mid-update/install/restore.
+  const result = await runBackupOperation(
+    appId,
+    {
+      triggeredBy: "schedule",
+      purpose: "schedule",
+      scheduleId: schedule.id,
+      destinationId: schedule.destination_id ?? null,
+      cloudTarget: schedule.destination_id ? null : schedule.cloud_target,
+    },
+    { actor: `schedule:${schedule.id}` },
+  );
+  if (!result.success && result.conflict) {
+    // Skipped, not failed: the stale-backup check alerts if it keeps happening.
+    writeNotification("warning", "Backup skipped", `${appId}: ${result.error}`);
+    log.warn(`Scheduled backup of ${appId} skipped: ${result.error}`);
+    return result;
+  }
   if (result.success) {
     const sizeMb = Math.round((result.sizeBytes / (1024 * 1024)) * 10) / 10;
     writeNotification("info", "Backup completed", `${appId} backed up successfully (${sizeMb} MB, ${result.method})`);

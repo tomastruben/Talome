@@ -62,6 +62,8 @@ export interface RestoreOptions {
   healthTimeoutMs?: number;
   pollIntervalMs?: number;
   dbReadyTimeoutMs?: number;
+  /** Progress callback: checking, safety-backup, stopping, extracting, restoring-files, loading-<svc>, starting, health-check, rolling-back */
+  onStage?: (stage: string) => void;
 }
 
 type SwapRecord = RecoverySwap;
@@ -353,6 +355,11 @@ export async function restoreAppBackup(backupId: string, opts: RestoreOptions = 
       updateRestoreStage(restoreId, s, safetyId);
     } catch {
       // non-fatal
+    }
+    try {
+      opts.onStage?.(s);
+    } catch {
+      // progress reporting never breaks a restore
     }
   };
 

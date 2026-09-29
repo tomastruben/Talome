@@ -19,6 +19,8 @@ import { writeNotification } from "../db/notifications.js";
 import { subscribeDockerEvents, connectContainerToNetwork, type DockerEvent } from "../docker/client.js";
 import { ensureTalomeNetwork } from "../docker/talome-network.js";
 import { isContainerInBackupWindow } from "../backup/state.js";
+import { checkRemediationGuard } from "./app-scope.js";
+import { registerSemanticOutcomeProbe } from "./semantic-probe.js";
 import type { AgentLoopConfig, SystemEvent } from "./types.js";
 import { DEFAULT_AGENT_LOOP_CONFIG } from "./types.js";
 import { randomUUID } from "node:crypto";
@@ -162,8 +164,15 @@ async function runCycle(): Promise<void> {
     }
 
     // ── Tier 1: Triage with Haiku (cheap) ─────────────────────────────
-    // Only triage new warning+ events — info events and deduped events skip triage
-    const triageWorthy = newEvents.filter((e) => e.severity !== "info");
+    // Only triage new warning+ events — info events and deduped events skip triage.
+    // Apps being changed on purpose (live operation / maintenance window) are
+    // left alone: no AI spend, no remediation fighting the operation.
+    const triageWorthy = newEvents.filter((e) => {
+      if (e.severity === "info") return false;
+      const guard = checkRemediationGuard(e);
+      if (guard.blocked) log.info(`Skipping ${e.type} for ${e.source}: ${guard.reason}`);
+      return !guard.blocked;
+    });
 
     if (triageWorthy.length === 0) return;
 
@@ -218,6 +227,13 @@ async function runCycle(): Promise<void> {
     for (const result of actResults) {
       const event = newEvents.find((e) => e.id === result.eventId);
       if (!event) continue;
+
+      // Re-checked right before acting: an operation may have started during triage.
+      const guard = checkRemediationGuard(event);
+      if (guard.blocked) {
+        log.info(`Not remediating ${event.type} for ${event.source}: ${guard.reason}`);
+        continue;
+      }
 
       // Update event with remediation link
       try {
@@ -417,6 +433,9 @@ export function startAgentLoop(): () => void {
     log.info("Agent loop disabled — skipping");
     return () => {};
   }
+
+  // Remediations on apps with outcome probes are judged by verifyApp(appId).
+  registerSemanticOutcomeProbe();
 
   log.info(
     `Starting background agent (interval=${config.checkIntervalMs}ms, ` +

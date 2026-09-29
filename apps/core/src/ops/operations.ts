@@ -9,6 +9,20 @@
 //   • a terminal status is always recorded (succeeded / failed / rolled_back),
 //     and operations cut short by a crash are marked "interrupted" on boot
 //     (see ops/recovery.ts).
+//
+// Lock hierarchy (always acquired in this order, never the reverse):
+//   1. app operation      — withAppOperation (this file); outermost. Install,
+//                           update, rollback, start/stop, backup and restore
+//                           entry points all take it, so a restore can never
+//                           run during an update and vice versa.
+//   2. compose lock       — stores/compose-exec withAppLock (queues, never fails)
+//   3. backup lock        — backup/state acquireAppOperation (per-app, fails fast)
+//   4. Docker             — container stop/start/recreate
+// Code running INSIDE an operation must never call a public lifecycle entry
+// point for the same app (it would return a conflict against itself). The one
+// sanctioned re-entry is getHeldOperation(): code that is known to run inside
+// the caller's own operation (e.g. a restore starting the app it restored)
+// continues on the held operation instead of opening a new one.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
@@ -196,6 +210,58 @@ export function getActiveOperation(appId: string): RunningOperationInfo | null {
 
 export function listActiveOperationsInProcess(): RunningOperationInfo[] {
   return [...activeOps.values()];
+}
+
+// ── Held-operation scope ─────────────────────────────────────────────────────
+// Which operations the current async call chain is running inside. Only used
+// for explicit, sanctioned re-entry (see the lock hierarchy above) — public
+// entry points still fail fast on conflicts.
+
+interface HeldOperation {
+  id: string;
+  ctx: OperationContext;
+}
+
+const heldScope = new AsyncLocalStorage<ReadonlyMap<string, HeldOperation>>();
+
+/**
+ * The operation on `appId` that the current call chain is running inside, if
+ * it is still running. A task spawned from an operation that outlives it never
+ * sees it as held.
+ */
+export function getHeldOperation(appId: string): OperationContext | null {
+  const held = heldScope.getStore()?.get(appId);
+  if (!held) return null;
+  return activeOps.get(appId)?.id === held.id ? held.ctx : null;
+}
+
+/**
+ * A view of a held operation for nested work: steps are recorded under a
+ * prefixed name at the operation's current progress (a nested step never moves
+ * progress backwards), detail is namespaced, and a nested step can neither
+ * mark the outer operation failed nor rolled back.
+ */
+export function nestedOperationContext(parent: OperationContext, prefix: string): OperationContext {
+  let nestedDetail: Record<string, unknown> = {};
+  return {
+    id: parent.id,
+    appId: parent.appId,
+    kind: parent.kind,
+    actor: parent.actor,
+    step(name: string, _progress: number, message?: string) {
+      parent.step(`${prefix}:${name}`, activeOps.get(parent.appId)?.progress ?? 0, message);
+    },
+    setDetail(patch: Record<string, unknown>) {
+      nestedDetail = { ...nestedDetail, ...patch };
+      parent.setDetail({ [prefix]: nestedDetail });
+    },
+    markRolledBack() {
+      // The outer operation decides its own terminal status
+    },
+    markFailed() {
+      // The outer operation decides its own terminal status
+    },
+  };
 }
 
 // ── Row helpers ───────────────────────────────────────────────────────────────
@@ -516,7 +582,9 @@ export async function withAppOperation<T>(
   };
 
   try {
-    const result = await fn(ctx);
+    const scope = new Map(heldScope.getStore() ?? []);
+    scope.set(appId, { id, ctx });
+    const result = await heldScope.run(scope, () => fn(ctx));
     const verdict = outcome.override ?? (opts.classify ? opts.classify(result) : defaultClassify(result));
     finishOperation(id, appId, kind, actor, info, verdict.status, verdict.error ?? null);
     return result;

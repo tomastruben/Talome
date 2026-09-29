@@ -271,8 +271,13 @@ export async function composeUp(opts: {
   });
 }
 
-/** Start an app through Talome's lifecycle (network, hooks, dependencies). */
+/**
+ * Start an app through Talome's lifecycle (network, hooks, dependencies).
+ * Inside the caller's own operation on the app (a restore run as an app
+ * operation) the start continues on that operation instead of opening a new
+ * one — which would conflict with it.
+ */
 export async function startAppViaLifecycle(appId: string): Promise<{ success: boolean; error?: string }> {
-  const { startApp } = await import("../stores/lifecycle.js");
-  return startApp(appId);
+  const { startAppWithinHeldOperation } = await import("../stores/lifecycle.js");
+  return startAppWithinHeldOperation(appId);
 }

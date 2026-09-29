@@ -42,6 +42,14 @@ vi.mock("../ops/docker-probe.js", () => ({
 vi.mock("../ops/pre-update-backup.js", () => ({
   isPreUpdateBackupEnabled: m.isPreUpdateBackupEnabled,
   takePreUpdateBackup: m.takePreUpdateBackup,
+  findPreUpdateBackupId: vi.fn(() => null),
+}));
+
+// Outcome probes are covered by wire-ops-update-backup.test.ts.
+vi.mock("../ops/semantic-verify.js", () => ({
+  hasSemanticProbe: vi.fn(async () => false),
+  getSemanticBaseline: vi.fn(async () => null),
+  runSemanticVerification: vi.fn(),
 }));
 
 vi.mock("../docker/client.js", () => ({

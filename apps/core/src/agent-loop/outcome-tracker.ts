@@ -8,13 +8,18 @@
 // Extension point: registerOutcomeProbe() — richer verification (e.g. the
 // verification/verifyApp(appId) module) plugs in here without changing the
 // tracker. Probes run in registration order before the built-in container
-// probe; the first probe that returns a verdict wins.
+// probe; the first probe that returns a verdict wins. The agent loop registers
+// the semantic probe (agent-loop/semantic-probe.ts) on start.
+//
+// Remediations on an app with a live operation or in a maintenance window are
+// not judged until the operation is over (the app is changing on purpose).
 
 import { db, schema } from "../db/index.js";
 import { eq, and, isNull, inArray } from "drizzle-orm";
 import type { Container } from "@talome/types";
 import { listContainers } from "../docker/client.js";
 import { writeNotification } from "../db/notifications.js";
+import { checkRemediationGuard } from "./app-scope.js";
 
 export type VerifiedOutcome = "success" | "failure" | "partial";
 
@@ -201,6 +206,9 @@ export async function verifyPendingRemediations(opts: { now?: number } = {}): Pr
       }
 
       const eventData = parseEventData(event?.data);
+      // An app being updated/restored/backed up right now cannot be judged —
+      // leave the remediation pending until the operation is over.
+      if (event && checkRemediationGuard({ source: event.source, data: eventData }).blocked) continue;
       const verdict = await evaluateRemediationOutcome({ remediation: rem, event, eventData, containers: containerMap });
 
       db.update(schema.remediationLog)

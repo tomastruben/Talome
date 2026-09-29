@@ -442,12 +442,24 @@ apps.post("/:storeId/:appId/restart", async (c) => {
   return c.json({ ok: true, operationId: result.operationId });
 });
 
+const updateBodySchema = z.object({
+  /** Proceed even if the pre-update backup fails */
+  force: z.boolean().optional(),
+}).catch({});
+
 apps.post("/:storeId/:appId/update", async (c) => {
   const { appId } = c.req.param();
-  const result = await updateApp(appId, { actor: actorFor(c) });
+  const { force } = updateBodySchema.parse(await c.req.json().catch(() => ({})));
+  const result = await updateApp(appId, { actor: actorFor(c), force: force === true });
   if (!result.success) {
     if (result.conflict) return operationError(c, result);
-    return c.json({ error: result.error, operationId: result.operationId, rolledBack: result.rolledBack ?? false }, 400);
+    return c.json({
+      error: result.error,
+      operationId: result.operationId,
+      rolledBack: result.rolledBack ?? false,
+      ...(result.backupFailed ? { backupFailed: true } : {}),
+      ...(result.preUpdateBackupId ? { preUpdateBackupId: result.preUpdateBackupId, dataRestoreHint: result.dataRestoreHint } : {}),
+    }, 400);
   }
   return c.json({ ok: true, operationId: result.operationId, verified: result.verified ?? false });
 });
