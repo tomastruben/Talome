@@ -317,7 +317,8 @@ async function carryOverUnreadable(fromRoot: string, toRoot: string, rels: strin
   return moved;
 }
 
-async function stopAll(ctx: AppContext): Promise<void> {
+/** Stop every running container of the app (application services first) and mark them in maintenance. */
+export async function stopAll(ctx: AppContext): Promise<void> {
   const containers = await listAppContainers({ appId: ctx.appId, composePath: ctx.composePath, projectName: ctx.compose.projectName });
   markContainersInMaintenance(ctx.appId, containers.flatMap((c) => [c.id, c.name]));
   for (const c of sortForStop(containers.filter((x) => x.status === "running"), ctx)) {
@@ -877,6 +878,40 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
 }
 
 /**
+ * Put an app back to the state captured by one of its safety backups (used to
+ * roll back work that changed data in place). Caller holds the app's backup
+ * lock. Never throws.
+ */
+export async function restoreSafetyBackup(
+  appId: string,
+  safetyBackupId: string,
+  opts: Pick<RestoreOptions, "healthTimeoutMs" | "pollIntervalMs" | "dbReadyTimeoutMs" | "onStage"> = {},
+): Promise<RestoreAppBackupResult> {
+  const row = getBackupRow(safetyBackupId);
+  if (!row?.file_path || !row.manifest_path || row.app_id !== appId) return failResult(safetyBackupId, appId, "Safety backup not found");
+  try {
+    return await performRestore({
+      backupId: safetyBackupId,
+      appId,
+      archivePath: row.file_path,
+      manifestPath: row.manifest_path,
+      restoreId: randomUUID(),
+      opts: { ...opts, skipSafetyBackup: true },
+      stage: (s) => {
+        try {
+          opts.onStage?.(s);
+        } catch {
+          // progress reporting never breaks a restore
+        }
+      },
+      allowRollback: false,
+    });
+  } catch (err) {
+    return failResult(safetyBackupId, appId, errorMessage(err));
+  }
+}
+
+/**
  * Database services loaded in place whose data the safety backup cannot put
  * back: it holds neither a dump of the service nor a copy of all of the
  * service's raw (bind-mounted) data directories.
@@ -892,20 +927,20 @@ export function uncoveredInPlaceDatabases(safety: BackupManifest, services: stri
 
 // ── Safety backup ───────────────────────────────────────────────────────────
 
-interface SafetyBackupParams {
+export interface SafetyBackupParams {
   appId: string;
   ctx: AppContext;
   /** Host paths the restore is about to replace (existing ones) */
   volumes: string[];
   /** Containers before the restore started */
   before: AppContainer[];
-  /** Manifest of the backup being restored */
-  restoring: BackupManifest;
+  /** What the backup being restored could not read (the restore keeps the current data there) */
+  restoring: Pick<BackupManifest, "volumes" | "unreadable">;
   dbReadyTimeoutMs: number;
   pollMs: number;
 }
 
-type SafetyBackupOutcome =
+export type SafetyBackupOutcome =
   | { ok: true; backupId: string; stopped: AppContainer[]; warnings: string[] }
   | { ok: false; error: string };
 
@@ -944,7 +979,7 @@ async function stopServices(ctx: AppContext, services: string[]): Promise<void> 
  *  - a backup that could not read part of the data it protects is refused
  *    (unless the restore keeps that data anyway).
  */
-async function takeSafetyBackup(s: SafetyBackupParams): Promise<SafetyBackupOutcome> {
+export async function takeSafetyBackup(s: SafetyBackupParams): Promise<SafetyBackupOutcome> {
   const { appId, ctx } = s;
   const common = {
     purpose: "pre-restore" as const,
