@@ -319,7 +319,10 @@ export function readAppDataRoot(appId: string): string | null {
     if (!row) return null;
     const plan = JSON.parse(row.plan) as { dataRoot?: { hostPath?: unknown } } | null;
     const hostPath = plan?.dataRoot?.hostPath;
-    return typeof hostPath === "string" && isAbsolute(hostPath) ? resolve(hostPath) : null;
+    if (typeof hostPath !== "string" || !isAbsolute(hostPath)) return null;
+    const resolved = resolve(hostPath);
+    // Never let a broad folder turn every bind mount (media, system paths) into app data
+    return resolved === "/" || resolved === homedir() ? null : resolved;
   } catch {
     return null;
   }
