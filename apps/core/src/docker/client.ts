@@ -530,8 +530,6 @@ const DISK_FIRST_WAIT_MS = 5_000;
 const DISK_DF_TIMEOUT_MS = 5_000;
 /** Upper bound for the retry backoff after consecutive df failures. */
 const DISK_BACKOFF_MAX_MS = 5 * 60_000;
-/** Consecutive df failures before the stale mount list is logged. */
-const DISK_FAILURES_BEFORE_WARNING = 3;
 /** statfs("/") answers in microseconds; this only bounds a pathological root. */
 const ROOT_STATFS_TIMEOUT_MS = 2_000;
 
@@ -546,7 +544,7 @@ let diskFailures = 0;
 let diskNextAttemptAt = 0;
 let diskFailureWarned = false;
 
-/** Last successful statfs("/") reading. */
+/** Latest statfs("/") result — null after a failed call, so df's "/" takes over. */
 let rootUsageCache: DiskUsage | null = null;
 /** The statfs("/") call still pending, if any — never more than one at a time. */
 let rootStatfsPending: Promise<DiskUsage | null> | null = null;
@@ -566,17 +564,18 @@ function recordDiskFailure(): void {
   diskFailures++;
   const backoff = Math.min(DISK_REFRESH_MS * 2 ** (diskFailures - 1), DISK_BACKOFF_MAX_MS);
   diskNextAttemptAt = Date.now() + backoff;
-  if (diskFailures >= DISK_FAILURES_BEFORE_WARNING && !diskFailureWarned) {
+  // Once per failure streak. A df wedged in the kernel never fails a second
+  // time (no new df runs until it exits), so this cannot wait for a count.
+  if (!diskFailureWarned) {
     diskFailureWarned = true;
     diskLog.warn(
-      `df failed ${diskFailures} times in a row (timeout ${DISK_DF_TIMEOUT_MS}ms) — a network or USB mount may be ` +
-      "unreachable. The mount list is stale; root disk usage is still measured directly.",
+      `df gave no answer within ${DISK_DF_TIMEOUT_MS}ms — a network or USB mount may be unreachable. ` +
+      "The mount list stays stale until it answers; root disk usage is still measured directly.",
     );
   }
 }
 
 function recordDiskSuccess(): void {
-  if (diskFailureWarned) diskLog.info("df answers again — mount list refreshed");
   diskFailures = 0;
   diskNextAttemptAt = 0;
   diskFailureWarned = false;

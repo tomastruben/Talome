@@ -465,12 +465,16 @@ describe("getSystemStats", () => {
     // GNU df blocks on a hard-mounted NFS share whose NAS is off: every run times out with no output.
     platformMock.readDiskMountsTracked.mockImplementation(() => ({ mounts: Promise.resolve(null), exited: Promise.resolve() }));
     platformMock.readDiskUsage.mockImplementation(async () => ({ usedBytes: 99, totalBytes: 100, percent: 99 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     for (let i = 0; i < 5; i++) {
       const stats = await getSystemStats();
       expect(stats.disk).toMatchObject({ usedBytes: 99, totalBytes: 100, percent: 99 });
       nowMs += 60_000;
     }
     expect(platformMock.readDiskUsage).toHaveBeenCalledWith("/");
+    // Not silent: the stale mount list is logged once, not on every tick.
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("df gave no answer"))).toHaveLength(1);
+    warn.mockRestore();
   });
 
   it("reports the real root usage on the first reading after a restart even when df is slow", async () => {
