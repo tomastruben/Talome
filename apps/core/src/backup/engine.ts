@@ -59,6 +59,7 @@ import {
   MANIFEST_FILE_NAME,
   MANIFEST_FORMAT_VERSION,
   type BackupManifest,
+  type BackupFailureCode,
   type BackupPurpose,
   type ConfiguredMethod,
   type ConsistencyMethod,
@@ -84,6 +85,8 @@ export interface CreateAppBackupOptions {
   /** Legacy schedule cloud_target (existing rclone remote path or local dir) */
   cloudTarget?: string | null;
   scheduleId?: string | null;
+  /** Progress callback: preparing, dumping, pausing, archiving, resuming, validating, uploading */
+  onStage?: (stage: string) => void;
 }
 
 /** Internal knobs used by restore (safety backups). */
@@ -173,13 +176,21 @@ export async function createAppBackup(appId: string, opts: CreateAppBackupOption
   const backupId = randomUUID();
   const handle = acquireAppOperation(appId, "backup", backupId);
   if (!handle) {
-    return { success: false, appId, error: `Another backup or restore is already running for '${appId}'.` };
+    return { success: false, appId, error: `Another backup or restore is already running for '${appId}'.`, code: "busy" };
   }
+  const onStage = opts.onStage;
   try {
     const { result } = await runBackup(appId, backupId, {
       ...opts,
       signal: handle.op.controller.signal,
-      onStage: handle.setStage,
+      onStage: (stage) => {
+        handle.setStage(stage);
+        try {
+          onStage?.(stage);
+        } catch {
+          // progress reporting never breaks a backup
+        }
+      },
     });
     return result;
   } finally {
@@ -196,7 +207,7 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
   };
   const fail = (error: string): InternalBackupResult => ({ result: { success: false, appId, error }, stoppedContainers: [] });
   // Failures before any work starts still get a history row so the UI can show them
-  const recordEarlyFailure = (error: string): InternalBackupResult => {
+  const recordEarlyFailure = (error: string, code: BackupFailureCode = "failed"): InternalBackupResult => {
     try {
       insertRunningBackup({
         id: backupId,
@@ -211,7 +222,7 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
     } catch {
       // history is best-effort
     }
-    return { result: { success: false, backupId, appId, error }, stoppedContainers: [] };
+    return { result: { success: false, backupId, appId, error, code }, stoppedContainers: [] };
   };
 
   const ctxResult = resolveAppContext(appId);
@@ -269,6 +280,7 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
   if (selected.length === 0 && dumpServices.length === 0) {
     return recordEarlyFailure(
       `No volumes to back up for '${appId}'. The app may use named Docker volumes only, or only media mounts (select them explicitly).`,
+      "nothing_to_backup",
     );
   }
 

@@ -18,8 +18,6 @@ import { resolve, join, dirname, basename } from "node:path";
 import { exec as execCb, type ExecOptions } from "node:child_process";
 import { writeAuditEntry } from "../../db/audit.js";
 import {
-  createAppBackup,
-  restoreAppBackup,
   verifyBackup,
   getBackupProgress,
   cancelAppBackup,
@@ -27,6 +25,7 @@ import {
   CONFIGURED_METHODS,
 } from "../../backup/index.js";
 import { bindVolumes, resolveAppContext } from "../../backup/compose.js";
+import { runBackupOperation, runLegacyRestoreOperation, runRestoreOperation } from "../../backup/operation.js";
 import { getBackupRoot } from "../../backup/fs-utils.js";
 import { ARCHIVE_FILE_NAME, ARCHIVE_META_DIR, MANIFEST_FILE_NAME } from "../../backup/types.js";
 
@@ -159,7 +158,8 @@ After calling: Report the backup size, the method used, which volumes were inclu
     volumes: z.array(z.string()).optional().describe("Specific volume paths to include. If omitted, only config volumes are backed up (media mounts excluded)."),
   }),
   execute: async ({ appId, stopFirst, method, triggeredBy, volumes }) => {
-    const result = await createAppBackup(appId, {
+    // Journaled "backup" operation: refused while an update/install/restore runs on the app.
+    const result = await runBackupOperation(appId, {
       method: method ?? (stopFirst ? "stop" : undefined),
       triggeredBy,
       purpose: triggeredBy === "schedule" ? "schedule" : "manual",
@@ -169,14 +169,18 @@ After calling: Report the backup size, the method used, which volumes were inclu
       return {
         success: false,
         error: result.error,
-        hint: result.error.includes("No volumes")
-          ? "The app may use named Docker volumes instead of bind mounts, or only has media mounts. Check with get_app_config."
-          : undefined,
+        ...(result.conflict ? { conflict: true, operationId: result.operationId } : {}),
+        hint: result.conflict
+          ? "Another operation is running on this app — wait for it to finish, then back up again."
+          : result.code === "nothing_to_backup" || result.error.includes("No volumes")
+            ? "The app may use named Docker volumes instead of bind mounts, or only has media mounts. Check with get_app_config."
+            : undefined,
       };
     }
     return {
       success: true,
       appId,
+      operationId: result.operationId,
       backupId: result.backupId,
       backupFile: result.archivePath,
       manifest: result.manifestPath,
@@ -271,20 +275,25 @@ After calling: Report what was restored, the backup date, the health check resul
         const v = await verifyBackup(row.id);
         if (!v.success) return { success: false, error: `Verification failed — not restoring: ${v.errors.join("; ")}` };
       }
-      const r = await restoreAppBackup(row.id);
+      // Journaled "restore" operation: refused while an update/install/backup runs on the app.
+      const r = await runRestoreOperation(appId, row.id);
       if (!r.success) {
         return {
           success: false,
           error: r.error,
           rolledBack: r.rolledBack,
           safetyBackupId: r.safetyBackupId,
-          hint: r.rolledBack ? "The app was returned to its previous state." : "Check the app — the safety backup can be restored if needed.",
+          ...(r.conflict ? { conflict: true, operationId: r.operationId } : {}),
+          hint: r.conflict
+            ? "Another operation is running on this app — nothing was changed. Wait for it to finish, then restore again."
+            : r.rolledBack ? "The app was returned to its previous state." : "Check the app — the safety backup can be restored if needed.",
         };
       }
       return {
         success: true,
         action: "restore",
         appId,
+        operationId: r.operationId,
         restoredFrom: row.id,
         backupDate: row.completed_at,
         safetyBackupId: r.safetyBackupId,
@@ -313,7 +322,7 @@ After calling: Report what was restored, the backup date, the health check resul
     if (!composePath) {
       return { success: false, error: `App '${appId}' not found or not installed.` };
     }
-    return legacyRestore(appId, composePath, legacyPath);
+    return runLegacyRestoreOperation(appId, {}, () => legacyRestore(appId, composePath, legacyPath));
   },
 });
 

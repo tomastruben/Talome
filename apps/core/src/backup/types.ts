@@ -170,7 +170,16 @@ export type CreateAppBackupResult =
       destination: string | null;
       durationMs: number;
     }
-  | { success: false; backupId?: string; appId: string; error: string };
+  | { success: false; backupId?: string; appId: string; error: string; code?: BackupFailureCode };
+
+/**
+ * Machine-readable reason for a failed backup:
+ *   busy              — another backup or restore of the app is running
+ *   nothing_to_backup — the app has no bind-mounted data to archive (named
+ *                       Docker volumes only, or only unselected media mounts)
+ *   failed            — the backup ran and failed (or was cancelled)
+ */
+export type BackupFailureCode = "busy" | "nothing_to_backup" | "failed";
 
 export interface VerifyCheck {
   name: string;

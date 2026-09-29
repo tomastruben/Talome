@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import { sql } from "drizzle-orm";
@@ -9,11 +9,8 @@ import { homedir } from "node:os";
 import { snapshotNow } from "../services/self-backup.js";
 import { requireRole } from "../middleware/role-guard.js";
 import {
-  createAppBackup,
   deleteBackup,
   verifyBackup,
-  restoreAppBackup,
-  canStartRestore,
   loadManifest,
   getAppBackupConfig,
   setAppBackupConfig,
@@ -29,6 +26,7 @@ import {
   CONFIGURED_METHODS,
 } from "../backup/index.js";
 import { bindVolumes, resolveAppContext } from "../backup/compose.js";
+import { backupBlockedReason, runBackupOperation, runRestoreOperation, startInBackground } from "../backup/operation.js";
 import {
   createDestination,
   createDestinationSchema,
@@ -220,16 +218,30 @@ const triggerSchema = z.object({
   destinationId: z.string().nullable().optional(),
 });
 
+/** Actor for the operations journal ("user:<id>" when the session names a user). */
+function actorFor(c: Context): string {
+  const userId = c.get("sessionUser" as never) as unknown;
+  return typeof userId === "string" && userId ? `user:${userId}` : "user";
+}
+
 backups.post("/trigger", async (c) => {
   const body = triggerSchema.safeParse(await c.req.json().catch(() => null));
   if (!body.success) return c.json({ error: body.error.flatten() }, 400);
   const { appId, volumes, method, destinationId } = body.data;
-  if (getAppOperation(appId)) return c.json({ error: `A backup or restore is already running for '${appId}'` }, 409);
+  const blocked = backupBlockedReason(appId);
+  if (blocked) return c.json({ error: blocked }, 409);
 
-  // Fire and forget — backup runs in background, UI polls /api/backups for updates
-  void createAppBackup(appId, { triggeredBy: "manual", purpose: "manual", volumes, method, destinationId: destinationId ?? null });
-
-  return c.json({ started: true, appId });
+  // Runs in the background as a journaled "backup" operation — the UI polls
+  // /api/backups (or streams /api/operations) for progress.
+  const start = await startInBackground((onStarted) =>
+    runBackupOperation(
+      appId,
+      { triggeredBy: "manual", purpose: "manual", volumes, method, destinationId: destinationId ?? null },
+      { actor: actorFor(c), onStarted },
+    ),
+  );
+  if (!start.started) return c.json({ error: start.error, operationId: start.operationId }, start.conflict ? 409 : 500);
+  return c.json({ started: true, appId, operationId: start.operationId });
 });
 
 // ── Per-app overview & config ─────────────────────────────────────────────
@@ -414,11 +426,17 @@ backups.post("/:id/restore", requireRole("admin"), async (c) => {
   if (!row || !row.app_id) return c.json({ error: "Backup not found" }, 404);
   if (row.status !== "completed") return c.json({ error: "Only completed backups can be restored" }, 409);
   if (!row.manifest_path) return c.json({ error: "This backup was made by an older Talome version — restore it through the assistant (restore_app)" }, 409);
-  if (!canStartRestore(row.app_id)) return c.json({ error: `A backup or restore is already running for '${row.app_id}'` }, 409);
+  const appId = row.app_id;
+  // No restore while an update, install, backup or another restore runs on the app.
+  const blocked = backupBlockedReason(appId);
+  if (blocked) return c.json({ error: blocked }, 409);
 
   const restoreId = randomUUID();
-  void restoreAppBackup(id, { restoreId, skipSafetyBackup: body.data.skipSafetyBackup });
-  return c.json({ started: true, restoreId, appId: row.app_id }, 202);
+  const start = await startInBackground((onStarted) =>
+    runRestoreOperation(appId, id, { restoreId, skipSafetyBackup: body.data.skipSafetyBackup }, { actor: actorFor(c), onStarted }),
+  );
+  if (!start.started) return c.json({ error: start.error, operationId: start.operationId }, start.conflict ? 409 : 500);
+  return c.json({ started: true, restoreId, appId, operationId: start.operationId }, 202);
 });
 
 // Cancel a running backup

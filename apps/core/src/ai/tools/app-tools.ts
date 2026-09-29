@@ -269,12 +269,13 @@ export const restartAppTool = tool({
 });
 
 export const updateAppTool = tool({
-  description: "Update an installed app by pulling the latest image and recreating containers.",
+  description: "Update an installed app by pulling the latest image and recreating containers. If the app's update policy takes a pre-update backup and that backup fails, the update is aborted before anything changes — only pass force: true when the user explicitly accepts updating without a backup.",
   inputSchema: z.object({
     appId: z.string().describe("App ID to update"),
+    force: z.boolean().optional().describe("Proceed even if the pre-update backup fails (only with the user's explicit consent)"),
   }),
-  execute: async ({ appId }) => {
-    const result = await updateApp(appId);
+  execute: async ({ appId, force }) => {
+    const result = await updateApp(appId, { force: force === true });
     if (result.success) writeAuditEntry("Updated app", "modify", appId);
     return result;
   },
