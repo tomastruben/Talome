@@ -12,6 +12,7 @@ import {
   restartApp,
   updateApp,
   withAppMaintenance,
+  applyComposeEditToUpdateSnapshots,
 } from "../stores/lifecycle.js";
 import { installProgress, emitProgress, type InstallProgressEvent } from "../stores/install-emitter.js";
 import { listAppOperations, hasLiveOperation } from "../ops/operations.js";
@@ -457,12 +458,14 @@ apps.post("/:storeId/:appId/restart", async (c) => {
 const updateBodySchema = z.object({
   /** Proceed even if the pre-update backup fails */
   force: z.boolean().optional(),
+  /** Also move pinned/customised image tags to the catalog's */
+  useCatalogImages: z.boolean().optional(),
 }).catch({});
 
 apps.post("/:storeId/:appId/update", async (c) => {
   const { appId } = c.req.param();
-  const { force } = updateBodySchema.parse(await c.req.json().catch(() => ({})));
-  const result = await updateApp(appId, { actor: actorFor(c), force: force === true });
+  const { force, useCatalogImages } = updateBodySchema.parse(await c.req.json().catch(() => ({})));
+  const result = await updateApp(appId, { actor: actorFor(c), force: force === true, useCatalogImages: useCatalogImages === true });
   if (!result.success) {
     if (result.conflict) return operationError(c, result);
     return c.json({
@@ -473,7 +476,12 @@ apps.post("/:storeId/:appId/update", async (c) => {
       ...(result.preUpdateBackupId ? { preUpdateBackupId: result.preUpdateBackupId, dataRestoreHint: result.dataRestoreHint } : {}),
     }, 400);
   }
-  return c.json({ ok: true, operationId: result.operationId, verified: result.verified ?? false });
+  return c.json({
+    ok: true,
+    operationId: result.operationId,
+    verified: result.verified ?? false,
+    ...(result.imagesKept ? { imagesKept: result.imagesKept, warning: result.warning } : {}),
+  });
 });
 
 /* ── Rename app / change port mappings ─────────────────────────────── */
@@ -558,20 +566,24 @@ apps.patch("/:storeId/:appId", async (c) => {
       ctx.step("edit_ports", 50, "Updating port mappings");
       const content = await readFile(targetCompose, "utf-8");
       const doc = parseYaml(content) as Record<string, unknown>;
-      const services = doc.services as Record<string, Record<string, unknown>> | undefined;
-      if (!services) return { success: false, error: "No services in compose file", changed: false };
+      if (!doc.services) return { success: false, error: "No services in compose file", changed: false };
 
       // Apply port changes across all services
-      let changed = false;
-      for (const service of Object.values(services)) {
-        if (!Array.isArray(service.ports)) continue;
-        service.ports = (service.ports as string[]).map((p: string) => {
-          const [, container] = p.split(":");
-          const newHost = ports[container];
-          if (newHost !== undefined) { changed = true; return `${newHost}:${container}`; }
-          return p;
-        });
-      }
+      const applyPorts = (compose: Record<string, unknown>): boolean => {
+        const services = compose.services as Record<string, Record<string, unknown>> | undefined;
+        let changed = false;
+        for (const service of Object.values(services ?? {})) {
+          if (!Array.isArray(service?.ports)) continue;
+          service.ports = (service.ports as string[]).map((p: string) => {
+            const [, container] = String(p).split(":");
+            const newHost = ports[container];
+            if (newHost !== undefined) { changed = true; return `${newHost}:${container}`; }
+            return p;
+          });
+        }
+        return changed;
+      };
+      const changed = applyPorts(doc);
 
       if (changed) {
         const BACKUP_DIR = join(process.env.HOME || "/tmp", ".talome", "backups", "compose");
@@ -579,6 +591,8 @@ apps.patch("/:storeId/:appId", async (c) => {
         const ts = new Date().toISOString().replace(/[:.]/g, "-");
         await writeFile(join(BACKUP_DIR, `${appId}-${ts}.yml.bak`), content, "utf-8");
         await writeFile(targetCompose, stringifyYaml(doc), "utf-8");
+        // Keep the new ports when an earlier update is rolled back.
+        applyComposeEditToUpdateSnapshots(appId, applyPorts);
       }
       return { success: true, changed };
     }, { actor: actorFor(c) });

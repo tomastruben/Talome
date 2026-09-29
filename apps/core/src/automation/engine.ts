@@ -885,6 +885,9 @@ export async function fireTrigger(
       }
 
       if (trigger.type !== type) continue;
+      // A schedule automation runs on its own cron tick (automation/cron.ts
+      // names it) or a manual run — never on a tick that names no automation.
+      if (type === "schedule" && typeof data.automationId !== "string") continue;
       if (!data.manual && !matchesTrigger(trigger, data)) continue;
 
       const workflow = parseWorkflow(auto);

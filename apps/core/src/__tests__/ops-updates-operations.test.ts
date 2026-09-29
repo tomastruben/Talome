@@ -21,6 +21,9 @@ vi.mock("../automation/engine.js", () => ({
   markInterruptedAutomationRuns: mockMarkInterruptedAutomationRuns,
 }));
 
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
@@ -40,7 +43,7 @@ import {
   OWNER_HOST,
   type OperationEvent,
 } from "../ops/operations.js";
-import { recoverOperationsOnBoot, markInterruptedOperations } from "../ops/recovery.js";
+import { recoverOperationsOnBoot, markInterruptedOperations, restoreInterruptedUpdateComposes } from "../ops/recovery.js";
 import { operationsRoute } from "../ops/routes.js";
 
 function deferred<T = void>() {
@@ -389,6 +392,92 @@ describe("boot recovery", () => {
     gateRadarr.resolve();
     gateFresh.resolve();
     await Promise.all([radarrOp, freshOp]);
+  });
+
+  describe("updates interrupted before containers were recreated", () => {
+    const OLD_COMPOSE = "services:\n  sonarr:\n    image: linuxserver/sonarr:4.0.0\n    ports:\n      - 18989:8989\n";
+    const NEW_COMPOSE = "services:\n  sonarr:\n    image: linuxserver/sonarr:4.1.0\n    ports:\n      - 18989:8989\n";
+    let composePath = "";
+
+    /** An update cut short at `step`, with the compose already moved to the new refs. */
+    function interruptedUpdate(opId: string, step: string): number {
+      composePath = join(mkdtempSync(join(tmpdir(), "talome-recovery-")), "docker-compose.yml");
+      writeFileSync(composePath, NEW_COMPOSE);
+      const now = new Date().toISOString();
+      db.insert(schema.installedApps).values({
+        appId: "sonarr", storeSourceId: "store", status: "updating", version: "4.0.0",
+        overrideComposePath: composePath, installedAt: now, updatedAt: now,
+      }).run();
+      const snap = db.insert(schema.updateSnapshots).values({
+        appId: "sonarr", previousVersion: "4.0.0", previousCompose: OLD_COMPOSE, previousImages: "[]",
+        operationId: opId, createdAt: now,
+      }).returning({ id: schema.updateSnapshots.id }).get();
+      const at = new Date(Date.now() - 60_000).toISOString();
+      db.insert(schema.appOperations).values({
+        id: opId, appId: "sonarr", kind: "update", actor: "user", status: "running", step, progress: 30,
+        detail: JSON.stringify({ snapshotId: snap.id, fromVersion: "4.0.0", toVersion: "4.1.0" }),
+        startedAt: at, updatedAt: at, heartbeatAt: at, ownerPid: null, ownerHost: null,
+      }).run();
+      return snap.id;
+    }
+
+    beforeEach(() => {
+      db.delete(schema.updateSnapshots).run();
+      mockListContainers.mockResolvedValue([
+        { Id: "aaa111", Names: ["/sonarr"], Image: "linuxserver/sonarr:4.0.0", State: "running", Labels: {} },
+      ]);
+    });
+
+    it("an update interrupted during the pull gets its pre-update compose back before anything can start the app", async () => {
+      const snapshotId = interruptedUpdate("op-pull", "pull");
+
+      const result = recoverOperationsOnBoot({ delayMs: 0, sweeper: false });
+
+      // Synchronously at boot, before the delayed reconcile (or any start/update) runs.
+      expect(readFileSync(composePath, "utf-8")).toBe(OLD_COMPOSE);
+      // The app never left 4.0.0: no rollback snapshot of a state that was never left.
+      expect(db.select().from(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).get()).toBeUndefined();
+      const op = getOperation("op-pull")!;
+      expect(op.status).toBe("interrupted");
+      expect(op.detail).toMatchObject({ snapshotId: null, appTouched: false, composeRestoredOnRecovery: true });
+
+      const findings = await result.reconciled;
+      const note = findings.find((f) => f.appId === "sonarr")!.note;
+      expect(note).toContain("stays on version 4.0.0");
+      expect(note).toContain("compose file was restored");
+      expect(db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, "sonarr")).get()?.status).toBe("running");
+    });
+
+    it("also covers an update interrupted during its pre-update backup", () => {
+      interruptedUpdate("op-backup", "backup:archiving");
+      recoverOperationsOnBoot({ delayMs: 60_000, sweeper: false });
+      expect(readFileSync(composePath, "utf-8")).toBe(OLD_COMPOSE);
+    });
+
+    it("keeps the compose and the rollback snapshot once containers may have been recreated", async () => {
+      const snapshotId = interruptedUpdate("op-recreate", "recreate");
+
+      const result = recoverOperationsOnBoot({ delayMs: 0, sweeper: false });
+      expect(readFileSync(composePath, "utf-8")).toBe(NEW_COMPOSE);
+      expect(db.select().from(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).get()).toBeTruthy();
+
+      const findings = await result.reconciled;
+      expect(findings.find((f) => f.appId === "sonarr")!.note).toContain(`rollback snapshot (#${snapshotId})`);
+    });
+
+    it("leaves the compose alone when a new operation already runs on the app", async () => {
+      interruptedUpdate("op-stale", "pull");
+      const marked = markInterruptedOperations();
+      const gate = deferred();
+      const running = withAppOperation("sonarr", "update", "user", async () => { await gate.promise; return { success: true }; });
+      await new Promise((r) => setTimeout(r, 5));
+
+      expect(restoreInterruptedUpdateComposes(marked).size).toBe(0);
+      expect(readFileSync(composePath, "utf-8")).toBe(NEW_COMPOSE);
+
+      gate.resolve();
+      await running;
+    });
   });
 
   it("records a reconcile error when Docker is unavailable and leaves status alone", async () => {

@@ -138,6 +138,7 @@ async function setupApp(compose = COMPOSE, preBackup = true, catalogCompose: str
   db.run(sql`DELETE FROM app_update_policies`);
   db.run(sql`DELETE FROM app_catalog`);
   db.run(sql`DELETE FROM store_sources`);
+  db.run(sql`DELETE FROM settings WHERE key LIKE 'app_image_refs:%'`);
   const { composePath } = await installFakeApp(env.root, APP, compose, { "config/settings.xml": "<x/>" });
   appComposePath = composePath;
   // A separate catalog compose makes the installed one an override whose image refs the update moves.
@@ -432,34 +433,52 @@ describe("semantic verification after updates", () => {
     m.isVerifiableApp.mockReturnValue(true);
   });
 
-  it("rolls back when a verified app fails its outcome checks after the update", async () => {
+  it("never rolls a regression back automatically — even with a pre-update backup — and offers rollback + data restore", async () => {
+    // The new version already ran (and may have migrated the data): old images
+    // alone would run on a schema they do not know, and an unattended data
+    // restore would discard writes since the backup.
     await setupApp(COMPOSE, true);
     m.getLatestVerificationResult.mockReturnValue(stored("verified"));
     m.verifyApp.mockResolvedValue(verification("failed", "Bk App: API key rejected"));
 
     const result = await updateApp(APP);
 
-    expect(result.success).toBe(false);
-    expect(result.rolledBack).toBe(true);
-    expect(result.outcome).toBe("rolled_back");
-    expect(result.error).toContain("Outcome verification regressed");
-    expect(m.restoreServiceImages).toHaveBeenCalledWith(BASELINE);
-    // A suspected regression is confirmed once before acting; the restored version is re-checked.
-    expect(m.verifyApp).toHaveBeenCalledTimes(3);
+    expect(result.success).toBe(true);
+    expect(result.rolledBack).toBeUndefined();
+    expect(result.outcome).toBe("unverified");
+    expect(result.semanticVerification).toMatchObject({ regression: true });
+    // Old images were not put back on the new version's data, nothing was recreated again.
+    expect(m.restoreServiceImages).not.toHaveBeenCalled();
+    expect(commands().some((c) => c.includes("--force-recreate"))).toBe(false);
+    // A suspected regression is confirmed once; no rollback, so no post-rollback check.
+    expect(m.verifyApp).toHaveBeenCalledTimes(2);
+
+    // The owner gets the way back: roll back the update, then restore the pre-update backup.
+    expect(result.preUpdateBackupId).toBeTruthy();
+    expect(result.warning).toContain("not rolled back automatically");
+    expect(result.warning).toContain("roll back the update and then restore the pre-update backup");
+    expect(result.warning).toContain(result.preUpdateBackupId!);
+    expect(m.writeNotification).toHaveBeenCalledWith(
+      "critical",
+      "Bk App updated, outcome checks now failing",
+      expect.stringContaining(result.preUpdateBackupId!),
+      APP,
+    );
+    expect(m.writeNotification).not.toHaveBeenCalledWith("warning", "Update of Bk App rolled back", expect.anything(), APP);
 
     const op = getOperation(result.operationId!)!;
-    expect(op.status).toBe("rolled_back");
+    expect(op.status).toBe("succeeded");
+    expect(op.detail?.outcome).toBe("regressed");
+    expect(op.detail?.semanticRollback).toMatchObject({ automatic: false });
     const semantic = op.detail?.semanticVerification as { regression: boolean; baseline: string; status: string; attempts: number };
     expect(semantic).toMatchObject({ regression: true, baseline: "verified", status: "failed", attempts: 2 });
-    expect(op.detail?.semanticAfterRollback).toBeTruthy();
-    expect(listOperationSteps(op.id).map((s) => s.step)).toEqual(expect.arrayContaining(["verify", "semantic_verify", "rollback"]));
-    expect(m.writeNotification).toHaveBeenCalledWith("warning", "Update of Bk App rolled back", expect.stringContaining("Outcome verification regressed"), APP);
+    expect(listOperationSteps(op.id).map((s) => s.step)).not.toContain("rollback");
 
     const row = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, APP)).get()!;
-    expect(row.version).toBe("1.0.0");
-    // The data restore is offered with the rollback
-    expect(result.preUpdateBackupId).toBeTruthy();
-    expect(result.dataRestoreHint).toContain(result.preUpdateBackupId!);
+    expect(row.version).toBe("1.1.0");
+    expect(row.status).toBe("running");
+    // The rollback snapshot is kept for the manual rollback.
+    expect(db.select().from(schema.updateSnapshots).get()?.rolledBack).toBe(false);
   });
 
   it("does not roll back a regression without a pre-update backup, and does not report it as a clean success", async () => {

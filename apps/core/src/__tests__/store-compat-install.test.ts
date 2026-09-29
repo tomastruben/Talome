@@ -71,6 +71,7 @@ import {
   runWithUmbrelInstallOptions,
 } from "../stores/umbrel-v2-install.js";
 import { stores } from "../routes/stores.js";
+import { composeServiceImages, readImageRefState } from "../ops/image-refs.js";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "umbrel-apps");
 const STORE = "fx";
@@ -233,6 +234,18 @@ describe("installApp with Umbrel 2.0 options (end to end, docker mocked)", () =>
     expect(result.success).toBe(true);
     expect(getAppBackupIgnore("immich")).toEqual(["data/model-cache/*"]);
     expect(appRequiresHttps("immich")).toBe(false);
+  });
+
+  it("records the image refs it installed, so updates can tell them from the user's pins", async () => {
+    const result = await installApp("nextcloud", STORE, {}, {});
+    expect(result.success).toBe(true);
+    const installed = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, "nextcloud")).get()!;
+    const images = composeServiceImages(installed.overrideComposePath!);
+    expect(images).toMatchObject({ db: "mariadb:10.11.5", redis: "redis:7.2.4" });
+    const state = readImageRefState("nextcloud")!;
+    expect(state.pinned).toEqual({});
+    expect(Object.keys(state.managed).sort()).toEqual(Object.keys(images).sort());
+    for (const [service, image] of Object.entries(images)) expect(state.managed[service]).toEqual([image]);
   });
 });
 

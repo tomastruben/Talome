@@ -360,7 +360,8 @@ async function executeScheduledBackup(appId: string, schedule: ScheduleRow) {
   }
 }
 
-async function checkBackupSchedules() {
+/** Exported for tests. */
+export async function checkBackupSchedules() {
   try {
     const schedules = db.all(sql`SELECT * FROM backup_schedules WHERE enabled = 1`) as ScheduleRow[];
 
@@ -376,8 +377,10 @@ async function checkBackupSchedules() {
       // Mark as run
       db.run(sql`UPDATE backup_schedules SET last_run_at = ${new Date().toISOString()} WHERE id = ${schedule.id}`);
 
-      // Fire automation trigger for any wired automations
-      void fireTrigger("schedule", { scheduleId: schedule.id, type: "backup", appId: schedule.app_id });
+      // Hook for automations wired to backup runs. Its own trigger type: a
+      // "schedule" trigger here would run every cron automation (they carry no
+      // appId to filter on) whenever any backup schedule fires.
+      void fireTrigger("backup_schedule", { scheduleId: schedule.id, appId: schedule.app_id });
 
       // Execute backups directly — don't rely on an automation being wired up
       if (schedule.app_id) {
