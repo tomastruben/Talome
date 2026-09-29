@@ -150,3 +150,37 @@ export function retentionSummary(s: {
   if (s.keep_monthly) parts.push(`${s.keep_monthly} monthly`);
   return parts.length > 0 ? `Keep ${parts.join(", ")}` : `Keep ${s.retention_days} days`;
 }
+
+// ── Errors ────────────────────────────────────────────────────────────────────
+
+/** Every change to backups is admin-only on the server; reads are open to everyone. */
+export const ADMIN_ONLY_MESSAGE = "Only an admin can change backups.";
+
+/** A failed backups API call, with its HTTP status. */
+export class BackupRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Readable message for a failed backups API call. A 403 always reads as
+ * admin-only (the server's "Forbidden — admin access required" is not
+ * something a member can act on); otherwise the server's error, else `fallback`.
+ */
+export function backupErrorMessage(status: number, body: unknown, fallback: string): string {
+  if (status === 403) return ADMIN_ONLY_MESSAGE;
+  if (body && typeof body === "object") {
+    const error = (body as { error?: unknown }).error;
+    if (typeof error === "string" && error) return error;
+  }
+  return fallback;
+}
+
+/** True when a thrown error is the server refusing a non-admin change. */
+export function isForbiddenError(error: unknown): boolean {
+  return error instanceof BackupRequestError && error.status === 403;
+}

@@ -16,7 +16,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { METHOD_LABELS, METHOD_OPTIONS, parseExcludePatterns } from "../_lib/backup-status";
+import { METHOD_LABELS, METHOD_OPTIONS, backupErrorMessage, parseExcludePatterns } from "../_lib/backup-status";
 import type { AppBackupOverview, ConfiguredMethod } from "../_lib/types";
 
 interface BackupSettingsSheetProps {
@@ -55,8 +55,8 @@ export function BackupSettingsSheet({ app, onOpenChange, onSaved }: BackupSettin
         }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: unknown };
-        throw new Error(typeof body.error === "string" ? body.error : "Check the values and try again");
+        const body: unknown = await res.json().catch(() => null);
+        throw new Error(backupErrorMessage(res.status, body, "Check the values and try again"));
       }
       toast.success(`Backup settings saved for ${app.name}`);
       onSaved();

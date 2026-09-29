@@ -9,6 +9,10 @@ import {
   parseCredentials,
   parseKeepCount,
   retentionSummary,
+  ADMIN_ONLY_MESSAGE,
+  BackupRequestError,
+  backupErrorMessage,
+  isForbiddenError,
 } from "./backup-status";
 import type { AppBackupOverview, BackupSummary } from "./types";
 
@@ -113,5 +117,23 @@ describe("storage & retention helpers", () => {
     const base = { keep_last: null, keep_daily: null, keep_weekly: null, keep_monthly: null, retention_days: 30 };
     expect(retentionSummary(base)).toBe("Keep 30 days");
     expect(retentionSummary({ ...base, keep_last: 3, keep_weekly: 4 })).toBe("Keep last 3, 4 weekly");
+  });
+});
+
+describe("backup API errors", () => {
+  it("explains a 403 as admin-only instead of echoing the server", () => {
+    expect(backupErrorMessage(403, { error: "Forbidden — admin access required" }, "fallback")).toBe(ADMIN_ONLY_MESSAGE);
+  });
+
+  it("uses the server error, else the fallback", () => {
+    expect(backupErrorMessage(409, { error: "A backup is already running" }, "fallback")).toBe("A backup is already running");
+    expect(backupErrorMessage(500, null, "fallback")).toBe("fallback");
+    expect(backupErrorMessage(400, { error: { formErrors: [] } }, "fallback")).toBe("fallback");
+  });
+
+  it("recognises forbidden request errors", () => {
+    expect(isForbiddenError(new BackupRequestError(ADMIN_ONLY_MESSAGE, 403))).toBe(true);
+    expect(isForbiddenError(new BackupRequestError("x", 500))).toBe(false);
+    expect(isForbiddenError(new Error("x"))).toBe(false);
   });
 });
