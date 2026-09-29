@@ -7,34 +7,37 @@
 // The supervisor calls this when a process has crashed 3+ times in 5 minutes
 // and no recent evolution change explains it.
 
-import { spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import type { DiagnosticsBundle, DiagnosisResult } from "./types.js";
-
-// ── Claude Code availability check ──────────────────────────────────────────
-
-let _claudeAvailable: boolean | null = null;
-
-async function isClaudeCodeAvailable(): Promise<boolean> {
-  if (_claudeAvailable !== null) return _claudeAvailable;
-  try {
-    const result = await new Promise<{ code: number }>((resolve) => {
-      const proc = spawn("claude", ["--version"], { shell: false });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ChildProcess type lacks .on() in newer @types/node
-      const p = proc as any;
-      p.on("close", (code: number | null) => resolve({ code: code ?? 1 }));
-      p.on("error", () => resolve({ code: 1 }));
-    });
-    _claudeAvailable = result.code === 0;
-  } catch {
-    _claudeAvailable = false;
-  }
-  return _claudeAvailable;
-}
+import { generateTextViaClaudeCode, isClaudeCodeAvailable } from "../ai/claude-process.js";
+import { fenceUntrusted } from "../ai/untrusted-data.js";
 
 // ── Diagnosis prompt ─────────────────────────────────────────────────────────
 
-function buildDiagnosisPrompt(bundle: DiagnosticsBundle): string {
+/**
+ * The crash report. Process output, commit messages, diffs, evolution tasks
+ * and audit entries can all carry attacker-written text (logs of apps, data
+ * the agent handled), so they are fenced as untrusted data; the model has no
+ * tools, and its answer is parsed into a fixed set of actions.
+ */
+export function buildDiagnosisPrompt(bundle: DiagnosticsBundle): string {
+  const evidence = [
+    "LAST LINES OF OUTPUT:",
+    bundle.logTail.slice(-4000),
+    "",
+    "RECENT GIT CHANGES (last 5 commits):",
+    bundle.recentCommits,
+    "",
+    "UNCOMMITTED CHANGES:",
+    bundle.uncommittedChanges || "None",
+    "",
+    "RECENT EVOLUTION RUNS:",
+    bundle.recentEvolutionRuns,
+    "",
+    "RECENT AUDIT LOG:",
+    bundle.recentAuditEntries,
+  ].join("\n");
+
   return `You are Talome's process supervisor AI. A Talome process has crashed repeatedly and needs diagnosis.
 
 CRASHED PROCESS: ${bundle.processName}
@@ -42,27 +45,12 @@ EXIT CODE: ${bundle.exitCode}
 EXIT SIGNAL: ${bundle.exitSignal ?? "none"}
 CRASH COUNT: ${bundle.crashCount} times in the last 5 minutes
 
-LAST LINES OF OUTPUT:
-\`\`\`
-${bundle.logTail.slice(-4000)}
-\`\`\`
-
-RECENT GIT CHANGES (last 5 commits):
-${bundle.recentCommits}
-
-UNCOMMITTED CHANGES:
-${bundle.uncommittedChanges || "None"}
-
 SYSTEM RESOURCES:
 - CPU: ${bundle.systemResources.cpu}%
 - Memory: ${bundle.systemResources.memPercent}%
 - Disk: ${bundle.systemResources.diskPercent}%
 
-RECENT EVOLUTION RUNS:
-${bundle.recentEvolutionRuns}
-
-RECENT AUDIT LOG:
-${bundle.recentAuditEntries}
+${fenceUntrusted(evidence, { label: "process output, git history, evolution runs and audit entries", prefix: "CRASH", maxChars: 12_000 })}
 
 Analyze this crash and respond with EXACTLY this format:
 ROOT CAUSE: <one-line summary>
@@ -108,39 +96,10 @@ function parseDiagnosisResponse(text: string, model: string, costUsd: number): D
 async function diagnoseViaClaudeCode(
   prompt: string,
   cwd: string,
-): Promise<{ text: string; model: string; costUsd: number }> {
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-
-    // Strip ANTHROPIC_API_KEY so claude CLI uses subscription auth
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { ANTHROPIC_API_KEY: _strip, CLAUDECODE: _strip2, ...cleanEnv } = process.env;
-
-    const proc = spawn(
-      "claude",
-      ["--dangerously-skip-permissions", "--print", prompt],
-      { cwd, env: cleanEnv, shell: false },
-    );
-
-    const timeout = setTimeout(() => {
-      proc.kill("SIGTERM");
-      resolve({ text: stderr || "Diagnosis timed out after 60s", model: "claude-code", costUsd: 0 });
-    }, 60_000);
-
-    proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    proc.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ChildProcess type lacks .on() in newer @types/node
-    const p2 = proc as any;
-    p2.on("close", () => {
-      clearTimeout(timeout);
-      resolve({ text: stdout || stderr, model: "claude-code", costUsd: 0 });
-    });
-    p2.on("error", () => {
-      clearTimeout(timeout);
-      resolve({ text: stderr || "Claude Code process error", model: "claude-code", costUsd: 0 });
-    });
-  });
+): Promise<{ text: string; model: string; costUsd: number } | null> {
+  // No tools: the diagnosis is text only (see generateTextViaClaudeCode).
+  const text = await generateTextViaClaudeCode(prompt, { cwd, timeoutMs: 60_000 });
+  return text ? { text, model: "claude-code", costUsd: 0 } : null;
 }
 
 // ── Path 2: Anthropic API fallback ──────────────────────────────────────────
@@ -202,10 +161,8 @@ export async function diagnoseProcessCrash(
   console.log(`[supervisor] Running AI diagnosis for ${bundle.processName}…`);
 
   // Prefer Claude Code ($0), fall back to API
-  const claudeAvailable = await isClaudeCodeAvailable();
-  const result = claudeAvailable
-    ? await diagnoseViaClaudeCode(prompt, projectRoot)
-    : await diagnoseViaApi(prompt, dbPath);
+  const viaClaude = (await isClaudeCodeAvailable()) ? await diagnoseViaClaudeCode(prompt, projectRoot) : null;
+  const result = viaClaude ?? (await diagnoseViaApi(prompt, dbPath));
 
   console.log(`[supervisor] Diagnosis complete via ${result.model} (cost: $${result.costUsd.toFixed(4)})`);
 

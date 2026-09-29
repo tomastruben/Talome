@@ -240,9 +240,12 @@ This attaches to an existing `talome-claude` tmux session if one is already runn
 
 ### Headless mode (automated)
 
-The AI agent uses `claude --dangerously-skip-permissions --print <task>` for automated operations:
-- `apply_change` — self-improvement changes with typecheck + auto-rollback
-- `executeWorkspaceGeneration` — app scaffolding in a generated-app workspace
+Headless runs never use `--dangerously-skip-permissions`. Every one goes through `spawnClaudeStreaming()` in `apps/core/src/ai/claude-process.ts` with a tool policy:
+- **Code editing** (`codeEditingClaudePolicy`) — `apply_change` / evolution auto-execute (the evolution worker), the dashboard build autofix and `executeWorkspaceGeneration`: file edits inside the working directory only (never `.claude/`, `.mcp.json`, `.git/`, `.env*`, `CLAUDE.md`), no shell, no web, no MCP servers. Talome runs the typecheck/build and rollback itself.
+- **Text only** (`textOnlyClaudePolicy`, `generateTextViaClaudeCode`) — weekly digest, activity summary, supervisor crash diagnosis: every tool denied, no MCP servers. Log/event/activity text in their prompts is fenced as untrusted data (`ai/untrusted-data.ts`).
+- **Remediation** (`remediationClaudePolicy`) — see Agent loop below.
+
+Evolution auto-execute is off unless the owner turns it on in Settings -> Intelligence (`evolution_auto_execute` plus the `evolution_auto_execute_enabled_at` opt-in; admin-only). Only the interactive terminal commands an admin launches and watches may add `--dangerously-skip-permissions` (the "auto" toggle).
 
 CLAUDE.md is read automatically in both modes.
 

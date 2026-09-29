@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import {
   spawnProcess,
   spawnClaudeStreaming,
+  codeEditingClaudePolicy,
   getChangedFiles,
   runTypecheck,
   stashRollback,
@@ -49,7 +50,7 @@ export interface ClaudeRunOptions {
   /** Working directory for the Claude Code process */
   cwd: string;
   /**
-   * headless: runs `claude --dangerously-skip-permissions --print <task>` (non-interactive)
+   * headless: runs a restricted `claude --print` session (file edits in cwd only, no shell/web)
    * interactive: emits a tmux command string — caller is responsible for sending it to a terminal
    */
   mode: "headless" | "interactive";
@@ -142,8 +143,9 @@ export async function saveScreenshots(dataUrls: string[]): Promise<string[]> {
 /**
  * Run Claude Code in headless or interactive mode.
  *
- * - headless: spawns `claude --dangerously-skip-permissions --print <task>`,
- *   optionally runs typecheck + auto-rollback, returns a full result.
+ * - headless: spawns a restricted `claude --print` session (codeEditingClaudePolicy:
+ *   file edits in cwd only, no shell, web or MCP), optionally runs typecheck +
+ *   auto-rollback, returns a full result.
  * - interactive: returns the tmux command string to send to a terminal session;
  *   no process is spawned here.
  */
@@ -169,7 +171,7 @@ export async function runClaudeCode(opts: ClaudeRunOptions): Promise<ClaudeRunRe
   const task = appendScreenshotNote(opts.task, screenshotPaths);
   const start = Date.now();
 
-  const { code, stdout, stderr } = await spawnClaudeStreaming(task, cwd, onOutput);
+  const { code, stdout, stderr } = await spawnClaudeStreaming(task, cwd, onOutput, undefined, undefined, codeEditingClaudePolicy({ canEdit: true }));
 
   if (code !== 0 && !stdout) {
     return {

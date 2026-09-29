@@ -257,8 +257,11 @@ beforeEach(() => {
 // ── Finding: Claude Code remediation must not have Bash ──────────────────────
 
 describe("Claude Code remediation session", () => {
-  it("other headless callers keep their flags; a policy removes skip-permissions", () => {
-    expect(buildClaudeStreamingArgs()).toContain("--dangerously-skip-permissions");
+  it("no headless session gets skip-permissions: without a policy it is text-only; a policy is applied as given", () => {
+    const textOnly = buildClaudeStreamingArgs();
+    expect(textOnly).not.toContain("--dangerously-skip-permissions");
+    expect(textOnly[textOnly.indexOf("--disallowedTools") + 1].split(",")).toEqual(expect.arrayContaining(["Bash", "Edit", "Write", "Read", "WebFetch"]));
+    expect(textOnly).toContain("--strict-mcp-config");
     const args = buildClaudeStreamingArgs({ allowedTools: ["mcp__talome__x"], disallowedTools: ["Bash"], mcpConfig: "{}" });
     expect(args).not.toContain("--dangerously-skip-permissions");
     expect(args).not.toContain("bypassPermissions");
