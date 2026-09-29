@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { serverError } from "../middleware/request-logger.js";
 import { decideApproval, getApproval, listApprovals, type ApprovalRow } from "../approval/approvals.js";
+import { openApprovalDetail } from "../approval/redact.js";
 import { writeAuditEntry } from "../db/audit.js";
 
 /**
@@ -30,7 +31,8 @@ function serialize(row: ApprovalRow) {
     source: row.source,
     tool: row.tool,
     summary: row.summary,
-    argsPreview: row.argsPreview,
+    // The full request the owner decides on (stored sealed; see approval/redact.ts).
+    argsPreview: openApprovalDetail(row.argsPreview),
     status: row.status,
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,

@@ -19,6 +19,7 @@ export interface ProbeCallContext {
 
 export interface AppConnection {
   appId: string;
+  /** Saved URL without userinfo — safe to show and to hand to fetch. */
   baseUrl: string;
   /** Settings key the URL was read from (for remediation text). */
   urlSettingKey: string;
@@ -27,6 +28,65 @@ export interface AppConnection {
   apiKey?: string;
   username?: string;
   password?: string;
+  /** Credentials that were embedded in the saved URL (user:pass@host), sent as HTTP Basic auth. */
+  urlCredentials?: { username: string; password: string };
+}
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Split `scheme://user:pass@host…` into the URL without userinfo and the
+ * credentials. fetch refuses URLs with credentials — and puts the whole URL,
+ * password included, into its error message.
+ */
+export function splitUrlCredentials(raw: string): { url: string; credentials?: { username: string; password: string } } {
+  try {
+    const parsed = new URL(raw);
+    if (!parsed.username && !parsed.password) return { url: raw };
+  } catch {
+    // Not a valid URL (e.g. a raw "/" in the password): split it by hand.
+  }
+  const schemeEnd = raw.indexOf("://");
+  if (schemeEnd < 0) return { url: raw };
+  const rest = raw.slice(schemeEnd + 3);
+  const authorityEnd = rest.search(/[/?#]/);
+  let authority = authorityEnd < 0 ? rest : rest.slice(0, authorityEnd);
+  // A password with a raw "/" (not percent-encoded) ends the authority early;
+  // the userinfo then runs to the last "@" before any query or fragment.
+  if (!authority.includes("@")) {
+    const head = rest.split(/[?#]/, 1)[0] ?? "";
+    if (!head.includes("@")) return { url: raw };
+    authority = head.slice(0, head.lastIndexOf("@") + 1);
+  }
+  const at = authority.lastIndexOf("@");
+  const userinfo = authority.slice(0, at);
+  const url = `${raw.slice(0, schemeEnd + 3)}${rest.slice(at + 1)}`;
+  const colon = userinfo.indexOf(":");
+  const username = safeDecode(colon < 0 ? userinfo : userinfo.slice(0, colon));
+  const password = colon < 0 ? "" : safeDecode(userinfo.slice(colon + 1));
+  return { url, credentials: { username, password } };
+}
+
+/** Remove `user:pass@` from every URL in free text (error messages that echo a URL). */
+export function stripUrlCredentials(text: string): string {
+  return text.replace(/\/\/[^\s"'<>]*@/g, "//");
+}
+
+function remember(env: ProbeEnv, credentials: { username: string; password: string } | undefined): void {
+  if (!credentials?.password) return;
+  env.secrets.add(credentials.password);
+  env.secrets.add(encodeURIComponent(credentials.password));
+  env.secrets.add(Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64"));
+}
+
+function basicAuthHeader(credentials: { username: string; password: string }): string {
+  return `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`;
 }
 
 export function getAppName(appId: string): string {
@@ -48,7 +108,12 @@ export function resolveConnection(env: ProbeEnv, appId: string): AppConnection |
   }
   if (!url) return null;
 
-  const baseUrl = url.trim().replace(/\/+$/, "");
+  // A URL with user:pass@ (an app behind a basic-auth proxy): the password is
+  // a secret for this run, and never part of the URL we fetch or show.
+  const split = splitUrlCredentials(url.trim());
+  remember(env, split.credentials);
+  const baseUrl = split.url.replace(/\/+$/, "");
+  const urlCredentials = split.credentials ? { urlCredentials: split.credentials } : {};
   if (appId === "qbittorrent") {
     return {
       appId,
@@ -57,9 +122,10 @@ export function resolveConnection(env: ProbeEnv, appId: string): AppConnection |
       keySettingKey: keyKey,
       username: env.getSetting("qbittorrent_username") ?? "admin",
       password: env.getSetting(keyKey) ?? "",
+      ...urlCredentials,
     };
   }
-  return { appId, baseUrl, urlSettingKey: urlKey, keySettingKey: keyKey, apiKey: env.getSetting(keyKey) };
+  return { appId, baseUrl, urlSettingKey: urlKey, keySettingKey: keyKey, apiKey: env.getSetting(keyKey), ...urlCredentials };
 }
 
 function describeNetworkError(err: unknown, signal: AbortSignal): string {
@@ -72,9 +138,9 @@ function describeNetworkError(err: unknown, signal: AbortSignal): string {
     if (code === "ECONNRESET") return "connection reset by the app";
     if (code === "EHOSTUNREACH" || code === "ENETUNREACH") return "host unreachable";
     if (err.name === "AbortError" || err.name === "TimeoutError") return "request aborted (timed out)";
-    return clip(err.message, 160);
+    return clip(stripUrlCredentials(err.message), 160);
   }
-  return clip(String(err), 160);
+  return clip(stripUrlCredentials(String(err)), 160);
 }
 
 function describeBody(data: unknown): string {
@@ -145,10 +211,16 @@ export function qbtLogin(ctx: ProbeCallContext): Promise<QbtSession> {
 
   const pending = (async (): Promise<QbtSession> => {
     const body = new URLSearchParams({ username: conn.username ?? "admin", password: conn.password ?? "" });
+    const headers: Record<string, string> = {
+      "Content-Type": "application/x-www-form-urlencoded",
+      // qBittorrent's CSRF protection rejects logins without a matching Referer/Origin.
+      Referer: conn.baseUrl,
+      Origin: conn.baseUrl,
+    };
+    if (conn.urlCredentials) headers.Authorization = basicAuthHeader(conn.urlCredentials);
     const res = await probeFetch(ctx, `${conn.baseUrl}/api/v2/auth/login`, {
       method: "POST",
-      // qBittorrent's CSRF protection rejects logins without a matching Referer/Origin.
-      headers: { "Content-Type": "application/x-www-form-urlencoded", Referer: conn.baseUrl, Origin: conn.baseUrl },
+      headers,
       body: body.toString(),
     });
     if (res.status === 403) {
@@ -198,7 +270,10 @@ export async function appRequest<T = unknown>(
   if (!conn) return { ok: false, status: 0, error: `${getAppName(appId)} is not configured in Talome` };
 
   const method = opts.method ?? "GET";
-  const baseUrl = (opts.baseUrl ?? conn.baseUrl).replace(/\/+$/, "");
+  const override = opts.baseUrl !== undefined ? splitUrlCredentials(opts.baseUrl.trim()) : undefined;
+  remember(ctx.env, override?.credentials);
+  const baseUrl = (override?.url ?? conn.baseUrl).replace(/\/+$/, "");
+  const urlCredentials = override ? override.credentials : conn.urlCredentials;
   const useAuth = opts.auth !== false;
   const cacheKey = method === "GET" ? `${appId} ${useAuth ? "auth" : "anon"} ${baseUrl}${path}` : null;
 
@@ -224,6 +299,9 @@ export async function appRequest<T = unknown>(
         else if (style === "bearer") headers.Authorization = `Bearer ${conn.apiKey}`;
       }
     }
+    // Basic auth for a proxy in front of the app, unless the app's own scheme
+    // already uses the Authorization header.
+    if (urlCredentials && !headers.Authorization) headers.Authorization = basicAuthHeader(urlCredentials);
 
     return probeFetch(ctx, `${baseUrl}${path}`, {
       method,
