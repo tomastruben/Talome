@@ -1484,27 +1484,38 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
 
   // ── 5b. Semantic verification (apps with outcome probes) ────────────────
   // Only once the new version passed container/HTTP verification. A regression
-  // from "verified" to "failed" is treated like a failed update.
+  // from "verified" to "failed" is reported loudly but NEVER rolled back
+  // automatically. By now the new version has run, so its startup migrations
+  // may already have been applied to the app's data:
+  //   - putting the old images back alone runs the old binary on a schema it
+  //     does not know (*arr apps refuse to start; others may corrupt data);
+  //   - restoring the pre-update backup as well would discard everything the
+  //     app wrote since that backup (it kept serving during the pull), unattended,
+  //     on the strength of outcome probes that can fail for reasons outside the
+  //     app (e.g. a download client restarting in the same bulk update).
+  // The containers are healthy, so the safest state is the one we are in: keep
+  // the new version, notify, and let the owner roll back the update and then
+  // restore the pre-update backup (both offered) if the app really is broken.
   let semantic: SemanticVerification | null = null;
-  /** Why a semantic regression was not rolled back automatically (null when none or rolled back). */
+  /** Why a semantic regression was not rolled back automatically (null when there is none). */
   let semanticNotRolledBack: string | null = null;
   if (!failureReason && imagesChanged && verification?.healthy && semanticProbe) {
     ctx.step("semantic_verify", 75, "Checking the app still does its job (outcome probes)");
     semantic = await runSemanticVerification(appId, { baseline: semanticBaseline });
     ctx.setDetail({ semanticVerification: semantic });
     if (semantic.regression) {
-      // The new version already passed its health checks, so its startup
-      // migrations have run: putting the old images back on top of that data
-      // is only safe to automate when the pre-update backup can revert the data.
-      const dataRevertible = backup.success && Boolean(backup.backupId);
-      if (imageRollbackAvailable && dataRevertible) {
-        failureReason = `Outcome verification regressed after the update (verified before, failed now): ${semantic.summary ?? "checks failed"}`;
-      } else {
-        semanticNotRolledBack = !imageRollbackAvailable
-          ? "no previous images were recorded"
-          : "no pre-update backup was taken, and the older version may not start on data the new version already migrated " +
-            "(enable preBackup in the app's update policy to allow automatic rollbacks)";
-      }
+      const preUpdateBackupId = backup.success ? backup.backupId : undefined;
+      semanticNotRolledBack =
+        "the new version has already run and may have migrated the app's data, which the older version might not run on, " +
+        "and restoring the pre-update backup automatically would discard what the app wrote since then. " +
+        (!imageRollbackAvailable
+          ? "No previous images were recorded, so it cannot be rolled back."
+          : preUpdateBackupId
+            ? `To go back, roll back the update and then restore the pre-update backup ${preUpdateBackupId} ` +
+              "(restore_app with backupId, or Backups → Restore) so the older version gets its own data back."
+            : "No pre-update backup was taken, so rolling back would run the older version on data the new version may have migrated " +
+              "(enable preBackup in the app's update policy to make a clean rollback possible).");
+      ctx.setDetail({ semanticRollback: { automatic: false, reason: "the new version already ran on the app's data" } });
     }
   }
 
@@ -1567,8 +1578,8 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
       // A known regression is never reported as a clean, verified success.
       const warning =
         `Updated to version ${app.version} and its containers are healthy, but it passed its outcome checks before the update ` +
-        `and fails them now (${semantic.summary ?? "checks failed"}). It was not rolled back automatically: ${semanticNotRolledBack}. ` +
-        `Roll back the update if the app does not work.${backupLine}`;
+        `and fails them now (${semantic.summary ?? "checks failed"}). It was not rolled back automatically: ${semanticNotRolledBack}` +
+        `${backupLine}`;
       ctx.setDetail({ outcome: "regressed" });
       writeNotification("critical", `${app.name} updated, outcome checks now failing`, warning, appId);
       return { success: true, verified: true, outcome: "unverified", warning, ...semanticResult, ...backupResult };
@@ -1657,7 +1668,6 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   const dataRestore = backup.success && backup.backupId
     ? { preUpdateBackupId: backup.backupId, dataRestoreHint: dataRestoreHint(backup.backupId) }
     : {};
-  const semanticResult = semantic?.ran ? { semanticVerification: summarizeSemantic(semantic) } : {};
 
   if (rolledBack && snapshot) {
     db.update(schema.updateSnapshots)
@@ -1665,12 +1675,6 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
       .where(eq(schema.updateSnapshots.id, snapshot.id))
       .run();
     ctx.setDetail({ outcome: "rolled_back", ...(backup.success && backup.backupId ? { dataRestore: { backupId: backup.backupId, available: true } } : {}) });
-    if (semantic?.regression) {
-      // Record whether the restored version passes its outcome checks again.
-      ctx.step("semantic_verify_rollback", 95, "Checking the restored version with outcome probes");
-      const afterRollback = await runSemanticVerification(appId, { baseline: null });
-      ctx.setDetail({ semanticAfterRollback: afterRollback });
-    }
     ctx.markRolledBack(failureReason);
     writeNotification(
       "warning",
@@ -1685,7 +1689,6 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
       rolledBack: true,
       outcome: "rolled_back",
       ...dataRestore,
-      ...semanticResult,
     };
   }
 
@@ -1698,7 +1701,7 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
     `${error}.${backupLine} Manual attention is needed.`,
     appId,
   );
-  return { success: false, error, verified: false, rolledBack: false, outcome: "failed", ...dataRestore, ...semanticResult };
+  return { success: false, error, verified: false, rolledBack: false, outcome: "failed", ...dataRestore };
 }
 
 // ── Status refresh ────────────────────────────────────────────────────────
