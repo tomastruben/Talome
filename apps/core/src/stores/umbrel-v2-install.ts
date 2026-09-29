@@ -593,15 +593,18 @@ export function appRequiresHttps(appId: string): boolean {
  * Dependency provider choices (`dependency → provider app id`) saved when the
  * app was installed from `storeSourceId`, so starting it later resolves its
  * dependencies the way the install did. Unlike getAppInstallOptions this does
- * not depend on the app's status (a failed start leaves it "error"). Never
- * throws; empty when nothing was chosen.
+ * not depend on the app's status (a failed start leaves it "error"). A choice
+ * whose provider has since been uninstalled is dropped, so another installed
+ * provider can stand in. Never throws; empty when nothing was chosen.
  */
 export function getSavedDependencySelections(appId: string, storeSourceId: string): Record<string, string> {
   try {
     const row = db.select().from(schema.appInstallOptions).where(eq(schema.appInstallOptions.appId, appId)).get();
     if (!row || row.storeSourceId !== storeSourceId) return {};
     const parsed = UmbrelInstallOptionsSchema.safeParse(JSON.parse(row.options));
-    return parsed.success ? (parsed.data.dependencies ?? {}) : {};
+    if (!parsed.success) return {};
+    const installed = new Set(db.select({ appId: schema.installedApps.appId }).from(schema.installedApps).all().map((r) => r.appId));
+    return Object.fromEntries(Object.entries(parsed.data.dependencies ?? {}).filter(([, provider]) => installed.has(provider)));
   } catch {
     return {};
   }

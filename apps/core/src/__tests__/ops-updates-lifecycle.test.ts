@@ -717,6 +717,23 @@ describe("Umbrel dependencies met by a provider at start time", () => {
     expect(statusOf("alpha-llm")).toBe("stopped");
   });
 
+  it("falls back to another installed provider when the one chosen at install was uninstalled", async () => {
+    const alpha = addUmbrelApp("alpha-llm", { status: "stopped", implementsDeps: ["llm-runtime"] });
+    addUmbrelApp("chat-ui", { status: "stopped", dependencies: ["llm-runtime"] });
+    db.insert(schema.appInstallOptions).values({
+      appId: "chat-ui",
+      storeSourceId: UMBREL_STORE,
+      options: JSON.stringify({ dependencies: { "llm-runtime": "zeta-llm" } }), // zeta-llm is gone
+      plan: "{}",
+      updatedAt: new Date().toISOString(),
+    }).run();
+
+    const result = await startApp("chat-ui");
+
+    expect(result.success).toBe(true);
+    expect(commands().some((c) => c.includes(alpha) && c.endsWith(" up -d"))).toBe(true);
+  });
+
   it("still refuses to start when no installed app provides the dependency", async () => {
     addUmbrelApp("chat-ui", { status: "stopped", dependencies: ["llm-runtime"] });
     const result = await startApp("chat-ui");
