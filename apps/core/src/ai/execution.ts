@@ -41,7 +41,15 @@ import { writeAuditEntry, type AuditOutcome } from "../db/audit.js";
 import { writeNotification } from "../db/notifications.js";
 import { checkCallGrant, TIER_RANK, type TokenScopes, type ToolTier } from "../approval/grants.js";
 import { APPROVAL_ARG, consumeApproval, hashArgs, requestApproval, type ConsumeFailure } from "../approval/approvals.js";
-import { invalidateSecretValueCache, redactedPreview, redactText } from "../approval/redact.js";
+import {
+  approvalArgsPreview,
+  approvalSummaryCommand,
+  executableArgKeys,
+  invalidateSecretValueCache,
+  redactedPreview,
+  redactText,
+  sealApprovalDetail,
+} from "../approval/redact.js";
 import { isApprovalExemptShellCommand } from "../approval/shell-safety.js";
 import { isSecretSettingKey } from "../utils/crypto.js";
 import {
@@ -401,21 +409,45 @@ function humanToolName(toolName: string): string {
 
 const SUMMARY_TARGET_KEYS = ["appId", "app_id", "appIds", "containerId", "container", "containerName", "name", "path", "key", "id"] as const;
 
-/** A short, redacted "on <target>" phrase for approval summaries, when the args name one. */
-function describeTarget(toolName: string, args: Record<string, unknown>): string {
-  if (toolName === "run_shell" && typeof args.command === "string") {
-    const cmd = redactText(args.command.trim());
-    return `: ${cmd.length > 120 ? `${cmd.slice(0, 120)}…` : cmd}`;
-  }
+function executableNoun(toolName: string): string {
+  if (toolName === "apply_change" || toolName === "plan_change") return "task";
+  if (toolName === "create_tool") return "code";
+  return "command";
+}
+
+/**
+ * The one-line approval summary: who wants to run what, on which target. It
+ * also reaches notifications, automation output and the chat approval card,
+ * so it stays redacted. When redaction or length means it cannot show the
+ * request faithfully, it says so — it never shows a shortened or masked
+ * command as if it were the whole thing. The full request is in the approval
+ * details (approvalArgsPreview).
+ */
+function approvalSummary(actorLabel: string, toolName: string, args: Record<string, unknown>, tier: ToolTier): string {
+  const execKeys = executableArgKeys(toolName);
+  let complete = true;
+  let target = "";
   for (const key of SUMMARY_TARGET_KEYS) {
+    if (execKeys.includes(key)) continue;
     const v = args[key];
-    const text = Array.isArray(v) ? v.filter((x) => typeof x === "string").join(", ") : typeof v === "string" ? v : "";
-    if (text.trim()) {
-      const safe = redactText(text.trim());
-      return ` on ${safe.length > 80 ? `${safe.slice(0, 80)}…` : safe}`;
+    const text = (Array.isArray(v) ? v.filter((x) => typeof x === "string").join(", ") : typeof v === "string" ? v : "").trim();
+    if (text) {
+      const safe = redactText(text);
+      if (safe !== text || safe.length > 80) complete = false;
+      target = ` on ${safe.length > 80 ? `${safe.slice(0, 80)}…` : safe}`;
+      break;
     }
   }
-  return "";
+  let what = "";
+  if (execKeys.length > 0) {
+    const shown = approvalSummaryCommand(toolName, args);
+    if (shown === null) complete = false;
+    else what = `: ${shown}`;
+  }
+  const head = `${actorLabel} wants to run "${humanToolName(toolName)}"${target}${what} (${tier}).`;
+  if (complete) return head;
+  const noun = execKeys.length > 0 ? `the exact ${executableNoun(toolName)}` : "the full request";
+  return `${head} Not shown in full here (it is long, spans lines or has secret-looking values): review ${noun} in the approval details before approving.`;
 }
 
 function listInstalledAppIds(): string[] {
@@ -549,10 +581,13 @@ export async function executeTool(params: ExecuteToolParams): Promise<ExecuteToo
     let idToConsume = approvalId;
     if (!idToConsume) {
       let requested: ReturnType<typeof requestApproval>;
+      // Audit rows and notifications get the redacted, shortened preview; the
+      // approval itself stores the full request the owner decides on, sealed.
       const argsPreview = redactedPreview(args, 400);
       try {
-        const summary = `${actor.label} wants to run "${humanToolName(toolName)}"${describeTarget(toolName, args)} (${tier}).`;
-        requested = requestApproval({ actor: approvalActor, source, tool: toolName, argsHash, argsPreview, summary });
+        const summary = approvalSummary(actor.label, toolName, args, tier);
+        const detail = sealApprovalDetail(approvalArgsPreview(toolName, args));
+        requested = requestApproval({ actor: approvalActor, source, tool: toolName, argsHash, argsPreview: detail, summary });
       } catch (err) {
         return finish({
           outcome: "blocked",
@@ -576,7 +611,9 @@ export async function executeTool(params: ExecuteToolParams): Promise<ExecuteToo
           writeNotification(
             "warning",
             `Approval needed: ${humanToolName(toolName)}`,
-            `${approval.summary}\nReview it in Settings -> Approvals: ${approveUrl}\n${argsPreview}`,
+            // Executable arguments stay out of notifications: redacted they could
+            // mislead, unredacted they could leak. The summary names them when it can.
+            `${approval.summary}\nReview it in Settings -> Approvals: ${approveUrl}${executableArgKeys(toolName).length > 0 ? "" : `\n${argsPreview}`}`,
             `approval:${approval.id}`,
             { link: approveUrl, dedupe: false },
           );

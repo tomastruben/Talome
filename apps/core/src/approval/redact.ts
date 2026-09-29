@@ -8,10 +8,17 @@
  *      even when it sits under an innocent key like `command` or `body`.
  * Truncation happens only after redaction so a secret can never be split
  * across the cut and leak its prefix.
+ *
+ * What the owner approves is different: an approval must show exactly what
+ * will run. Executable arguments (a shell command, code, a coding agent's
+ * task) are never pattern-redacted or truncated there — `API_TOKEN=$(curl …|sh)`
+ * would otherwise read as `API_TOKEN=[REDACTED]`. Only known secret values are
+ * masked, and the full preview is stored encrypted (see approvalArgsPreview /
+ * sealApprovalDetail). Pattern redaction stays for audit rows and notifications.
  */
 
 import { db, schema } from "../db/index.js";
-import { isSecretSettingKey, decryptSetting } from "../utils/crypto.js";
+import { isSecretSettingKey, decryptSetting, encrypt, decrypt } from "../utils/crypto.js";
 
 export const SECRET_KEY_PATTERN = /(pass(word)?|secret|token|api[_-]?key|auth|cookie|credential|private|bearer)/i;
 
@@ -150,4 +157,129 @@ export function redactedPreview(args: unknown, maxLength = 500): string {
 export function redactText(text: string, secrets: readonly string[] = getKnownSecretValues()): string {
   if (!text) return text;
   return redactAssignments(redactString(text, secrets));
+}
+
+// ── Approval display ─────────────────────────────────────────────────────────
+
+/**
+ * Arguments that are executed as given: shell commands, container exec argv,
+ * code the server will load, and tasks handed to Claude Code (which runs with
+ * --dangerously-skip-permissions). The owner must see them exactly.
+ */
+const EXECUTABLE_ARG_KEYS: Readonly<Record<string, readonly string[]>> = {
+  run_shell: ["command"],
+  exec_container: ["command"],
+  apply_change: ["task"],
+  plan_change: ["task"],
+  create_tool: ["code"],
+};
+
+/** The argument names of `toolName` that are executed as given (empty for most tools). */
+export function executableArgKeys(toolName: string): readonly string[] {
+  return Object.hasOwn(EXECUTABLE_ARG_KEYS, toolName) ? EXECUTABLE_ARG_KEYS[toolName] : [];
+}
+
+/**
+ * Mask known secret values only — substring matches of long secrets, never a
+ * pattern and never a whole-string match of a short value (a short "secret"
+ * equal to a command such as `reboot` must not hide that command).
+ */
+function maskKnownSecretValues(value: unknown, secrets: readonly string[], depth = 0): unknown {
+  if (depth > 8) return value;
+  if (typeof value === "string") {
+    let out = value;
+    for (const secret of secrets) {
+      if (secret.length >= MIN_SUBSTRING_SECRET_LENGTH && out.includes(secret)) out = out.split(secret).join(REDACTED);
+    }
+    return out;
+  }
+  if (Array.isArray(value)) return value.map((v) => maskKnownSecretValues(v, secrets, depth + 1));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, maskKnownSecretValues(v, secrets, depth + 1)]),
+    );
+  }
+  return value;
+}
+
+function redactAssignmentsDeep(value: unknown, depth = 0): unknown {
+  if (depth > 8) return value;
+  if (typeof value === "string") return redactAssignments(value);
+  if (Array.isArray(value)) return value.map((v) => redactAssignmentsDeep(v, depth + 1));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, redactAssignmentsDeep(v, depth + 1)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * The full argument preview the owner decides on. Never truncated. Executable
+ * arguments appear exactly as they will run, with only known secret values
+ * masked; every other argument is redacted like an audit preview (secret keys,
+ * known values, KEY=value / Bearer patterns). Store it with sealApprovalDetail.
+ */
+export function approvalArgsPreview(toolName: string, args: Record<string, unknown>): string {
+  const secrets = getKnownSecretValues();
+  const exec = new Set(executableArgKeys(toolName));
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) if (!exec.has(k)) rest[k] = v;
+  const redactedRest = redactAssignmentsDeep(redactValue(rest, secrets)) as Record<string, unknown>;
+
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(args)) {
+    out[k] = exec.has(k) ? maskKnownSecretValues(args[k], secrets) : redactedRest[k];
+  }
+  try {
+    return JSON.stringify(out) ?? "{}";
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+/**
+ * The executable part of a call for a one-line approval summary, or null when
+ * it cannot be shown there faithfully: it is long, spans lines, or contains a
+ * secret-looking value the summary (which also reaches notifications) must
+ * hide. A null means "review the full request" — never a shortened command.
+ */
+export function approvalSummaryCommand(toolName: string, args: Record<string, unknown>, maxLength = 160): string | null {
+  const parts: string[] = [];
+  for (const key of executableArgKeys(toolName)) {
+    const v = args[key];
+    if (v === undefined || v === null) continue;
+    if (typeof v === "string") parts.push(v.trim());
+    else if (Array.isArray(v) && v.every((x) => typeof x === "string")) parts.push(JSON.stringify(v));
+    else return null;
+  }
+  if (parts.length === 0) return null;
+  const text = maskKnownSecretValues(parts.join(" "), getKnownSecretValues()) as string;
+  if (text.length > maxLength || /[\r\n\u2028\u2029]/.test(text)) return null;
+  if (redactAssignments(text) !== text) return null;
+  return text;
+}
+
+const SEALED_PREFIX = "sealed:v1:";
+
+/**
+ * Encrypt an approval's full argument preview for storage: it can hold a new
+ * secret typed into a command, which the approvals table must not keep in
+ * plain text. Only the admin approvals API opens it (openApprovalDetail).
+ */
+export function sealApprovalDetail(text: string): string {
+  // Without TALOME_SECRET nothing is encrypted at rest (see encryptSetting);
+  // an approval must still be requestable.
+  if (!process.env.TALOME_SECRET) return text;
+  return `${SEALED_PREFIX}${encrypt(text)}`;
+}
+
+/** The stored preview for an admin. Legacy rows (already redacted) pass through. */
+export function openApprovalDetail(stored: string): string {
+  if (!stored.startsWith(SEALED_PREFIX)) return stored;
+  try {
+    return decrypt(stored.slice(SEALED_PREFIX.length));
+  } catch {
+    return "[The full request could not be decrypted. Deny it and ask for a new approval.]";
+  }
 }
