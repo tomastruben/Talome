@@ -133,6 +133,37 @@ describe("validateHostFolder", () => {
     expect(validateHostFolder("/")).toMatch(/protected/);
     expect(validateHostFolder("/var/run/docker.sock")).toBeTruthy();
   });
+
+  it("rejects folders that contain protected trees, user homes and differently-cased twins", () => {
+    const policy = {
+      protectedTrees: ["/home/me/.talome", "/opt/talome/data"],
+      allowedTrees: ["/home/me/.talome/app-data/demo"],
+    };
+    // Parents of protected trees would hand the app those trees too.
+    expect(validateHostFolder("/var", policy)).toMatch(/protected/);
+    expect(validateHostFolder("/var/lib", policy)).toMatch(/protected/);
+    expect(validateHostFolder("/private", policy)).toMatch(/protected/);
+    expect(validateHostFolder("/opt/talome", policy)).toMatch(/protected/);
+    expect(validateHostFolder("/opt", policy)).toMatch(/protected/);
+    // A whole user home (or the folder of homes) holds ~/.ssh, ~/.talome …
+    expect(validateHostFolder("/home/me", policy)).toMatch(/protected/);
+    expect(validateHostFolder("/home/me")).toMatch(/home folder/);
+    expect(validateHostFolder("/home/someone-else")).toMatch(/home folder/);
+    expect(validateHostFolder("/home")).toMatch(/home folder/);
+    expect(validateHostFolder("/Users/me")).toMatch(/home folder/);
+    expect(validateHostFolder("/Users")).toMatch(/home folder/);
+    // macOS is case-insensitive: these are ~/.ssh and /etc there.
+    expect(validateHostFolder("/home/me/.SSH")).toMatch(/protected/);
+    expect(validateHostFolder("/Users/me/.Talome/data")).toMatch(/protected/);
+    expect(validateHostFolder("/ETC")).toMatch(/protected/);
+    expect(validateHostFolder("/Var/Lib/Docker/volumes")).toMatch(/protected/);
+    // Folders inside a home, shared folders and the app's own tree stay usable.
+    expect(validateHostFolder("/home/me/Movies", policy)).toBeNull();
+    expect(validateHostFolder("/Users/me/Pictures")).toBeNull();
+    expect(validateHostFolder("/Users/Shared")).toBeNull();
+    expect(validateHostFolder("/mnt/media")).toBeNull();
+    expect(validateHostFolder("/home/me/.talome/app-data/demo/library", policy)).toBeNull();
+  });
 });
 
 describe("planUmbrelV2Install — folderAccess", () => {

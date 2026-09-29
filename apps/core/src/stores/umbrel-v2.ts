@@ -12,6 +12,7 @@
  * Field semantics follow the Umbrel manifest documentation; the implementation
  * is Talome's own.
  */
+import { homedir } from "node:os";
 import { posix } from "node:path";
 import { z } from "zod";
 
@@ -399,8 +400,30 @@ const PROTECTED_HOST_TREES = [
 /** Credential/config folders that must never be handed to an app, wherever they live. */
 const PROTECTED_SEGMENTS = new Set([".ssh", ".gnupg", ".aws", ".kube", ".docker", ".talome"]);
 
+/** Folders whose children are user homes (`/home/<user>`, `/Users/<user>`). */
+const HOME_PARENTS = ["/home", "/users", "/var/home"];
+/** Children of HOME_PARENTS that are shared folders, not a user's home. */
+const SHARED_HOME_CHILDREN = new Set(["/users/shared"]);
+
 function isSameOrUnder(path: string, root: string): boolean {
   return path === root || path.startsWith(root === "/" ? "/" : `${root}/`);
+}
+
+/**
+ * A user's whole home folder, or anything above one. Homes hold credentials
+ * and dotfiles (.ssh, .talome, shell history…) that no app may be handed;
+ * a folder inside a home (~/Movies) is fine. `folded` is lower-case.
+ */
+function isHomeOrAbove(folded: string): boolean {
+  let home = "";
+  try {
+    home = normalizeTarget(homedir()).toLowerCase();
+  } catch {
+    home = "";
+  }
+  if (home.startsWith("/") && home !== "/" && isSameOrUnder(home, folded)) return true;
+  if (SHARED_HOME_CHILDREN.has(folded)) return false;
+  return HOME_PARENTS.some((parent) => folded === parent || posix.dirname(folded) === parent);
 }
 
 export interface HostFolderPolicy {
@@ -430,12 +453,24 @@ export function validateHostFolder(path: string, policy: HostFolderPolicy = {}):
     .filter((root) => root.startsWith("/"))
     .some((root) => isSameOrUnder(normalized, normalizeTarget(root)));
   if (allowed) return null;
-  if (normalized.split("/").some((segment) => PROTECTED_SEGMENTS.has(segment))) {
+  // Compare case-insensitively: macOS volumes usually are (/home/u/.SSH is
+  // ~/.ssh there), and refusing a differently-cased twin costs nothing elsewhere.
+  const folded = normalized.toLowerCase();
+  if (folded.split("/").some((segment) => PROTECTED_SEGMENTS.has(segment))) {
     return `"${path}" is a protected folder`;
   }
   const extra = (policy.protectedTrees ?? []).filter((root) => root.startsWith("/")).map(normalizeTarget);
-  if ([...PROTECTED_HOST_TREES, ...extra].some((root) => isSameOrUnder(normalized, root))) {
+  const roots = [...PROTECTED_HOST_TREES, ...extra].map((root) => root.toLowerCase());
+  if (roots.some((root) => isSameOrUnder(folded, root))) {
     return `"${path}" is a protected system folder`;
+  }
+  // A folder above a protected tree hands the app that tree too (/var holds
+  // /var/lib/docker, Talome's home holds its database and secrets).
+  if (roots.some((root) => isSameOrUnder(root, folded))) {
+    return `"${path}" contains a protected folder`;
+  }
+  if (isHomeOrAbove(folded)) {
+    return `"${path}" is a home folder, which holds protected credentials — choose a folder inside it`;
   }
   return null;
 }
