@@ -55,6 +55,11 @@ describe("photo-management stack (Immich parity)", () => {
     expect(immich.compose).toMatch(/valkey\/valkey:\d/);
     expect(immich.compose).toMatch(/ghcr\.io\/immich-app\/postgres:14-vectorchord[\d.]+-pgvectors[\d.]+/);
     expect(immich.compose).not.toContain("pgvecto-rs:pg14");
+    // Pinned to the verified upstream v3.2.4 layout.
+    expect(immich.compose).toContain("ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3.2.4}");
+    expect(immich.compose).toContain("ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-v3.2.4}");
+    expect(immich.compose).toContain("valkey/valkey:9");
+    expect(immich.compose).toContain("ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0");
   });
 
   it("pins versions (no latest/release tags) and keeps server and ML in lockstep", () => {

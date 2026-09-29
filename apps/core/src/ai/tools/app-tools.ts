@@ -17,7 +17,7 @@ import {
 import { addStore, syncStore } from "../../stores/sync.js";
 import { getCatalogApp } from "../../stores/compose-exec.js";
 import { UmbrelInstallOptionsSchema } from "../../stores/umbrel-v2.js";
-import { reconcileUmbrelDependencies, runWithUmbrelInstallOptions } from "../../stores/umbrel-v2-install.js";
+import { getInstallAccessWarnings, reconcileUmbrelDependencies, runWithUmbrelInstallOptions } from "../../stores/umbrel-v2-install.js";
 import { writeAuditEntry } from "../../db/audit.js";
 import { checkForUpdates } from "../../stores/update-checker.js";
 import os from "node:os";
@@ -152,15 +152,20 @@ export const searchAppsTool = tool({
 });
 
 export const checkDependenciesTool = tool({
-  description: "Check if an app's dependencies are satisfied before installing. Returns missing and installed dependencies.",
+  description: "Check if an app's dependencies are satisfied before installing. Returns missing and installed dependencies. For Umbrel apps, an installed app that implements a dependency (e.g. any LLM runtime) counts as satisfying it — the same rule install_app applies.",
   inputSchema: z.object({
     appId: z.string().describe("App ID to check dependencies for"),
     storeId: z.string().describe("Store source ID"),
+    umbrel: UmbrelInstallOptionsSchema.pick({ dependencies: true }).optional().describe("Umbrel apps only: { dependencies: { <dependency>: <installed provider app id> } } — the same provider choices you would pass to install_app."),
   }),
-  execute: async ({ appId, storeId }) => {
+  execute: async ({ appId, storeId, umbrel }) => {
     const catalogApp = getCatalogApp(appId, storeId);
-    const base = resolveDependencies(appId, storeId);
-    const result = catalogApp ? reconcileUmbrelDependencies(catalogApp, base) : base;
+    // Same resolution as the install path (lifecycle installAppInner): Umbrel
+    // `implements` alternatives and explicit provider choices count as installed.
+    const result = await runWithUmbrelInstallOptions(umbrel, async () => {
+      const base = resolveDependencies(appId, storeId);
+      return catalogApp ? reconcileUmbrelDependencies(catalogApp, base) : base;
+    });
     return {
       ...result,
       message: result.satisfied
@@ -184,7 +189,10 @@ All apps are placed on the shared 'talome' Docker network so they can reach each
     umbrel: UmbrelInstallOptionsSchema.optional().describe("Umbrel 2.0 apps only: { folders: { <folderAccess id>: '/host/path' }, environment: { <NAME>: <allowed value> }, dataRoot: '/host/path', dependencies: { <dependency>: <installed provider app id> } }. Omit to use defaults."),
   }),
   execute: async ({ appId, storeId, env, volumeMounts, umbrel }) => {
-    const result = await runWithUmbrelInstallOptions(umbrel, () => installApp(appId, storeId, env || {}, volumeMounts || {}));
+    const installed = await runWithUmbrelInstallOptions(umbrel, () => installApp(appId, storeId, env || {}, volumeMounts || {}));
+    // e.g. an app that requires HTTPS but has no TLS route — surface it, never serve HTTP silently.
+    const accessWarnings = installed.success ? getInstallAccessWarnings(appId) : [];
+    const result = accessWarnings.length > 0 ? { ...installed, warnings: accessWarnings } : installed;
     if (result.success) {
       writeAuditEntry("Installed app", "modify", `${appId} from store ${storeId}`);
 

@@ -20,6 +20,7 @@ import { eq } from "drizzle-orm";
 import { getLastErrorWithVariables, getStartupFailures } from "../services/docker.js";
 import { serverError } from "../middleware/request-logger.js";
 import { createLogger } from "../utils/logger.js";
+import { onCatalogChanged } from "../stores/catalog-events.js";
 
 const log = createLogger("containers");
 import type { Container, ServiceStack } from "@talome/types";
@@ -180,6 +181,9 @@ let catalogLookupCache: { at: number; lookup: CatalogLookup } | null = null;
 export function invalidateCatalogLookupCache(): void {
   catalogLookupCache = null;
 }
+
+// Store sync rewrites the catalog → drop the memo right away.
+onCatalogChanged(invalidateCatalogLookupCache);
 
 function buildCatalogLookup(catalog: CatalogRow[]): CatalogLookup {
   // Map appId → best catalog entry (prefer talome source)

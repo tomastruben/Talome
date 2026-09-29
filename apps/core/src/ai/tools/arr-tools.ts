@@ -3,6 +3,7 @@ import { z } from "zod";
 import { parseContainerFormat } from "../../utils/media-format.js";
 import { getSetting } from "../../utils/settings.js";
 import { summarizeList, truncateList } from "../../utils/tool-helpers.js";
+import { invalidateLibraryCache } from "../../media/library-cache.js";
 
 interface ArrConfig {
   baseUrl: string;
@@ -110,11 +111,23 @@ async function arrFetch(app: ArrApp, path: string, options?: RequestInit) {
       return { success: false as const, error: `${app} API error ${res.status}: ${text}` };
     }
 
+    // Sonarr/Radarr state changed (series/movie added, deleted, re-monitored,
+    // grabbed, renamed, ...) — the dashboard library must not serve stale data.
+    if (LIBRARY_APPS.has(app) && isMutatingMethod(options?.method)) invalidateLibraryCache();
+
     const data = await res.json();
     return { success: true as const, data };
   } catch (err: unknown) {
     return { success: false as const, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** Apps whose data backs the media library payload (GET /api/media/library). */
+const LIBRARY_APPS: ReadonlySet<ArrApp> = new Set<ArrApp>(["sonarr", "radarr"]);
+
+function isMutatingMethod(method: string | undefined): boolean {
+  const m = (method ?? "GET").toUpperCase();
+  return m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
 }
 
 // Quality scoring functions imported from @talome/types: normalizeTier, getMaxSizeGb, scoreRelease

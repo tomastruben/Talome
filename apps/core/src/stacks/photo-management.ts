@@ -8,7 +8,7 @@ export const photoManagementStack: TalomeStack = {
   tagline: "Your memories. Your storage. AI-powered search.",
   author: "talome",
   tags: ["photos", "backup", "immich", "gallery", "sync"],
-  version: "1.1.0",
+  version: "1.2.0",
   createdAt: "2026-03-01T00:00:00Z",
   apps: [
     {
@@ -22,7 +22,7 @@ export const photoManagementStack: TalomeStack = {
       // macOS rejects binds of unshared host paths).
       compose: `services:
   immich-server:
-    image: ghcr.io/immich-app/immich-server:\${IMMICH_VERSION:-v2.0.0}
+    image: ghcr.io/immich-app/immich-server:\${IMMICH_VERSION:-v3.2.4}
     container_name: immich
     restart: unless-stopped
     ports:
@@ -42,7 +42,7 @@ export const photoManagementStack: TalomeStack = {
     healthcheck:
       disable: false
   immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:\${IMMICH_VERSION:-v2.0.0}
+    image: ghcr.io/immich-app/immich-machine-learning:\${IMMICH_VERSION:-v3.2.4}
     container_name: immich-machine-learning
     restart: unless-stopped
     volumes:
@@ -52,11 +52,11 @@ export const photoManagementStack: TalomeStack = {
     healthcheck:
       disable: false
   immich-redis:
-    image: docker.io/valkey/valkey:8-bookworm
+    image: docker.io/valkey/valkey:9
     container_name: immich-redis
     restart: unless-stopped
     healthcheck:
-      test: redis-cli ping || exit 1
+      test: valkey-cli ping || exit 1
   immich-postgres:
     image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
     container_name: immich-postgres
@@ -95,7 +95,7 @@ export const photoManagementStack: TalomeStack = {
             key: "IMMICH_VERSION",
             description: "Immich release for both server and machine-learning (they must match). Upgrade by bumping this after reading the release notes.",
             required: false,
-            defaultValue: "v2.0.0",
+            defaultValue: "v3.2.4",
           },
           { key: "TZ", description: "Timezone (used for photo dates)", required: false, defaultValue: "America/New_York" },
         ],

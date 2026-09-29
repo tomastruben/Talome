@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import { getSetting } from "../utils/settings.js";
 import { inspectContainer, listContainers } from "../docker/client.js";
 import { findOptimizedPath } from "../media/optimizer.js";
+import { getOrBuildLibrary, invalidateLibraryCache } from "../media/library-cache.js";
 import {
   type PathMount,
   getArrMounts,
@@ -310,24 +311,12 @@ const ALLOWED_BACKDROP_WIDTHS = [400, 780, 1280] as const;
 const media = new Hono();
 
 // ── Library cache ─────────────────────────────────────────────────────────
-// /library pulls the full Sonarr /series and Radarr /movie lists (can be
-// several MB for large libraries). Cache the mapped payload server-side and
-// share one upstream fetch between concurrent requests. Any mutating request
-// handled by this router (add, delete, grab, webhook, ...) invalidates it.
+// /library pulls the full Sonarr /series and Radarr /movie lists; the cache
+// itself lives in media/library-cache.ts so AI tools can invalidate it too.
+// Any mutating request handled by this router (add, delete, grab, webhook,
+// ...) invalidates it.
 
-const LIBRARY_CACHE_TTL_MS = 60_000;
-/** Shorter TTL when Sonarr/Radarr failed, so recovery shows up quickly. */
-const LIBRARY_CACHE_PARTIAL_TTL_MS = 10_000;
-
-let libraryCache: { key: string; at: number; ttl: number; payload: unknown } | null = null;
-let libraryInflight: { key: string; generation: number; promise: Promise<unknown> } | null = null;
-let libraryGeneration = 0;
-
-/** Drop the cached library payload (after any library mutation). */
-export function invalidateLibraryCache(): void {
-  libraryGeneration++;
-  libraryCache = null;
-}
+export { invalidateLibraryCache };
 
 /** Cache key covers the configured endpoints so a settings change is never served stale data. */
 function libraryCacheKey(): string {
@@ -797,32 +786,7 @@ async function qbitGet(path: string): Promise<unknown> {
 
 media.get("/library", async (c) => {
   try {
-    const key = libraryCacheKey();
-    const now = Date.now();
-    if (libraryCache && libraryCache.key === key && now - libraryCache.at < libraryCache.ttl) {
-      return c.json(libraryCache.payload);
-    }
-    if (!libraryInflight || libraryInflight.key !== key || libraryInflight.generation !== libraryGeneration) {
-      const generation = libraryGeneration;
-      const promise = buildLibraryPayload()
-        .then(({ payload, complete }) => {
-          // Don't cache a result that raced with a mutation.
-          if (generation === libraryGeneration) {
-            libraryCache = {
-              key,
-              at: Date.now(),
-              ttl: complete ? LIBRARY_CACHE_TTL_MS : LIBRARY_CACHE_PARTIAL_TTL_MS,
-              payload,
-            };
-          }
-          return payload;
-        })
-        .finally(() => {
-          if (libraryInflight?.promise === promise) libraryInflight = null;
-        });
-      libraryInflight = { key, generation, promise };
-    }
-    return c.json(await libraryInflight.promise);
+    return c.json(await getOrBuildLibrary(libraryCacheKey(), buildLibraryPayload));
   } catch (err: unknown) {
     return serverError(c, err, { context: { endpoint: "media/library" }, extra: { tv: [], movies: [], sonarrAvailable: false, radarrAvailable: false, totals: { tvShows: 0, movies: 0 } } });
   }

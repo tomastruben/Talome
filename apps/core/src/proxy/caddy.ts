@@ -10,6 +10,7 @@ import { generateCaddyfile } from "./caddyfile.js";
 import { ensureProxyNetwork, connectContainerToProxyNetwork, PROXY_NETWORK } from "./network.js";
 import { getDockerHostAddress } from "../platform/index.js";
 import { appRequiresHttps } from "../stores/umbrel-v2-install.js";
+import { resolveAppTlsMode, type ProxyTlsMode } from "./https-policy.js";
 
 const CADDY_DIR = join(os.homedir(), ".talome", "caddy");
 const CADDY_CONTAINER_NAME = "talome-caddy";
@@ -190,24 +191,47 @@ export async function stopCaddy(): Promise<void> {
   }
 }
 
-export async function autoRegisterProxyRoute(appId: string, appName: string, port: number): Promise<void> {
+export interface AutoRegisterProxyRouteResult {
+  registered: boolean;
+  domain?: string;
+  tlsMode?: ProxyTlsMode;
+  /** True when an existing HTTP-only route was switched to TLS because the app requires HTTPS */
+  upgraded?: boolean;
+  reason?: "proxy-disabled" | "exists";
+}
+
+export async function autoRegisterProxyRoute(appId: string, appName: string, port: number): Promise<AutoRegisterProxyRouteResult> {
   const baseDomain = getSetting("proxy_base_domain");
   const proxyEnabled = getSetting("proxy_enabled");
-  if (proxyEnabled !== "true" || !baseDomain) return;
+  if (proxyEnabled !== "true" || !baseDomain) return { registered: false, reason: "proxy-disabled" };
 
   const domain = `${appId}.${baseDomain}`;
   // Use appId for the container name — appName is the display name and may contain spaces
   const upstream = `${appId}:${port}`;
 
-  // .local domains must use self-signed — Let's Encrypt can't issue certs for them
-  const isLocal = baseDomain.endsWith(".local") || baseDomain.endsWith(".lan") || baseDomain.endsWith(".home");
-  const defaultTls = getSetting("proxy_default_tls") || "auto";
-  // Umbrel apps that declare requiresHttps break over plain HTTP — never register them with TLS off.
-  const tlsMode = isLocal ? "selfsigned" : defaultTls === "off" && appRequiresHttps(appId) ? "selfsigned" : defaultTls;
+  // .local domains use Caddy's internal CA (Let's Encrypt can't issue certs for
+  // them); Umbrel apps that declare requiresHttps break over plain HTTP, so
+  // they are never registered with TLS off either.
+  const requiresHttps = appRequiresHttps(appId);
+  const tlsMode = resolveAppTlsMode(baseDomain, getSetting("proxy_default_tls"), requiresHttps);
 
   // Check if route already exists
-  const existing = db.get(sql`SELECT id FROM proxy_routes WHERE app_id = ${appId}`) as { id: string } | undefined;
-  if (existing) return;
+  // An enabled route first — the same lookup the install HTTPS warning uses
+  // (proxy/https-policy.ts). A route the user disabled is left disabled.
+  const existing = db.get(
+    sql`SELECT id, domain, tls_mode FROM proxy_routes WHERE app_id = ${appId} ORDER BY enabled DESC LIMIT 1`,
+  ) as { id: string; domain: string; tls_mode: ProxyTlsMode } | undefined;
+  if (existing) {
+    if (!requiresHttps || existing.tls_mode !== "off") {
+      return { registered: false, reason: "exists", domain: existing.domain, tlsMode: existing.tls_mode };
+    }
+    // An HTTP-only route (e.g. created before the app was installed) would
+    // serve a requiresHttps app over plain HTTP — switch it to TLS.
+    const upgradedTls: ProxyTlsMode = tlsMode === "off" ? "selfsigned" : tlsMode;
+    db.run(sql`UPDATE proxy_routes SET tls_mode = ${upgradedTls} WHERE id = ${existing.id}`);
+    await writeCaddyfileAndReload();
+    return { registered: false, upgraded: true, reason: "exists", domain: existing.domain, tlsMode: upgradedTls };
+  }
 
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -221,6 +245,7 @@ export async function autoRegisterProxyRoute(appId: string, appName: string, por
   }
 
   await writeCaddyfileAndReload();
+  return { registered: true, domain, tlsMode };
 }
 
 export async function removeProxyRoutesForApp(appId: string): Promise<void> {

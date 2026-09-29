@@ -1,6 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalEnv": ["TALOME_SECRET"],
+  "globalEnv": ["TALOME_SECRET", "TALOME_UPDATE_VERIFY_TIMEOUT_MS", "TALOME_FORCE_STORE_SYNC"],
   "tasks": {
     "dev": {
       "persistent": true,
