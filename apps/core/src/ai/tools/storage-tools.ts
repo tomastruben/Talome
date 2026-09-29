@@ -1,10 +1,23 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getSetting } from "../../utils/settings.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/**
+ * A device smartctl may be pointed at: a path under /dev made of device-name
+ * characters only (sda, nvme0n1, disk0, disk/by-id/ata-WDC_…, mapper/…).
+ * The value is passed to smartctl as one argv entry — never through a shell —
+ * and this pattern keeps it from being read as an option or escaping /dev.
+ */
+const SMART_DEVICE_PATTERN = /^\/dev\/[A-Za-z0-9_][A-Za-z0-9_.:\/-]*$/;
+
+export function isValidSmartDevice(device: string): boolean {
+  return SMART_DEVICE_PATTERN.test(device) && !device.split("/").includes("..");
+}
 
 function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -17,15 +30,22 @@ function formatBytes(bytes: number): string {
 export const getSmartStatusTool = tool({
   description: "Get SMART disk health status. Shows drive health indicators like temperature, reallocated sectors, and overall health status.",
   inputSchema: z.object({
-    device: z.string().optional().describe("Device path (e.g., /dev/sda). If omitted, scans all drives."),
+    device: z
+      .string()
+      .max(256)
+      .regex(SMART_DEVICE_PATTERN, "Device must be a path under /dev, e.g. /dev/sda")
+      .optional()
+      .describe("Device path (e.g., /dev/sda). If omitted, scans all drives."),
   }),
   execute: async ({ device }) => {
+    // Callers outside the AI SDK (MCP, automations) may skip schema parsing:
+    // validate here too before the value reaches a process argument.
+    if (device !== undefined && !isValidSmartDevice(device)) {
+      return { success: false, error: `Invalid device "${device}". Use a device path under /dev, e.g. /dev/sda.` };
+    }
     try {
-      const cmd = device
-        ? `smartctl --json -a ${device}`
-        : `smartctl --scan --json`;
-
-      const { stdout } = await execAsync(cmd, { timeout: 10000 });
+      const args = device ? ["--json", "-a", device] : ["--scan", "--json"];
+      const { stdout } = await execFileAsync("smartctl", args, { timeout: 10000 });
       const data = JSON.parse(stdout);
 
       if (!device && data.devices) {
