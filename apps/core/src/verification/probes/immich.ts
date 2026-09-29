@@ -3,6 +3,7 @@
  * server URL the phone app can actually reach for automatic backup.
  */
 
+import { isIP } from "node:net";
 import { z } from "zod";
 import { appRequest, probeFetch, resolveConnection, type ProbeCallContext } from "../http.js";
 import { outcome, type CheckDefinition } from "../runner.js";
@@ -88,8 +89,30 @@ function isLoopbackHost(host: string): boolean {
 }
 
 /**
+ * True for addresses a phone can only reach on the home network: private and
+ * link-local IPs (not Tailscale's 100.64.0.0/10, which works from anywhere),
+ * single-label hostnames and LAN-only suffixes such as .local.
+ */
+export function isHomeNetworkOnlyHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const ipVersion = isIP(h);
+  if (ipVersion === 4) {
+    const [a, b] = h.split(".").map((n) => parseInt(n, 10));
+    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+  }
+  if (ipVersion === 6) {
+    const mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return isHomeNetworkOnlyHost(mapped[1]);
+    return /^f[cd][0-9a-f]{2}:/.test(h) || /^fe[89ab][0-9a-f]:/.test(h);
+  }
+  if (!h.includes(".")) return true;
+  return [".local", ".lan", ".home", ".home.arpa"].some((suffix) => h.endsWith(suffix));
+}
+
+/**
  * Can a phone reach Immich? Uses Talome's immich_external_url, else Immich's
- * own External Domain setting. A loopback URL can never work from a phone.
+ * own External Domain setting. A loopback URL can never work from a phone,
+ * and a home-network address only works at home.
  */
 export async function evaluateImmichMobileUrl(ctx: ProbeCallContext): Promise<CheckOutcome> {
   const conn = resolveConnection(ctx.env, "immich");
@@ -142,6 +165,12 @@ export async function evaluateImmichMobileUrl(ctx: ProbeCallContext): Promise<Ch
     return outcome.fail(
       `Immich is not reachable at ${displayUrl(url.toString())} (${source}): ${res.error ?? "unexpected response"}.`,
       "Check the reverse-proxy route / Tailscale serve config and DNS for that address.",
+    );
+  }
+  if (isHomeNetworkOnlyHost(url.hostname)) {
+    return outcome.warn(
+      `${source} is ${displayUrl(url.toString())}, a home-network address: phones can back up on home Wi-Fi, but backups pause when the phone leaves your network.`,
+      `For backup from anywhere, expose Immich through Tailscale or Talome's reverse proxy, then set Immich → Administration → Settings → Server → External Domain (or save it as ${IMMICH_EXTERNAL_URL_SETTING}).`,
     );
   }
   return outcome.pass(

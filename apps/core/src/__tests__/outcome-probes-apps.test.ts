@@ -421,6 +421,26 @@ describe("immich probe", () => {
     expect(check(loop.result, "mobile-url").status).toBe("fail");
   });
 
+  it("warns (never passes) for a reachable home-network-only external URL", async () => {
+    for (const lanOnly of ["http://192.168.1.20:2283", "http://10.0.0.5:2283", "http://nas:2283", "http://photos.local:2283", "http://[fd12:3456::1]:2283"]) {
+      const origin = new URL(lanOnly).origin;
+      const { result } = await run("immich", {
+        settings: { ...immichSettings, immich_external_url: lanOnly },
+        routes: immichRoutes({ [`GET ${origin}/api/server/ping`]: jsonResponse({ res: "pong" }) }),
+      });
+      const c = check(result, "mobile-url");
+      expect(c.status, lanOnly).toBe("warn");
+      expect(c.evidence).toContain("backups pause when the phone leaves your network");
+      expect(c.remediation).toContain("Tailscale");
+    }
+    // Tailscale addresses (100.64.0.0/10) and public names work away from home.
+    const tailscale = await run("immich", {
+      settings: { ...immichSettings, immich_external_url: "http://100.101.102.103:2283" },
+      routes: immichRoutes({ "GET http://100.101.102.103:2283/api/server/ping": jsonResponse({ res: "pong" }) }),
+    });
+    expect(check(tailscale.result, "mobile-url").status).toBe("pass");
+  });
+
   it("fails storage when the drive is nearly full and fails the URL when unreachable", async () => {
     const { result } = await run("immich", {
       settings: { ...immichSettings, immich_external_url: "https://photos.example.com" },
