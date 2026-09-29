@@ -138,3 +138,20 @@ describe("restore_app — legacy archives", () => {
     expect(getRestoreRow(restores[0].id)?.status).toBe("rolled_back");
   });
 });
+
+describe("restore_app — skipping the safety backup", () => {
+  it("is an explicit, approval-visible argument that reaches the restore", async () => {
+    const shape = (restoreAppTool.inputSchema as unknown as { shape: Record<string, { safeParse: (v: unknown) => { success: boolean } }> }).shape;
+    expect(shape.skipSafetyBackup.safeParse(true).success).toBe(true);
+    const { config } = await app("legacyskip");
+    const archive = await legacyArchive("legacyskip", [
+      { path: config, dir: true },
+      { path: join(config, "app.conf"), content: "version=1" },
+    ]);
+    const before = listAppBackups("legacyskip").length;
+    const r = await restoreLegacyArchive("legacyskip", archive, { ...FAST, skipSafetyBackup: true });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.safetyBackupId).toBeNull();
+    expect(listAppBackups("legacyskip").length).toBe(before);
+  });
+});

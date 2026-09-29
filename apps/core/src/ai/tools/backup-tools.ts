@@ -170,8 +170,14 @@ After calling: Report what was restored, the backup date, the health check resul
     backupId: z.string().optional().describe("Backup id to restore (preferred)"),
     backupFile: z.string().optional().describe("Full path to the backup archive. Omit both to list available backups."),
     verifyFirst: z.boolean().default(false).describe("Run a full verification (test restore) before restoring"),
+    skipSafetyBackup: z
+      .boolean()
+      .optional()
+      .describe(
+        "Restore WITHOUT a pre-restore safety backup (no way back afterwards). Only when a restore was refused because the safety backup could not be taken (e.g. a broken database, unreadable files) and the user explicitly accepts losing the current data.",
+      ),
   }),
-  execute: async ({ appId, backupId, backupFile, verifyFirst }) => {
+  execute: async ({ appId, backupId, backupFile, verifyFirst, skipSafetyBackup }) => {
     // List mode
     if (!backupId && !backupFile) {
       const rows = db.all(
@@ -226,7 +232,7 @@ After calling: Report what was restored, the backup date, the health check resul
         if (!v.success) return { success: false, error: `Verification failed — not restoring: ${v.errors.join("; ")}` };
       }
       // Journaled "restore" operation: refused while an update/install/backup runs on the app.
-      const r = await runRestoreOperation(appId, row.id);
+      const r = await runRestoreOperation(appId, row.id, { skipSafetyBackup: skipSafetyBackup === true });
       if (!r.success) {
         return {
           success: false,
@@ -275,6 +281,6 @@ After calling: Report what was restored, the backup date, the health check resul
       return { success: false, error: `App '${appId}' not found or not installed.` };
     }
     // Same safety net as a regular restore: safety backup, health check, automatic rollback
-    return runLegacyRestoreOperation(appId, {}, () => restoreLegacyArchive(appId, legacyPath, { backupId: row?.id ?? null }));
+    return runLegacyRestoreOperation(appId, {}, () => restoreLegacyArchive(appId, legacyPath, { backupId: row?.id ?? null, skipSafetyBackup: skipSafetyBackup === true }));
   },
 });
