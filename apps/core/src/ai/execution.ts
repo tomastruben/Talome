@@ -210,9 +210,13 @@ export function getSecurityMode(): SecurityMode {
 const TIER_OVERRIDES: Record<string, ToolTier> = {
   run_shell: "destructive", // arbitrary host command
   create_tool: "destructive", // writes code the server will load
+  // Runs Claude Code with --dangerously-skip-permissions on the host (its Bash
+  // tool, file reads, the owner-level MCP stdio server): a "preview" in name only.
+  plan_change: "destructive",
   bulk_app_action: "modify",
   bulk_update_apps: "modify",
   cleanup_hls_cache: "modify",
+  upgrade_app_image: "modify", // rewrites the compose file's image tag
 };
 
 

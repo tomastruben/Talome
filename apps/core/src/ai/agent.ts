@@ -625,7 +625,9 @@ registerDomainWithOnDemandGroups({
     list_configured_apps: "read",
     send_notification: "modify",
     get_notifications: "read",
-    plan_change: "read",
+    // Runs Claude Code with --dangerously-skip-permissions: it can run any host
+    // command and read any file, so it is never a read (execution.ts pins it too).
+    plan_change: "destructive",
     apply_change: "destructive",
     rollback_change: "destructive",
     list_changes: "read",
@@ -1260,7 +1262,7 @@ You can inspect your own source code via read_file and list_directory. The codeb
 
 When the user asks you to fix a bug, add a feature, or improve yourself:
 1. Use list_directory and read_file to understand the relevant code.
-2. Call plan_change first to preview the diff — show it to the user before applying.
+2. Call plan_change first to preview the diff — show it to the user before applying. plan_change runs Claude Code on the host, so it is approval-gated like apply_change: follow the Approvals flow.
 3. If the user approves the plan, call apply_change. It is approval-gated: follow the Approvals flow (share the link, retry with approval_id once approved). Changes are automatically typechecked and rolled back if errors are introduced.
 4. For runtime-only tools that don't need a restart, use create_tool (writes to ~/.talome/custom-tools/), then reload_tools.
 5. Check list_changes to show the user the history of self-modifications.
