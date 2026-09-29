@@ -40,8 +40,8 @@ describe("conversation_tool_domains", () => {
   it("migration is idempotent and records its version", () => {
     expect(() => runAiChatMigrations()).not.toThrow();
     expect(() => runMigrations()).not.toThrow();
-    const version = db.$client.prepare("SELECT version FROM schema_versions WHERE version = 21").get();
-    expect(version).toEqual({ version: 21 });
+    const version = db.$client.prepare("SELECT version FROM schema_versions WHERE version = 106").get();
+    expect(version).toEqual({ version: 106 });
   });
 
   it("keeps discover_tools activations across a restart for plain-text histories", async () => {

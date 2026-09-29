@@ -127,7 +127,7 @@ describe("store-compat migration", () => {
     expect(indexes).toContain("idx_app_catalog_store_source");
     const tables = db.all(sql`SELECT name FROM sqlite_master WHERE type='table' AND name='app_install_options'`);
     expect(tables).toHaveLength(1);
-    const versions = db.all(sql`SELECT version FROM schema_versions WHERE version = 19`);
+    const versions = db.all(sql`SELECT version FROM schema_versions WHERE version = 104`);
     expect(versions).toHaveLength(1);
   });
 

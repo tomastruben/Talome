@@ -19,6 +19,7 @@ import { setSetting } from "../utils/settings.js";
 import {
   executeTool,
   getEffectiveTier,
+  acceptsApprovalArg,
   requiresApprovalInCautious,
   sessionChatActor,
   withExecutionContext,
@@ -245,6 +246,17 @@ describe("terminal access", () => {
     expect(allowsTerminalAccess({ ...FULL_ACCESS_SCOPES, tools: ["run_shell"] })).toBe(false);
     expect(allowsTerminalAccess({ ...FULL_ACCESS_SCOPES, deniedTools: ["run_shell"] })).toBe(false);
     expect(allowsTerminalAccess({ ...FULL_ACCESS_SCOPES, deniedTools: ["uninstall_app"] })).toBe(true);
+  });
+});
+
+// ── Forced updates skip the pre-update backup ───────────────────────────────
+
+describe("forced updates", () => {
+  it("update_app with force: true is destructive and accepts approval_id", () => {
+    expect(getEffectiveTier("update_app", { appId: "jellyfin" }, "modify")).toBe("modify");
+    expect(getEffectiveTier("update_app", { appId: "jellyfin", force: false }, "modify")).toBe("modify");
+    expect(getEffectiveTier("update_app", { appId: "jellyfin", force: true }, "modify")).toBe("destructive");
+    expect(acceptsApprovalArg("update_app", "modify")).toBe(true);
   });
 });
 

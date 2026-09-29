@@ -890,14 +890,16 @@ export function runMigrations() {
   recordMigration(13, "Optimization jobs: ai_diagnosis column for AI-first error handling");
   recordMigration(14, "Installed apps: display_name column for user-defined app names");
   recordMigration(15, "Setup loop: setup_runs and setup_attempts for autonomous app configuration");
-  recordMigration(20, "core-perf: retention + hot-query indexes (container_events, install_errors, evolution_runs, evolution_log)");
-  recordMigration(16, "Trust: per-token MCP grants, server-issued approvals, actor-aware audit log");
-  recordMigration(17, "Ops journal: app_operations, app_operation_events, snapshot rollback state, automation run durability");
-  recordMigration(18, "Backups: methods, manifests, verification, per-app config, destinations, restores, GFS retention");
-  recordMigration(19, "Store compat: app_catalog.umbrel_meta, store_sources.last_parsed_rev, app_install_options, catalog store index");
-  recordMigration(21, "AI chat: conversation_tool_domains for per-conversation tool routing");
-  recordMigration(22, "Outcome probes: verification_results for semantic app/stack verification");
-  recordMigration(23, "Wire backend: notifications.link, automations.actor_scopes, remediation_escalations");
+  // Parity migrations use 101+ so they can never collide with versions 16-99
+  // recorded by other Talome builds (a production DB was found at version 19).
+  recordMigration(101, "Trust: per-token MCP grants, server-issued approvals, actor-aware audit log");
+  recordMigration(102, "Ops journal: app_operations, app_operation_events, snapshot rollback state, automation run durability");
+  recordMigration(103, "Backups: methods, manifests, verification, per-app config, destinations, restores, GFS retention");
+  recordMigration(104, "Store compat: app_catalog.umbrel_meta, store_sources.last_parsed_rev, app_install_options, catalog store index");
+  recordMigration(105, "core-perf: retention + hot-query indexes (container_events, install_errors, evolution_runs, evolution_log)");
+  recordMigration(106, "AI chat: conversation_tool_domains for per-conversation tool routing");
+  recordMigration(107, "Outcome probes: verification_results for semantic app/stack verification");
+  recordMigration(108, "Wire backend: notifications.link, automations.actor_scopes, remediation_escalations");
 
   console.log("Database migrations complete");
 }

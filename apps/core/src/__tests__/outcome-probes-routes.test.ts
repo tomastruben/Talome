@@ -48,8 +48,8 @@ describe("outcome-probes migration", () => {
     runOutcomeProbesMigrations();
     const cols = (db.all(sql`PRAGMA table_info(verification_results)`) as Array<{ name: string }>).map((c) => c.name);
     expect(cols).toEqual(expect.arrayContaining(["id", "target_type", "target_id", "status", "result_json", "verified_at", "include_active", "duration_ms", "summary"]));
-    const version = db.get(sql`SELECT version FROM schema_versions WHERE version = 22`) as { version: number } | undefined;
-    expect(version?.version).toBe(22);
+    const version = db.get(sql`SELECT version FROM schema_versions WHERE version = 107`) as { version: number } | undefined;
+    expect(version?.version).toBe(107);
   });
 });
 

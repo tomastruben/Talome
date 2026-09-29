@@ -314,6 +314,9 @@ export function getEffectiveTier(toolName: string, args: Record<string, unknown>
   ) {
     return "destructive";
   }
+  // Skipping the pre-update backup removes the data-rollback path: treat it
+  // like any other destructive action so cautious mode asks the owner first.
+  if (toolName === "update_app" && args.force === true) return "destructive";
   return tier;
 }
 
@@ -331,7 +334,7 @@ export function requiresApprovalInCautious(toolName: string, tier: ToolTier, arg
 
 /** Tools that may need approval → their input schema accepts `approval_id`. */
 export function acceptsApprovalArg(toolName: string, baseTier?: ToolTier): boolean {
-  if (toolName === "set_setting" || toolName === "revert_setting") return true;
+  if (toolName === "set_setting" || toolName === "revert_setting" || toolName === "update_app") return true;
   return requiresApprovalInCautious(toolName, getToolMeta(toolName, baseTier).tier);
 }
 
