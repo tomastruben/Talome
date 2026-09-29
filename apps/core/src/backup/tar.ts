@@ -245,7 +245,7 @@ export class TarGzWriter {
    * zero-filled (and reported as changed). The sha256 always describes the
    * bytes stored in the archive.
    */
-  async addFile(name: string, absPath: string, stat: Stats, signal?: AbortSignal): Promise<AddedFile> {
+  async addFile(name: string, absPath: string, stat: Pick<Stats, "size" | "mode" | "uid" | "gid" | "mtimeMs">, signal?: AbortSignal): Promise<AddedFile> {
     const size = stat.size;
     await this.push(
       encodeHeader({ name, type: "file", mode: stat.mode, uid: stat.uid, gid: stat.gid, size, mtime: stat.mtimeMs / 1000, linkname: "" }),

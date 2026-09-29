@@ -12,7 +12,34 @@ import { execFile } from "node:child_process";
 export interface RcloneOptions {
   /** Extra environment (e.g. RCLONE_CONFIG_<REMOTE>_* credentials) */
   env?: Record<string, string>;
+  /** Hard limit for the whole command; 0 = none. Default 10 min, none for transfers. */
   timeoutMs?: number;
+  /**
+   * Abort when rclone reports no transfer progress for this long (transfers
+   * only; they print their stats every 30 s). Default 15 min for transfers.
+   */
+  stallTimeoutMs?: number;
+  /** Cancels the command (the caller's operation was cancelled) */
+  signal?: AbortSignal;
+}
+
+/**
+ * Transfers (backup uploads, downloads for verification/recovery) can take
+ * hours for large archives on a home uplink, so they get no fixed timeout —
+ * only a stall timeout (rclone itself also retries and times out idle
+ * connections).
+ */
+export const TRANSFER_STALL_TIMEOUT_MS = 15 * 60 * 1000;
+/** Periodic one-line stats on stderr (at NOTICE, so they print without -v) — the progress signal. */
+const TRANSFER_STATS_ARGS = ["--stats", "30s", "--stats-one-line", "--stats-log-level", "NOTICE"];
+
+/**
+ * The "transferred" amount of an rclone stats line
+ * ("… NOTICE:   1.234 GiB / 5 GiB, 24%, 10 MiB/s, ETA 6m"), or null.
+ */
+export function parseTransferred(line: string): string | null {
+  const m = line.match(/(\d+(?:\.\d+)?\s*[A-Za-z]*)\s*\/\s*\d+(?:\.\d+)?\s*[A-Za-z]*,\s*(?:\d+%|-)/);
+  return m ? m[1].replace(/\s+/g, "") : null;
 }
 
 export interface RcloneRunResult {
@@ -29,25 +56,74 @@ function assertSafeArg(value: string): void {
 /** Run rclone with an argument array. Never throws. */
 export function runRclone(args: string[], opts: RcloneOptions = {}): Promise<RcloneRunResult> {
   return new Promise((resolveRun) => {
-    execFile(
-      "rclone",
-      args,
-      {
-        env: { ...(process.env as Record<string, string>), ...(opts.env ?? {}) },
-        timeout: opts.timeoutMs ?? 600_000,
-        maxBuffer: 10 * 1024 * 1024,
-      },
-      (err, stdout, stderr) => {
-        const out = String(stdout ?? "");
-        const errOut = String(stderr ?? "");
-        if (err) {
-          resolveRun({ success: false, stdout: out, stderr: errOut, error: (errOut.trim() || err.message).slice(0, 2000) });
-        } else {
-          resolveRun({ success: true, stdout: out, stderr: errOut });
+    let stalledAfterMs: number | null = null;
+    let watchdog: ReturnType<typeof setInterval> | undefined;
+    let child: ReturnType<typeof execFile> | undefined;
+    try {
+      child = execFile(
+        "rclone",
+        args,
+        {
+          env: { ...(process.env as Record<string, string>), ...(opts.env ?? {}) },
+          timeout: opts.timeoutMs ?? 600_000,
+          maxBuffer: 10 * 1024 * 1024,
+          ...(opts.signal ? { signal: opts.signal } : {}),
+        },
+        (err, stdout, stderr) => {
+          if (watchdog) clearInterval(watchdog);
+          const out = String(stdout ?? "");
+          const errOut = String(stderr ?? "");
+          if (stalledAfterMs !== null) {
+            resolveRun({
+              success: false,
+              stdout: out,
+              stderr: errOut,
+              error: `rclone made no progress for ${Math.round(stalledAfterMs / 60_000)} min — aborted`,
+            });
+          } else if (err) {
+            resolveRun({ success: false, stdout: out, stderr: errOut, error: (errOut.trim() || err.message).slice(0, 2000) });
+          } else {
+            resolveRun({ success: true, stdout: out, stderr: errOut });
+          }
+        },
+      );
+    } catch (err) {
+      resolveRun({ success: false, stdout: "", stderr: "", error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    const stallMs = opts.stallTimeoutMs;
+    if (!stallMs || stallMs <= 0 || !child) return;
+    // Stall detection: any change of the transferred amount counts as progress
+    let lastProgressAt = Date.now();
+    let lastTransferred: string | null = null;
+    let pending = "";
+    const onOutput = (chunk: Buffer | string) => {
+      pending += String(chunk);
+      const lines = pending.split(/\r?\n|\r/);
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        const transferred = parseTransferred(line);
+        if (transferred !== null && transferred !== lastTransferred) {
+          lastTransferred = transferred;
+          lastProgressAt = Date.now();
         }
-      },
-    );
+      }
+    };
+    child.stderr?.on("data", onOutput);
+    child.stdout?.on("data", onOutput);
+    const running = child;
+    watchdog = setInterval(() => {
+      if (Date.now() - lastProgressAt < stallMs) return;
+      stalledAfterMs = stallMs;
+      if (watchdog) clearInterval(watchdog);
+      running.kill("SIGTERM");
+    }, Math.max(10, Math.min(Math.floor(stallMs / 4), 30_000)));
+    watchdog.unref?.();
   });
+}
+
+function transferOptions(opts: RcloneOptions): RcloneOptions {
+  return { ...opts, timeoutMs: opts.timeoutMs ?? 0, stallTimeoutMs: opts.stallTimeoutMs ?? TRANSFER_STALL_TIMEOUT_MS };
 }
 
 /** Check if rclone is installed */
@@ -78,7 +154,7 @@ export async function rcloneSync(
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
-  const r = await runRclone(["copy", localPath, remotePath, "--stats-one-line"], opts);
+  const r = await runRclone(["copy", localPath, remotePath, ...TRANSFER_STATS_ARGS], transferOptions(opts));
   return r.success ? { success: true, output: (r.stdout + r.stderr).trim() } : { success: false, error: r.error };
 }
 
@@ -94,7 +170,7 @@ export async function rcloneCopyFile(
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
-  const r = await runRclone(["copyto", localFile, remotePath], opts);
+  const r = await runRclone(["copyto", localFile, remotePath, ...TRANSFER_STATS_ARGS], transferOptions(opts));
   return r.success ? { success: true } : { success: false, error: r.error };
 }
 
@@ -110,7 +186,7 @@ export async function rcloneCopyFrom(
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
-  const r = await runRclone(["copy", remotePath, localPath], opts);
+  const r = await runRclone(["copy", remotePath, localPath, ...TRANSFER_STATS_ARGS], transferOptions(opts));
   return r.success ? { success: true } : { success: false, error: r.error };
 }
 

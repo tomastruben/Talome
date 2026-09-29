@@ -277,3 +277,155 @@ describe("createAppBackup — dump method", () => {
     expect(dockerState.events).toEqual(["stop:w3", "start:w3"]);
   });
 });
+
+describe("Umbrel data root (storage.dataRoot)", () => {
+  it("backs up the data folder an Umbrel app was installed with instead of treating it as media", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { db, schema } = await import("../db/index.js");
+    const dataRoot = join(env.root, "ssd", "photo-vault");
+    mkdirSync(join(dataRoot, "library"), { recursive: true });
+    writeFileSync(join(dataRoot, "library", "photos.db"), "db");
+    mkdirSync(join(dataRoot, "cache"), { recursive: true });
+    writeFileSync(join(dataRoot, "cache", "thumb.jpg"), "thumb");
+    const home = join(env.root, "umbrel-home");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "notes.txt"), "user media");
+    // ${APP_DATA_DIR}/data was redirected to the chosen folder at install
+    const compose = `services:
+  app:
+    image: example/photo:1
+    volumes:
+      - ${dataRoot}/library:/data/library
+      - ${dataRoot}/cache:/data/cache
+      - ${home}:/home
+`;
+    await installFakeApp(env.root, "photovault", compose, {});
+    resetDocker([{ id: "pv", name: "photovault", service: "app", image: "example/photo:1" }]);
+    db.insert(schema.appInstallOptions)
+      .values({
+        appId: "photovault",
+        storeSourceId: "test-store",
+        options: JSON.stringify({ dataRoot }),
+        plan: JSON.stringify({ dataRoot: { declared: true, hostPath: dataRoot }, backupIgnore: ["data/cache/*"] }),
+      })
+      .run();
+    // Umbrel backupIgnore, merged into the app's excludes at install
+    setAppBackupConfig("photovault", { excludePatterns: ["data/cache/*"] });
+
+    const r = await createAppBackup("photovault");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.volumes.sort()).toEqual([join(dataRoot, "cache"), join(dataRoot, "library")].sort());
+    const m = await loadManifest(r.manifestPath);
+    if (!m.ok) throw new Error(m.error);
+    const files = m.manifest.files.map((f) => f.path);
+    expect(files.some((p) => p.endsWith("photos.db"))).toBe(true);
+    // backupIgnore patterns relative to ${APP_DATA_DIR} still apply under the moved root
+    expect(files.some((p) => p.endsWith("thumb.jpg"))).toBe(false);
+    // the user's mapped home folder stays media (not selected)
+    expect(files.some((p) => p.endsWith("notes.txt"))).toBe(false);
+  });
+});
+
+describe("legacy schedule cloud_target copies", () => {
+  it("deletes the copy made through a legacy cloud_target together with the backup", async () => {
+    const { mkdirSync } = await import("node:fs");
+    const nas = join(env.root, "nas-backups");
+    mkdirSync(nas, { recursive: true });
+    await installFakeApp(env.root, "legacycopy", SIMPLE_COMPOSE, { "config/a.txt": "a", "data/b.txt": "b" });
+    resetDocker([{ id: "lc", name: "legacycopy", service: "app", image: "example/app:1.0" }]);
+    const r = await createAppBackup("legacycopy", { cloudTarget: nas });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    const row = getBackupRow(r.backupId)!;
+    expect(row.destination_id).toBeNull();
+    expect(row.cloud_target).toBeTruthy();
+    expect(existsSync(join(row.cloud_target!, "data.tar.gz"))).toBe(true);
+
+    expect((await deleteBackup(r.backupId)).ok).toBe(true);
+    expect(existsSync(row.cloud_target!)).toBe(false);
+    // the target itself (and other apps' copies) stay
+    expect(existsSync(nas)).toBe(true);
+  });
+
+  it("only resolves copies that sit where a legacy copy is put", async () => {
+    const { legacyCopyDestination } = await import("../backup/destinations.js");
+    const base = { app_id: "app", destination_id: null, manifest_path: "/b/app/2026-dir/manifest.json" };
+    expect(legacyCopyDestination({ ...base, cloud_target: "b2:bucket/talome/app/2026-dir" })).toMatchObject({ type: "rclone", target: "b2:bucket/talome" });
+    expect(legacyCopyDestination({ ...base, cloud_target: "/mnt/nas/app/2026-dir" })).toMatchObject({ type: "local", target: "/mnt/nas" });
+    expect(legacyCopyDestination({ ...base, cloud_target: "/mnt/nas/other/2026-dir" })).toBeNull();
+    expect(legacyCopyDestination({ ...base, cloud_target: "/app/2026-dir" })).toBeNull();
+    expect(legacyCopyDestination({ ...base, cloud_target: ":s3,key=x:bucket/app/2026-dir" })).toBeNull();
+    expect(legacyCopyDestination({ ...base, destination_id: "d1", cloud_target: "b2:bucket/app/2026-dir" })).toBeNull();
+  });
+});
+
+describe("database detection — sidecars are not databases", () => {
+  it("backs up an app whose postgres has an exporter and a backup sidecar", async () => {
+    const compose = `services:
+  web:
+    image: example/web:1
+    volumes:
+      - ./config:/config
+  db:
+    image: postgres:16
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+  metrics:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: postgresql://postgres@db:5432/postgres
+  pgbackup:
+    image: prodrigestivill/postgres-backup-local:16
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_USER: postgres
+    volumes:
+      - ./dumps:/backups
+`;
+    await installFakeApp(env.root, "sidecars", compose, { "config/a.txt": "a", "pgdata/PG_VERSION": "16", "dumps/old.sql.gz": "x" });
+    resetDocker([
+      { id: "sc-web", name: "sidecars-web", service: "web", image: "example/web:1" },
+      { id: "sc-db", name: "sidecars-db", service: "db", image: "postgres:16" },
+      { id: "sc-m", name: "sidecars-metrics", service: "metrics", image: "quay.io/prometheuscommunity/postgres-exporter:v0.15.0" },
+      { id: "sc-b", name: "sidecars-pgbackup", service: "pgbackup", image: "prodrigestivill/postgres-backup-local:16" },
+    ]);
+    // pg_dumpall inside a sidecar fails (no server there)
+    dockerState.failDumpServices = new Set(["metrics", "pgbackup"]);
+    const r = await createAppBackup("sidecars");
+    expect(r.success ? "" : r.error).toBe("");
+    if (!r.success) return;
+    const m = await loadManifest(r.manifestPath);
+    if (!m.ok) throw new Error(m.error);
+    expect(m.manifest.dumps.map((d) => d.service)).toEqual(["db"]);
+  });
+
+  it("recognises real database images and ignores tools named after them", async () => {
+    const { detectDbEngine, parseCompose } = await import("../backup/compose.js");
+    expect(detectDbEngine("postgres:16")).toBe("postgres");
+    expect(detectDbEngine("ghcr.io/immich-app/postgres:14-vectorchord0.3.0")).toBe("postgres");
+    expect(detectDbEngine("bitnami/postgresql-repmgr:16")).toBe("postgres");
+    expect(detectDbEngine("mariadb:11")).toBe("mysql");
+    expect(detectDbEngine("prometheuscommunity/postgres-exporter")).toBeNull();
+    expect(detectDbEngine("wrouesnel/postgres_exporter:latest")).toBeNull();
+    expect(detectDbEngine("prodrigestivill/postgres-backup-local:16")).toBeNull();
+    expect(detectDbEngine("eeshugerman/postgres-backup-s3:16")).toBeNull();
+    expect(detectDbEngine("tianon/postgres-upgrade:14-to-16")).toBeNull();
+    // A name merely containing "postgres" needs a data volume to count as a database
+    const parsed = parseCompose(
+      `services:
+  withdata:
+    image: example/postgres-custom:1
+    volumes:
+      - pg:/var/lib/postgresql/data
+  nodata:
+    image: example/postgres-custom:1
+volumes:
+  pg:
+`,
+      { composeDir: "/x", appDataDir: "/y", env: {} },
+    );
+    expect(parsed.services.find((s) => s.name === "withdata")?.dbEngine).toBe("postgres");
+    expect(parsed.services.find((s) => s.name === "nodata")?.dbEngine).toBeNull();
+  });
+});

@@ -31,7 +31,14 @@ import {
   stopContainerGracefully,
   type AppContainer,
 } from "./docker-ops.js";
-import { copyToDestination, getDestination, legacyCloudTargetDestination, deleteFromDestination, type BackupDestination } from "./destinations.js";
+import {
+  copyToDestination,
+  deleteFromDestination,
+  getDestination,
+  legacyCloudTargetDestination,
+  legacyCopyDestination,
+  type BackupDestination,
+} from "./destinations.js";
 import { REDIS_BGSAVE, REDIS_PERSISTENCE_INFO, dumpCommand, parseRedisPersistence, validateSqlDump } from "./dumps.js";
 import { errorMessage, getBackupRoot, getTalomeVersion, isWithin, sha256File, timestampSlug } from "./fs-utils.js";
 import { compileExcludePatterns } from "./glob.js";
@@ -99,6 +106,14 @@ export interface InternalBackupOptions extends CreateAppBackupOptions {
   leaveStopped?: boolean;
   /** Treat `volumes` as the exact selection — an empty list archives no volumes */
   exactVolumes?: boolean;
+  /**
+   * Dump method only: fail instead of falling back to the stop method when a
+   * database container is not running (a safety backup must hold the data a
+   * restore is about to replace).
+   */
+  requireDumps?: boolean;
+  /** Dump method only: after dumping, stop the app while its files are archived (cold copy) */
+  stopAfterDump?: boolean;
   signal?: AbortSignal;
   onStage?: (stage: string) => void;
 }
@@ -123,6 +138,7 @@ function volumeKey(index: number, v: ComposeVolume, ctx: AppContext): string {
   let label: string;
   if (isWithin(ctx.appDataDir, hostPath)) label = relative(ctx.appDataDir, hostPath) || "app-data";
   else if (isWithin(ctx.composeDir, hostPath)) label = relative(ctx.composeDir, hostPath) || "app";
+  else if (ctx.dataRootDir && isWithin(ctx.dataRootDir, hostPath)) label = `data/${relative(ctx.dataRootDir, hostPath)}`.replace(/\/$/, "");
   else label = basename(hostPath);
   return `${index}-${slugify(label)}`;
 }
@@ -130,6 +146,11 @@ function volumeKey(index: number, v: ComposeVolume, ctx: AppContext): string {
 export function appRelative(ctx: AppContext, absPath: string): string | null {
   if (isWithin(ctx.appDataDir, absPath)) return relative(ctx.appDataDir, absPath).split("\\").join("/");
   if (isWithin(ctx.composeDir, absPath)) return relative(ctx.composeDir, absPath).split("\\").join("/");
+  // A moved data root stands in for ${APP_DATA_DIR}/data, so "data/cache/*" style excludes still apply
+  if (ctx.dataRootDir && isWithin(ctx.dataRootDir, absPath)) {
+    const rel = relative(ctx.dataRootDir, absPath).split("\\").join("/");
+    return rel ? `data/${rel}` : "data";
+  }
   return null;
 }
 
@@ -137,6 +158,11 @@ export function appRelative(ctx: AppContext, absPath: string): string | null {
 export function sortForStop(containers: AppContainer[], ctx: AppContext): AppContainer[] {
   const isDb = (c: AppContainer) => ctx.compose.services.some((s) => s.name === c.service && s.dbEngine !== null);
   return [...containers].sort((a, b) => Number(isDb(a)) - Number(isDb(b)));
+}
+
+/** Services whose database can be captured with a logical dump (postgres, mysql/mariadb). */
+export function dumpableServices(ctx: Pick<AppContext, "compose">): ComposeService[] {
+  return ctx.compose.services.filter((s) => s.dbEngine !== null && DUMPABLE.has(s.dbEngine));
 }
 
 export function containerForService(containers: AppContainer[], svc: ComposeService): AppContainer | undefined {
@@ -335,6 +361,9 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
         (s) => s.dbEngine !== null && DUMPABLE.has(s.dbEngine) && !containerForService(running, s),
       );
       if (missing.length > 0) {
+        if (opts.requireDumps) {
+          throw new Error(`Database container not running (${missing.map((s) => s.name).join(", ")}) — cannot take a database dump`);
+        }
         warnings.push(`Database container not running (${missing.map((s) => s.name).join(", ")}) — used the stop method`);
         method = "stop";
         if (!opts.includeDbData) {
@@ -426,7 +455,8 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
     let maintenanceMarked = false;
 
     try {
-      if (method === "stop" && running.length > 0) {
+      const stopForArchive = method === "stop" || (method === "dump" && opts.stopAfterDump === true);
+      if (stopForArchive && running.length > 0) {
         setStage("pausing");
         for (const c of sortForStop(running, ctx)) {
           checkCancelled();
@@ -593,7 +623,7 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
     }
     if (destination && destination.enabled) {
       setStage("uploading");
-      const copy = await copyToDestination(destination, backupDir, appId, dirName);
+      const copy = await copyToDestination(destination, backupDir, appId, dirName, signal);
       if (copy.ok) {
         destinationLocation = copy.location;
         setBackupDestination(backupId, destination.id === "legacy" ? null : destination.id, copy.location);
@@ -700,7 +730,8 @@ export async function deleteBackup(id: string): Promise<{ ok: boolean; error?: s
     log.warn(`failed to delete backup files for ${id}`, err);
   }
   if (row.cloud_target) {
-    const dest = row.destination_id ? getDestination(row.destination_id) : null;
+    // Copies made through a legacy schedule cloud_target have no destination row
+    const dest = row.destination_id ? getDestination(row.destination_id) : legacyCopyDestination(row);
     if (dest) {
       const r = await deleteFromDestination(dest, row.cloud_target);
       if (!r.ok) log.warn(`failed to delete remote copy for ${id}: ${r.error}`);

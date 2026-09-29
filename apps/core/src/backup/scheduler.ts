@@ -4,8 +4,10 @@
  *  - runScheduledBackup: back up one app for a schedule, then apply the
  *    schedule's retention policy (keep-last + GFS, or retention_days)
  *  - runBackupMaintenance (self-throttled, called every monitor tick):
- *      · recover work left pending by a restart (stopped containers,
- *        half-swapped restores) and rows left "running"
+ *      · recover work left pending by a restart or by a process (the MCP
+ *        stdio server) that died mid-operation — stopped containers,
+ *        half-swapped restores — and rows left "running" (at startup, then
+ *        every minute; operations still running anywhere are left alone)
  *      · weekly verification of the newest backup of every app
  *      · alert when an app with a schedule has no successful backup for
  *        longer than max(24h, schedule interval) + 1h grace
@@ -20,7 +22,7 @@ import { createLogger } from "../utils/logger.js";
 import { maxCronIntervalMs } from "./cron.js";
 import { deleteBackup } from "./engine.js";
 import { runBackupOperation } from "./operation.js";
-import { waitForAppOperation } from "../ops/operations.js";
+import { hasLiveOperation, waitForAppOperation } from "../ops/operations.js";
 import { recoverPendingOperations } from "./recovery.js";
 import { applyRetentionPolicy, hasGfsRules } from "./retention.js";
 import { activeIds } from "./state.js";
@@ -142,7 +144,37 @@ export async function runScheduledBackup(
 // First full maintenance pass ~10 minutes after startup (don't add IO to boot)
 let lastMaintenance = Date.now() - MAINTENANCE_INTERVAL_MS + 10 * 60 * 1000;
 let maintenanceRunning = false;
-let recovered = false;
+/** Recovery runs at startup and then periodically (work left behind by a dead MCP stdio process). */
+const RECOVERY_INTERVAL_MS = 60 * 1000;
+let lastRecovery = 0;
+let bootRecoveryDone = false;
+let recoveryRunning = false;
+
+/**
+ * Undo work left pending by backups/restores whose process is gone, and mark
+ * their rows as failed. At startup that is every operation of the previous
+ * server; afterwards it catches operations of other processes (the MCP stdio
+ * server) that died mid-way. Operations still running anywhere are skipped.
+ */
+export async function runBackupRecovery(): Promise<void> {
+  const now = Date.now();
+  if (recoveryRunning) return;
+  if (bootRecoveryDone && now - lastRecovery < RECOVERY_INTERVAL_MS) return;
+  recoveryRunning = true;
+  lastRecovery = now;
+  const atBoot = !bootRecoveryDone;
+  bootRecoveryDone = true;
+  try {
+    // Undo half-finished work first (restart stopped apps, put data back)
+    await recoverPendingOperations(activeIds());
+    const n = recoverInterruptedOperations(activeIds(), { isAppBusy: hasLiveOperation, verifies: atBoot });
+    if (n > 0) log.warn(`marked ${n} interrupted backup/restore operation(s) as failed`);
+  } catch (err) {
+    log.error("backup recovery error", err);
+  } finally {
+    recoveryRunning = false;
+  }
+}
 
 export function listEnabledSchedules(): ScheduleRow[] {
   return db.all(sql`SELECT * FROM backup_schedules WHERE enabled = 1`) as ScheduleRow[];
@@ -239,17 +271,7 @@ function notifyStale(alert: StaleBackupAlert): void {
 
 /** Self-throttled background maintenance. Safe to call every minute. */
 export async function runBackupMaintenance(now = new Date(), force = false): Promise<void> {
-  if (!recovered) {
-    recovered = true;
-    try {
-      // Undo half-finished work first (restart stopped apps, put data back)
-      await recoverPendingOperations(activeIds());
-      const n = recoverInterruptedOperations(activeIds());
-      if (n > 0) log.warn(`marked ${n} interrupted backup/restore operation(s) as failed`);
-    } catch (err) {
-      log.error("backup recovery error", err);
-    }
-  }
+  await runBackupRecovery();
   if (maintenanceRunning) return;
   if (!force && now.getTime() - lastMaintenance < MAINTENANCE_INTERVAL_MS) return;
   maintenanceRunning = true;

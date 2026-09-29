@@ -16,7 +16,7 @@
 
 import { randomUUID } from "node:crypto";
 import { cp, mkdir, readdir, rm, writeFile, unlink } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
@@ -235,12 +235,40 @@ function joinRemote(root: string, ...parts: string[]): string {
   return `${root}${sep}${parts.join("/")}`;
 }
 
+/**
+ * Destination of a copy made through a legacy schedule `cloud_target` (the
+ * backup row has no destination_id, only the copy's location
+ * `<target>/<appId>/<backup dir>`), or null. Lets retention and deletion
+ * remove such copies, and verification fetch them back.
+ */
+export function legacyCopyDestination(row: {
+  app_id: string | null;
+  cloud_target: string | null;
+  destination_id: string | null;
+  manifest_path: string | null;
+}): BackupDestination | null {
+  if (!row.cloud_target || row.destination_id || !row.app_id || !row.manifest_path) return null;
+  const location = row.cloud_target;
+  const dirName = basename(dirname(row.manifest_path));
+  const suffix = `${row.app_id}/${dirName}`;
+  if (!dirName || !location.endsWith(suffix)) return null;
+  let target = location.slice(0, location.length - suffix.length);
+  if (target.length > 1 && target.endsWith("/")) target = target.slice(0, -1);
+  if (!target || target === "/") return null;
+  const dest = legacyCloudTargetDestination(target);
+  if (!dest) return null;
+  // The copy must sit directly under the target, where copyToDestination put it
+  const expected = dest.type === "local" ? join(dest.target, row.app_id, dirName) : joinRemote(dest.target, row.app_id, dirName);
+  return expected === location ? dest : null;
+}
+
 /** Copy a finished backup directory to the destination. Never throws. */
 export async function copyToDestination(
   dest: BackupDestination,
   localBackupDir: string,
   appId: string,
   dirName: string,
+  signal?: AbortSignal,
 ): Promise<{ ok: true; location: string } | { ok: false; error: string }> {
   try {
     if (dest.type === "local") {
@@ -260,7 +288,8 @@ export async function copyToDestination(
         if (!e.isFile()) continue;
         await encryptFile(join(localBackupDir, e.name), join(staging, `${e.name}${ENCRYPTED_SUFFIX}`));
       }
-      const r = await rcloneSync(staging, location, { env });
+      // No fixed timeout: a large upload can take hours (stalls are detected by rclone.ts)
+      const r = await rcloneSync(staging, location, { env, signal });
       return r.success ? { ok: true, location } : { ok: false, error: r.error ?? "rclone copy failed" };
     } finally {
       await rm(staging, { recursive: true, force: true }).catch(() => {});
@@ -289,7 +318,12 @@ export async function deleteFromDestination(dest: BackupDestination, location: s
 }
 
 /** Fetch a backup copy from a destination into a local directory. */
-export async function fetchFromDestination(dest: BackupDestination, location: string, localDir: string): Promise<{ ok: boolean; error?: string }> {
+export async function fetchFromDestination(
+  dest: BackupDestination,
+  location: string,
+  localDir: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; error?: string }> {
   try {
     await mkdir(localDir, { recursive: true });
     if (dest.type === "local") {
@@ -297,7 +331,7 @@ export async function fetchFromDestination(dest: BackupDestination, location: st
       return { ok: true };
     }
     const { env } = buildRcloneTarget(dest);
-    const r = await rcloneCopyFrom(location, localDir, { env });
+    const r = await rcloneCopyFrom(location, localDir, { env, signal });
     if (!r.success) return { ok: false, error: r.error };
     // Copies made by this version are encrypted — decrypt them in place
     for (const name of await readdir(localDir)) {

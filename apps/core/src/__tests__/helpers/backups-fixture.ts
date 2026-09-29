@@ -7,7 +7,7 @@
  */
 
 import { vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -64,7 +64,16 @@ export const dockerState = {
   /** Called before each stop (e.g. to cancel a backup mid-way) */
   onStop: null as ((id: string) => void) | null,
   loadStderr: "",
+  /** stderr of the next dump loads, one per load (falls back to loadStderr) */
+  loadStderrQueue: [] as string[],
   dumps: new Map<string, string>(),
+  /** Services whose dump fails (execToFile exits non-zero) */
+  failDumpServices: new Set<string>(),
+  /** Contents of every tar.gz passed to putArchive */
+  putArchives: [] as Buffer[],
+  /** Output of `id -u` / `id -g` inside containers (empty = command fails) */
+  execUid: "",
+  execGid: "",
 };
 
 export function resetDocker(containers: Array<Omit<FakeContainer, "status"> & { status?: string }>): void {
@@ -74,7 +83,12 @@ export function resetDocker(containers: Array<Omit<FakeContainer, "status"> & { 
   dockerState.failStopIds = new Set();
   dockerState.onStop = null;
   dockerState.loadStderr = "";
+  dockerState.loadStderrQueue = [];
   dockerState.dumps = new Map();
+  dockerState.failDumpServices = new Set();
+  dockerState.putArchives = [];
+  dockerState.execUid = "";
+  dockerState.execGid = "";
 }
 
 function find(id: string): FakeContainer | undefined {
@@ -121,11 +135,21 @@ export function dockerOpsMock() {
         const now = Math.floor(Date.now() / 1000) + 1;
         return { exitCode: 0, stdout: `rdb_bgsave_in_progress:0\r\nrdb_last_bgsave_status:ok\r\nrdb_last_save_time:${now}\r\n`, stderr: "" };
       }
+      if (cmd[0] === "id" && (cmd[1] === "-u" || cmd[1] === "-g")) {
+        const out = cmd[1] === "-u" ? dockerState.execUid : dockerState.execGid;
+        return out ? { exitCode: 0, stdout: `${out}\n`, stderr: "" } : { exitCode: 1, stdout: "", stderr: "id: not found" };
+      }
       dockerState.events.push(`exec:${joined.includes("BGSAVE") ? "bgsave" : joined.includes("psql") ? "psql" : joined.includes("pg_isready") ? "ready" : "other"}`);
-      return { exitCode: 0, stdout: "", stderr: joined.includes("psql") ? dockerState.loadStderr : "" };
+      if (!joined.includes("psql")) return { exitCode: 0, stdout: "", stderr: "" };
+      const loadStderr = dockerState.loadStderrQueue.length > 0 ? dockerState.loadStderrQueue.shift()! : dockerState.loadStderr;
+      return { exitCode: 0, stdout: "", stderr: loadStderr };
     }),
     execToFile: vi.fn(async (id: string, _cmd: string[], outPath: string) => {
       const c = find(id);
+      if (dockerState.failDumpServices.has(c?.service ?? "")) {
+        dockerState.events.push(`dumpfail:${c?.service}`);
+        return { exitCode: 1, stderr: "pg_dumpall: error: connection failed", bytes: 0 };
+      }
       const content =
         dockerState.dumps.get(c?.service ?? "") ??
         "--\n-- PostgreSQL database cluster dump\n--\nCREATE TABLE t (id int);\n--\n-- PostgreSQL database cluster dump complete\n--\n";
@@ -133,8 +157,9 @@ export function dockerOpsMock() {
       dockerState.events.push(`dump:${c?.service}`);
       return { exitCode: 0, stderr: "", bytes: Buffer.byteLength(content) };
     }),
-    putArchive: vi.fn(async () => {
+    putArchive: vi.fn(async (_id: string, tarGzPath: string) => {
       dockerState.events.push("putArchive");
+      dockerState.putArchives.push(readFileSync(tarGzPath));
     }),
     composeUp: vi.fn(async (opts: { services?: string[] }) => {
       dockerState.events.push(`composeUp:${(opts.services ?? []).join(",")}`);

@@ -6,7 +6,11 @@
 import { installStdioShutdown } from "../../mcp-stdio-lifecycle.js";
 
 setInterval(() => {}, 1_000);
+// STDIO_CHILD_BUSY_MS: pretend a restore is running for that long after startup
+const busyUntil = Date.now() + (Number(process.env.STDIO_CHILD_BUSY_MS) || 0);
 installStdioShutdown({
+  pendingWork: () => (Date.now() < busyUntil ? ["restore of testapp"] : []),
+  drainPollMs: 50,
   stdin: process.stdin,
   stdout: process.stdout,
   signals: process,

@@ -6,7 +6,8 @@
  * verifiable and restorable per app with automatic rollback.
  *
  * Archives made by older Talome versions (plain tar.gz of absolute paths, no
- * manifest) can still be restored through restore_app's legacy path.
+ * manifest) can still be restored through restore_app's legacy path
+ * (backup/legacy-restore.ts — with a safety backup and automatic rollback).
  */
 
 import { tool } from "ai";
@@ -15,8 +16,6 @@ import { db, schema } from "../../db/index.js";
 import { eq, sql } from "drizzle-orm";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve, join, dirname, basename } from "node:path";
-import { exec as execCb, type ExecOptions } from "node:child_process";
-import { writeAuditEntry } from "../../db/audit.js";
 import {
   verifyBackup,
   getBackupProgress,
@@ -27,10 +26,8 @@ import {
 import { bindVolumes, resolveAppContext } from "../../backup/compose.js";
 import { runBackupOperation, runLegacyRestoreOperation, runRestoreOperation } from "../../backup/operation.js";
 import { getBackupRoot } from "../../backup/fs-utils.js";
-import { ARCHIVE_FILE_NAME, ARCHIVE_META_DIR, MANIFEST_FILE_NAME } from "../../backup/types.js";
-
-/** Top-level members of archives made by the current backup engine (relative paths). */
-const ENGINE_ARCHIVE_PREFIXES = [`${ARCHIVE_META_DIR}/`, "volumes/", "compose/", "dumps/"];
+import { legacyArchiveBelongsToApp, restoreLegacyArchive } from "../../backup/legacy-restore.js";
+import { ARCHIVE_FILE_NAME, MANIFEST_FILE_NAME } from "../../backup/types.js";
 
 /**
  * True when a file looks like an archive made by the current backup engine
@@ -41,10 +38,6 @@ export function isEngineArchivePath(archivePath: string): boolean {
 }
 
 const LEGACY_BACKUP_BASE = join(process.env.HOME || "/tmp", ".talome", "backups", "apps");
-
-// Timeouts for the legacy restore path
-const DOCKER_TIMEOUT = 120_000;
-const TAR_EXTRACT_TIMEOUT = 600_000;
 
 // ── Progress / cancel (delegated to the engine) ─────────────────────────────
 
@@ -59,44 +52,6 @@ export function getActiveBackupProgress(): Map<string, { backupId: string; stage
 /** Cancel a running backup. Returns true if a backup was found and cancelled. */
 export function cancelBackup(appId: string): boolean {
   return cancelAppBackup(appId);
-}
-
-function log(msg: string) {
-  console.log(`[backup] ${msg}`);
-}
-
-function execPromise(cmd: string, options: ExecOptions & { timeout?: number }): Promise<string> {
-  return new Promise<string>((resolvePromise, reject) => {
-    execCb(cmd, options, (err, stdout) => {
-      if (err) reject(err);
-      else resolvePromise(typeof stdout === "string" ? stdout : stdout?.toString() ?? "");
-    });
-  });
-}
-
-/**
- * Validate that a legacy tar archive does not contain path traversal entries.
- * Rejects any entry that starts with `/` (absolute path) or contains `..`.
- */
-async function validateTarSafety(archivePath: string): Promise<{ safe: boolean; reason?: string }> {
-  try {
-    const listing = await execPromise(`tar -tzf "${archivePath}"`, { timeout: 60_000 });
-    const entries = listing.split("\n").filter(Boolean);
-    for (const entry of entries) {
-      if (ENGINE_ARCHIVE_PREFIXES.some((p) => entry === p.slice(0, -1) || entry.startsWith(p))) {
-        return { safe: false, reason: "This is a backup made by the current backup engine — restore it by backupId" };
-      }
-      if (entry.startsWith("/")) {
-        return { safe: false, reason: `Archive contains absolute path entry: "${entry}"` };
-      }
-      if (entry.includes("..")) {
-        return { safe: false, reason: `Archive contains path traversal entry: "${entry}"` };
-      }
-    }
-    return { safe: true };
-  } catch (err) {
-    return { safe: false, reason: `Failed to list archive contents: ${err instanceof Error ? err.message : String(err)}` };
-  }
 }
 
 // ── Volume discovery ────────────────────────────────────────────────────────
@@ -126,18 +81,11 @@ export function getAppVolumeInfo(appId: string): VolumeInfo[] | null {
   }));
 }
 
-function getInstalledAppComposePath(appId: string): string | null {
+function isAppInstalled(appId: string): boolean {
   try {
-    const row = db
-      .select()
-      .from(schema.installedApps)
-      .where(eq(schema.installedApps.appId, appId))
-      .get();
-    if (!row) return null;
-    const ctx = resolveAppContext(appId);
-    return ctx.ok ? ctx.ctx.composePath : row.overrideComposePath ?? null;
+    return !!db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, appId)).get();
   } catch {
-    return null;
+    return false;
   }
 }
 
@@ -212,6 +160,8 @@ interface BackupListRow {
 export const restoreAppTool = tool({
   description: `Restore an app's data from a previously created backup. A safety backup of the current state is taken first; the app is stopped, its data and compose file are restored, it is started again and its health is checked. If the app doesn't come back healthy the previous state is restored automatically.
 
+Archives made by Talome versions before the current backup engine ("legacy", restored by backupFile) get the same safety backup, health check and rollback, but have no checksums and are merged into the current data (files created since the backup are kept). They must come from the app's own backup folder and may only contain the app's own data folders.
+
 Lists available backups (with verification status) if no backup is specified.
 
 After calling: Report what was restored, the backup date, the health check result, and the safety backup id. Warn that data changed since the backup was replaced.`,
@@ -220,8 +170,14 @@ After calling: Report what was restored, the backup date, the health check resul
     backupId: z.string().optional().describe("Backup id to restore (preferred)"),
     backupFile: z.string().optional().describe("Full path to the backup archive. Omit both to list available backups."),
     verifyFirst: z.boolean().default(false).describe("Run a full verification (test restore) before restoring"),
+    skipSafetyBackup: z
+      .boolean()
+      .optional()
+      .describe(
+        "Restore WITHOUT a pre-restore safety backup (no way back afterwards). Only when a restore was refused because the safety backup could not be taken (e.g. a broken database, unreadable files) and the user explicitly accepts losing the current data.",
+      ),
   }),
-  execute: async ({ appId, backupId, backupFile, verifyFirst }) => {
+  execute: async ({ appId, backupId, backupFile, verifyFirst, skipSafetyBackup }) => {
     // List mode
     if (!backupId && !backupFile) {
       const rows = db.all(
@@ -276,7 +232,7 @@ After calling: Report what was restored, the backup date, the health check resul
         if (!v.success) return { success: false, error: `Verification failed — not restoring: ${v.errors.join("; ")}` };
       }
       // Journaled "restore" operation: refused while an update/install/backup runs on the app.
-      const r = await runRestoreOperation(appId, row.id);
+      const r = await runRestoreOperation(appId, row.id, { skipSafetyBackup: skipSafetyBackup === true });
       if (!r.success) {
         return {
           success: false,
@@ -305,9 +261,12 @@ After calling: Report what was restored, the backup date, the health check resul
 
     // ── Legacy archive (no manifest) ──────────────────────────────────────
     const legacyPath = resolve(row?.file_path ?? backupFile ?? "");
-    const legacyRoots = [LEGACY_BACKUP_BASE, getBackupRoot()];
-    if (!legacyRoots.some((r) => legacyPath.startsWith(r + "/"))) {
-      return { success: false, error: "Legacy restores are limited to archives inside the Talome backup directory." };
+    // Only this app's own backup folder: the approval, grants and audit all name appId
+    if (!legacyArchiveBelongsToApp(appId, legacyPath, [LEGACY_BACKUP_BASE, getBackupRoot()])) {
+      return {
+        success: false,
+        error: `Legacy restores are limited to archives in ${appId}'s own folder inside the Talome backup directory.`,
+      };
     }
     if (!existsSync(legacyPath)) {
       return { success: false, error: `Backup file not found: ${legacyPath}` };
@@ -318,50 +277,10 @@ After calling: Report what was restored, the backup date, the health check resul
         error: "This archive was made by the current backup engine and has no matching backup record for this app. Restore it with backupId (list backups by calling restore_app with only appId).",
       };
     }
-    const composePath = getInstalledAppComposePath(appId);
-    if (!composePath) {
+    if (!isAppInstalled(appId)) {
       return { success: false, error: `App '${appId}' not found or not installed.` };
     }
-    return runLegacyRestoreOperation(appId, {}, () => legacyRestore(appId, composePath, legacyPath));
+    // Same safety net as a regular restore: safety backup, health check, automatic rollback
+    return runLegacyRestoreOperation(appId, {}, () => restoreLegacyArchive(appId, legacyPath, { backupId: row?.id ?? null, skipSafetyBackup: skipSafetyBackup === true }));
   },
 });
-
-async function legacyRestore(appId: string, composePath: string, archive: string) {
-  const composeDir = dirname(composePath);
-  try {
-    log(`Stopping ${appId} for legacy restore...`);
-    await execPromise(`docker compose -f "${composePath}" stop`, { cwd: composeDir, timeout: DOCKER_TIMEOUT }).catch(() => "");
-
-    const safety = await validateTarSafety(archive);
-    if (!safety.safe) {
-      await execPromise(`docker compose -f "${composePath}" up -d`, { cwd: composeDir, timeout: DOCKER_TIMEOUT }).catch(() => "");
-      return {
-        success: false,
-        error: `Unsafe archive rejected: ${safety.reason}`,
-        hint: "The archive contains entries that could write outside the expected directories. This may indicate a tampered backup.",
-      };
-    }
-
-    log(`Restoring ${appId} from ${basename(archive)} (legacy format)...`);
-    await execPromise(`tar -xzf "${archive}" -C /`, { timeout: TAR_EXTRACT_TIMEOUT });
-    await execPromise(`docker compose -f "${composePath}" up -d`, { cwd: composeDir, timeout: DOCKER_TIMEOUT });
-
-    writeAuditEntry(`Restore: ${appId}`, "destructive", JSON.stringify({ backupFile: archive, legacy: true }));
-    return {
-      success: true,
-      action: "restore",
-      appId,
-      restoredFrom: archive,
-      message: `App '${appId}' restored from a legacy backup and restarted. Legacy backups have no checksums or automatic rollback.`,
-    };
-  } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    log(`Legacy restore failed for ${appId}: ${errMsg}`);
-    await execPromise(`docker compose -f "${composePath}" up -d`, { cwd: composeDir, timeout: DOCKER_TIMEOUT }).catch(() => "");
-    return {
-      success: false,
-      error: errMsg,
-      hint: "The app has been restarted. The restore may have partially completed.",
-    };
-  }
-}

@@ -7,9 +7,15 @@ interface ExecCall {
   file: string;
   args: string[];
   env: Record<string, string>;
+  timeout?: number;
 }
+type ExecCb = (err: Error | null, stdout: string, stderr: string) => void;
 const calls = vi.hoisted(() => [] as ExecCall[]);
-const hooks = vi.hoisted(() => ({ onCall: null as null | ((args: string[]) => void) }));
+const hooks = vi.hoisted(() => ({
+  onCall: null as null | ((args: string[]) => void),
+  /** Take over the call: return a fake child process and finish it later via cb */
+  spawn: null as null | ((args: string[], cb: (err: Error | null, stdout: string, stderr: string) => void) => unknown),
+}));
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -19,12 +25,14 @@ vi.mock("node:child_process", async (importOriginal) => {
       (
         file: string,
         args: string[],
-        opts: { env?: Record<string, string> },
-        cb: (err: Error | null, stdout: string, stderr: string) => void,
+        opts: { env?: Record<string, string>; timeout?: number },
+        cb: ExecCb,
       ) => {
-        calls.push({ file, args, env: opts.env ?? {} });
+        calls.push({ file, args, env: opts.env ?? {}, timeout: opts.timeout });
         hooks.onCall?.(args);
+        if (hooks.spawn) return hooks.spawn(args, cb);
         cb(null, "", "");
+        return undefined;
       },
     ),
     exec: vi.fn(() => {
@@ -45,7 +53,10 @@ afterAll(() => env.cleanup());
 beforeEach(() => {
   calls.length = 0;
   hooks.onCall = null;
+  hooks.spawn = null;
 });
+
+const STATS = ["--stats", "30s", "--stats-one-line", "--stats-log-level", "NOTICE"];
 
 const SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
 const ACCESS = "AKIAIOSFODNN7EXAMPLE";
@@ -97,7 +108,7 @@ describe("backup destinations", () => {
       expect(call.env[`RCLONE_CONFIG_${remote}_TYPE`]).toBe("s3");
     }
     // Uploads come from an encrypted staging copy, never the plaintext backup dir
-    expect(calls[0].args).toEqual(["copy", staged, `${dest.managedRemoteName(d.id)}:my-bucket/talome/app1/2026-01-01`, "--stats-one-line"]);
+    expect(calls[0].args).toEqual(["copy", staged, `${dest.managedRemoteName(d.id)}:my-bucket/talome/app1/2026-01-01`, ...STATS]);
     expect(staged).not.toBe(local);
     expect(existsSync(staged!)).toBe(false); // staging is cleaned up
   });
@@ -182,8 +193,62 @@ describe("backup destinations", () => {
     writeFileSync(join(src, "data.tar.gz"), "x");
     await dest.copyToDestination(d, src, "app", "dir");
     expect(calls[0].args[0]).toBe("copy");
-    expect(calls[0].args.slice(2)).toEqual(["b2:bucket/path/app/dir", "--stats-one-line"]);
+    expect(calls[0].args.slice(2)).toEqual(["b2:bucket/path/app/dir", ...STATS]);
     expect(Object.keys(calls[0].env).some((k) => k.startsWith("RCLONE_CONFIG_TALOME"))).toBe(false);
+  });
+
+  it("never kills a large upload or download on a fixed timer", async () => {
+    const created = dest.createDestination({ name: "Slow uplink", type: "rclone", target: "b2:bucket/slow" });
+    if (!created.ok) throw new Error(created.error);
+    const d = dest.getDestination(created.destination.id)!;
+    const src = join(env.root, "big-backup");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, "data.tar.gz"), "x");
+    await dest.copyToDestination(d, src, "app", "big");
+    await dest.fetchFromDestination(d, "b2:bucket/slow/app/big", join(env.root, "big-fetched"));
+    const transfers = calls.filter((c) => c.args[0] === "copy");
+    expect(transfers).toHaveLength(2);
+    // 0 = no execFile timeout (was 10 minutes)
+    for (const c of transfers) expect(c.timeout).toBe(0);
+    // short commands keep their timeouts
+    await dest.testDestination(d);
+    expect(calls.filter((c) => c.args[0] !== "copy").every((c) => (c.timeout ?? 0) > 0)).toBe(true);
+  });
+
+  it("aborts a transfer only when rclone stops making progress", async () => {
+    const { rcloneSync, parseTransferred } = await import("../backup/rclone.js");
+    const { EventEmitter } = await import("node:events");
+    expect(parseTransferred("2026/01/01 03:00:00 NOTICE:    1.234 GiB / 5.000 GiB, 24%, 10.000 MiB/s, ETA 6m")).toBe("1.234GiB");
+    expect(parseTransferred("2026/01/01 03:00:00 NOTICE:         0 B / 0 B, -, 0 B/s, ETA -")).toBe("0B");
+    expect(parseTransferred("some other log line")).toBeNull();
+
+    const child = Object.assign(new EventEmitter(), { stderr: new EventEmitter(), stdout: new EventEmitter(), killed: false, kill: vi.fn() });
+    let finish!: (err: Error | null) => void;
+    hooks.spawn = (_args, cb) => {
+      finish = (err) => cb(err, "", "");
+      child.kill.mockImplementation(() => {
+        child.killed = true;
+        finish(Object.assign(new Error("killed"), { signal: "SIGTERM" }));
+        return true;
+      });
+      return child;
+    };
+    const pending = rcloneSync("/tmp/staging", "b2:bucket/x", { stallTimeoutMs: 120 });
+    // steady progress for longer than the stall timeout
+    for (let i = 1; i <= 6; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      child.stderr.emit("data", Buffer.from(`NOTICE:   ${i * 10} MiB / 1 GiB, ${i}%, 1 MiB/s, ETA 10m\n`));
+    }
+    expect(child.kill).not.toHaveBeenCalled();
+    // same amount over and over: stalled
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      child.stderr.emit("data", Buffer.from("NOTICE:   60 MiB / 1 GiB, 6%, 0 B/s, ETA -\n"));
+    }
+    const r = await pending;
+    expect(child.kill).toHaveBeenCalled();
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/no progress/);
   });
 
   it("copies to local destinations and validates the target", async () => {

@@ -156,6 +156,73 @@ describe("restoreAppBackup", () => {
     expect(readdirSync(appDir).filter((n) => n.includes(".talome-"))).toEqual([]);
   });
 
+  it("prepares the dump load for a database that runs as its own user (e.g. bitnami, uid 1001)", async () => {
+    const { chmodSync, statSync, writeFileSync: wf } = await import("node:fs");
+    const { readTarGz } = await import("../backup/tar.js");
+    const { appDir } = await installFakeApp(
+      env.root,
+      "restorebitnami",
+      `services:
+  web:
+    image: example/web:1
+    volumes:
+      - ./config:/config
+  db:
+    image: bitnami/postgresql:16
+    volumes:
+      - ./pgdata:/bitnami/postgresql
+`,
+      { "config/a.txt": "a", "pgdata/data/PG_VERSION": "16" },
+    );
+    chmodSync(join(appDir, "pgdata"), 0o775);
+    resetDocker([
+      { id: "rb-web", name: "restorebitnami-web", service: "web", image: "example/web:1" },
+      { id: "rb-db", name: "restorebitnami-db", service: "db", image: "bitnami/postgresql:16" },
+    ]);
+    const backup = await createAppBackup("restorebitnami");
+    if (!backup.success) throw new Error(backup.error);
+    expect(backup.method).toBe("dump");
+    dockerState.execUid = "1001";
+    dockerState.execGid = "0";
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success).toBe(true);
+    // the fresh data directory keeps the previous one's permissions (not a Talome-only 0700)
+    expect(statSync(join(appDir, "pgdata")).mode & 0o777).toBe(0o775);
+    // the dump inside the container belongs to the user psql runs as
+    const loadHeaders = async () => {
+      const headers: Array<{ uid: number; gid: number; mode: number }> = [];
+      for (const [i, buf] of dockerState.putArchives.entries()) {
+        const p = join(env.root, `load-${i}.tar.gz`);
+        wf(p, buf);
+        await readTarGz(p, async (h, body) => {
+          for await (const _chunk of body) {
+            // drain
+          }
+          if (h.type === "file") headers.push({ uid: h.uid, gid: h.gid, mode: h.mode & 0o777 });
+        });
+      }
+      return headers;
+    };
+    expect(await loadHeaders()).toEqual([{ uid: 1001, gid: 0, mode: 0o600 }]);
+
+    // Container user unknown: root-owned and readable by any user
+    dockerState.execUid = "";
+    dockerState.putArchives = [];
+    const again = await restoreAppBackup(backup.backupId, FAST);
+    expect(again.success).toBe(true);
+    expect(await loadHeaders()).toEqual([{ uid: 0, gid: 0, mode: 0o644 }]);
+  });
+
+  it("plans the owner and mode of a re-created database data directory", async () => {
+    const { freshDataDirPlan } = await import("../backup/restore.js");
+    expect(freshDataDirPlan(null, 1000)).toEqual({ mode: 0o700 });
+    expect(freshDataDirPlan({ uid: 1000, gid: 1000, mode: 0o40750 }, 1000)).toEqual({ mode: 0o750 });
+    expect(freshDataDirPlan({ uid: 999, gid: 999, mode: 0o40700 }, 0)).toEqual({ mode: 0o700, chown: { uid: 999, gid: 999 } });
+    // owned by the database user, Talome not root: cannot chown → let that user initialise it
+    expect(freshDataDirPlan({ uid: 1001, gid: 0, mode: 0o40700 }, 1000)).toEqual({ mode: 0o777 });
+  });
+
   it("rejects backups without a manifest (legacy format)", async () => {
     const { db } = await import("../db/index.js");
     const { sql } = await import("drizzle-orm");

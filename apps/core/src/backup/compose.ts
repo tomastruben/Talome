@@ -5,7 +5,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { eq, and } from "drizzle-orm";
@@ -22,7 +22,7 @@ export interface ComposeVolume {
   target: string;
   kind: "bind" | "named";
   readOnly: boolean;
-  /** "config" = app data (under the compose dir or app data dir), "media" = anything else */
+  /** "config" = app data (under the compose dir, the app data dir or the app's chosen data root), "media" = anything else */
   type: "config" | "media";
   exists: boolean;
 }
@@ -54,6 +54,12 @@ export interface AppContext {
   composeDir: string;
   /** Talome's per-app data dir (${APP_DATA_DIR} in Umbrel-style composes) */
   appDataDir: string;
+  /**
+   * Host folder chosen at install time for an Umbrel app's data root
+   * (`storage.dataRoot`: ${APP_DATA_DIR}/data moved elsewhere), or null.
+   * It holds the app's primary data, so it is app data — not media.
+   */
+  dataRootDir: string | null;
   env: Record<string, string>;
   envOverrides: Record<string, string>;
   compose: ParsedCompose;
@@ -119,14 +125,29 @@ function imageRepoName(image: string): string {
   return repo.toLowerCase();
 }
 
+/**
+ * Images that work WITH a database but are not one: metrics exporters,
+ * backup/dump jobs, poolers, admin UIs, upgrade helpers
+ * (prometheuscommunity/postgres-exporter, prodrigestivill/postgres-backup-local,
+ * tianon/postgres-upgrade, …). Dumping them fails and would fail every backup.
+ */
+const DB_SIDECAR_WORD = /(^|[-_.])(exporter|backups?|dump(er)?|restore|admin|metrics|monitor(ing)?|operator|proxy|pooler|bouncer|upgrade|migrate|migrations?|cli|client|tools?)([-_.]|$)/;
+
 export function detectDbEngine(image: string | null | undefined): DbEngine | null {
+  return detectDbEngineDetailed(image)?.engine ?? null;
+}
+
+/** `exact`: a well-known database image name (not just a name containing "postgres"). */
+function detectDbEngineDetailed(image: string | null | undefined): { engine: DbEngine; exact: boolean } | null {
   if (!image) return null;
   const repo = imageRepoName(image);
   const last = repo.split("/").pop() ?? repo;
-  if (/^(postgres|postgresql|postgis|timescaledb(-ha)?|pgvecto-rs|pgvector|pgvecto\.rs)$/.test(last)) return "postgres";
-  if (repo.includes("immich-app/postgres") || /(^|[-_])postgres(ql)?([-_]|$)/.test(last)) return "postgres";
-  if (/^(mariadb|mysql|mysql-server|percona|percona-server)$/.test(last)) return "mysql";
-  if (/^(redis|valkey|keydb|redis-stack|redis-stack-server)$/.test(last)) return "redis";
+  if (/^(postgres|postgresql|postgis|timescaledb(-ha)?|pgvecto-rs|pgvector|pgvecto\.rs)$/.test(last)) return { engine: "postgres", exact: true };
+  if (/^(mariadb|mysql|mysql-server|percona|percona-server)$/.test(last)) return { engine: "mysql", exact: true };
+  if (/^(redis|valkey|keydb|redis-stack|redis-stack-server)$/.test(last)) return { engine: "redis", exact: true };
+  if (DB_SIDECAR_WORD.test(last)) return null;
+  if (repo.includes("immich-app/postgres")) return { engine: "postgres", exact: true };
+  if (/(^|[-_])postgres(ql)?([-_]|$)/.test(last)) return { engine: "postgres", exact: false };
   return null;
 }
 
@@ -177,6 +198,8 @@ function isSystemPath(p: string): boolean {
 export interface ParseComposeOptions {
   composeDir: string;
   appDataDir: string;
+  /** The app's chosen data root (Umbrel storage.dataRoot), classified as app data */
+  dataRootDir?: string | null;
   env: Record<string, string>;
 }
 
@@ -191,9 +214,11 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
     const image = typeof svc.image === "string" ? interpolate(svc.image, opts.env) : null;
     const environment = normalizeEnvironment(svc.environment);
     for (const [k, v] of Object.entries(environment)) environment[k] = interpolate(v, opts.env);
-    const dbEngine = detectDbEngine(image);
+    const detected = detectDbEngineDetailed(image);
+    let dbEngine = detected?.engine ?? null;
     const volumes: ComposeVolume[] = [];
     const dbDataPaths: string[] = [];
+    let hasDataTarget = false;
 
     for (const vol of (Array.isArray(svc.volumes) ? svc.volumes : []) as unknown[]) {
       let raw: string;
@@ -222,13 +247,17 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
       if (source.startsWith("~")) source = join(homedir(), source.slice(1));
       const isBind =
         explicitType === "bind" || source.startsWith("/") || source.startsWith(".") || (explicitType !== "volume" && source.includes("/"));
+      if (dbEngine && isDbDataTarget(dbEngine, target, environment, image)) hasDataTarget = true;
       if (!isBind) {
         volumes.push({ service: name, raw, hostPath: null, target, kind: "named", readOnly, type: "config", exists: false });
         continue;
       }
       const hostPath = resolve(opts.composeDir, source);
       if (isSystemPath(hostPath)) continue;
-      const type = isWithin(opts.composeDir, hostPath) || isWithin(opts.appDataDir, hostPath) ? "config" : "media";
+      const type =
+        isWithin(opts.composeDir, hostPath) || isWithin(opts.appDataDir, hostPath) || (opts.dataRootDir ? isWithin(opts.dataRootDir, hostPath) : false)
+          ? "config"
+          : "media";
       const entry: ComposeVolume = {
         service: name,
         raw,
@@ -248,6 +277,12 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
       volumes.push(entry);
     }
 
+    // A name that merely contains "postgres" counts as a database only when it
+    // keeps database data (a volume at the data directory)
+    if (detected && !detected.exact && !hasDataTarget) {
+      dbEngine = null;
+      dbDataPaths.length = 0;
+    }
     services.push({
       name,
       image,
@@ -268,6 +303,30 @@ export function bindVolumes(compose: ParsedCompose): ComposeVolume[] {
 }
 
 // ── App context ─────────────────────────────────────────────────────────────
+
+/**
+ * The data root folder an Umbrel app was installed with (app_install_options
+ * plan, written by stores/umbrel-v2-install.ts), or null. Missing table (older
+ * database, MCP stdio before migrations) or unreadable JSON → null.
+ */
+export function readAppDataRoot(appId: string): string | null {
+  try {
+    const row = db
+      .select({ plan: schema.appInstallOptions.plan })
+      .from(schema.appInstallOptions)
+      .where(eq(schema.appInstallOptions.appId, appId))
+      .get();
+    if (!row) return null;
+    const plan = JSON.parse(row.plan) as { dataRoot?: { hostPath?: unknown } } | null;
+    const hostPath = plan?.dataRoot?.hostPath;
+    if (typeof hostPath !== "string" || !isAbsolute(hostPath)) return null;
+    const resolved = resolve(hostPath);
+    // Never let a broad folder turn every bind mount (media, system paths) into app data
+    return resolved === "/" || resolved === homedir() ? null : resolved;
+  } catch {
+    return null;
+  }
+}
 
 export type AppContextResult = { ok: true; ctx: AppContext } | { ok: false; error: string };
 
@@ -308,9 +367,10 @@ export function resolveAppContext(appId: string): AppContextResult {
     ...dotEnv,
     ...envOverrides,
   };
+  const dataRootDir = readAppDataRoot(appId);
   let compose: ParsedCompose;
   try {
-    compose = parseCompose(readFileSync(composePath, "utf-8"), { composeDir, appDataDir, env });
+    compose = parseCompose(readFileSync(composePath, "utf-8"), { composeDir, appDataDir, dataRootDir, env });
   } catch (err) {
     return { ok: false, error: `Could not parse compose file: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -325,6 +385,7 @@ export function resolveAppContext(appId: string): AppContextResult {
       composeIsOverride: installed.overrideComposePath === composePath,
       composeDir,
       appDataDir,
+      dataRootDir,
       env,
       envOverrides,
       compose,
