@@ -34,8 +34,8 @@ Every tool in Talome is tagged with one of three security tiers: `read`, `modify
 | Tier | Description | Interactive Chat | Automations |
 |------|-------------|-----------------|-------------|
 | `read` | Retrieves data, no side effects | Always allowed | Always allowed |
-| `modify` | Changes state, can typically be undone | Allowed (confirmation in cautious mode) | Curated subset only |
-| `destructive` | Irreversible operations | Requires CONFIRM in cautious mode | Always blocked |
+| `modify` | Changes state, can typically be undone | Allowed (blocked in locked mode) | Curated subset only |
+| `destructive` | Irreversible operations | Requires the owner's approval in cautious mode | Always blocked |
 
 ### Curated Modify Subset
 

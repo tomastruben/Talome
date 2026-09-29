@@ -92,6 +92,8 @@ export function spawnClaudeStreaming(
   cwd: string,
   onData?: (chunk: string) => void,
   abortSignal?: AbortSignal,
+  /** Extra environment for the claude process (and the MCP servers it launches). */
+  extraEnv?: Record<string, string>,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     let resultText = "";
@@ -116,7 +118,7 @@ export function spawnClaudeStreaming(
       // detached: true so we can SIGTERM the whole process group on timeout.
       // claude may spawn tool subprocesses (bash, git, etc.) — killing only
       // the top-level PID leaves orphans.
-      { cwd, env: cleanEnv, shell: false, detached: true },
+      { cwd, env: { ...cleanEnv, ...(extraEnv ?? {}) }, shell: false, detached: true },
     );
 
     // On abort: send SIGTERM to the process group, then SIGKILL after a

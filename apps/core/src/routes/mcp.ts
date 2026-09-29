@@ -11,6 +11,7 @@ import {
   approvalIdArgSchema,
   executeTool,
   getToolMeta,
+  withExecutionContext,
   type Actor,
   type ExecuteToolResult,
   type ToolMeta,
@@ -235,7 +236,11 @@ export function createMcpSession(actor: Actor): McpSession {
         annotations: toolAnnotations(entry.meta),
       },
       (async (args: unknown) => {
-        const result = await executeTool({ actor, source: "mcp", toolName: entry.name, args, tool: entry.tool });
+        // The whole call — grant checks, approvals, the tool and any app
+        // operation it starts — runs as this MCP actor.
+        const result = await withExecutionContext(actor, "mcp", () =>
+          executeTool({ actor, source: "mcp", toolName: entry.name, args, tool: entry.tool }),
+        );
         return toMcpCallResult(result);
       }) as never,
     );
@@ -290,13 +295,14 @@ mcp.use("/*", async (c, next) => {
           : "provide a valid Bearer token";
     return c.json({ error: `Unauthorized — ${reason}` }, 401);
   }
-  c.set("mcpActor", {
+  const actor: Actor = {
     kind: "mcp_token",
     id: result.token.id,
     label: `MCP token "${result.token.name}"`,
     scopes: result.token.scopes,
-  });
-  await next();
+  };
+  c.set("mcpActor", actor);
+  await withExecutionContext(actor, "mcp", () => next());
 });
 
 // Stateless MCP handler — fresh server + transport per request, built for the

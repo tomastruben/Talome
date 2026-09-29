@@ -10,7 +10,6 @@
 //     and operations cut short by a crash are marked "interrupted" on boot
 //     (see ops/recovery.ts).
 
-import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
@@ -18,6 +17,7 @@ import { z } from "zod";
 import { and, desc, eq, gt, inArray, asc } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { createLogger } from "../utils/logger.js";
+import { currentOperationActor, runWithOperationActor } from "../ai/actor-context.js";
 
 const log = createLogger("ops");
 
@@ -149,17 +149,22 @@ export class OperationConflictError extends Error {
 }
 
 // ── Actor context ─────────────────────────────────────────────────────────────
-// Lets an entry point (chat, MCP, automation) attribute nested lifecycle calls
-// without threading an actor argument through every tool.
-
-const actorStorage = new AsyncLocalStorage<string>();
+// Lets an entry point (chat, MCP, automation, agent loop) attribute nested
+// lifecycle calls without threading an actor argument through every tool.
+// Shares one AsyncLocalStorage with the tool execution service
+// (ai/actor-context.ts): executeTool() runs each tool as its actor, so an
+// operation started from a chat turn, an MCP call, an automation or the agent
+// loop is journaled as e.g. "user:<id> (<name> (chat))",
+// "mcp_token:<id> (MCP token \"<name>\")", "automation:<id> (Automation: <name>)"
+// or "agent_loop:remediation (…)". An explicit runWithActor() string wins
+// over the execution actor; the innermost context wins.
 
 export function runWithActor<T>(actor: string, fn: () => T): T {
-  return actorStorage.run(actor, fn);
+  return runWithOperationActor(actor, fn);
 }
 
 export function currentActor(fallback = "system"): string {
-  return actorStorage.getStore() ?? fallback;
+  return currentOperationActor(fallback);
 }
 
 // ── Events ────────────────────────────────────────────────────────────────────

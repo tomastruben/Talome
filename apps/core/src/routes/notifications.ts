@@ -119,7 +119,8 @@ notifications.get("/", (c) => {
       .orderBy(desc(schema.notifications.createdAt))
       .limit(limit)
       .all();
-    return c.json(rows);
+    // `link` (string | null): optional in-app target, e.g. the approval to review.
+    return c.json(rows.map((row) => ({ ...row, link: row.link ?? null })));
   } catch (err) {
     recordGracefulError(c, err, { endpoint: "notifications/list" });
     return c.json([]);

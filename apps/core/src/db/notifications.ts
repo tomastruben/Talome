@@ -1,5 +1,6 @@
 import { db, schema } from "./index.js";
 import { eq, and, gte, like } from "drizzle-orm";
+import { ensureNotificationLinkColumn } from "./migrations/wire-backend.js";
 
 export type NotificationType = "info" | "warning" | "critical";
 
@@ -83,19 +84,54 @@ function isDuplicate(title: string, sourceId?: string | null): boolean {
   }
 }
 
+export interface WriteNotificationOptions {
+  /**
+   * In-app link for the notification (e.g. /dashboard/settings/approvals?id=…).
+   * Must be a relative path inside the dashboard; anything else is dropped.
+   */
+  link?: string | null;
+  /** Skip title/source de-duplication (default true = de-duplicate). */
+  dedupe?: boolean;
+}
+
+/** Only same-origin, absolute-path links are stored — never external URLs. */
+export function sanitizeNotificationLink(link: string | null | undefined): string | null {
+  if (typeof link !== "string") return null;
+  const trimmed = link.trim();
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.includes("\\")) return null;
+  if (/[\s<>"'`]/.test(trimmed)) return null;
+  return trimmed.slice(0, 500);
+}
+
+function isMissingLinkColumn(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("link") && (msg.includes("no column") || msg.includes("has no column"));
+}
+
+function insertNotification(values: typeof schema.notifications.$inferInsert): void {
+  try {
+    db.insert(schema.notifications).values(values).run();
+  } catch (err) {
+    // A process that never ran migrations (the MCP stdio server against an
+    // older server's DB) may lack the link column: add it and retry once.
+    if (!isMissingLinkColumn(err)) throw err;
+    ensureNotificationLinkColumn();
+    db.insert(schema.notifications).values(values).run();
+  }
+}
+
 export function writeNotification(
   type: NotificationType,
   title: string,
   body = "",
   sourceId?: string,
+  options: WriteNotificationOptions = {},
 ) {
   // Skip if an identical notification was written recently
-  if (isDuplicate(title, sourceId ?? null)) return;
+  if (options.dedupe !== false && isDuplicate(title, sourceId ?? null)) return;
 
   try {
-    db.insert(schema.notifications)
-      .values({ type, title, body, sourceId: sourceId ?? null })
-      .run();
+    insertNotification({ type, title, body, sourceId: sourceId ?? null, link: sanitizeNotificationLink(options.link) });
   } catch {
     // Non-fatal — notifications are best-effort
   }

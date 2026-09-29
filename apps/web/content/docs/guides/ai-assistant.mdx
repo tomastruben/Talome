@@ -63,14 +63,14 @@ Every tool execution passes through the security gateway, which enforces one of 
 | Mode | Read Tools | Modify Tools | Destructive Tools |
 |------|-----------|-------------|------------------|
 | **Permissive** | Execute freely | Execute freely | Execute freely |
-| **Cautious** (default) | Execute freely | Execute freely | Require `confirmed: true` — the AI asks you first |
+| **Cautious** (default) | Execute freely | Execute freely | Require your approval — the AI shares an approval link, you approve in Settings > Approvals |
 | **Locked** | Execute freely | Blocked | Blocked |
 
 You can change the security mode in **Settings > Security**. The default "cautious" mode means the AI can read anything and modify anything, but destructive operations like uninstalling apps, deleting containers, or pruning Docker resources require your explicit confirmation.
 
 <Accordions>
 <Accordion title="Source">
-`apps/core/src/ai/tool-gateway.ts` — `gateToolExecution()` (line 31) wraps each tool with tier-based access control. The three modes (permissive, cautious, locked) are enforced at lines 38-81. Blocked calls write to the audit log via `writeAuditEntry()`.
+`apps/core/src/ai/tool-gateway.ts` — `gateToolExecution()` wraps each chat tool so it runs through `executeTool()` in `apps/core/src/ai/execution.ts`, the single execution path shared with MCP, automations and the agent loop. It enforces grants, the security mode and server-issued approvals, and writes an actor-aware audit entry for every call.
 </Accordion>
 </Accordions>
 

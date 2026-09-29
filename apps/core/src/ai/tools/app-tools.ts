@@ -213,14 +213,14 @@ All apps are placed on the shared 'talome' Docker network so they can reach each
 });
 
 export const uninstallAppTool = tool({
-  description: "Uninstall an app and remove its containers. This is a DESTRUCTIVE action requiring explicit CONFIRM from user.",
+  description: "Uninstall an app and remove its containers. DESTRUCTIVE: tell the user what will be removed first; in cautious mode Talome returns approval_required and the owner approves it before it runs.",
   inputSchema: z.object({
     appId: z.string().describe("App ID to uninstall"),
-    confirmed: z.boolean().describe("Must be true — ask user to confirm before calling"),
+    confirmed: z.boolean().optional().describe("Leave unset. Talome sets it once this call is authorized (the owner approved it, or permissive mode)."),
   }),
   execute: async ({ appId, confirmed }) => {
     if (!confirmed) {
-      return { error: "This is a destructive action. Ask the user to confirm, then call again with confirmed: true." };
+      return { error: "This destructive action was not authorized. Call it without confirmed: Talome asks the owner to approve it (approval_required), then retry with approval_id." };
     }
     const result = await uninstallApp(appId);
     if (result.success) {

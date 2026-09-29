@@ -8,9 +8,13 @@
  * - "permissive": all tools execute freely (power user)
  * - "cautious": destructive tools require a server-issued approval (default).
  *   The model can no longer approve itself with `confirmed: true`; it receives
- *   an `approval_required` result and retries with `approval_id` once the
- *   owner approved in Settings -> Approvals.
+ *   an `approval_required` result (with a link to Settings -> Approvals) and
+ *   retries with `approval_id` once the owner approved. The legacy `confirmed`
+ *   flag is set by the execution service, never by the model.
  * - "locked": only read-tier tools execute; modify/destructive return error
+ *
+ * executeTool also runs the tool inside the actor's context, so app
+ * operations it starts are journaled under the same actor (ops/operations.ts).
  */
 
 import type { Tool } from "ai";

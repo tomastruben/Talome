@@ -6,6 +6,17 @@ import { eq, desc } from "drizzle-orm";
 import { writeAuditEntry } from "../../db/audit.js";
 import { getAutomationSafeTools } from "../automation-safe-tools.js";
 import { executedStepRuns } from "../../automation/step-run-view.js";
+import { getExecutionContext } from "../actor-context.js";
+
+/**
+ * The grants of the actor writing an automation (an MCP token), stored on the
+ * automation so its steps — and its model's tool calls — run under them and a
+ * token cannot escape its grants by scheduling work. Owner writers have none.
+ */
+function writerScopes(): string | null {
+  const scopes = getExecutionContext()?.actor.scopes;
+  return scopes ? JSON.stringify(scopes) : null;
+}
 
 // ── Schema helpers ────────────────────────────────────────────────────────────
 
@@ -31,7 +42,10 @@ const stepSchema = z.discriminatedUnion("type", [
     type: z.literal("tool_action"),
     toolName: z.string().describe("One of the automation-allowed tool names"),
     args: z.record(z.string(), z.any()).optional(),
-    approvalPolicy: z.enum(["auto", "require_approval"]).default("require_approval"),
+    approvalPolicy: z
+      .enum(["auto", "require_approval"])
+      .default("require_approval")
+      .describe("require_approval: each run stops at this step (blocked_approval) until the owner approves it in Settings -> Approvals, then the next run executes it. auto: runs unattended (security mode still applies)."),
   }),
   z.object({
     id: z.string().default(() => randomUUID()),
@@ -101,6 +115,7 @@ export const createAutomationTool = tool({
       actions: "[]",
       workflowVersion: 2,
       steps: JSON.stringify(steps),
+      actorScopes: writerScopes(),
     }).run();
     writeAuditEntry(`AI: create_automation "${name}"`, "modify", id);
     return { ok: true, id, name, stepCount: steps.length };
@@ -120,7 +135,11 @@ export const updateAutomationTool = tool({
     const existing = db.select().from(schema.automations).where(eq(schema.automations.id, id)).get();
     if (!existing) return { ok: false, error: "automation_not_found" };
 
+    // A scoped writer (MCP token) that changes the steps makes the automation
+    // run under its grants; owner edits keep whatever grants it already has.
+    const scopes = steps !== undefined ? writerScopes() : null;
     db.update(schema.automations).set({
+      ...(scopes ? { actorScopes: scopes } : {}),
       ...(name !== undefined ? { name: name.trim() } : {}),
       ...(enabled !== undefined ? { enabled } : {}),
       ...(trigger !== undefined ? { trigger: JSON.stringify(trigger) } : {}),
@@ -136,15 +155,15 @@ export const updateAutomationTool = tool({
 
 export const deleteAutomationTool = tool({
   description:
-    "Permanently delete an automation by ID. This is irreversible — only delete when the user explicitly confirms. Use list_automations to confirm the ID first.",
+    "Permanently delete an automation by ID. This is irreversible — only delete when the user asked for it; in cautious mode the owner approves it in Talome (approval_required). Use list_automations to confirm the ID first.",
   inputSchema: z.object({
     id: z.string().describe("Automation ID to delete"),
     confirmName: z.string().describe("The automation name as shown in list_automations, required as confirmation"),
-    confirmed: z.boolean().describe("Must be true — ask user to confirm before calling"),
+    confirmed: z.boolean().optional().describe("Leave unset. Talome sets it once this call is authorized (the owner approved it, or permissive mode)."),
   }),
   execute: async ({ id, confirmName, confirmed }) => {
     if (!confirmed) {
-      return { error: "This is a destructive action. Ask the user to confirm, then call again with confirmed: true." };
+      return { error: "This destructive action was not authorized. Call it without confirmed: Talome asks the owner to approve it (approval_required), then retry with approval_id." };
     }
     const existing = db.select().from(schema.automations).where(eq(schema.automations.id, id)).get();
     if (!existing) return { ok: false, error: "automation_not_found" };
