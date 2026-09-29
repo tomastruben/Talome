@@ -14,7 +14,7 @@ import {
 import { toast } from "sonner";
 import { SettingsGroup, ToggleRow } from "@/components/settings/settings-primitives";
 import { useAvailableUpdates, type AppUpdateInfo } from "@/hooks/use-available-updates";
-import { describeUpdateResponse } from "@/lib/app-operations";
+import { describeUpdateResponse, updateOutcomeFromOperation, type UpdateOutcome } from "@/lib/app-operations";
 
 interface UpdatePolicy {
   app_id: string;
@@ -23,6 +23,18 @@ interface UpdatePolicy {
 }
 
 const policyFetcher = (url: string) => fetch(url, { credentials: "include" }).then((r) => r.json());
+
+/** The journaled outcome of a finished update (the update route only returns `verified`). */
+async function fetchUpdateOutcome(appId: string, operationId: string | null): Promise<UpdateOutcome | null> {
+  try {
+    const res = await fetch(`${CORE_URL}/api/updates/${encodeURIComponent(appId)}`, { credentials: "include" });
+    if (!res.ok) return null;
+    const info = (await res.json()) as { lastUpdateOperation?: unknown } | null;
+    return updateOutcomeFromOperation(info?.lastUpdateOperation ?? null, operationId);
+  } catch {
+    return null;
+  }
+}
 
 function UpdateRow({ app, onUpdated }: { app: AppUpdateInfo; onUpdated: () => void }) {
   const [updating, setUpdating] = useState(false);
@@ -42,10 +54,18 @@ function UpdateRow({ app, onUpdated }: { app: AppUpdateInfo; onUpdated: () => vo
         credentials: "include",
       });
       const body: unknown = await res.json().catch(() => null);
-      // Success, verified-or-not, rolled back (with reason) or busy (409).
-      const outcome = describeUpdateResponse(app.name, res.status, body);
+      const operationId =
+        body && typeof body === "object" && typeof (body as { operationId?: unknown }).operationId === "string"
+          ? (body as { operationId: string }).operationId
+          : null;
+      const journaled = res.ok ? await fetchUpdateOutcome(app.appId, operationId) : null;
+      // Success, already up to date, verified-or-not, rolled back (with reason) or busy (409).
+      const outcome = describeUpdateResponse(app.name, res.status, body, {
+        outcome: journaled,
+        toVersion: app.availableVersion,
+      });
       const options = outcome.description ? { description: outcome.description } : undefined;
-      if (outcome.kind === "success") toast.success(`${app.name} updated to v${app.availableVersion}`);
+      if (outcome.kind === "success") toast.success(outcome.title, options);
       else if (outcome.kind === "warning") toast.warning(outcome.title, options);
       else toast.error(outcome.title, options);
       onUpdated();

@@ -73,14 +73,30 @@ describe("drafts and changes", () => {
     expect(Object.keys(draft).sort()).toEqual([...RETENTION_KEYS].sort());
   });
 
-  it("returns only changed keys, normalised, with '' to reset to the default", () => {
-    const initial = retentionDraftFromSettings({ retention_audit_log_days: "120" });
-    const draft = { ...initial, retention_audit_log_days: "", retention_install_errors_days: "007" };
-    expect(retentionChanges(initial, draft)).toEqual({
+  it("returns only changed keys, normalised; a cleared stored value is sent as the explicit default", () => {
+    const initial = retentionDraftFromSettings({ retention_audit_log_days: "120", retention_notifications_unread_days: "14" });
+    const draft = {
+      ...initial,
       retention_audit_log_days: "",
+      retention_notifications_unread_days: " ",
+      retention_install_errors_days: "007",
+    };
+    // Core POST /api/settings skips "" (keeps the old value), so never send it.
+    const changes = retentionChanges(initial, draft);
+    expect(changes).toEqual({
+      retention_audit_log_days: "90",
+      retention_notifications_unread_days: "0",
       retention_install_errors_days: "7",
     });
+    expect(Object.values(changes)).not.toContain("");
     expect(retentionChanges(initial, initial)).toEqual({});
+  });
+
+  it("does not resend a cleared field that already holds the default or nothing", () => {
+    const initial = retentionDraftFromSettings({ retention_audit_log_days: "90" });
+    expect(retentionChanges(initial, { ...initial, retention_audit_log_days: "" })).toEqual({});
+    const empty = retentionDraftFromSettings({});
+    expect(retentionChanges(empty, { ...empty })).toEqual({});
   });
 
   it("collects field errors for the whole draft", () => {

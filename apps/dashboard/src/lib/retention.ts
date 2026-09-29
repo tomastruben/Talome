@@ -1,8 +1,11 @@
 /**
  * Data-retention settings — mirrors apps/core/src/db/retention.ts
  * (RETENTION_SETTING_KEYS, DEFAULT_RETENTION and the per-key minimums).
- * Values are stored through the generic settings API as strings; an empty
- * value means "use the default".
+ * Values are stored through the generic settings API as strings. In the form
+ * draft an empty value means "use the default"; because core POST
+ * /api/settings skips empty strings (it never deletes a key), clearing a
+ * stored value is persisted as the explicit default, which core
+ * resolveRetentionConfig treats exactly like an absent key.
  */
 
 export interface RetentionField {
@@ -142,13 +145,21 @@ export function validateRetentionDraft(draft: RetentionDraft): Record<string, st
   return errors;
 }
 
-/** The settings to POST: only changed keys, normalised ("" resets to the default). */
+/**
+ * The settings to POST: only changed keys, normalised. A cleared field that
+ * had a stored value is sent as the explicit default — core ignores "" and
+ * would otherwise keep the old value.
+ */
 export function retentionChanges(initial: RetentionDraft, draft: RetentionDraft): Record<string, string> {
   const changes: Record<string, string> = {};
   for (const field of RETENTION_FIELDS) {
     const before = (initial[field.key] ?? "").trim();
     const raw = (draft[field.key] ?? "").trim();
-    const after = raw === "" ? "" : String(Number(raw));
+    if (raw === "") {
+      if (before !== "" && before !== String(field.defaultValue)) changes[field.key] = String(field.defaultValue);
+      continue;
+    }
+    const after = String(Number(raw));
     if (after !== before) changes[field.key] = after;
   }
   return changes;

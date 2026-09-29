@@ -164,6 +164,121 @@ describe("useAppOperations", () => {
     expect(FakeEventSource.instances[1].closed).toBe(false);
   });
 
+  it("recovers from a terminal event missed while the tab was hidden", async () => {
+    let historyRows: unknown[] = [];
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/operations?limit=")) return { ok: true, json: async () => historyRows };
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+    const onSettled = vi.fn();
+    const { result } = renderHook(() => useAppOperations("jellyfin", { onSettled }), { wrapper });
+    const first = FakeEventSource.instances[0];
+
+    act(() => {
+      first.emit("operation", {
+        operationId: "op-5",
+        appId: "jellyfin",
+        kind: "update",
+        actor: "user",
+        status: "running",
+        step: "recreate",
+        progress: 60,
+        at: "2026-09-29T10:00:30.000Z",
+      });
+    });
+    expect(result.current.isActive).toBe(true);
+
+    // Hidden: the stream closes and the operation finishes meanwhile.
+    act(() => setVisibility("hidden"));
+    expect(first.closed).toBe(true);
+    historyRows = [
+      {
+        id: "op-5",
+        appId: "jellyfin",
+        kind: "update",
+        actor: "user",
+        status: "succeeded",
+        step: "done",
+        progress: 100,
+        detail: { outcome: "updated" },
+        error: null,
+        startedAt: "2026-09-29T10:00:00.000Z",
+        updatedAt: "2026-09-29T10:01:00.000Z",
+        finishedAt: "2026-09-29T10:01:00.000Z",
+      },
+    ];
+
+    // Visible again: the reopened stream says "ready" and the journal is refetched.
+    act(() => setVisibility("visible"));
+    const second = FakeEventSource.instances[1];
+    await act(async () => {
+      second.emit("ready", {});
+    });
+
+    await waitFor(() => expect(result.current.isActive).toBe(false));
+    expect(result.current.live).toMatchObject({ operationId: "op-5", status: "succeeded", progress: 100 });
+    await waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
+    expect(onSettled.mock.calls[0][0]).toMatchObject({ operationId: "op-5", status: "succeeded" });
+
+    // A late duplicate terminal event is not reported twice.
+    act(() => {
+      second.emit("operation", {
+        operationId: "op-5",
+        appId: "jellyfin",
+        kind: "update",
+        actor: "user",
+        status: "succeeded",
+        step: "done",
+        progress: 100,
+        at: "2026-09-29T10:01:00.000Z",
+      });
+    });
+    expect(onSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles an adopted operation from the journal when the stream never reports it", async () => {
+    let finished = false;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/operations?limit=")) {
+        return {
+          ok: true,
+          json: async () =>
+            finished
+              ? [{
+                  id: "op-9", appId: "jellyfin", kind: "install", actor: "assistant", status: "failed",
+                  step: "pulling", progress: 30, detail: null, error: "pull failed",
+                  startedAt: "2026-09-29T10:00:00.000Z", updatedAt: "2026-09-29T10:00:40.000Z",
+                  finishedAt: "2026-09-29T10:00:40.000Z",
+                }]
+              : [],
+        };
+      }
+      if (url.endsWith("/api/operations/op-9")) {
+        return {
+          ok: true,
+          json: async () => ({
+            id: "op-9", appId: "jellyfin", kind: "install", actor: "assistant", status: "running",
+            step: "pulling", progress: 30, detail: null, error: null,
+            startedAt: "2026-09-29T10:00:00.000Z", updatedAt: "2026-09-29T10:00:10.000Z", finishedAt: null,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+    const { result } = renderHook(() => useAppOperations("jellyfin"), { wrapper });
+    await act(async () => {
+      await result.current.adopt("op-9");
+    });
+    await waitFor(() => expect(result.current.isActive).toBe(true));
+
+    finished = true;
+    await act(async () => {
+      await result.current.refresh();
+    });
+    await waitFor(() => expect(result.current.isActive).toBe(false));
+    expect(result.current.live).toMatchObject({ operationId: "op-9", status: "failed", error: "pull failed" });
+  });
+
   it("opens nothing when disabled", () => {
     renderHook(() => useAppOperations("jellyfin", { enabled: false }), { wrapper });
     expect(FakeEventSource.instances).toHaveLength(0);

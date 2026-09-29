@@ -5,13 +5,14 @@ import useSWR from "swr";
 import { CORE_URL, getDirectCoreUrl } from "@/lib/constants";
 import { POLL_ACTIVE_MS, POLL_IDLE_MS, isDocumentVisible } from "@/lib/polling";
 import {
-  activeOperationFromHistory,
   isActiveOperationStatus,
+  liveOperationFrom,
+  missedTerminalRecord,
+  operationEventFromRecord,
   operationFromRecord,
   parseOperationEvent,
   parseOperationHistory,
   parseOperationRecord,
-  pickLiveOperation,
   reduceOperationEvent,
   type LiveOperation,
   type OperationEvent,
@@ -22,15 +23,22 @@ const HISTORY_LIMIT = 10;
 
 type StreamAction =
   | { type: "event"; event: OperationEvent; appId: string }
-  /** A journal row learned out of band (409 conflict); never overrides fresher stream state. */
+  /**
+   * A journal row learned out of band (409 conflict, or a terminal row for an
+   * operation whose terminal event was missed); never overrides fresher
+   * stream state unless it settles it.
+   */
   | { type: "seed"; operation: LiveOperation };
 
 function streamReducer(state: LiveOperation | null, action: StreamAction): LiveOperation | null {
   if (action.type === "event") return reduceOperationEvent(state, action.event, action.appId);
-  if (state && state.operationId === action.operation.operationId && state.updatedAt >= action.operation.updatedAt) {
-    return state;
+  const next = action.operation;
+  if (state && state.operationId === next.operationId) {
+    // A terminal journal row always settles a still-active streamed state.
+    const settles = isActiveOperationStatus(state.status) && !isActiveOperationStatus(next.status);
+    if (!settles && state.updatedAt >= next.updatedAt) return state;
   }
-  return action.operation;
+  return next;
 }
 
 async function historyFetcher(url: string): Promise<OperationRecord[]> {
@@ -60,6 +68,13 @@ export function useAppOperations(appId: string | null | undefined, options: UseA
   const { enabled = true, busy = false, onSettled } = options;
   const [streamed, dispatch] = useReducer(streamReducer, null);
   const onSettledRef = useRef(onSettled);
+  const streamedRef = useRef(streamed);
+  /** Operation ids already reported through onSettled (stream or journal). */
+  const settledIdsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    streamedRef.current = streamed;
+  }, [streamed]);
 
   useEffect(() => {
     onSettledRef.current = onSettled;
@@ -71,15 +86,28 @@ export function useAppOperations(appId: string | null | undefined, options: UseA
   const refreshInterval = useCallback(
     (data: OperationRecord[] | undefined) => {
       if (!appId) return 0;
-      const live = pickLiveOperation(streamed, activeOperationFromHistory(data), appId);
+      const live = liveOperationFrom(streamed, data, appId);
       return busy || isActiveOperationStatus(live?.status) ? POLL_ACTIVE_MS : POLL_IDLE_MS;
     },
     [appId, streamed, busy],
   );
 
+  // The journal finished an operation the stream still shows as active (its
+  // terminal event was missed while hidden / reconnecting / unreachable):
+  // settle the stream state and report it like a terminal event.
+  const onHistory = useCallback((data: OperationRecord[]) => {
+    const row = missedTerminalRecord(streamedRef.current, data);
+    if (!row) return;
+    dispatch({ type: "seed", operation: operationFromRecord(row) });
+    if (settledIdsRef.current.has(row.id)) return;
+    settledIdsRef.current.add(row.id);
+    onSettledRef.current?.(operationEventFromRecord(row));
+  }, []);
+
   const { data: history, error, isLoading, mutate } = useSWR<OperationRecord[]>(key, historyFetcher, {
     refreshInterval,
     revalidateOnFocus: true,
+    onSuccess: onHistory,
   });
 
   const mutateRef = useRef(mutate);
@@ -105,7 +133,10 @@ export function useAppOperations(appId: string | null | undefined, options: UseA
       dispatch({ type: "event", event, appId });
       if (!isActiveOperationStatus(event.status)) {
         void mutateRef.current();
-        onSettledRef.current?.(event);
+        if (!settledIdsRef.current.has(event.operationId)) {
+          settledIdsRef.current.add(event.operationId);
+          onSettledRef.current?.(event);
+        }
       }
     };
 
@@ -169,7 +200,7 @@ export function useAppOperations(appId: string | null | undefined, options: UseA
   );
 
   const live = useMemo(
-    () => (appId ? pickLiveOperation(streamed, activeOperationFromHistory(history), appId) : null),
+    () => (appId ? liveOperationFrom(streamed, history, appId) : null),
     [appId, streamed, history],
   );
 

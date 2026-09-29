@@ -233,6 +233,69 @@ export function activeOperationFromHistory(history: readonly OperationRecord[] |
 }
 
 /**
+ * Reconcile the streamed state with the full journal history.
+ *
+ * The stream has no replay: a terminal event is missed when the tab was hidden
+ * (stream closed), the EventSource reconnected, or the stream is unreachable
+ * and the operation was seeded from a 409. The journal row for the same
+ * operation then wins when it is terminal or newer, so a finished operation
+ * never stays "running" on the page.
+ */
+export function reconcileStreamedOperation(
+  streamed: LiveOperation | null,
+  history: readonly OperationRecord[] | null | undefined,
+): LiveOperation | null {
+  if (!streamed || !history || !isActiveOperationStatus(streamed.status)) return streamed;
+  const row = history.find((rec) => rec.id === streamed.operationId);
+  if (!row) return streamed;
+  if (!isActiveOperationStatus(row.status) || row.updatedAt > streamed.updatedAt) {
+    return { ...operationFromRecord(row), message: row.step === streamed.step ? streamed.message : null };
+  }
+  return streamed;
+}
+
+/**
+ * The terminal journal row for an operation the stream still shows as
+ * active, if the history has one (i.e. its terminal event was missed).
+ */
+export function missedTerminalRecord(
+  streamed: LiveOperation | null,
+  history: readonly OperationRecord[] | null | undefined,
+): OperationRecord | null {
+  if (!streamed || !history || !isActiveOperationStatus(streamed.status)) return null;
+  const row = history.find((rec) => rec.id === streamed.operationId);
+  return row && !isActiveOperationStatus(row.status) ? row : null;
+}
+
+/** A journal row as a stream event (for callbacks that expect one). */
+export function operationEventFromRecord(rec: OperationRecord): OperationEvent {
+  return {
+    operationId: rec.id,
+    appId: rec.appId,
+    kind: rec.kind,
+    actor: rec.actor,
+    status: rec.status,
+    step: rec.step,
+    progress: rec.progress,
+    ...(rec.error ? { error: rec.error } : {}),
+    at: rec.finishedAt ?? rec.updatedAt,
+  };
+}
+
+/**
+ * The live operation for `appId` from the stream state and the full journal
+ * history: the stream reconciled against its journal row, then compared with
+ * the newest active journal row.
+ */
+export function liveOperationFrom(
+  streamed: LiveOperation | null,
+  history: readonly OperationRecord[] | null | undefined,
+  appId: string,
+): LiveOperation | null {
+  return pickLiveOperation(reconcileStreamedOperation(streamed, history), activeOperationFromHistory(history), appId);
+}
+
+/**
  * Pick what to show from the stream state and the polled journal. The more
  * recently updated view of the same operation wins; for different operations
  * the more recently started one wins.
@@ -462,18 +525,55 @@ export interface LifecycleOutcome {
   operationId: string | null;
 }
 
+export const UPDATE_OUTCOMES = ["updated", "no_change", "unverified", "rolled_back", "failed"] as const;
+export type UpdateOutcome = (typeof UPDATE_OUTCOMES)[number];
+
+function asUpdateOutcome(value: unknown): UpdateOutcome | null {
+  return typeof value === "string" && (UPDATE_OUTCOMES as readonly string[]).includes(value)
+    ? (value as UpdateOutcome)
+    : null;
+}
+
+/**
+ * The journaled outcome (core lifecycle `detail.outcome`) of an update, from
+ * `lastUpdateOperation` of GET /api/updates/:appId. When `operationId` is
+ * given the row must be that operation, so an older update is never used.
+ */
+export function updateOutcomeFromOperation(raw: unknown, operationId: string | null): UpdateOutcome | null {
+  const op = parseOperationRecord(raw);
+  if (!op || op.kind !== "update") return null;
+  if (operationId && op.id !== operationId) return null;
+  return asUpdateOutcome(op.detail?.outcome);
+}
+
+export interface UpdateResponseContext {
+  /** Journaled outcome of this update (the HTTP route only returns `verified`). */
+  outcome?: UpdateOutcome | null;
+  /** Version the update targeted, for the success title. */
+  toVersion?: string | null;
+}
+
 /** Toast copy for the response of POST /api/apps/:storeId/:appId/update. */
-export function describeUpdateResponse(appName: string, status: number, body: unknown): LifecycleOutcome {
+export function describeUpdateResponse(
+  appName: string,
+  status: number,
+  body: unknown,
+  context: UpdateResponseContext = {},
+): LifecycleOutcome {
   const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
   const operationId = typeof b.operationId === "string" ? b.operationId : null;
   const error = typeof b.error === "string" && b.error ? b.error : undefined;
+  const outcome = context.outcome ?? asUpdateOutcome(b.outcome);
 
   const conflict = parseOperationConflict(status, body);
   if (conflict) {
     return { kind: "conflict", title: `${appName} is busy`, description: conflict.message, operationId: conflict.operationId };
   }
   if (status >= 200 && status < 300) {
-    if (b.verified === false) {
+    if (outcome === "no_change") {
+      return { kind: "success", title: `${appName} is already up to date`, operationId };
+    }
+    if (outcome === "unverified" || (!outcome && b.verified === false)) {
       return {
         kind: "warning",
         title: `${appName} updated`,
@@ -481,7 +581,8 @@ export function describeUpdateResponse(appName: string, status: number, body: un
         operationId,
       };
     }
-    return { kind: "success", title: `${appName} updated`, operationId };
+    const title = context.toVersion ? `${appName} updated to v${context.toVersion}` : `${appName} updated`;
+    return { kind: "success", title, operationId };
   }
   if (b.rolledBack === true) {
     return {

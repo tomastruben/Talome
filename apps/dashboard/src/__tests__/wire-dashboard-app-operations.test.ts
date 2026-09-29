@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   activeOperationFromHistory,
   describeUpdateResponse,
+  liveOperationFrom,
+  missedTerminalRecord,
+  operationEventFromRecord,
   operationActorLabel,
   operationStepLabel,
   parseOperationConflict,
@@ -10,6 +13,7 @@ import {
   pickLiveOperation,
   reduceOperationEvent,
   summarizeUpdateOperation,
+  updateOutcomeFromOperation,
   type OperationEvent,
   type OperationRecord,
 } from "@/lib/app-operations";
@@ -119,6 +123,37 @@ describe("history reconciliation", () => {
     expect(pickLiveOperation(null, polled, "jellyfin")?.status).toBe("running");
     expect(pickLiveOperation(streamed, null, "sonarr")).toBeNull();
   });
+
+  it("settles a streamed running op from a terminal journal row (missed terminal event)", () => {
+    const streamed = reduceOperationEvent(null, event({ at: "2026-09-29T10:00:30.000Z" }), "jellyfin");
+    const history = [
+      record({ status: "succeeded", step: "done", progress: 100, updatedAt: "2026-09-29T10:02:00.000Z", finishedAt: "2026-09-29T10:02:00.000Z" }),
+    ];
+    const live = liveOperationFrom(streamed, history, "jellyfin");
+    expect(live).toMatchObject({ operationId: "op-1", status: "succeeded", progress: 100 });
+    expect(missedTerminalRecord(streamed, history)?.id).toBe("op-1");
+    expect(operationEventFromRecord(history[0])).toMatchObject({ operationId: "op-1", status: "succeeded", at: "2026-09-29T10:02:00.000Z" });
+  });
+
+  it("settles even when the terminal row's timestamp is not newer than the stream", () => {
+    const streamed = reduceOperationEvent(null, event({ at: "2026-09-29T10:05:00.000Z" }), "jellyfin");
+    const history = [record({ status: "failed", error: "boom", updatedAt: "2026-09-29T10:04:00.000Z" })];
+    expect(liveOperationFrom(streamed, history, "jellyfin")).toMatchObject({ status: "failed", error: "boom" });
+  });
+
+  it("keeps fresher stream state over an older active journal row, and ignores unrelated rows", () => {
+    const streamed = reduceOperationEvent(null, event({ step: "recreate", progress: 60, at: "2026-09-29T10:05:00.000Z" }), "jellyfin");
+    const olderRow = [record({ step: "pull", progress: 10, updatedAt: "2026-09-29T10:01:00.000Z" })];
+    expect(liveOperationFrom(streamed, olderRow, "jellyfin")).toMatchObject({ step: "recreate", progress: 60 });
+    expect(missedTerminalRecord(streamed, olderRow)).toBeNull();
+
+    const newerRow = [record({ step: "verify", progress: 80, updatedAt: "2026-09-29T10:06:00.000Z" })];
+    expect(liveOperationFrom(streamed, newerRow, "jellyfin")).toMatchObject({ step: "verify", progress: 80 });
+
+    const other = [record({ id: "op-0", status: "succeeded" })];
+    expect(liveOperationFrom(streamed, other, "jellyfin")?.status).toBe("running");
+    expect(liveOperationFrom(null, other, "jellyfin")).toBeNull();
+  });
 });
 
 describe("summarizeUpdateOperation", () => {
@@ -163,6 +198,31 @@ describe("lifecycle responses", () => {
       kind: "conflict",
       operationId: "x",
     });
+  });
+
+  it("uses the journaled outcome: no_change is 'already up to date', not 'updated'", () => {
+    const body = { ok: true, operationId: "op-1", verified: false };
+    expect(describeUpdateResponse("Jellyfin", 200, body, { outcome: "no_change", toVersion: "10.9.1" })).toEqual({
+      kind: "success",
+      title: "Jellyfin is already up to date",
+      operationId: "op-1",
+    });
+    expect(describeUpdateResponse("Jellyfin", 200, body, { outcome: "unverified" }).kind).toBe("warning");
+    expect(describeUpdateResponse("Jellyfin", 200, { ...body, verified: true }, { outcome: "updated", toVersion: "10.9.1" }).title).toBe(
+      "Jellyfin updated to v10.9.1",
+    );
+    // Forward-compatible with a route that returns `outcome` itself.
+    expect(describeUpdateResponse("Jellyfin", 200, { ...body, outcome: "no_change" }).title).toBe("Jellyfin is already up to date");
+  });
+
+  it("reads the outcome of this update from lastUpdateOperation", () => {
+    const row = record({ status: "succeeded", detail: { outcome: "no_change" } });
+    expect(updateOutcomeFromOperation(row, "op-1")).toBe("no_change");
+    expect(updateOutcomeFromOperation(row, null)).toBe("no_change");
+    expect(updateOutcomeFromOperation(row, "op-2")).toBeNull();
+    expect(updateOutcomeFromOperation(record({ kind: "rollback", detail: { outcome: "no_change" } }), null)).toBeNull();
+    expect(updateOutcomeFromOperation(record({ detail: { outcome: "weird" } }), null)).toBeNull();
+    expect(updateOutcomeFromOperation(null, null)).toBeNull();
   });
 });
 

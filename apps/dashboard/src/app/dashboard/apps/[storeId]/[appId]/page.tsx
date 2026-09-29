@@ -26,6 +26,7 @@ import {
   OPERATION_KIND_LABELS,
   OPERATION_KIND_PROGRESS_LABELS,
   describeUpdateResponse,
+  updateOutcomeFromOperation,
   parseOperationConflict,
   summarizeUpdateOperation,
   type LifecycleOutcome,
@@ -270,7 +271,7 @@ export default function AppDetailPage() {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [umbrelDialog, setUmbrelDialog] = useState<{ plan: UmbrelInstallPlan; version: number } | null>(null);
   const quickLook = useQuickLook();
-  const { isAdmin } = useUser();
+  const { isAdmin, isLoading: userLoading } = useUser();
 
   const appKey = storeId && appId ? `${CORE_URL}/api/apps/${storeId}/${appId}` : null;
   const stacksKey = `${CORE_URL}/api/containers?grouped=true`;
@@ -374,6 +375,12 @@ export default function AppDetailPage() {
     { revalidateOnFocus: false },
   );
   const installBlocked = installBlockReason(installPlan);
+  // Hold Install until we know whether to show the plan: while the role is
+  // loading an early click would skip the dialog (and the unsupported check).
+  const installPlanPending =
+    !!app && app.source === "umbrel" && !app.installed && (userLoading || (wantsInstallPlan && installPlan === undefined));
+  // Unsupported (e.g. Tor-only) apps can't be installed by any path, including the assistant.
+  const installUnsupported = !!installPlan && !installPlan.supported;
 
   // Set title synchronously from URL, update when SWR data arrives.
   const resolvedName = app?.installed?.displayName || app?.name;
@@ -412,8 +419,14 @@ export default function AppDetailPage() {
         toast.success(`${app.name} removed`);
       } else if (action === "update") {
         const response = await talomePost<unknown>(`/api/apps/${storeId}/${appId}/update`);
-        await Promise.all([mutate(), mutateUpdateInfo()]);
-        showOutcomeToast(describeUpdateResponse(app.name, 200, response));
+        const [, freshInfo] = await Promise.all([mutate(), mutateUpdateInfo()]);
+        const operationId =
+          response && typeof response === "object" && typeof (response as { operationId?: unknown }).operationId === "string"
+            ? (response as { operationId: string }).operationId
+            : null;
+        // The route only returns `verified`; the journal knows "already up to date".
+        const outcome = updateOutcomeFromOperation(freshInfo?.lastUpdateOperation ?? null, operationId);
+        showOutcomeToast(describeUpdateResponse(app.name, 200, response, { outcome }));
       } else {
         await talomePost(`/api/apps/${storeId}/${appId}/${action}`);
         await mutate();
@@ -446,7 +459,7 @@ export default function AppDetailPage() {
 
   /** Install, first asking for Umbrel folder/env/dependency choices when the plan has any. */
   const startInstall = async () => {
-    if (!app) return;
+    if (!app || installPlanPending) return;
     if (app.source === "umbrel" && isAdmin) {
       const plan = installPlan ?? (await mutateInstallPlan());
       if (plan && (planHasChoices(plan) || installBlockReason(plan))) {
@@ -551,7 +564,7 @@ export default function AppDetailPage() {
   const isRunning = status === "running";
   const hasRealIcon = app.iconUrl && !app.iconUrl.startsWith("file://");
   const isUserCreated = storeId === "user-apps";
-  const requiresSetup = !isInstalled && needsAiSetup(app);
+  const requiresSetup = !isInstalled && !installUnsupported && needsAiSetup(app);
   const validScreenshots = (app.screenshots || []).filter(
     (s) => !s.startsWith("file://"),
   );
@@ -807,7 +820,7 @@ export default function AppDetailPage() {
             <Button
               size="lg"
               onClick={() => void startInstall()}
-              disabled={actionInFlight || !!installBlocked}
+              disabled={actionInFlight || !!installBlocked || installPlanPending}
               className="w-full"
             >
               {app.detectedRunning ? "Reinstall with Talome" : "Install"}
