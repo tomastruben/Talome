@@ -67,7 +67,7 @@ import {
   type VerifyResult,
   type VerifyOptions,
 } from "../ops/docker-probe.js";
-import { isPreUpdateBackupEnabled, takePreUpdateBackup, findPreUpdateBackupId, type PreUpdateBackupResult } from "../ops/pre-update-backup.js";
+import { isPreUpdateBackupEnabled, takePreUpdateBackup, findPreUpdateBackupId, backupTriggerForActor, type PreUpdateBackupResult } from "../ops/pre-update-backup.js";
 import { getSemanticBaseline, hasSemanticProbe, runSemanticVerification, type SemanticVerification } from "../ops/semantic-verify.js";
 import { holdAppMaintenance } from "../backup/state.js";
 import { reconcileUmbrelDependencies, applyUmbrelV2Install } from "./umbrel-v2-install.js";
@@ -1053,10 +1053,27 @@ export interface RollbackResult {
   dataRestoreHint?: string;
 }
 
+/** Container names/ids recorded by the newest rollback snapshot (for the maintenance hold). */
+function latestSnapshotContainerKeys(appId: string): string[] {
+  try {
+    const snap = db
+      .select({ previousImages: schema.updateSnapshots.previousImages })
+      .from(schema.updateSnapshots)
+      .where(and(eq(schema.updateSnapshots.appId, appId), eq(schema.updateSnapshots.rolledBack, false)))
+      .orderBy(desc(schema.updateSnapshots.id))
+      .limit(1)
+      .get();
+    return parseSnapshotImages(snap?.previousImages).flatMap((i) => [i.containerId, i.containerName]).filter((k): k is string => Boolean(k));
+  } catch {
+    return [];
+  }
+}
+
 export function rollbackUpdate(appId: string, opts?: LifecycleOptions): Promise<RollbackResult & OperationResultMeta> {
   return runAppOperation(appId, "rollback", opts, async (ctx) => {
-    // Containers are recreated: keep monitors and the agent loop quiet until done.
-    const releaseMaintenance = holdAppMaintenance(appId, "rollback");
+    // Containers are recreated: keep monitors and the agent loop quiet until
+    // done — including containers whose container_name is not app-prefixed.
+    const releaseMaintenance = holdAppMaintenance(appId, "rollback", latestSnapshotContainerKeys(appId));
     try {
       return await rollbackUpdateInner(appId, ctx);
     } finally {
@@ -1212,6 +1229,17 @@ interface UpdateRunOptions {
   beginMaintenance: (keys: Array<string | null | undefined>) => void;
 }
 
+/** Journal progress for the pre-update backup's engine stages (inside the 6–9% band). */
+const PRE_UPDATE_BACKUP_PROGRESS: Record<string, number> = {
+  preparing: 6,
+  dumping: 7,
+  pausing: 7,
+  archiving: 8,
+  resuming: 9,
+  validating: 9,
+  uploading: 9,
+};
+
 function summarizeSemantic(v: SemanticVerification): UpdateResult["semanticVerification"] {
   return { status: v.status ?? "unknown", baseline: v.baseline, regression: v.regression, summary: v.summary ?? "" };
 }
@@ -1272,6 +1300,60 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
     ...(runOpts.force ? { force: true } : {}),
   });
 
+  // ── 2. Pre-update backup ────────────────────────────────────────────────
+  // Taken before anything changes — before the compose image refs move and
+  // before new images are pulled — so the archive (and its compose snapshot
+  // and manifest version) captures the version that is actually running, and
+  // an abort leaves nothing half-applied (no moved tags, no edited compose).
+  // It runs while holding this operation: the engine uses its own per-app lock
+  // and Docker directly (never a lifecycle entry point), so it cannot conflict
+  // with or deadlock on this update.
+  db.update(schema.installedApps)
+    .set({ status: "updating", updatedAt: new Date().toISOString() })
+    .where(eq(schema.installedApps.appId, appId))
+    .run();
+
+  let backup: PreUpdateBackupResult;
+  if (isPreUpdateBackupEnabled(appId)) {
+    ctx.step("backup", 6, "Backing up app data before switching versions");
+    backup = await takePreUpdateBackup(appId, {
+      triggeredBy: backupTriggerForActor(ctx.actor),
+      onStage: (stage) => ctx.step(`backup:${stage}`, PRE_UPDATE_BACKUP_PROGRESS[stage] ?? 7),
+    });
+  } else {
+    backup = { attempted: false, success: false, reason: "Not enabled in the app's update policy (preBackup)" };
+  }
+  ctx.setDetail({ backup });
+  if (backup.attempted && !backup.success && !backup.skipped) {
+    const backupError = backup.error ?? "unknown error";
+    if (!runOpts.force) {
+      // Nothing was changed yet (no compose edit, no pull, no recreate).
+      db.update(schema.installedApps)
+        .set({ status: previousStatus, updatedAt: new Date().toISOString() })
+        .where(eq(schema.installedApps.appId, appId))
+        .run();
+      db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
+      ctx.setDetail({ snapshotId: null, appTouched: false, outcome: "failed", backupFailed: true });
+      const error =
+        `Pre-update backup failed: ${backupError}. The update was aborted before anything changed — ` +
+        `${app.name} keeps running version ${installed.version}. Fix the backup, or update with force to proceed without one.`;
+      writeNotification("warning", `Update of ${app.name} aborted`, error, appId);
+      return { success: false, error, outcome: "failed", backupFailed: true };
+    }
+    ctx.setDetail({ backupForced: true });
+    log.warn(`Pre-update backup of ${appId} failed (${backupError}); proceeding because the update was forced`);
+  }
+  if (backup.success && backup.backupFile) {
+    try {
+      db.update(schema.updateSnapshots)
+        .set({ backupPath: backup.backupFile })
+        .where(eq(schema.updateSnapshots.id, snapshotId))
+        .run();
+    } catch {
+      // Detail on the operation already records it
+    }
+  }
+
   // The override compose froze the image refs at install — move them to the
   // catalog's current refs (restored from the snapshot on any failure).
   let imageRefChanges: { service: string; from: string; to: string }[] = [];
@@ -1288,12 +1370,8 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
     if (snap?.previousCompose) atomicWriteFileSync(effectiveCompose, snap.previousCompose, "utf-8");
   };
 
-  // ── 2. Pull new images while the app keeps running ─────────────────────
+  // ── 3. Pull new images while the app keeps running ─────────────────────
   ctx.step("pull", 10, "Downloading new images (app keeps running)");
-  db.update(schema.installedApps)
-    .set({ status: "updating", updatedAt: new Date().toISOString() })
-    .where(eq(schema.installedApps.appId, appId))
-    .run();
 
   try {
     await run(`docker compose -f "${effectiveCompose}" pull`, {
@@ -1325,54 +1403,6 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
     return { success: false, error: `Image pull failed; app left unchanged: ${errorDetail}`, outcome: "failed" };
   }
   ctx.step("pull", 40, "New images downloaded");
-
-  // ── 3. Pre-update backup ────────────────────────────────────────────────
-  // Taken through the backup engine while holding this operation: the engine
-  // uses its own per-app lock and Docker directly (never a lifecycle entry
-  // point), so it cannot conflict with or deadlock on this update.
-  let backup: PreUpdateBackupResult;
-  if (isPreUpdateBackupEnabled(appId)) {
-    ctx.step("backup", 45, "Backing up app data before switching versions");
-    backup = await takePreUpdateBackup(appId);
-  } else {
-    backup = { attempted: false, success: false, reason: "Not enabled in the app's update policy (preBackup)" };
-  }
-  ctx.setDetail({ backup });
-  if (backup.attempted && !backup.success && !backup.skipped) {
-    const backupError = backup.error ?? "unknown error";
-    if (!runOpts.force) {
-      // Nothing was recreated yet (the new images were only downloaded), so
-      // aborting here costs no downtime.
-      try {
-        restoreSnapshotCompose();
-      } catch (restoreErr: unknown) {
-        log.warn(`Could not restore the compose file of ${appId} after a failed pre-update backup`, restoreErr);
-      }
-      db.update(schema.installedApps)
-        .set({ status: previousStatus, updatedAt: new Date().toISOString() })
-        .where(eq(schema.installedApps.appId, appId))
-        .run();
-      db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
-      ctx.setDetail({ snapshotId: null, appTouched: false, outcome: "failed", backupFailed: true });
-      const error =
-        `Pre-update backup failed: ${backupError}. The update was aborted before any container was recreated — ` +
-        `${app.name} keeps running version ${installed.version}. Fix the backup, or update with force to proceed without one.`;
-      writeNotification("warning", `Update of ${app.name} aborted`, error, appId);
-      return { success: false, error, outcome: "failed", backupFailed: true };
-    }
-    ctx.setDetail({ backupForced: true });
-    log.warn(`Pre-update backup of ${appId} failed (${backupError}); proceeding because the update was forced`);
-  }
-  if (backup.success && backup.backupFile) {
-    try {
-      db.update(schema.updateSnapshots)
-        .set({ backupPath: backup.backupFile })
-        .where(eq(schema.updateSnapshots.id, snapshotId))
-        .run();
-    } catch {
-      // Detail on the operation already records it
-    }
-  }
 
   // ── 4. Recreate on the new images ───────────────────────────────────────
   // From here until the operation ends, container stops/recreates are intended.
@@ -1449,21 +1479,24 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   // Only once the new version passed container/HTTP verification. A regression
   // from "verified" to "failed" is treated like a failed update.
   let semantic: SemanticVerification | null = null;
+  /** Why a semantic regression was not rolled back automatically (null when none or rolled back). */
+  let semanticNotRolledBack: string | null = null;
   if (!failureReason && imagesChanged && verification?.healthy && semanticProbe) {
     ctx.step("semantic_verify", 75, "Checking the app still does its job (outcome probes)");
     semantic = await runSemanticVerification(appId, { baseline: semanticBaseline });
     ctx.setDetail({ semanticVerification: semantic });
     if (semantic.regression) {
-      if (imageRollbackAvailable) {
+      // The new version already passed its health checks, so its startup
+      // migrations have run: putting the old images back on top of that data
+      // is only safe to automate when the pre-update backup can revert the data.
+      const dataRevertible = backup.success && Boolean(backup.backupId);
+      if (imageRollbackAvailable && dataRevertible) {
         failureReason = `Outcome verification regressed after the update (verified before, failed now): ${semantic.summary ?? "checks failed"}`;
       } else {
-        writeNotification(
-          "critical",
-          `${app.name} updated, outcome checks now failing`,
-          `${app.name} passed its outcome checks before the update and fails them now (${semantic.summary ?? "checks failed"}). ` +
-          `It could not be rolled back automatically because no previous images were recorded.`,
-          appId,
-        );
+        semanticNotRolledBack = !imageRollbackAvailable
+          ? "no previous images were recorded"
+          : "no pre-update backup was taken, and the older version may not start on data the new version already migrated " +
+            "(enable preBackup in the app's update policy to allow automatic rollbacks)";
       }
     }
   }
@@ -1521,6 +1554,17 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
       ctx.setDetail({ outcome: "unverified" });
       writeNotification("warning", `${app.name} updated, not yet verified`, warning, appId);
       return { success: true, verified: false, outcome: "unverified", warning, ...backupResult };
+    }
+
+    if (semantic?.regression && semanticNotRolledBack) {
+      // A known regression is never reported as a clean, verified success.
+      const warning =
+        `Updated to version ${app.version} and its containers are healthy, but it passed its outcome checks before the update ` +
+        `and fails them now (${semantic.summary ?? "checks failed"}). It was not rolled back automatically: ${semanticNotRolledBack}. ` +
+        `Roll back the update if the app does not work.${backupLine}`;
+      ctx.setDetail({ outcome: "regressed" });
+      writeNotification("critical", `${app.name} updated, outcome checks now failing`, warning, appId);
+      return { success: true, verified: true, outcome: "unverified", warning, ...semanticResult, ...backupResult };
     }
 
     ctx.setDetail({ outcome: "updated" });

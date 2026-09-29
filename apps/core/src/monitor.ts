@@ -19,7 +19,8 @@ import { maybeRunScheduledSetup } from "./setup/triggers.js";
 import { getSetting, setSetting } from "./utils/settings.js";
 import { db } from "./db/index.js";
 import { sql } from "drizzle-orm";
-import { runScheduledBackup, runBackupMaintenance, isContainerInBackupWindow, type ScheduleRow } from "./backup/index.js";
+import { runScheduledBackup, runBackupMaintenance, type ScheduleRow } from "./backup/index.js";
+import { isContainerUnderOperation } from "./ops/maintenance.js";
 import { cronMatches } from "./backup/cron.js";
 import { createLogger } from "./utils/logger.js";
 
@@ -76,11 +77,15 @@ async function checkContainerHealth() {
     const stoppedNames: string[] = [];
 
     for (const c of containers) {
-      currentStates.set(c.name, c.status);
       const prev = previousContainerStates.get(c.name);
+      const wentDown = prev === "running" && c.status !== "running";
+      // Containers stopped on purpose (backup, restore, update, rollback — in
+      // any Talome process) are not "down" yet: keep the previous state so a
+      // container still down once the operation is over is reported then.
+      const intentional = wentDown && isContainerUnderOperation(c.name, c.id);
+      currentStates.set(c.name, intentional ? "running" : c.status);
 
-      // Containers stopped on purpose by a backup/restore are not "down"
-      if (prev && prev === "running" && c.status !== "running" && !isContainerInBackupWindow(c.name, c.id)) {
+      if (wentDown && !intentional) {
         stoppedNames.push(c.name);
         writeAuditEntry(
           `Container down: ${c.name}`,

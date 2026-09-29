@@ -239,7 +239,8 @@ describe("backups are app operations", () => {
       expect(res.status).toBe(409);
 
       const schedule = { id: "s1", app_id: APP, cron: "0 2 * * *", cloud_target: null, retention_days: 30, enabled: 1, last_run_at: null, created_at: new Date().toISOString() };
-      const scheduled = await runScheduledBackup(schedule, APP);
+      // Waits (bounded) for the update, then gives up with a "skipped" notice
+      const scheduled = await runScheduledBackup(schedule, APP, { conflictWaitMs: 30 });
       expect(scheduled.success).toBe(false);
       expect(m.writeNotification).toHaveBeenCalledWith("warning", "Backup skipped", expect.stringContaining(APP));
 
@@ -249,6 +250,24 @@ describe("backups are app operations", () => {
       held.release();
       await held.done;
     }
+  });
+
+  it("a scheduled backup that collides with an update waits for it and then runs", async () => {
+    const held = await holdOperation("update");
+    const schedule = { id: "s2", app_id: APP, cron: "0 2 * * *", cloud_target: null, retention_days: 30, enabled: 1, last_run_at: null, created_at: new Date().toISOString() };
+    const scheduled = runScheduledBackup(schedule, APP, { conflictWaitMs: 5_000 });
+    await new Promise((r) => setTimeout(r, 30));
+    // Still waiting: nothing stopped while the update runs
+    expect(dockerState.events).toEqual([]);
+    held.release();
+    await held.done;
+
+    const result = await scheduled;
+    expect(result.success).toBe(true);
+    expect(m.writeNotification).not.toHaveBeenCalledWith("warning", "Backup skipped", expect.anything());
+    expect(m.writeNotification).toHaveBeenCalledWith("info", "Backup completed", expect.stringContaining(APP));
+    const ops = db.select().from(schema.appOperations).all().map((o) => `${o.kind}:${o.status}`);
+    expect(ops).toEqual(expect.arrayContaining(["update:succeeded", "backup:succeeded"]));
   });
 
   it("the trigger endpoint returns the operation id of the background backup", async () => {

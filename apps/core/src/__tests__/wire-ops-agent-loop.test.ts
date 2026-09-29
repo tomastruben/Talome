@@ -130,8 +130,25 @@ describe("maintenance windows", () => {
     releaseUpdate();
     releaseUpdate(); // idempotent
     expect(getAppMaintenanceReasons(APP)).toEqual([]);
-    // Short grace period for restart settling, then nothing
+    // Short grace period for restart settling — for the marked containers only:
+    // app-name matching ends with the hold, so a recreated container that
+    // crashes right after the update is not hidden.
     expect(isAppInMaintenance(APP)).toBe(true);
+    expect(isContainerInBackupWindow("sonarr")).toBe(true);
+    expect(isContainerInBackupWindow("sonarr-sonarr-1", "fff000fff000")).toBe(false);
+  });
+
+  it("a held app does not cover another installed app whose id shares its prefix", () => {
+    const release = holdAppMaintenance(APP, "update");
+    try {
+      expect(isContainerInBackupWindow("sonarr-web-1")).toBe(true);
+      expect(isContainerInBackupWindow("sonarr-anime")).toBe(false);
+      expect(isContainerInBackupWindow("sonarr-anime-web-1")).toBe(false);
+      expect(checkRemediationGuard(event("sonarr-anime-web-1")).blocked).toBe(false);
+      expect(checkRemediationGuard(event("sonarr-web-1")).blocked).toBe(true);
+    } finally {
+      release();
+    }
   });
 
   it("ends immediately with a zero grace period", () => {
@@ -188,17 +205,20 @@ describe("remediation guard", () => {
       await runAgentCycleOnce();
       expect(m.triageEvents).not.toHaveBeenCalled();
       expect(m.remediateEvent).not.toHaveBeenCalled();
-      // The event itself is still recorded
-      expect(db.select().from(schema.systemEvents).where(eq(schema.systemEvents.id, ev.id)).get()).toBeTruthy();
+      // Neither persisted nor deduplicated: the first occurrence after the
+      // operation must count as new
+      expect(db.select().from(schema.systemEvents).where(eq(schema.systemEvents.id, ev.id)).get()).toBeUndefined();
     } finally {
       await held.release();
     }
 
-    resetDedupCache();
+    // Same problem, still there after the operation — no dedup cache reset
     const ev2 = event("sonarr");
     m.runDetectors.mockResolvedValue([ev2]);
     await runAgentCycleOnce();
+    expect(m.triageEvents).toHaveBeenCalledTimes(1);
     expect(m.remediateEvent).toHaveBeenCalledTimes(1);
+    expect(db.select().from(schema.systemEvents).where(eq(schema.systemEvents.id, ev2.id)).get()).toBeTruthy();
   });
 
   it("re-checks right before remediating (an operation may start during triage)", async () => {

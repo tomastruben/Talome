@@ -62,11 +62,20 @@ export function isPreUpdateBackupEnabled(appId: string): boolean {
   }
 }
 
+export type PreUpdateBackupTrigger = "manual" | "schedule";
+
 export interface PreUpdateBackupOptions {
   /** Called with backup engine stages (preparing, dumping, pausing, archiving, …) */
   onStage?: (stage: string) => void;
+  /** Who started the update: a person/assistant ("manual") or a schedule/automation */
+  triggeredBy?: PreUpdateBackupTrigger;
   /** Test seam */
-  createBackup?: (appId: string, opts: { purpose: "pre-update"; triggeredBy: "manual"; onStage?: (stage: string) => void }) => Promise<CreateAppBackupResult>;
+  createBackup?: (appId: string, opts: { purpose: "pre-update"; triggeredBy: PreUpdateBackupTrigger; onStage?: (stage: string) => void }) => Promise<CreateAppBackupResult>;
+}
+
+/** Backup trigger for an operation actor ("schedule:<id>", "automation:<id>" → schedule). */
+export function backupTriggerForActor(actor: string): PreUpdateBackupTrigger {
+  return /^(schedule|automation|auto-update)(:|$)/.test(actor) ? "schedule" : "manual";
 }
 
 export async function takePreUpdateBackup(appId: string, opts: PreUpdateBackupOptions = {}): Promise<PreUpdateBackupResult> {
@@ -75,13 +84,15 @@ export async function takePreUpdateBackup(appId: string, opts: PreUpdateBackupOp
     try {
       createBackup = (await import("../backup/index.js")).createAppBackup;
     } catch (err) {
-      return { attempted: false, success: false, error: `Backup module unavailable: ${err instanceof Error ? err.message : String(err)}`, reason: "Backup module unavailable" };
+      // Only called when the policy requires a backup: an unloadable backup
+      // module is a failed backup (aborts the update unless forced), not a skip.
+      return { attempted: true, success: false, error: `Backup module unavailable: ${err instanceof Error ? err.message : String(err)}`, code: "failed" };
     }
   }
 
   let result: CreateAppBackupResult;
   try {
-    result = await createBackup(appId, { purpose: "pre-update", triggeredBy: "manual", onStage: opts.onStage });
+    result = await createBackup(appId, { purpose: "pre-update", triggeredBy: opts.triggeredBy ?? "manual", onStage: opts.onStage });
   } catch (err) {
     return { attempted: true, success: false, error: err instanceof Error ? err.message : String(err), code: "failed" };
   }
@@ -109,10 +120,20 @@ export async function takePreUpdateBackup(appId: string, opts: PreUpdateBackupOp
   };
 }
 
+/** True when the backup still exists and completed (safety backups get pruned). */
+function isRestorableBackup(backupId: string): boolean {
+  const row = db
+    .select({ status: schema.backups.status })
+    .from(schema.backups)
+    .where(eq(schema.backups.id, backupId))
+    .get();
+  return row?.status === "completed";
+}
+
 /**
  * Find the pre-update backup taken by an update operation (for offering a data
  * restore after a rollback). Falls back to the archive path recorded on the
- * update snapshot.
+ * update snapshot. Null when that backup was pruned or never completed.
  */
 export function findPreUpdateBackupId(snapshot: { operationId?: string | null; backupPath?: string | null }): string | null {
   try {
@@ -124,16 +145,18 @@ export function findPreUpdateBackupId(snapshot: { operationId?: string | null; b
         .get();
       if (op?.detail) {
         const detail = JSON.parse(op.detail) as { backup?: { backupId?: unknown; success?: unknown } };
-        if (detail.backup?.success === true && typeof detail.backup.backupId === "string") return detail.backup.backupId;
+        if (detail.backup?.success === true && typeof detail.backup.backupId === "string") {
+          return isRestorableBackup(detail.backup.backupId) ? detail.backup.backupId : null;
+        }
       }
     }
     if (snapshot.backupPath) {
       const row = db
-        .select({ id: schema.backups.id })
+        .select({ id: schema.backups.id, status: schema.backups.status })
         .from(schema.backups)
         .where(eq(schema.backups.filePath, snapshot.backupPath))
         .get();
-      if (row) return row.id;
+      if (row?.status === "completed") return row.id;
     }
   } catch {
     // Best effort

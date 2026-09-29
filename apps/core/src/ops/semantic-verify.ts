@@ -11,7 +11,10 @@
 //                           → record + notify only.
 //
 // Every run is bounded: per-check timeouts plus an overall deadline. A run that
-// cannot finish in time counts as "unknown" — never as a regression.
+// cannot finish in time counts as "unknown" — never as a regression. Likewise a
+// "failed" whose only failing critical checks timed out (slow first answer
+// after a recreate, a dependency briefly away) counts as "unknown", and a
+// baseline older than SEMANTIC_BASELINE_MAX_AGE_MS is no baseline at all.
 
 import type { VerificationStatus } from "../verification/types.js";
 
@@ -46,6 +49,8 @@ export interface SemanticVerifyOptions {
 const DEFAULT_TIMEOUT_MS = Number(process.env.TALOME_SEMANTIC_VERIFY_TIMEOUT_MS) || 60_000;
 const DEFAULT_RETRY_MS = Number(process.env.TALOME_SEMANTIC_VERIFY_RETRY_MS) || 15_000;
 const DEFAULT_CHECK_TIMEOUT_MS = 10_000;
+/** A stored "verified" older than this says nothing about the version being replaced. */
+export const SEMANTIC_BASELINE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 type VerificationModule = typeof import("../verification/index.js");
 
@@ -68,12 +73,23 @@ export async function hasSemanticProbe(appId: string): Promise<boolean> {
   }
 }
 
-/** Last stored verification status for the app (read BEFORE changing it). */
-export async function getSemanticBaseline(appId: string): Promise<VerificationStatus | null> {
+/**
+ * Last stored verification status for the app (read BEFORE changing it), or
+ * null when there is none recent enough to compare against.
+ */
+export async function getSemanticBaseline(
+  appId: string,
+  maxAgeMs: number = SEMANTIC_BASELINE_MAX_AGE_MS,
+  now: number = Date.now(),
+): Promise<VerificationStatus | null> {
   const mod = await loadVerification();
   if (!mod) return null;
   try {
-    return mod.getLatestVerificationResult("app", appId.toLowerCase())?.status ?? null;
+    const latest = mod.getLatestVerificationResult("app", appId.toLowerCase());
+    if (!latest) return null;
+    const at = Date.parse(latest.verifiedAt);
+    if (!Number.isFinite(at) || now - at > maxAgeMs) return null;
+    return latest.status;
   } catch {
     return null;
   }
@@ -103,9 +119,15 @@ async function runOnce(mod: VerificationModule, appId: string, timeoutMs: number
     }
     if (!outcome.ok) return { status: "unknown", summary: outcome.error, problems: [], error: outcome.error };
     const r = outcome.result;
+    // "failed" only because critical checks timed out is not evidence the app
+    // is broken — it may still be warming up, or a dependency is briefly away.
+    const timeoutOnly = r.status === "failed" &&
+      !r.checks.some((c) => c.critical && c.status === "fail") &&
+      r.checks.some((c) => c.critical && c.status === "timeout");
     return {
-      status: r.status,
-      summary: r.summary,
+      status: timeoutOnly ? "unknown" : r.status,
+      summary: timeoutOnly ? `Outcome checks timed out: ${r.summary}` : r.summary,
+      ...(timeoutOnly ? { error: "timeout" } : {}),
       problems: r.checks
         .filter((c) => c.status !== "pass" && c.status !== "skip")
         .slice(0, 10)

@@ -4,6 +4,8 @@
  * cancellation.
  */
 
+import { db, schema } from "../db/index.js";
+
 export type AppOperationKind = "backup" | "restore";
 
 export interface AppOperation {
@@ -98,10 +100,19 @@ export function activeIds(): { backups: Set<string>; restores: Set<string>; veri
 //     rollback or restore. While an app is held, releasing its container keys
 //     (e.g. a pre-update backup finishing inside an update) does not end the
 //     window, and every container named after the app counts as in the window
-//     (recreated containers get new ids). The window ends — after a short
-//     grace period — when the last hold is released.
+//     (recreated containers get new ids) — unless the name belongs to another
+//     installed app with a longer id ("sonarr-anime-web-1" is not "sonarr").
+//
+// When the last hold is released only the container keys the operation marked
+// stay in the window, for a short settling grace (HOLD_GRACE_MS): the app-name
+// match ends with the hold. Callers that track state transitions must not
+// advance their "previous state" for containers skipped here, so a container
+// still down once the window ends is reported then.
 
+/** Settling grace for container keys after a backup released them (no hold). */
 const MAINTENANCE_GRACE_MS = 2 * 60 * 1000;
+/** Settling grace after the last hold on an app is released (update/rollback/restore). */
+export const HOLD_GRACE_MS = 15 * 1000;
 const maintenance = new Map<string, { appId: string; until: number }>();
 const appHolds = new Map<string, Map<symbol, { reason: string; since: number }>>();
 /** Grace period after the last hold on an app was released. */
@@ -135,7 +146,7 @@ export function holdAppMaintenance(
   appId: string,
   reason: string,
   keys: Array<string | null | undefined> = [],
-  graceMs = MAINTENANCE_GRACE_MS,
+  graceMs = HOLD_GRACE_MS,
 ): () => void {
   const token = Symbol(reason);
   const holds = appHolds.get(appId) ?? new Map<symbol, { reason: string; since: number }>();
@@ -175,20 +186,47 @@ export function isAppInMaintenance(appId: string): boolean {
 }
 
 /** Container names Docker Compose (or a plain `container_name`) gives an app's containers. */
-function nameBelongsToApp(name: string, appId: string): boolean {
-  const n = name.toLowerCase();
+export function nameBelongsToApp(name: string, appId: string): boolean {
+  const n = name.toLowerCase().replace(/^\//, "");
   const a = appId.toLowerCase();
   return n === a || n.startsWith(`${a}-`) || n.startsWith(`${a}_`);
 }
 
-/** Apps currently held (or in their post-hold grace period). */
-function appsInHoldWindow(now: number): string[] {
-  const ids = new Set<string>(appHolds.keys());
-  for (const [appId, until] of appGraceUntil) {
-    if (until >= now) ids.add(appId);
-    else appGraceUntil.delete(appId);
+/**
+ * The app a container name belongs to among `appIds`: the longest matching id
+ * wins, so "sonarr-anime-web-1" belongs to "sonarr-anime", not "sonarr".
+ */
+export function owningAppId(name: string, appIds: Iterable<string>): string | null {
+  let best: string | null = null;
+  for (const id of appIds) {
+    if (nameBelongsToApp(name, id) && (best === null || id.length > best.length)) best = id;
   }
-  return [...ids];
+  return best;
+}
+
+const INSTALLED_IDS_TTL_MS = 10_000;
+let installedIdsCache: { at: number; ids: string[] } | null = null;
+
+/** Installed app ids (cached briefly — consulted on every monitor tick). */
+export function installedAppIdsCached(): string[] {
+  const now = Date.now();
+  if (installedIdsCache && now - installedIdsCache.at < INSTALLED_IDS_TTL_MS) return installedIdsCache.ids;
+  let ids: string[] = [];
+  try {
+    ids = db.select({ appId: schema.installedApps.appId }).from(schema.installedApps).all().map((r) => r.appId);
+  } catch {
+    ids = [];
+  }
+  installedIdsCache = { at: now, ids };
+  return ids;
+}
+
+/** True when `name` is named after a held app and no longer installed app id claims it. */
+function nameInHeldApp(name: string, heldApps: string[]): boolean {
+  const held = heldApps.filter((appId) => nameBelongsToApp(name, appId));
+  if (held.length === 0) return false;
+  const owner = owningAppId(name, [...installedAppIdsCached(), ...held]);
+  return owner !== null && held.includes(owner);
 }
 
 /**
@@ -205,12 +243,13 @@ export function isContainerInBackupWindow(...keys: Array<string | null | undefin
   for (const [key, entry] of maintenance) {
     if (entry.until < now && (appHolds.get(entry.appId)?.size ?? 0) === 0) maintenance.delete(key);
   }
-  const heldApps = appsInHoldWindow(now);
+  // App-name matching covers held apps only — never the post-hold grace.
+  const heldApps = [...appHolds.keys()];
   for (const k of keys) {
     if (!k) continue;
     const name = k.replace(/^\//, "");
     if (maintenance.has(name)) return true;
-    if (heldApps.some((appId) => nameBelongsToApp(name, appId))) return true;
+    if (heldApps.length > 0 && nameInHeldApp(name, heldApps)) return true;
     // Container ids: short (12) and full (64) hex forms refer to the same container
     if (/^[0-9a-f]{12,64}$/.test(name)) {
       for (const key of maintenance.keys()) {
@@ -223,6 +262,7 @@ export function isContainerInBackupWindow(...keys: Array<string | null | undefin
 
 /** Test-only: forget every maintenance window and hold. */
 export function __resetMaintenanceForTests(): void {
+  installedIdsCache = null;
   maintenance.clear();
   appHolds.clear();
   appGraceUntil.clear();

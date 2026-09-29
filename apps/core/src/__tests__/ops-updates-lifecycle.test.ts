@@ -43,6 +43,7 @@ vi.mock("../ops/pre-update-backup.js", () => ({
   isPreUpdateBackupEnabled: m.isPreUpdateBackupEnabled,
   takePreUpdateBackup: m.takePreUpdateBackup,
   findPreUpdateBackupId: vi.fn(() => null),
+  backupTriggerForActor: vi.fn(() => "manual"),
 }));
 
 // Outcome probes are covered by wire-ops-update-backup.test.ts.
@@ -190,7 +191,8 @@ describe("safe update pipeline", () => {
     const cmds = commands();
     expect(cmds.every((c) => c.includes(" pull"))).toBe(true);
     expect(cmds.some((c) => /\b(up|down|stop|restart|rm)\b/.test(c))).toBe(false);
-    expect(m.takePreUpdateBackup).not.toHaveBeenCalled();
+    // The pre-update backup runs before anything changes (before the pull)
+    expect(m.takePreUpdateBackup.mock.invocationCallOrder[0]).toBeLessThan(m.run.mock.invocationCallOrder[0]);
     expect(m.restoreServiceImages).not.toHaveBeenCalled();
 
     const row = installedRow()!;
@@ -216,8 +218,9 @@ describe("safe update pipeline", () => {
     expect(pullCall).toBeGreaterThanOrEqual(0);
     expect(upCall).toBeGreaterThan(pullCall);
     expect(m.captureServiceImages.mock.invocationCallOrder[0]).toBeLessThan(m.run.mock.invocationCallOrder[pullCall]);
-    expect(m.takePreUpdateBackup.mock.invocationCallOrder[0]).toBeGreaterThan(m.run.mock.invocationCallOrder[pullCall]);
-    expect(m.takePreUpdateBackup.mock.invocationCallOrder[0]).toBeLessThan(m.run.mock.invocationCallOrder[upCall]);
+    // Backup of the running version before the pull (no moved tags, no edited compose in the archive)
+    expect(m.takePreUpdateBackup.mock.invocationCallOrder[0]).toBeGreaterThan(m.captureServiceImages.mock.invocationCallOrder[0]);
+    expect(m.takePreUpdateBackup.mock.invocationCallOrder[0]).toBeLessThan(m.run.mock.invocationCallOrder[pullCall]);
 
     const snapshot = db.select().from(schema.updateSnapshots).get()!;
     expect(snapshot.previousCompose).toBe(ORIGINAL_COMPOSE);
@@ -250,7 +253,7 @@ describe("safe update pipeline", () => {
     const result = await updateApp(APP_ID);
     const steps = listOperationSteps(result.operationId!);
     expect(steps.map((s) => s.step)).toEqual([
-      "starting", "preflight", "snapshot", "pull", "pull", "backup", "recreate", "verify", "finalize", "done",
+      "starting", "preflight", "snapshot", "backup", "pull", "pull", "recreate", "verify", "finalize", "done",
     ]);
     const progress = steps.map((s) => s.progress);
     expect(progress).toEqual([...progress].sort((a, b) => a - b));

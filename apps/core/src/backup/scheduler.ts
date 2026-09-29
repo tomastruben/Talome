@@ -20,6 +20,7 @@ import { createLogger } from "../utils/logger.js";
 import { maxCronIntervalMs } from "./cron.js";
 import { deleteBackup } from "./engine.js";
 import { runBackupOperation } from "./operation.js";
+import { waitForAppOperation } from "../ops/operations.js";
 import { recoverPendingOperations } from "./recovery.js";
 import { applyRetentionPolicy, hasGfsRules } from "./retention.js";
 import { activeIds } from "./state.js";
@@ -79,10 +80,25 @@ export async function applyScheduleRetention(schedule: ScheduleRow, appId: strin
   return decision.prune;
 }
 
+/**
+ * How long a scheduled backup waits for another operation on the app (an
+ * update scheduled for the same night, a restore, …) before it is skipped.
+ */
+export const SCHEDULED_BACKUP_CONFLICT_WAIT_MS = 45 * 60 * 1000;
+
+export interface ScheduledBackupOptions {
+  /** Wait for a conflicting operation up to this long, then retry once (default 45 min). */
+  conflictWaitMs?: number;
+}
+
 /** Back up one app for a schedule, notify, and apply retention on success. */
-export async function runScheduledBackup(schedule: ScheduleRow, appId: string): Promise<CreateAppBackupResult> {
+export async function runScheduledBackup(
+  schedule: ScheduleRow,
+  appId: string,
+  opts: ScheduledBackupOptions = {},
+): Promise<CreateAppBackupResult> {
   // A journaled "backup" operation: never stops an app mid-update/install/restore.
-  const result = await runBackupOperation(
+  const attempt = () => runBackupOperation(
     appId,
     {
       triggeredBy: "schedule",
@@ -93,6 +109,13 @@ export async function runScheduledBackup(schedule: ScheduleRow, appId: string): 
     },
     { actor: `schedule:${schedule.id}` },
   );
+  let result = await attempt();
+  if (!result.success && result.conflict) {
+    // Deferred, not dropped: wait (bounded) for the other operation, then retry once.
+    const waitMs = opts.conflictWaitMs ?? SCHEDULED_BACKUP_CONFLICT_WAIT_MS;
+    log.info(`Scheduled backup of ${appId} waits up to ${Math.round(waitMs / 60_000)} min for another operation: ${result.error}`);
+    if (await waitForAppOperation(appId, { timeoutMs: waitMs })) result = await attempt();
+  }
   if (!result.success && result.conflict) {
     // Skipped, not failed: the stale-backup check alerts if it keeps happening.
     writeNotification("warning", "Backup skipped", `${appId}: ${result.error}`);

@@ -11,7 +11,7 @@ import { APP_REGISTRY } from "../app-registry/index.js";
 import { db, schema } from "../db/index.js";
 import { eq, desc } from "drizzle-orm";
 import type { SystemEvent, EventSeverity, AgentLoopConfig } from "./types.js";
-import { isContainerInBackupWindow } from "../backup/state.js";
+import { isContainerUnderOperation } from "../ops/maintenance.js";
 
 const execAsync = promisify(execCb);
 
@@ -69,11 +69,15 @@ async function detectContainerIssues(config: AgentLoopConfig): Promise<SystemEve
     const currentStates = new Map<string, string>();
 
     for (const c of containers) {
-      currentStates.set(c.name, c.status);
       const prev = previousStates.get(c.name);
+      const wentDown = prev === "running" && c.status !== "running";
+      // Stopped on purpose by an operation (any process): keep the previous
+      // state so a container still down after the operation is reported then.
+      const intentional = wentDown && isContainerUnderOperation(c.name, c.id);
+      currentStates.set(c.name, intentional ? "running" : c.status);
 
       // Container went down
-      if (prev && prev === "running" && c.status !== "running" && !isContainerInBackupWindow(c.name, c.id)) {
+      if (wentDown && !intentional) {
         if (shouldEmit(`container_down:${c.name}`)) {
           events.push(
             makeEvent("container_down", "warning", c.name, `Container ${c.name} stopped (was running)`, {

@@ -15,9 +15,9 @@ const m = vi.hoisted(() => {
     probeHttp: vi.fn(),
     writeNotification: vi.fn(),
     isVerifiableApp: vi.fn((_id: string) => false),
-    getLatestVerificationResult: vi.fn((_type: string, _id: string): { status: string } | null => null),
+    getLatestVerificationResult: vi.fn((_type: string, _id: string): { status: string; verifiedAt: string } | null => null),
     verifyApp: vi.fn(),
-    observed: [] as Array<{ at: string; appInMaintenance: boolean; containerInWindow: boolean }>,
+    observed: [] as Array<{ at: string; appInMaintenance: boolean; containerInWindow: boolean; customInWindow: boolean; compose: string }>,
   };
 });
 
@@ -67,6 +67,9 @@ runMigrations();
 const { db, schema } = await import("../db/index.js");
 const { eq, sql } = await import("drizzle-orm");
 const { updateApp, rollbackUpdate } = await import("../stores/lifecycle.js");
+const { runRestoreOperation } = await import("../backup/operation.js");
+const { readFileSync, writeFileSync } = await import("node:fs");
+const { join, dirname } = await import("node:path");
 const { getOperation, listOperationSteps, __resetActiveOperationsForTests } = await import("../ops/operations.js");
 const state = await import("../backup/state.js");
 
@@ -104,15 +107,30 @@ function commands(): string[] {
   return m.run.mock.calls.map((c) => String(c[0]));
 }
 
+let appComposePath = "";
+
 function observe(at: string): void {
+  let compose = "";
+  try {
+    compose = readFileSync(appComposePath, "utf-8");
+  } catch {
+    compose = "";
+  }
   m.observed.push({
     at,
     appInMaintenance: state.isAppInMaintenance(APP),
     containerInWindow: state.isContainerInBackupWindow("bkapp-web-1", "c2"),
+    customInWindow: state.isContainerInBackupWindow("custom-web"),
+    compose,
   });
 }
 
-async function setupApp(compose = COMPOSE, preBackup = true): Promise<void> {
+/** Stored verification result, recent enough to be an update baseline. */
+function stored(status: string, verifiedAt = new Date().toISOString()): { status: string; verifiedAt: string } {
+  return { status, verifiedAt };
+}
+
+async function setupApp(compose = COMPOSE, preBackup = true, catalogCompose: string | null = null): Promise<void> {
   db.run(sql`DELETE FROM app_operation_events`);
   db.run(sql`DELETE FROM app_operations`);
   db.run(sql`DELETE FROM update_snapshots`);
@@ -121,8 +139,15 @@ async function setupApp(compose = COMPOSE, preBackup = true): Promise<void> {
   db.run(sql`DELETE FROM app_catalog`);
   db.run(sql`DELETE FROM store_sources`);
   const { composePath } = await installFakeApp(env.root, APP, compose, { "config/settings.xml": "<x/>" });
+  appComposePath = composePath;
+  // A separate catalog compose makes the installed one an override whose image refs the update moves.
+  let catalogPath = composePath;
+  if (catalogCompose) {
+    catalogPath = join(dirname(composePath), "..", `${APP}-catalog.yml`);
+    writeFileSync(catalogPath, catalogCompose);
+  }
   db.insert(schema.storeSources).values({ id: "test-store", name: "Test", type: "talome" }).run();
-  db.insert(schema.appCatalog).values({ appId: APP, storeSourceId: "test-store", name: "Bk App", version: "1.1.0", source: "talome", composePath }).run();
+  db.insert(schema.appCatalog).values({ appId: APP, storeSourceId: "test-store", name: "Bk App", version: "1.1.0", source: "talome", composePath: catalogPath }).run();
   if (preBackup) {
     db.run(sql`INSERT INTO app_update_policies (app_id, policy, pre_backup, created_at) VALUES (${APP}, 'manual', 1, ${new Date().toISOString()})`);
   }
@@ -138,6 +163,7 @@ beforeEach(async () => {
   await setupApp();
   m.run.mockImplementation(async (cmd: string) => {
     if (cmd.includes(" up -d")) observe(cmd.includes("--force-recreate") ? "rollback-recreate" : "recreate");
+    if (cmd.includes(" pull")) observe("pull");
     return { stdout: "", stderr: "" };
   });
   m.captureServiceImages.mockReset();
@@ -171,6 +197,10 @@ describe("pre-update backup through the backup engine", () => {
     expect(startIdx).toBeGreaterThan(stopIdx);
     const upCall = m.run.mock.calls.findIndex((c) => String(c[0]).includes(" up -d"));
     expect(upCall).toBeGreaterThanOrEqual(0);
+    const order = m.observed.map((o) => o.at);
+    expect(order.indexOf("backup-stop")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("backup-stop")).toBeLessThan(order.indexOf("pull"));
+    expect(order.indexOf("pull")).toBeLessThan(order.indexOf("recreate"));
 
     // Backup id recorded on the operation and the archive on the update snapshot
     const op = getOperation(result.operationId!)!;
@@ -193,8 +223,8 @@ describe("pre-update backup through the backup engine", () => {
     expect(result.backupFailed).toBe(true);
     expect(result.error).toContain("Pre-update backup failed");
     expect(result.error).toContain("force");
-    // Images were pulled, but nothing was recreated
-    expect(commands().some((c) => c.includes(" pull"))).toBe(true);
+    // The backup runs before anything changes: no images pulled (no moved tags), nothing recreated
+    expect(commands().some((c) => c.includes(" pull"))).toBe(false);
     expect(commands().some((c) => c.includes(" up -d"))).toBe(false);
     // The backup engine started the container it tried to stop again
     expect(dockerState.events).toContain("start:c1");
@@ -236,6 +266,54 @@ describe("pre-update backup through the backup engine", () => {
     expect(op.detail?.backupForced).toBe(true);
     expect(op.detail?.force).toBe(true);
     expect((op.detail?.backup as { success: boolean }).success).toBe(false);
+  });
+
+  it("backs up the running version before moving image refs or pulling, so restoring it after a rollback keeps the old version", async () => {
+    await setupApp(COMPOSE, true, COMPOSE.replace("example/web:1", "example/web:2"));
+
+    const updated = await updateApp(APP);
+    expect(updated).toMatchObject({ success: true, outcome: "updated" });
+    // At backup time the compose still ran the old image, and nothing was pulled yet
+    const stopAt = m.observed.findIndex((o) => o.at === "backup-stop");
+    const pullAt = m.observed.findIndex((o) => o.at === "pull");
+    expect(stopAt).toBeGreaterThanOrEqual(0);
+    expect(pullAt).toBeGreaterThan(stopAt);
+    expect(m.observed[stopAt].compose).toContain("example/web:1");
+    expect(readFileSync(appComposePath, "utf-8")).toContain("example/web:2");
+
+    const rolled = await rollbackUpdate(APP);
+    expect(rolled.success).toBe(true);
+    expect(rolled.preUpdateBackupId).toBe(updated.preUpdateBackupId);
+    expect(readFileSync(appComposePath, "utf-8")).toContain("example/web:1");
+
+    // The data restore offered after the rollback does not bring the new version back
+    const restored = await runRestoreOperation(APP, rolled.preUpdateBackupId!, { healthTimeoutMs: 500, pollIntervalMs: 10 });
+    expect(restored.success).toBe(true);
+    const compose = readFileSync(appComposePath, "utf-8");
+    expect(compose).toContain("example/web:1");
+    expect(compose).not.toContain("example/web:2");
+    const row = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, APP)).get()!;
+    expect(row.version).toBe("1.0.0");
+  });
+
+  it("an aborted update leaves the compose file untouched", async () => {
+    await setupApp(COMPOSE, true, COMPOSE.replace("example/web:1", "example/web:2"));
+    dockerState.failStopIds.add("c1");
+
+    const result = await updateApp(APP);
+
+    expect(result.backupFailed).toBe(true);
+    expect(readFileSync(appComposePath, "utf-8")).toContain("example/web:1");
+    expect(commands().some((c) => c.includes(" pull"))).toBe(false);
+  });
+
+  it("journals backup progress and records who triggered it", async () => {
+    const result = await updateApp(APP, { actor: "automation:nightly" });
+    expect(result.success).toBe(true);
+    const steps = listOperationSteps(result.operationId!).map((s) => s.step);
+    expect(steps).toEqual(expect.arrayContaining(["backup", "backup:pausing", "backup:archiving"]));
+    const row = db.all(sql`SELECT triggered_by, purpose FROM backups WHERE id = ${result.preUpdateBackupId!}`)[0] as { triggered_by: string; purpose: string };
+    expect(row).toEqual({ triggered_by: "schedule", purpose: "pre-update" });
   });
 
   it("treats an app with nothing to back up as a skip, not a failure", async () => {
@@ -293,6 +371,32 @@ describe("maintenance windows around updates and rollbacks", () => {
     expect(state.getAppMaintenanceReasons(APP)).toEqual([]);
   });
 
+  it("a manual rollback also covers containers whose name is not app-prefixed", async () => {
+    const custom = [{ ...BASELINE[0], containerName: "custom-web" }];
+    m.captureServiceImages.mockReset();
+    m.captureServiceImages.mockResolvedValueOnce(custom).mockResolvedValue(AFTER);
+    const updated = await updateApp(APP);
+    expect(updated.success).toBe(true);
+    m.observed = [];
+
+    const result = await rollbackUpdate(APP);
+
+    expect(result.success).toBe(true);
+    expect(m.observed.find((o) => o.at === "rollback-recreate")?.customInWindow).toBe(true);
+  });
+
+  it("does not offer a pre-update backup that was pruned", async () => {
+    const updated = await updateApp(APP);
+    expect(updated.preUpdateBackupId).toBeTruthy();
+    db.run(sql`DELETE FROM backups WHERE id = ${updated.preUpdateBackupId!}`);
+
+    const result = await rollbackUpdate(APP);
+
+    expect(result.success).toBe(true);
+    expect(result.preUpdateBackupId).toBeUndefined();
+    expect(result.dataRestoreHint).toBeUndefined();
+  });
+
   it("a manual rollback holds the window and offers the pre-update backup for a data restore", async () => {
     const updated = await updateApp(APP);
     expect(updated.success).toBe(true);
@@ -329,7 +433,8 @@ describe("semantic verification after updates", () => {
   });
 
   it("rolls back when a verified app fails its outcome checks after the update", async () => {
-    m.getLatestVerificationResult.mockReturnValue({ status: "verified" });
+    await setupApp(COMPOSE, true);
+    m.getLatestVerificationResult.mockReturnValue(stored("verified"));
     m.verifyApp.mockResolvedValue(verification("failed", "Bk App: API key rejected"));
 
     const result = await updateApp(APP);
@@ -352,10 +457,55 @@ describe("semantic verification after updates", () => {
 
     const row = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, APP)).get()!;
     expect(row.version).toBe("1.0.0");
+    // The data restore is offered with the rollback
+    expect(result.preUpdateBackupId).toBeTruthy();
+    expect(result.dataRestoreHint).toContain(result.preUpdateBackupId!);
+  });
+
+  it("does not roll back a regression without a pre-update backup, and does not report it as a clean success", async () => {
+    m.getLatestVerificationResult.mockReturnValue(stored("verified"));
+    m.verifyApp.mockResolvedValue(verification("failed", "Bk App: API key rejected"));
+
+    const result = await updateApp(APP);
+
+    expect(result.success).toBe(true);
+    expect(result.outcome).toBe("unverified");
+    expect(result.warning).toContain("not rolled back automatically");
+    expect(result.semanticVerification).toMatchObject({ regression: true });
+    expect(m.restoreServiceImages).not.toHaveBeenCalled();
+    expect(getOperation(result.operationId!)!.detail?.outcome).toBe("regressed");
+    expect(m.writeNotification).toHaveBeenCalledWith("critical", "Bk App updated, outcome checks now failing", expect.any(String), APP);
+    expect(m.writeNotification).not.toHaveBeenCalledWith("info", "Bk App updated", expect.anything(), APP);
+  });
+
+  it("ignores a stale baseline", async () => {
+    await setupApp(COMPOSE, true);
+    m.getLatestVerificationResult.mockReturnValue(stored("verified", new Date(Date.now() - 3 * 24 * 3600_000).toISOString()));
+    m.verifyApp.mockResolvedValue(verification("failed", "Bk App: API key rejected"));
+
+    const result = await updateApp(APP);
+
+    expect(result.success).toBe(true);
+    expect(result.semanticVerification).toMatchObject({ baseline: null, regression: false });
+    expect(m.restoreServiceImages).not.toHaveBeenCalled();
+  });
+
+  it("treats a failure caused only by timed-out checks as unknown, not a regression", async () => {
+    await setupApp(COMPOSE, true);
+    m.getLatestVerificationResult.mockReturnValue(stored("verified"));
+    const timedOut = verification("failed", "Bk App: API did not answer");
+    timedOut.result.checks = [{ ...timedOut.result.checks[0], status: "timeout" }];
+    m.verifyApp.mockResolvedValue(timedOut);
+
+    const result = await updateApp(APP);
+
+    expect(result).toMatchObject({ success: true, outcome: "updated" });
+    expect(result.semanticVerification).toMatchObject({ status: "unknown", regression: false });
+    expect(m.restoreServiceImages).not.toHaveBeenCalled();
   });
 
   it("does not roll back when the outcome checks are only degraded", async () => {
-    m.getLatestVerificationResult.mockReturnValue({ status: "verified" });
+    m.getLatestVerificationResult.mockReturnValue(stored("verified"));
     m.verifyApp.mockResolvedValue(verification("degraded", "Bk App: one indexer failing"));
 
     const result = await updateApp(APP);
@@ -369,7 +519,7 @@ describe("semantic verification after updates", () => {
   });
 
   it("does not roll back a failure that was not verified before the update", async () => {
-    m.getLatestVerificationResult.mockReturnValue({ status: "failed" });
+    m.getLatestVerificationResult.mockReturnValue(stored("failed"));
     m.verifyApp.mockResolvedValue(verification("failed", "Bk App: API key rejected"));
 
     const result = await updateApp(APP);
@@ -380,7 +530,7 @@ describe("semantic verification after updates", () => {
   });
 
   it("records unknown when the outcome probe does not answer in time, without rolling back", async () => {
-    m.getLatestVerificationResult.mockReturnValue({ status: "verified" });
+    m.getLatestVerificationResult.mockReturnValue(stored("verified"));
     m.verifyApp.mockResolvedValue({ ok: false, code: "probe_error", error: "Verification failed to run: boom" });
 
     const result = await updateApp(APP);

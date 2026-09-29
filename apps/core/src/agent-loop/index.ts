@@ -18,7 +18,7 @@ import { deduplicate, formatOccurrenceLabel } from "./event-dedup.js";
 import { writeNotification } from "../db/notifications.js";
 import { subscribeDockerEvents, connectContainerToNetwork, type DockerEvent } from "../docker/client.js";
 import { ensureTalomeNetwork } from "../docker/talome-network.js";
-import { isContainerInBackupWindow } from "../backup/state.js";
+import { isContainerUnderOperation } from "../ops/maintenance.js";
 import { checkRemediationGuard } from "./app-scope.js";
 import { registerSemanticOutcomeProbe } from "./semantic-probe.js";
 import type { AgentLoopConfig, SystemEvent } from "./types.js";
@@ -108,6 +108,17 @@ async function runCycle(): Promise<void> {
     const newEvents: SystemEvent[] = [];
 
     for (const event of events) {
+      // Apps being changed on purpose (live operation / maintenance window) are
+      // left alone: no AI spend, no remediation fighting the operation. Their
+      // warning+ events are neither persisted nor deduplicated, so the first
+      // occurrence after the operation is new and gets triaged.
+      if (event.severity !== "info") {
+        const guard = checkRemediationGuard(event);
+        if (guard.blocked) {
+          log.info(`Skipping ${event.type} for ${event.source}: ${guard.reason}`);
+          continue;
+        }
+      }
       const result = deduplicate(event.id, event.type, event.source, event.data);
 
       if (result.isDuplicate) {
@@ -164,15 +175,8 @@ async function runCycle(): Promise<void> {
     }
 
     // ── Tier 1: Triage with Haiku (cheap) ─────────────────────────────
-    // Only triage new warning+ events — info events and deduped events skip triage.
-    // Apps being changed on purpose (live operation / maintenance window) are
-    // left alone: no AI spend, no remediation fighting the operation.
-    const triageWorthy = newEvents.filter((e) => {
-      if (e.severity === "info") return false;
-      const guard = checkRemediationGuard(e);
-      if (guard.blocked) log.info(`Skipping ${e.type} for ${e.source}: ${guard.reason}`);
-      return !guard.blocked;
-    });
+    // Only triage new warning+ events — info events and deduped events skip triage
+    const triageWorthy = newEvents.filter((e) => e.severity !== "info");
 
     if (triageWorthy.length === 0) return;
 
@@ -315,8 +319,8 @@ function handleDockerEventUnsafe(event: DockerEvent): void {
   if (!config.enabled) return;
 
   const containerName = event.actorName || event.actorId;
-  // Intentional stop by a backup/restore — not a crash, don't remediate
-  if (isContainerInBackupWindow(event.actorName, event.actorId)) return;
+  // Intentional stop by a backup/restore/update/rollback (any Talome process) — not a crash, don't remediate
+  if (isContainerUnderOperation(event.actorName, event.actorId)) return;
   const now = new Date().toISOString();
 
   let systemEvent: SystemEvent | null = null;
