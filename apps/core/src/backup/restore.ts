@@ -454,7 +454,11 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
   const ctx = ctxResult.ctx;
 
   const knownBind = new Set(bindVolumes(ctx.compose).map((v) => v.hostPath!));
-  const allowed = (path: string) => knownBind.has(path) || isWithin(ctx.composeDir, path) || isWithin(ctx.appDataDir, path);
+  const allowed = (path: string) =>
+    knownBind.has(path) ||
+    isWithin(ctx.composeDir, path) ||
+    isWithin(ctx.appDataDir, path) ||
+    (ctx.dataRootDir !== null && isWithin(ctx.dataRootDir, path));
   const replaced = manifest.dumps.flatMap((d) => d.replacesVolumes);
   for (const path of [...manifest.volumes.map((v) => v.hostPath), ...replaced]) {
     if (!allowed(path) || isWithin(getBackupRoot(), path)) {

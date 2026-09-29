@@ -5,7 +5,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { eq, and } from "drizzle-orm";
@@ -22,7 +22,7 @@ export interface ComposeVolume {
   target: string;
   kind: "bind" | "named";
   readOnly: boolean;
-  /** "config" = app data (under the compose dir or app data dir), "media" = anything else */
+  /** "config" = app data (under the compose dir, the app data dir or the app's chosen data root), "media" = anything else */
   type: "config" | "media";
   exists: boolean;
 }
@@ -54,6 +54,12 @@ export interface AppContext {
   composeDir: string;
   /** Talome's per-app data dir (${APP_DATA_DIR} in Umbrel-style composes) */
   appDataDir: string;
+  /**
+   * Host folder chosen at install time for an Umbrel app's data root
+   * (`storage.dataRoot`: ${APP_DATA_DIR}/data moved elsewhere), or null.
+   * It holds the app's primary data, so it is app data — not media.
+   */
+  dataRootDir: string | null;
   env: Record<string, string>;
   envOverrides: Record<string, string>;
   compose: ParsedCompose;
@@ -177,6 +183,8 @@ function isSystemPath(p: string): boolean {
 export interface ParseComposeOptions {
   composeDir: string;
   appDataDir: string;
+  /** The app's chosen data root (Umbrel storage.dataRoot), classified as app data */
+  dataRootDir?: string | null;
   env: Record<string, string>;
 }
 
@@ -228,7 +236,10 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
       }
       const hostPath = resolve(opts.composeDir, source);
       if (isSystemPath(hostPath)) continue;
-      const type = isWithin(opts.composeDir, hostPath) || isWithin(opts.appDataDir, hostPath) ? "config" : "media";
+      const type =
+        isWithin(opts.composeDir, hostPath) || isWithin(opts.appDataDir, hostPath) || (opts.dataRootDir ? isWithin(opts.dataRootDir, hostPath) : false)
+          ? "config"
+          : "media";
       const entry: ComposeVolume = {
         service: name,
         raw,
@@ -269,6 +280,27 @@ export function bindVolumes(compose: ParsedCompose): ComposeVolume[] {
 
 // ── App context ─────────────────────────────────────────────────────────────
 
+/**
+ * The data root folder an Umbrel app was installed with (app_install_options
+ * plan, written by stores/umbrel-v2-install.ts), or null. Missing table (older
+ * database, MCP stdio before migrations) or unreadable JSON → null.
+ */
+export function readAppDataRoot(appId: string): string | null {
+  try {
+    const row = db
+      .select({ plan: schema.appInstallOptions.plan })
+      .from(schema.appInstallOptions)
+      .where(eq(schema.appInstallOptions.appId, appId))
+      .get();
+    if (!row) return null;
+    const plan = JSON.parse(row.plan) as { dataRoot?: { hostPath?: unknown } } | null;
+    const hostPath = plan?.dataRoot?.hostPath;
+    return typeof hostPath === "string" && isAbsolute(hostPath) ? resolve(hostPath) : null;
+  } catch {
+    return null;
+  }
+}
+
 export type AppContextResult = { ok: true; ctx: AppContext } | { ok: false; error: string };
 
 export function resolveAppContext(appId: string): AppContextResult {
@@ -308,9 +340,10 @@ export function resolveAppContext(appId: string): AppContextResult {
     ...dotEnv,
     ...envOverrides,
   };
+  const dataRootDir = readAppDataRoot(appId);
   let compose: ParsedCompose;
   try {
-    compose = parseCompose(readFileSync(composePath, "utf-8"), { composeDir, appDataDir, env });
+    compose = parseCompose(readFileSync(composePath, "utf-8"), { composeDir, appDataDir, dataRootDir, env });
   } catch (err) {
     return { ok: false, error: `Could not parse compose file: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -325,6 +358,7 @@ export function resolveAppContext(appId: string): AppContextResult {
       composeIsOverride: installed.overrideComposePath === composePath,
       composeDir,
       appDataDir,
+      dataRootDir,
       env,
       envOverrides,
       compose,

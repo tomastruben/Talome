@@ -131,6 +131,7 @@ function volumeKey(index: number, v: ComposeVolume, ctx: AppContext): string {
   let label: string;
   if (isWithin(ctx.appDataDir, hostPath)) label = relative(ctx.appDataDir, hostPath) || "app-data";
   else if (isWithin(ctx.composeDir, hostPath)) label = relative(ctx.composeDir, hostPath) || "app";
+  else if (ctx.dataRootDir && isWithin(ctx.dataRootDir, hostPath)) label = `data/${relative(ctx.dataRootDir, hostPath)}`.replace(/\/$/, "");
   else label = basename(hostPath);
   return `${index}-${slugify(label)}`;
 }
@@ -138,6 +139,11 @@ function volumeKey(index: number, v: ComposeVolume, ctx: AppContext): string {
 export function appRelative(ctx: AppContext, absPath: string): string | null {
   if (isWithin(ctx.appDataDir, absPath)) return relative(ctx.appDataDir, absPath).split("\\").join("/");
   if (isWithin(ctx.composeDir, absPath)) return relative(ctx.composeDir, absPath).split("\\").join("/");
+  // A moved data root stands in for ${APP_DATA_DIR}/data, so "data/cache/*" style excludes still apply
+  if (ctx.dataRootDir && isWithin(ctx.dataRootDir, absPath)) {
+    const rel = relative(ctx.dataRootDir, absPath).split("\\").join("/");
+    return rel ? `data/${rel}` : "data";
+  }
   return null;
 }
 

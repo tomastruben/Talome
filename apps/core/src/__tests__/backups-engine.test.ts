@@ -277,3 +277,52 @@ describe("createAppBackup — dump method", () => {
     expect(dockerState.events).toEqual(["stop:w3", "start:w3"]);
   });
 });
+
+describe("Umbrel data root (storage.dataRoot)", () => {
+  it("backs up the data folder an Umbrel app was installed with instead of treating it as media", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { db, schema } = await import("../db/index.js");
+    const dataRoot = join(env.root, "ssd", "photo-vault");
+    mkdirSync(join(dataRoot, "library"), { recursive: true });
+    writeFileSync(join(dataRoot, "library", "photos.db"), "db");
+    mkdirSync(join(dataRoot, "cache"), { recursive: true });
+    writeFileSync(join(dataRoot, "cache", "thumb.jpg"), "thumb");
+    const home = join(env.root, "umbrel-home");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "notes.txt"), "user media");
+    // ${APP_DATA_DIR}/data was redirected to the chosen folder at install
+    const compose = `services:
+  app:
+    image: example/photo:1
+    volumes:
+      - ${dataRoot}/library:/data/library
+      - ${dataRoot}/cache:/data/cache
+      - ${home}:/home
+`;
+    await installFakeApp(env.root, "photovault", compose, {});
+    resetDocker([{ id: "pv", name: "photovault", service: "app", image: "example/photo:1" }]);
+    db.insert(schema.appInstallOptions)
+      .values({
+        appId: "photovault",
+        storeSourceId: "test-store",
+        options: JSON.stringify({ dataRoot }),
+        plan: JSON.stringify({ dataRoot: { declared: true, hostPath: dataRoot }, backupIgnore: ["data/cache/*"] }),
+      })
+      .run();
+    // Umbrel backupIgnore, merged into the app's excludes at install
+    setAppBackupConfig("photovault", { excludePatterns: ["data/cache/*"] });
+
+    const r = await createAppBackup("photovault");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.volumes.sort()).toEqual([join(dataRoot, "cache"), join(dataRoot, "library")].sort());
+    const m = await loadManifest(r.manifestPath);
+    if (!m.ok) throw new Error(m.error);
+    const files = m.manifest.files.map((f) => f.path);
+    expect(files.some((p) => p.endsWith("photos.db"))).toBe(true);
+    // backupIgnore patterns relative to ${APP_DATA_DIR} still apply under the moved root
+    expect(files.some((p) => p.endsWith("thumb.jpg"))).toBe(false);
+    // the user's mapped home folder stays media (not selected)
+    expect(files.some((p) => p.endsWith("notes.txt"))).toBe(false);
+  });
+});
