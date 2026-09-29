@@ -3,7 +3,13 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { getNotificationAction, useNotifications, type AppNotification } from "@/hooks/use-notifications";
+import {
+  getNotificationAction,
+  useNotifications,
+  type AppNotification,
+  type NotificationViewer,
+} from "@/hooks/use-notifications";
+import { useUser } from "@/hooks/use-user";
 
 /** Parse **bold** markers into <strong> elements. */
 function renderInlineBold(text: string): ReactNode {
@@ -27,6 +33,7 @@ function renderInlineBold(text: string): ReactNode {
 export function NotificationToastBridge() {
   // The always-mounted bridge is the single notifications poller.
   const { notifications, isMuted } = useNotifications({ poll: true });
+  const { isAdmin } = useUser();
   const router = useRouter();
   const seenIds = useRef<Set<number>>(new Set());
   const initialized = useRef(false);
@@ -53,16 +60,20 @@ export function NotificationToastBridge() {
       // Suppress toasts when muted
       if (isMuted) continue;
 
-      showToast(n, (href) => router.push(href));
+      showToast(n, { isAdmin }, (href) => router.push(href));
     }
-  }, [notifications, isMuted, router]);
+  }, [notifications, isMuted, isAdmin, router]);
 
   return null;
 }
 
-function showToast(n: AppNotification & { fullBody?: string }, navigate: (href: string) => void) {
+function showToast(
+  n: AppNotification & { fullBody?: string },
+  viewer: NotificationViewer,
+  navigate: (href: string) => void,
+) {
   const body = n.body ? renderInlineBold(n.body) : undefined;
-  const link = getNotificationAction(n);
+  const link = getNotificationAction(n, viewer);
   const action = link
     ? {
         label: link.label,

@@ -17,7 +17,8 @@ import { Streamdown } from "streamdown";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { getNotificationAction } from "@/hooks/use-notifications";
+import { getNotificationAction, isApprovalNotification } from "@/hooks/use-notifications";
+import { useUser } from "@/hooks/use-user";
 
 interface NotificationDetailSheetProps {
   open: boolean;
@@ -47,16 +48,20 @@ export function NotificationDetailSheet({
   const isMobile = useIsMobile();
   const router = useRouter();
   const { handleSubmit } = useAssistant();
+  const { isAdmin, isLoading: userLoading } = useUser();
 
   if (!notification) return null;
 
-  const action = getNotificationAction({
+  const actionable = {
     title: notification.title,
     body: notification.body ?? "",
     fullBody: notification.fullBody,
     sourceId: notification.sourceId ?? null,
     link: notification.link,
-  });
+  };
+  const action = getNotificationAction(actionable, { isAdmin });
+  // Members can't open the admin-only approvals page; say who decides instead.
+  const awaitingAdmin = !action && !isAdmin && !userLoading && isApprovalNotification(actionable);
 
   const askAssistant = () => {
     const userMessage = `Discuss this notification: **${notification.title}**`;
@@ -131,6 +136,9 @@ export function NotificationDetailSheet({
                 </Link>
               )}
             </Button>
+          )}
+          {awaitingAdmin && (
+            <p className="text-xs text-muted-foreground text-center">Waiting for an admin to review it.</p>
           )}
           <Button
             variant="outline"
