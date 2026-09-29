@@ -1,5 +1,18 @@
 import { Bot, type Context } from "grammy";
 import { routeMessage } from "./router.js";
+import { authorizeSender, type SenderDecision } from "./allowlist.js";
+
+/** Every command and message is checked against the allowed senders first (by user id, not chat id). */
+function authorize(ctx: Context): SenderDecision {
+  const senderId = ctx.from?.id !== undefined ? String(ctx.from.id) : null;
+  return authorizeSender("telegram", senderId, senderNameOf(ctx));
+}
+
+function senderNameOf(ctx: Context): string | undefined {
+  return ctx.from?.first_name
+    ? `${ctx.from.first_name}${ctx.from?.last_name ? " " + ctx.from.last_name : ""}`
+    : ctx.from?.username;
+}
 
 let activeBotInstance: Bot | null = null;
 let activeBotUsername: string | null = null;
@@ -31,8 +44,13 @@ export async function startTelegramBot(token: string): Promise<{ ok: boolean; us
   try {
     const bot = new Bot(token);
 
-    // /start command — greet and establish conversation
+    // /start command — greet an allowed sender; tell anyone else how to get access
     bot.command("start", async (ctx: Context) => {
+      const decision = authorize(ctx);
+      if (!decision.allowed) {
+        await ctx.reply(decision.reply);
+        return;
+      }
       await ctx.reply(
         "Hi! I'm Talome, your home server AI. Ask me anything about your containers, apps, media, or system health.",
       );
@@ -40,6 +58,11 @@ export async function startTelegramBot(token: string): Promise<{ ok: boolean; us
 
     // /forget command — clear memories
     bot.command("forget", async (ctx: Context) => {
+      const decision = authorize(ctx);
+      if (!decision.allowed) {
+        await ctx.reply(decision.reply);
+        return;
+      }
       try {
         const { db, schema } = await import("../db/index.js");
         const { eq } = await import("drizzle-orm");
@@ -66,11 +89,16 @@ export async function startTelegramBot(token: string): Promise<{ ok: boolean; us
       const text = ctx.message?.text;
       if (!text || text.startsWith("/")) return;
 
+      // Unknown senders never reach the agent (routeMessage checks again).
+      const decision = authorize(ctx);
+      if (!decision.allowed) {
+        await ctx.reply(decision.reply);
+        return;
+      }
+
       const chatId = String(ctx.chat?.id ?? "unknown");
-      const senderName =
-        ctx.from?.first_name
-          ? `${ctx.from.first_name}${ctx.from?.last_name ? " " + ctx.from.last_name : ""}`
-          : ctx.from?.username;
+      const senderId = String(ctx.from?.id ?? "");
+      const senderName = senderNameOf(ctx);
 
       // Send a typing indicator and placeholder so the user gets instant feedback
       await ctx.api.sendChatAction(ctx.chat!.id, "typing");
@@ -88,6 +116,7 @@ export async function startTelegramBot(token: string): Promise<{ ok: boolean; us
           externalId: chatId,
           text,
           senderName,
+          senderId,
         });
 
         if (sentMsg) {

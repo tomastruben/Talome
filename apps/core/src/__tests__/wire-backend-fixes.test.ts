@@ -124,6 +124,7 @@ import { approvals as approvalsRoute } from "../routes/approvals.js";
 import { createAutomationTool } from "../ai/tools/automation-tools.js";
 import { fireTrigger, type AutomationStep } from "../automation/engine.js";
 import { routeMessage } from "../messaging/router.js";
+import { allowSender } from "../messaging/allowlist.js";
 import type { SystemEvent } from "../agent-loop/types.js";
 
 // ── Fakes ────────────────────────────────────────────────────────────────────
@@ -546,6 +547,8 @@ describe("execution service", () => {
         })(),
       };
     });
+    // The bots answer only senders the owner allowed (messaging/allowlist.ts).
+    allowSender("telegram", "4242", "Tom");
     const reply = await routeMessage({ platform: "telegram", externalId: "4242", text: "status?", senderName: "Tom" });
     expect(reply).toBe("hi");
     expect(seen?.actor).toMatchObject({ kind: "user", id: "telegram:4242", label: "Tom (telegram)" });

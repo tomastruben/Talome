@@ -5,12 +5,20 @@ import { createChatStream } from "../ai/agent.js";
 import { withExecutionContext, type Actor } from "../ai/execution.js";
 import { writeMemory } from "../db/memories.js";
 import type { UIMessage } from "ai";
+import { authorizeSender } from "./allowlist.js";
 
 export interface InboundMessage {
   platform: "telegram" | "discord";
+  /** The chat the reply goes to (Telegram chat id, Discord user id). */
   externalId: string;
   text: string;
   senderName?: string;
+  /**
+   * The sender's user id (Telegram `from.id`, Discord user id), checked
+   * against the allowed senders. Defaults to externalId — the same id in a
+   * Telegram private chat and for Discord.
+   */
+  senderId?: string;
 }
 
 // Find an existing conversation for this platform + externalId, or create one.
@@ -124,6 +132,11 @@ async function extractMemoriesBackground(conversationId: string, text: string) {
 
 export async function routeMessage(msg: InboundMessage): Promise<string> {
   const { platform, externalId, text, senderName } = msg;
+
+  // Only senders the owner allowed reach the agent (which acts owner-level).
+  // Anyone else gets the pairing instructions; nothing of theirs is stored.
+  const decision = authorizeSender(platform, msg.senderId ?? externalId, senderName);
+  if (!decision.allowed) return decision.reply;
 
   const conversationId = ensureConversation(platform, externalId, text);
   persistMessage(conversationId, "user", text);

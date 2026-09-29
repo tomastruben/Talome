@@ -6,6 +6,7 @@ import { startTelegramBot, stopTelegramBot, getTelegramBotStatus } from "../mess
 import { startDiscordBot, stopDiscordBot, getDiscordBotStatus } from "../messaging/discord-bot.js";
 import { serverError } from "../middleware/request-logger.js";
 import { mcpTokens } from "./mcp-tokens.js";
+import { messagingSenders } from "./messaging-senders.js";
 
 const integrations = new Hono();
 
@@ -115,5 +116,10 @@ integrations.post("/discord/stop", async (c) => {
 // Per-token grants, expiry and soft revocation live in routes/mcp-tokens.ts.
 
 integrations.route("/mcp/tokens", mcpTokens);
+
+// ── Chat bot senders ──────────────────────────────────────────────────────────
+// Who the Telegram/Discord bots answer (admin-only, messaging/allowlist.ts).
+
+integrations.route("/messaging/senders", messagingSenders);
 
 export { integrations };
