@@ -15,11 +15,21 @@ The MCP server runs as a **local stdio process**. It connects directly to:
 
 The MCP server is **independent of the Talome web dashboard**. It works whether or not the dashboard is running. This means you can use MCP tools from Claude Code even if you've stopped the Talome web server for maintenance.
 
+Because it already has the database and the Docker socket, the stdio server acts as the local owner: no token or per-token grants apply to it. The security mode, approvals and the audit log still apply to every call.
+
+### Remote Access over HTTP
+
+The Talome server also serves MCP at `/api/mcp` (streamable HTTP) for remote clients. Every request needs a `Bearer` token created in **Settings**. Each token carries **grants** — a maximum tier (read / modify / destructive), allowed domains, allowed or denied tools, and apps — and the tool list is built per request from what that token may use. Every call is checked again against the grants, and appears in the audit log under the token's name.
+
 ### Tool Loading
 
-The MCP server uses the **same dynamic tool filter** as the dashboard chat. Tools for an integration only load when that integration is configured (e.g. the 27 `arr_*` tools require `sonarr_url` or `radarr_url` to be set in Settings → AI Provider). The 112 core tools and the always-on domains (mDNS, Tailscale, Proxy, Ollama, Setup) are exposed unconditionally.
+The MCP server uses the **same settings-based tool filter** as the dashboard chat. Tools for an integration only load when that integration is configured (e.g. the `arr_*` tools require `sonarr_url` or `radarr_url`; Proxy, Tailscale and Ollama need their settings too). Core, mDNS, verification and setup tools are always exposed. Tools disabled in Settings are hidden.
 
-This keeps the per-session tool count low — typically 50–120 tools instead of all 219 — and the AI's tool selection accurate.
+The list is evaluated live: over HTTP for every request, and over stdio every ~15 seconds — newly configured integrations appear (and the client is told the list changed) without restarting the server. Unlike dashboard chat, which loads non-core domains on demand via `discover_tools`, MCP clients see every active tool at once.
+
+## Approvals
+
+In the default **cautious** security mode, destructive tools (uninstall, delete, prune, shell commands, protected settings) do not run straight away. The call returns `[approval_required]` with an approval id and a link to **Settings > Approvals**, and Talome sends you a notification with the same link. Approve it there, then ask the client to call the tool again with the same arguments plus `approval_id`. Approvals are bound to that client, tool and exact arguments, are single-use and expire after 15 minutes. In **locked** mode only read tools run; in **permissive** mode everything runs without approval.
 
 ## Setup
 
@@ -162,6 +172,11 @@ Claude Code calls: mcp__talome__get_reclaimable_space()
 You: Clean it up.
 
 Claude Code calls: mcp__talome__cleanup_docker({ dryRun: false })
+  → [approval_required] Approve it in Settings > Approvals (/dashboard/settings/approvals?id=apr_…)
+
+You: Approved.
+
+Claude Code calls: mcp__talome__cleanup_docker({ dryRun: false, approval_id: "apr_…" })
   → Reclaimed 18.2GB
 
 You: Now restart Sonarr.
@@ -184,11 +199,11 @@ This prevents the user from having to repeat themselves. If they told the dashbo
 
 ## Connection Resilience
 
-The MCP stdio server is a **long-running process** launched when your AI client starts. Key points:
+The MCP stdio server is a process launched when your AI client starts and **it exits when that client disconnects** (closed pipe, client exit, or signal) — no orphaned processes are left behind. Key points:
 
 - **Editing Talome source files does not restart the MCP server** — your connection stays alive while you work on the codebase
 - **Internet blips don't affect MCP** — if Claude Code shows a "Connection error," that's Claude's API connection, not the MCP server. Wait for auto-reconnect; your MCP tools will still work.
-- **The MCP server outlives the web dashboard** — stopping `pnpm dev` or the Talome Docker container does not stop the MCP server
+- **The MCP server does not depend on the web dashboard** — stopping `pnpm dev` or the Talome Docker container does not stop the MCP server
 
 If the MCP server itself goes down (rare), reinitialize with `/mcp` in Claude Code.
 

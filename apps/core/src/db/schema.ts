@@ -140,6 +140,8 @@ export const notifications = sqliteTable("notifications", {
   read: integer("read", { mode: "boolean" }).notNull().default(false),
   sourceId: text("source_id"),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  /** Optional in-app link, e.g. /dashboard/settings/approvals?id=… (migration: db/migrations/wire-backend.ts) */
+  link: text("link"),
 });
 
 export const mcpTokens = sqliteTable("mcp_tokens", {

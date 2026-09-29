@@ -15,7 +15,8 @@ vi.mock("../ai/agent.js", () => ({ runAutomationPrompt: vi.fn(async () => "ok") 
 vi.mock("../ai/automation-safe-tools.js", () => ({
   getAutomationSafeToolNames: () => new Set(["probe_tool", "fail_tool"]),
 }));
-vi.mock("../ai/tool-registry.js", () => ({
+vi.mock("../ai/tool-registry.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ai/tool-registry.js")>()),
   getAllRegisteredTools: () => ({
     probe_tool: { execute: m.probeExecute },
     fail_tool: { execute: m.failExecute },
@@ -97,7 +98,7 @@ describe("automation run durability", () => {
     expect(observed.runStatus).toBe("running");
     expect(observed.stepStatuses).toEqual(["succeeded", "running", "pending"]);
     // App operations started from automations are attributed to them
-    expect(observed.actor).toBe("automation:a1");
+    expect(observed.actor).toBe("automation:a1 (Automation: Auto a1)");
 
     const run = db.select().from(schema.automationRuns).get()!;
     expect(run.status).toBe("succeeded");
@@ -133,7 +134,9 @@ describe("automation run durability", () => {
     ]);
     await fireTrigger("test_trigger");
     const run = db.select().from(schema.automationRuns).get()!;
-    expect(stepRows(run.id).map((r) => r.status)).toEqual(["blocked"]);
+    // require_approval now requests a server-issued approval instead of dead-ending
+    expect(stepRows(run.id).map((r) => r.status)).toEqual(["blocked_approval"]);
+    expect(run.status).toBe("blocked_approval");
     expect(m.probeExecute).not.toHaveBeenCalled();
   });
 

@@ -31,7 +31,10 @@ const stepSchema = z.discriminatedUnion("type", [
     type: z.literal("tool_action"),
     toolName: z.string().describe("One of the automation-allowed tool names"),
     args: z.record(z.string(), z.any()).optional(),
-    approvalPolicy: z.enum(["auto", "require_approval"]).default("require_approval"),
+    approvalPolicy: z
+      .enum(["auto", "require_approval"])
+      .default("require_approval")
+      .describe("require_approval: each run stops at this step (blocked_approval) until the owner approves it in Settings -> Approvals, then the next run executes it. auto: runs unattended (security mode still applies)."),
   }),
   z.object({
     id: z.string().default(() => randomUUID()),
@@ -136,15 +139,15 @@ export const updateAutomationTool = tool({
 
 export const deleteAutomationTool = tool({
   description:
-    "Permanently delete an automation by ID. This is irreversible — only delete when the user explicitly confirms. Use list_automations to confirm the ID first.",
+    "Permanently delete an automation by ID. This is irreversible — only delete when the user asked for it; in cautious mode the owner approves it in Talome (approval_required). Use list_automations to confirm the ID first.",
   inputSchema: z.object({
     id: z.string().describe("Automation ID to delete"),
     confirmName: z.string().describe("The automation name as shown in list_automations, required as confirmation"),
-    confirmed: z.boolean().describe("Must be true — ask user to confirm before calling"),
+    confirmed: z.boolean().optional().describe("Leave unset. Talome sets it once this call is authorized (the owner approved it, or permissive mode)."),
   }),
   execute: async ({ id, confirmName, confirmed }) => {
     if (!confirmed) {
-      return { error: "This is a destructive action. Ask the user to confirm, then call again with confirmed: true." };
+      return { error: "This destructive action was not authorized. Call it without confirmed: Talome asks the owner to approve it (approval_required), then retry with approval_id." };
     }
     const existing = db.select().from(schema.automations).where(eq(schema.automations.id, id)).get();
     if (!existing) return { ok: false, error: "automation_not_found" };

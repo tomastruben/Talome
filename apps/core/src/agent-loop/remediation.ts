@@ -1,6 +1,6 @@
 // ── Tier 2: Remediation (API or local Claude Code) ─────────────────────────
 
-import { generateText, stepCountIs } from "ai";
+import { generateText, stepCountIs, type Tool } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { db, schema } from "../db/index.js";
 import { eq, and } from "drizzle-orm";
@@ -11,7 +11,14 @@ import { getSetting } from "../utils/settings.js";
 import { isClaudeCodeAvailable, spawnClaudeStreaming } from "../ai/claude-process.js";
 import { resolve } from "node:path";
 import type { SystemEvent, TriageResult, RemediationResult, RemediationOutcome } from "./types.js";
-import { runWithActor } from "../ops/operations.js";
+import {
+  agentLoopActor,
+  executeTool,
+  withExecutionContext,
+  type Actor,
+  type ApprovalRequired,
+} from "../ai/execution.js";
+import { getApproval } from "../approval/approvals.js";
 
 // Import tool definitions for the remediation agent to use
 import { listContainersTool, getContainerLogsTool, restartContainerTool, checkServiceHealthTool } from "../ai/tools/docker-tools.js";
@@ -67,6 +74,115 @@ const REMEDIATION_TOOLS = {
   rollback_update: rollbackUpdateTool,
 };
 
+// ── Execution path ──────────────────────────────────────────────────────────
+// Every remediation tool call goes through executeTool() as the agent loop
+// (actor agent_loop:remediation, source "agent_loop"): security mode, approvals
+// and audit apply, and app operations it starts (rollback_update) are
+// journaled under this actor. A call that needs the owner's approval is
+// escalated once — the execution service notifies the owner with a link — and
+// the run stops; it is never retried in a loop. The Claude Code path reaches
+// the same executeTool() through Talome's MCP stdio server.
+
+export const REMEDIATION_ACTOR: Actor = agentLoopActor("remediation", "Agent loop remediation");
+
+interface RemediationRunState {
+  /** Tools that actually executed (success or tool error) — drives the outcome. */
+  executed: string[];
+  /** Approvals requested during the run (escalated to the owner). */
+  approvals: ApprovalRequired[];
+}
+
+const ESCALATED_RESULT_MESSAGE =
+  "Escalated to the owner for approval. Do not call this or any other write tool again in this run; finish with your diagnosis and say that approval is pending.";
+
+/** Wrap remediation tools so each call runs through executeTool as the agent loop. */
+export function buildRemediationTools(
+  tools: Record<string, Tool>,
+  state: RemediationRunState,
+): Record<string, Tool> {
+  return Object.fromEntries(
+    Object.entries(tools).map(([name, t]) => {
+      if (typeof (t as { execute?: unknown }).execute !== "function") return [name, t];
+      const gated = {
+        ...t,
+        execute: async (args: unknown, options: unknown) => {
+          // Once escalated, no further writes this run (parallel calls included).
+          if (state.approvals.length > 0 && WRITE_TOOLS.has(name)) {
+            return { status: "escalated", message: ESCALATED_RESULT_MESSAGE };
+          }
+          const r = await executeTool({
+            actor: REMEDIATION_ACTOR,
+            source: "agent_loop",
+            toolName: name,
+            args,
+            tool: t,
+            toolCallOptions: options,
+          });
+          switch (r.outcome) {
+            case "success":
+              state.executed.push(name);
+              return r.result;
+            case "error":
+              state.executed.push(name);
+              return r.result ?? { error: r.error?.message ?? "Tool failed" };
+            case "approval_required":
+              if (r.approval) state.approvals.push(r.approval);
+              return {
+                status: "approval_required",
+                approvalId: r.approval?.approvalId,
+                approveUrl: r.approval?.approveUrl,
+                message: ESCALATED_RESULT_MESSAGE,
+              };
+            case "blocked":
+            default:
+              return { error: r.error?.hint ? `${r.error.message} ${r.error.hint}` : (r.error?.message ?? "Blocked") };
+          }
+        },
+      } as Tool;
+      return [name, gated];
+    }),
+  );
+}
+
+// ── Escalations awaiting the owner ──────────────────────────────────────────
+// A source whose remediation was escalated is not re-investigated while the
+// approval is pending (or for the retry window after a denial): the agent loop
+// must not re-ask the model — and re-spend budget — every cycle.
+
+const ESCALATION_HOLD_MS = 4 * 60 * 60 * 1000;
+const escalations = new Map<string, { approvalIds: string[]; at: number }>();
+
+function recordEscalation(source: string, approvals: ApprovalRequired[]): void {
+  if (approvals.length === 0) return;
+  escalations.set(source, { approvalIds: [...new Set(approvals.map((a) => a.approvalId))], at: Date.now() });
+}
+
+/** Why remediation for this source is on hold, or null when it may run. */
+export function escalationHold(source: string, now: number = Date.now()): string | null {
+  const entry = escalations.get(source);
+  if (!entry) return null;
+  let statuses: string[];
+  try {
+    statuses = entry.approvalIds.map((id) => getApproval(id)?.status ?? "expired");
+  } catch {
+    return null;
+  }
+  if (statuses.includes("pending")) return "waiting for the owner's approval";
+  if (statuses.includes("approved")) {
+    // Approved: the next run may consume it (auto-consumed for the agent loop).
+    escalations.delete(source);
+    return null;
+  }
+  if (statuses.includes("denied") && now - entry.at < ESCALATION_HOLD_MS) return "the owner denied the proposed action";
+  escalations.delete(source);
+  return null;
+}
+
+/** Test-only: forget recorded escalations. */
+export function __resetEscalationsForTests(): void {
+  escalations.clear();
+}
+
 /** Build the system prompt for both API and Claude Code paths */
 function buildSystemPrompt(autoRemediate: boolean, eventType?: string): string {
   const isPostUpdateCrash = eventType === "post_update_crash_loop";
@@ -88,6 +204,7 @@ Rules:
 - Investigate the issue using available tools (read logs, check app health, check queue status, etc.)
 - ${writeRules}
 - Use app-specific tools when available (arr_get_status, qbt_list_torrents, jellyfin_get_status) for deeper diagnosis
+- If a tool returns approval_required, do NOT call it again: the owner has been asked to approve it. Finish with your diagnosis and say what is waiting for approval.
 - Be concise — output a brief diagnosis and what you did (or recommend)
 - Format: 1) Diagnosis  2) Action taken (or recommended)  3) Confidence (low/medium/high)`;
 }
@@ -152,19 +269,31 @@ export function finalizeRemediation(
   responseText: string,
   toolsUsed: string[],
   model: string,
+  approvals: ApprovalRequired[] = [],
 ): RemediationResult {
   const confidence = parseConfidence(responseText);
   const { tookAction, outcome } = classifyRemediationOutcome(toolsUsed);
+  const escalated = approvals[0];
 
   // Never announce "fixed" here — only the outcome tracker may, after verifying.
-  writeNotification(
-    "info",
-    tookAction ? `Agent attempted fix: ${event.source}` : `Agent diagnosed: ${event.source}`,
-    tookAction
-      ? `Verifying the result before reporting it as fixed.\n\n${responseText.slice(0, 1100)}`
-      : responseText.slice(0, 1200),
-    "agent-loop",
-  );
+  if (escalated) {
+    writeNotification(
+      "warning",
+      `Agent needs approval: ${event.source}`,
+      `The agent wants to run ${escalated.tool} to fix this and needs your approval: ${escalated.approveUrl}\n\n${responseText.slice(0, 1000)}`,
+      "agent-loop",
+      { link: escalated.approveUrl },
+    );
+  } else {
+    writeNotification(
+      "info",
+      tookAction ? `Agent attempted fix: ${event.source}` : `Agent diagnosed: ${event.source}`,
+      tookAction
+        ? `Verifying the result before reporting it as fixed.\n\n${responseText.slice(0, 1100)}`
+        : responseText.slice(0, 1200),
+      "agent-loop",
+    );
+  }
 
   writeAuditEntry(
     `Agent loop: ${tookAction ? "attempted remediation of" : "diagnosed"} ${event.type} on ${event.source}`,
@@ -175,7 +304,7 @@ export function finalizeRemediation(
   const rolledBack = toolsUsed.some((t) => normalizeToolName(t) === "rollback_update");
   const actionLabel = rolledBack
     ? "Rolled back + diagnosed"
-    : tookAction ? "Restarted + diagnosed" : "Diagnosis only";
+    : tookAction ? "Restarted + diagnosed" : escalated ? "Awaiting approval" : "Diagnosis only";
 
   const result: RemediationResult = {
     eventId: event.id,
@@ -312,12 +441,14 @@ async function remediateViaApi(
   const model = getModel();
   const anthropic = createAnthropic({ apiKey });
 
+  const state: RemediationRunState = { executed: [], approvals: [] };
   const result = await generateText({
     model: anthropic(model),
     system: buildSystemPrompt(autoRemediate, event.type),
     prompt: buildEventPrompt(event, triage, autoRemediate),
-    tools: REMEDIATION_TOOLS,
-    stopWhen: stepCountIs(8),
+    tools: buildRemediationTools(REMEDIATION_TOOLS as unknown as Record<string, Tool>, state),
+    // Stop at the step that escalated: an approval is never retried in a loop.
+    stopWhen: [stepCountIs(8), () => state.approvals.length > 0],
     maxRetries: 1,
   });
 
@@ -328,11 +459,9 @@ async function remediateViaApi(
     context: "agent_loop_remediation",
   });
 
-  const toolsUsed = result.steps
-    ?.flatMap((s) => s.toolCalls ?? [])
-    .map((tc) => tc.toolName) ?? [];
-
-  return finalizeRemediation(event, result.text.trim(), toolsUsed, model);
+  // Only tools that actually ran count — a call held for approval took no action.
+  recordEscalation(event.source, state.approvals);
+  return finalizeRemediation(event, result.text.trim(), state.executed, model, state.approvals);
 }
 
 // ── Tier 2b: Claude Code local remediation (subscription-included) ──────────
@@ -349,7 +478,8 @@ IMPORTANT: You have access to Talome's MCP tools. Use ONLY these tools for inves
 - get_system_stats, get_disk_usage, get_system_health, diagnose_app
 - arr_get_status, arr_get_queue_details, qbt_list_torrents, jellyfin_get_status
 - check_dependencies (to understand service dependencies before restarting)
-${autoRemediate ? `For remediation, you may ONLY use: restart_container, cleanup_docker, jellyfin_scan_library${event.type === "post_update_crash_loop" ? ", rollback_update" : ""}` : "Do NOT use any write tools — diagnosis only."}
+${autoRemediate ? `If a tool returns approval_required, do not retry it — the owner has been asked to approve it.
+For remediation, you may ONLY use: restart_container, cleanup_docker, jellyfin_scan_library${event.type === "post_update_crash_loop" ? ", rollback_update" : ""}` : "Do NOT use any write tools — diagnosis only."}
 Do NOT use Read, Edit, Write, Bash, or any file-modification tools. Do NOT modify code.
 
 ${buildEventPrompt(event, triage, autoRemediate)}`;
@@ -418,6 +548,20 @@ export async function remediateEvent(
     };
   }
 
+  // An escalated action is waiting on the owner: do not re-ask the model.
+  const hold = escalationHold(event.source);
+  if (hold) {
+    console.log(`[agent-loop] Remediation for ${event.source} on hold — ${hold}`);
+    return {
+      eventId: event.id,
+      action: "awaiting_approval",
+      model: "none",
+      confidence: 0,
+      outcome: "pending",
+      details: `Remediation on hold: ${hold}`,
+    };
+  }
+
   const gateResult = checkGates(event, triage, maxPerHour);
   if (gateResult) return gateResult;
 
@@ -435,8 +579,9 @@ export async function remediateEvent(
 
     // Fallback: API call (pay-per-token)
     console.log("[agent-loop] Remediating via API");
-    // Attribute any app operations the agent triggers (e.g. rollback_update).
-    return await runWithActor("agent-loop", () => remediateViaApi(event, triage, autoRemediate));
+    // Every tool call runs through executeTool as the agent loop; the context
+    // also attributes anything else the run starts (e.g. rollback_update).
+    return await withExecutionContext(REMEDIATION_ACTOR, "agent_loop", () => remediateViaApi(event, triage, autoRemediate));
   } catch (err) {
     console.error("[agent-loop] Remediation failed:", err);
     writeNotification(

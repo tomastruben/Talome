@@ -282,7 +282,7 @@ export const applyChangeTool = tool({
     "Apply a code change to the Talome codebase via Claude Code with full safety guards. " +
     "Runs in a detached process that survives server restarts — the change completes even if tsx watch reloads. " +
     "Runs tsc --noEmit and automatically rolls back via git stash if type errors are found. " +
-    "Requires user confirmation (confirmed: true). " +
+    "Approval-gated: in cautious mode it returns approval_required — share the link, and retry with approval_id once the owner approved. " +
     "If the user attached screenshots or images to their message, pass them via the screenshots parameter — " +
     "they will be saved to disk so Claude Code can read them as visual context. " +
     "After calling: report files changed, typecheck result, and whether a rollback occurred.",
@@ -292,7 +292,7 @@ export const applyChangeTool = tool({
     confirmed: z
       .boolean()
       .default(false)
-      .describe("Set to true only after user has explicitly confirmed they want the change applied"),
+      .describe("Leave unset. Talome sets it once this call is authorized (the owner approved it, or permissive mode)."),
     screenshots: z
       .array(z.string())
       .optional()
@@ -306,7 +306,7 @@ export const applyChangeTool = tool({
         success: false,
         needs_confirmation: true,
         message:
-          "This will modify the Talome codebase. Please confirm by calling apply_change again with confirmed: true. " +
+          "This will modify the Talome codebase and was not authorized. Call apply_change without confirmed: Talome asks the owner to approve it (approval_required), then retry with approval_id. " +
           "Consider calling plan_change first to preview the diff.",
       };
     }

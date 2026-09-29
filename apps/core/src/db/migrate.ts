@@ -8,6 +8,7 @@ import { runBackupsMigrations } from "./migrations/backups.js";
 import { runStoreCompatMigrations } from "./migrations/store-compat.js";
 import { runAiChatMigrations } from "./migrations/ai-chat.js";
 import { runOutcomeProbesMigrations } from "./migrations/outcome-probes.js";
+import { runWireBackendMigrations } from "./migrations/wire-backend.js";
 
 function recordMigration(version: number, description: string) {
   db.run(sql`INSERT OR IGNORE INTO schema_versions (version, applied_at, description) VALUES (${version}, datetime('now'), ${description})`);
@@ -871,6 +872,7 @@ export function runMigrations() {
   runStoreCompatMigrations();
   runAiChatMigrations();
   runOutcomeProbesMigrations();
+  runWireBackendMigrations();
 
   // ── Record schema versions ─────────────────────────────────────────────
   recordMigration(1, "Initial schema: users, conversations, messages, settings, audit_log");
@@ -895,6 +897,7 @@ export function runMigrations() {
   recordMigration(19, "Store compat: app_catalog.umbrel_meta, store_sources.last_parsed_rev, app_install_options, catalog store index");
   recordMigration(21, "AI chat: conversation_tool_domains for per-conversation tool routing");
   recordMigration(22, "Outcome probes: verification_results for semantic app/stack verification");
+  recordMigration(23, "Wire backend: notifications.link for first-class in-app links (approvals)");
 
   console.log("Database migrations complete");
 }

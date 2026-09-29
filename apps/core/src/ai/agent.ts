@@ -330,7 +330,7 @@ import {
   rememberTurnNote,
 } from "./chat-context-cache.js";
 import { gateToolExecution, getSecurityMode } from "./tool-gateway.js";
-import { automationActor, withExecutionContext } from "./execution.js";
+import { automationActor, isApprovalRequiredResult, withExecutionContext, type ApprovalRequired } from "./execution.js";
 
 // getSetting imported from ../utils/settings.js
 
@@ -1179,7 +1179,7 @@ Give a summary table or checklist of what was configured. Make it scannable. End
 - When the user asks about apps, use search_apps or list_apps to find them first.
 - For install_app, you need both appId and storeId — get these from search/list results.
 - For modify actions (start, stop, restart, install, update, add_store): briefly explain what you'll do, then execute.
-- For destructive actions (uninstall): you MUST ask the user to type CONFIRM before proceeding.
+- For destructive actions (uninstall, delete, shell commands, protected settings): tell the user exactly what will happen before you call the tool. Never pass confirmed: true on your own — see Approvals.
 - For run_shell: ONLY execute commands explicitly requested by the user. Always explain what the command will do before running. Never run commands autonomously.
 - **NEVER tell the user to open a config file or navigate to an app's settings page. Use the available tools to do it for them.**
 - If a configuration tool fails due to missing global settings, immediately use compose/config-file tools to complete the task instead of deferring to UI setup steps.
@@ -1192,6 +1192,13 @@ Give a summary table or checklist of what was configured. Make it scannable. End
 - Use get_library to browse the user's existing collection. Use search_media only when looking for new content to add.
 - Agentic media contract: recommend one best action first, include a short tradeoff rationale, and for modify/destructive media actions ask for confirmation when intent is ambiguous.
 - Never dead-end on strict quality preferences: if no preferred release exists, return best fallback options and explain what was relaxed.
+
+## Approvals
+Talome, not you, decides when an action needs the owner's approval. In cautious security mode (the default) a destructive call returns \`approval_required\` with an \`approvalId\` and an \`approveUrl\` instead of running:
+1. Tell the user what the action will do and share the approval link as a markdown link: [Review approval](approveUrl).
+2. Wait. Once the user says they approved it, call the same tool again with the same arguments plus \`approval_id\` set to that \`approvalId\`.
+3. Never invent, guess or reuse an approval id, and never set \`confirmed\` yourself — Talome sets it after the owner approves. If the retry says the approval is pending, denied, expired or used, tell the user and request a new one by calling without \`approval_id\`.
+In permissive mode destructive tools run without an approval — get the user's explicit go-ahead in chat first. In locked mode only read tools run.
 
 ## Audiobookshelf
 **API token:** Found in the Audiobookshelf web UI: Config → Users → click user → copy Token. Store as \`audiobookshelf_api_key\` in Settings.
@@ -1254,7 +1261,7 @@ You can inspect your own source code via read_file and list_directory. The codeb
 When the user asks you to fix a bug, add a feature, or improve yourself:
 1. Use list_directory and read_file to understand the relevant code.
 2. Call plan_change first to preview the diff — show it to the user before applying.
-3. If the user approves, call apply_change with confirmed: true. Changes are automatically typechecked and rolled back if errors are introduced.
+3. If the user approves the plan, call apply_change. It is approval-gated: follow the Approvals flow (share the link, retry with approval_id once approved). Changes are automatically typechecked and rolled back if errors are introduced.
 4. For runtime-only tools that don't need a restart, use create_tool (writes to ~/.talome/custom-tools/), then reload_tools.
 5. Check list_changes to show the user the history of self-modifications.
 6. Never attempt to modify source code directly. Always delegate to apply_change or create_tool.
@@ -1263,7 +1270,7 @@ When the user asks you to fix a bug, add a feature, or improve yourself:
 
 **Self-modification rules:**
 - Always call plan_change before apply_change for any non-trivial change.
-- The user must explicitly confirm before apply_change is called (confirmed: true).
+- The user must explicitly confirm the plan before apply_change is called; the owner's approval in Talome is what lets it run.
 - For destructive refactors, explain the rollback path: "If this breaks, I can run rollback_change immediately."
 - Never chain multiple apply_change calls without checking the result of each one.
 
@@ -1595,7 +1602,7 @@ ${stackSummary}
 
 When the user asks about setting up services, or when you notice they're trying to use a feature that requires unconfigured services, proactively mention what's missing and offer to install/configure it. After installing an app, offer to configure its integration and wire it to related apps.
 
-Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive actions require confirmation and shell commands are restricted to a safe allowlist." : securityMode === "locked" ? "Only read operations are allowed." : "Full access mode — the user accepts all risks."}`);
+Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive actions return approval_required until the owner approves them, and shell commands are restricted to a safe allowlist." : securityMode === "locked" ? "Only read operations are allowed." : "Full access mode — the user accepts all risks."}`);
   }
 
   // Per-conversation tool routing: base domains + domains this conversation
@@ -1691,14 +1698,24 @@ Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive
 export async function runAutomationPrompt(params: {
   prompt: string;
   automationName: string;
+  /** The automation's id — tool calls run as actor automation:<id>. Defaults to the name (legacy callers). */
+  automationId?: string;
   triggerType: string;
   allowedTools?: string[];
+  /**
+   * Called when a tool the model calls needs the owner's approval. The run
+   * stops after that step instead of letting the model retry — an unattended
+   * run cannot wait for a human.
+   */
+  onApprovalRequired?: (approval: ApprovalRequired) => void;
 }): Promise<string> {
   const provider = getActiveProvider();
   const modelId = resolveModel(provider);
   const model = createModelInstance(provider, modelId);
   const isAnthropic = provider === "anthropic";
-  const activeTools = withExecutionContext(automationActor(params.automationName), "automation", () => getActiveTools());
+  // Every tool the model calls goes through executeTool as this automation.
+  const actor = automationActor(params.automationId ?? params.automationName, params.automationName);
+  const activeTools = withExecutionContext(actor, "automation", () => getActiveTools());
 
   // Use provided allowedTools, or fall back to all automation-safe tools
   const { getAutomationSafeToolNames } = await import("./automation-safe-tools.js");
@@ -1707,10 +1724,26 @@ export async function runAutomationPrompt(params: {
     ? params.allowedTools
     : [...safeNames];
 
+  let approvalRequested = false;
   const toolSubset = Object.fromEntries(
-    Object.entries(activeTools).filter(([name]) =>
-      toolAllowlist.includes(name),
-    ),
+    Object.entries(activeTools)
+      .filter(([name]) => toolAllowlist.includes(name))
+      .map(([name, t]) => {
+        const run = (t as { execute?: (args: unknown, options: unknown) => unknown }).execute;
+        if (typeof run !== "function") return [name, t];
+        const watched = {
+          ...t,
+          execute: async (args: unknown, options: unknown) => {
+            const output = await run(args, options);
+            if (isApprovalRequiredResult(output)) {
+              approvalRequested = true;
+              params.onApprovalRequired?.(output);
+            }
+            return output;
+          },
+        } as Tool;
+        return [name, watched];
+      }),
   );
 
   const { logAiUsage } = await import("../agent-loop/budget.js");
@@ -1733,6 +1766,7 @@ export async function runAutomationPrompt(params: {
 You are running inside an automation action.
 - Keep response concise and operational.
 - You may use only safe read tools provided.
+- If a tool returns approval_required, do not call it again: the owner has been notified. Say what is waiting for approval.
 - Output exactly:
 1) Diagnosis
 2) Recommended action
@@ -1741,7 +1775,8 @@ You are running inside an automation action.
     ],
     prompt: `Automation "${params.automationName}" fired via trigger "${params.triggerType}".\n\nTask:\n${params.prompt}`,
     tools: toolSubset,
-    stopWhen: stepCountIs(4),
+    // Stop as soon as a call needs approval: never retry it in a loop.
+    stopWhen: [stepCountIs(4), () => approvalRequested],
     maxRetries: 1,
   });
 
