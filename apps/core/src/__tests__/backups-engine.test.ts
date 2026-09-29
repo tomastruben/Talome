@@ -326,3 +326,36 @@ describe("Umbrel data root (storage.dataRoot)", () => {
     expect(files.some((p) => p.endsWith("notes.txt"))).toBe(false);
   });
 });
+
+describe("legacy schedule cloud_target copies", () => {
+  it("deletes the copy made through a legacy cloud_target together with the backup", async () => {
+    const { mkdirSync } = await import("node:fs");
+    const nas = join(env.root, "nas-backups");
+    mkdirSync(nas, { recursive: true });
+    await installFakeApp(env.root, "legacycopy", SIMPLE_COMPOSE, { "config/a.txt": "a", "data/b.txt": "b" });
+    resetDocker([{ id: "lc", name: "legacycopy", service: "app", image: "example/app:1.0" }]);
+    const r = await createAppBackup("legacycopy", { cloudTarget: nas });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    const row = getBackupRow(r.backupId)!;
+    expect(row.destination_id).toBeNull();
+    expect(row.cloud_target).toBeTruthy();
+    expect(existsSync(join(row.cloud_target!, "data.tar.gz"))).toBe(true);
+
+    expect((await deleteBackup(r.backupId)).ok).toBe(true);
+    expect(existsSync(row.cloud_target!)).toBe(false);
+    // the target itself (and other apps' copies) stay
+    expect(existsSync(nas)).toBe(true);
+  });
+
+  it("only resolves copies that sit where a legacy copy is put", async () => {
+    const { legacyCopyDestination } = await import("../backup/destinations.js");
+    const base = { app_id: "app", destination_id: null, manifest_path: "/b/app/2026-dir/manifest.json" };
+    expect(legacyCopyDestination({ ...base, cloud_target: "b2:bucket/talome/app/2026-dir" })).toMatchObject({ type: "rclone", target: "b2:bucket/talome" });
+    expect(legacyCopyDestination({ ...base, cloud_target: "/mnt/nas/app/2026-dir" })).toMatchObject({ type: "local", target: "/mnt/nas" });
+    expect(legacyCopyDestination({ ...base, cloud_target: "/mnt/nas/other/2026-dir" })).toBeNull();
+    expect(legacyCopyDestination({ ...base, cloud_target: "/app/2026-dir" })).toBeNull();
+    expect(legacyCopyDestination({ ...base, cloud_target: ":s3,key=x:bucket/app/2026-dir" })).toBeNull();
+    expect(legacyCopyDestination({ ...base, destination_id: "d1", cloud_target: "b2:bucket/app/2026-dir" })).toBeNull();
+  });
+});

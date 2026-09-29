@@ -31,7 +31,14 @@ import {
   stopContainerGracefully,
   type AppContainer,
 } from "./docker-ops.js";
-import { copyToDestination, getDestination, legacyCloudTargetDestination, deleteFromDestination, type BackupDestination } from "./destinations.js";
+import {
+  copyToDestination,
+  deleteFromDestination,
+  getDestination,
+  legacyCloudTargetDestination,
+  legacyCopyDestination,
+  type BackupDestination,
+} from "./destinations.js";
 import { REDIS_BGSAVE, REDIS_PERSISTENCE_INFO, dumpCommand, parseRedisPersistence, validateSqlDump } from "./dumps.js";
 import { errorMessage, getBackupRoot, getTalomeVersion, isWithin, sha256File, timestampSlug } from "./fs-utils.js";
 import { compileExcludePatterns } from "./glob.js";
@@ -616,7 +623,7 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
     }
     if (destination && destination.enabled) {
       setStage("uploading");
-      const copy = await copyToDestination(destination, backupDir, appId, dirName);
+      const copy = await copyToDestination(destination, backupDir, appId, dirName, signal);
       if (copy.ok) {
         destinationLocation = copy.location;
         setBackupDestination(backupId, destination.id === "legacy" ? null : destination.id, copy.location);
@@ -723,7 +730,8 @@ export async function deleteBackup(id: string): Promise<{ ok: boolean; error?: s
     log.warn(`failed to delete backup files for ${id}`, err);
   }
   if (row.cloud_target) {
-    const dest = row.destination_id ? getDestination(row.destination_id) : null;
+    // Copies made through a legacy schedule cloud_target have no destination row
+    const dest = row.destination_id ? getDestination(row.destination_id) : legacyCopyDestination(row);
     if (dest) {
       const r = await deleteFromDestination(dest, row.cloud_target);
       if (!r.ok) log.warn(`failed to delete remote copy for ${id}: ${r.error}`);

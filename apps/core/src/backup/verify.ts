@@ -20,7 +20,7 @@ import { mkdir, open, readFile, rm, statfs } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { writeNotification } from "../db/notifications.js";
-import { getDestination, fetchFromDestination } from "./destinations.js";
+import { getDestination, fetchFromDestination, legacyCopyDestination } from "./destinations.js";
 import { validateSqlDump } from "./dumps.js";
 import { errorMessage, getBackupRoot, listFiles, sha256File } from "./fs-utils.js";
 import { checkSqliteIntegrity } from "./sqlite-check.js";
@@ -111,8 +111,8 @@ async function resolveArchive(row: BackupRow, workDir: string): Promise<{ archiv
   const archive = row.file_path;
   if (archive && existsSync(archive)) return { archive, manifestPath: row.manifest_path, fetched: false };
   // Local copy gone — try the destination copy
-  if (row.cloud_target && row.destination_id) {
-    const dest = getDestination(row.destination_id);
+  if (row.cloud_target) {
+    const dest = row.destination_id ? getDestination(row.destination_id) : legacyCopyDestination(row);
     if (dest) {
       const localDir = join(workDir, "fetched");
       const r = await fetchFromDestination(dest, row.cloud_target, localDir);
