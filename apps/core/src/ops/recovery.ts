@@ -3,14 +3,17 @@
 // A restart (crash, OOM, host reboot, self-update) can cut an operation short.
 // On boot we:
 //   1. mark every operation still queued/running as "interrupted" — we never
-//      re-execute non-idempotent work automatically;
+//      re-execute non-idempotent work automatically — and put the pre-update
+//      compose back for updates cut short before they recreated containers;
 //   2. run a reconcile pass that inspects the app's real container state and
 //      records what it found on the operation, and un-sticks installed_apps rows
 //      left in "installing"/"updating" so status polling resumes;
 //   3. mark automation runs that were mid-flight as interrupted.
 
+import { readFileSync } from "node:fs";
 import { eq, inArray, lt, and, isNotNull } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { atomicWriteFileSync } from "../utils/filesystem.js";
 import type { InstalledAppStatus } from "@talome/types";
 import { writeNotification } from "../db/notifications.js";
 import { markInterruptedAutomationRuns } from "../automation/engine.js";
@@ -87,6 +90,93 @@ export function markInterruptedOperations(opts: { staleMs?: number } = {}): Oper
   return rows.map((r) => rowToOperation({ ...r, status: "interrupted", error: INTERRUPTED_MESSAGE, updatedAt: at, finishedAt: at }));
 }
 
+// ── Interrupted updates: put the pre-update compose back ──────────────────────
+// An update moves the override compose to the catalog's new image refs before
+// it pulls (stores/lifecycle.ts updateAppInner) and recreates containers only
+// after the pull. Cut short before the recreate (restart, OOM, host reboot
+// during a pull that can take minutes), the app still runs the old version
+// but its compose names the new one: the next start/restart would switch
+// versions with no snapshot, backup gate or verification, and the next
+// update would snapshot the edited compose as the "previous" one. This runs
+// synchronously when the operation is marked interrupted — before anything
+// can start or update the app — and never needs Docker.
+
+/** Update steps that run before any container is recreated (see updateAppInner). */
+const PRE_RECREATE_UPDATE_STEPS = new Set(["starting", "preflight", "snapshot", "backup", "pull"]);
+
+function isBeforeRecreate(step: string | null): boolean {
+  return step === null || PRE_RECREATE_UPDATE_STEPS.has(step) || step.startsWith("backup:");
+}
+
+export interface InterruptedUpdateRestore {
+  operationId: string;
+  appId: string;
+  /** True when the compose file was written back (false: it already matched). */
+  composeRestored: boolean;
+  /** Version the app keeps running. */
+  previousVersion: string;
+}
+
+function restoreInterruptedUpdate(op: OperationRecord): InterruptedUpdateRestore | null {
+  if (op.kind !== "update" || !isBeforeRecreate(op.step)) return null;
+  const snapshotId = op.detail?.snapshotId;
+  if (typeof snapshotId !== "number") return null;
+  // A new operation on the app owns its compose now.
+  if (hasLiveOperation(op.appId)) return null;
+
+  const installed = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, op.appId)).get();
+  // Only an override compose is ever rewritten by an update — never the catalog's file.
+  const composePath = installed?.overrideComposePath;
+  if (!composePath) return null;
+
+  const snapshot = db.select().from(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).get();
+  if (!snapshot || snapshot.appId !== op.appId || snapshot.rolledBack || snapshot.previousCompose === null) return null;
+  if (snapshot.operationId && snapshot.operationId !== op.id) return null;
+
+  let current: string | null = null;
+  try {
+    current = readFileSync(composePath, "utf-8");
+  } catch {
+    // Missing/unreadable: write the snapshot's copy back.
+  }
+  const composeRestored = current !== snapshot.previousCompose;
+  if (composeRestored) atomicWriteFileSync(composePath, snapshot.previousCompose, "utf-8");
+
+  // Like a failed pull: the app never left this state, so a later rollback
+  // must not target it.
+  db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshot.id)).run();
+  patchOperationDetail(op.id, { snapshotId: null, appTouched: false, composeRestoredOnRecovery: composeRestored });
+  return { operationId: op.id, appId: op.appId, composeRestored, previousVersion: snapshot.previousVersion };
+}
+
+/**
+ * For update operations interrupted before they recreated containers, restore
+ * the pre-update compose file from the operation's rollback snapshot (and drop
+ * that snapshot). Keyed by operation id. Never throws.
+ */
+export function restoreInterruptedUpdateComposes(ops: OperationRecord[]): Map<string, InterruptedUpdateRestore> {
+  const restored = new Map<string, InterruptedUpdateRestore>();
+  // Only the most recent interrupted operation of each app describes its state.
+  const latest = new Map<string, OperationRecord>();
+  for (const op of ops) {
+    const seen = latest.get(op.appId);
+    if (!seen || op.startedAt > seen.startedAt) latest.set(op.appId, op);
+  }
+  for (const op of latest.values()) {
+    try {
+      const result = restoreInterruptedUpdate(op);
+      if (!result) continue;
+      restored.set(op.id, result);
+      if (result.composeRestored) {
+        log.warn(`Restored the pre-update compose of ${op.appId} (update ${op.id} was interrupted before recreating containers)`);
+      }
+    } catch (err) {
+      log.error(`Failed to restore the pre-update compose of ${op.appId} after interrupted update ${op.id}`, err);
+    }
+  }
+  return restored;
+}
+
 export interface ReconcileFinding {
   appId: string;
   operationId: string | null;
@@ -121,6 +211,7 @@ function latestUnrolledSnapshotId(appId: string): number | null {
 async function reconcileApp(
   appId: string,
   op: OperationRecord | null,
+  restoredUpdate?: InterruptedUpdateRestore,
 ): Promise<ReconcileFinding> {
   const checkedAt = new Date().toISOString();
   const installed = db
@@ -172,7 +263,13 @@ async function reconcileApp(
       ? "No containers found for this app."
       : `${containers.filter((c) => c.status === "running").length}/${containers.length} container(s) running.`,
   );
-  if (op?.kind === "update" || op?.kind === "rollback") {
+  if (restoredUpdate) {
+    parts.push(
+      `The update was interrupted before any container was recreated, so the app keeps running version ${restoredUpdate.previousVersion}` +
+        (restoredUpdate.composeRestored ? "; its compose file was restored to that version." : ".") +
+        " Update it again when ready.",
+    );
+  } else if (op?.kind === "update" || op?.kind === "rollback") {
     const snapshotId = latestUnrolledSnapshotId(appId);
     parts.push(
       snapshotId !== null
@@ -194,7 +291,10 @@ async function reconcileApp(
  * Inspect real container state for interrupted operations (and apps stuck in a
  * transient status) and record what was found. Never re-executes work.
  */
-export async function reconcileInterruptedOperations(ops: OperationRecord[]): Promise<ReconcileFinding[]> {
+export async function reconcileInterruptedOperations(
+  ops: OperationRecord[],
+  restoredUpdates: Map<string, InterruptedUpdateRestore> = new Map(),
+): Promise<ReconcileFinding[]> {
   const findings: ReconcileFinding[] = [];
   const handled = new Set<string>();
 
@@ -208,7 +308,7 @@ export async function reconcileInterruptedOperations(ops: OperationRecord[]): Pr
 
   for (const [appId, appOps] of byApp) {
     appOps.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-    const finding = await reconcileApp(appId, appOps[0]);
+    const finding = await reconcileApp(appId, appOps[0], restoredUpdates.get(appOps[0].id));
     findings.push(finding);
     handled.add(appId);
     for (const op of appOps) {
@@ -292,7 +392,8 @@ export function startOperationSweeper(intervalMs = 60_000): () => void {
       const stale = markInterruptedOperations({ staleMs: HEARTBEAT_STALE_MS * 2 });
       if (stale.length > 0) {
         log.warn(`Interrupted ${stale.length} operation(s) with a stale heartbeat`);
-        void reconcileInterruptedOperations(stale).catch((err: unknown) => log.error("Sweeper reconcile failed", err));
+        const restoredUpdates = restoreInterruptedUpdateComposes(stale);
+        void reconcileInterruptedOperations(stale, restoredUpdates).catch((err: unknown) => log.error("Sweeper reconcile failed", err));
       }
     } catch (err) {
       log.warn("Operation sweeper failed", err);
@@ -330,6 +431,8 @@ export function recoverOperationsOnBoot(opts: { delayMs?: number; sweeper?: bool
   } catch (err) {
     log.error("Failed to mark interrupted operations", err);
   }
+  // Before anything can start or update those apps (synchronous, no Docker).
+  const restoredUpdates = restoreInterruptedUpdateComposes(interruptedOperations);
 
   let interruptedAutomationRuns = 0;
   try {
@@ -352,7 +455,7 @@ export function recoverOperationsOnBoot(opts: { delayMs?: number; sweeper?: bool
 
   const reconciled = new Promise<ReconcileFinding[]>((resolve) => {
     const timer = setTimeout(() => {
-      reconcileInterruptedOperations(interruptedOperations)
+      reconcileInterruptedOperations(interruptedOperations, restoredUpdates)
         .then(resolve)
         .catch((err: unknown) => {
           log.error("Reconcile pass failed", err);
