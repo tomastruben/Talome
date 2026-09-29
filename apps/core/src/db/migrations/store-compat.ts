@@ -1,15 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "../index.js";
-
-function hasColumn(table: string, column: string): boolean {
-  const rows = db.all(sql.raw(`PRAGMA table_info(${table})`)) as { name: string }[];
-  return rows.some((row) => row.name === column);
-}
-
-function addColumnIfMissing(table: string, column: string, definition: string): void {
-  if (hasColumn(table, column)) return;
-  db.run(sql.raw(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`));
-}
+import { addColumnIfMissing } from "./columns.js";
 
 /**
  * Store-compat schema changes (Umbrel 2.0 manifests + cheap catalog sync).

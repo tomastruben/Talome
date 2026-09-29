@@ -1,20 +1,11 @@
 import { db } from "../index.js";
 import { sql } from "drizzle-orm";
+import { addColumnIfMissing } from "./columns.js";
 
 /**
  * Idempotent migrations for verified, application-consistent backups.
  * Only adds tables/columns/indexes — never drops or rewrites user data.
  */
-
-function columnNames(table: string): Set<string> {
-  const rows = db.all(sql.raw(`PRAGMA table_info(${table})`)) as Array<{ name: string }>;
-  return new Set(rows.map((r) => r.name));
-}
-
-function addColumnIfMissing(table: string, column: string, definition: string): void {
-  if (columnNames(table).has(column)) return;
-  db.run(sql.raw(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`));
-}
 
 export function runBackupsMigrations(): void {
   // ── backups: method, manifest, verification ────────────────────────────

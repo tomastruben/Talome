@@ -1,9 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "../index.js";
-
-function columnsOf(table: string): Set<string> {
-  return new Set((db.all(sql.raw(`PRAGMA table_info(${table})`)) as Array<{ name: string }>).map((c) => c.name));
-}
+import { addColumnIfMissing, tableColumns } from "./columns.js";
 
 /**
  * notifications.link — a first-class, optional in-app link (e.g. the approval
@@ -11,10 +8,9 @@ function columnsOf(table: string): Set<string> {
  * from processes that never run the full migration set (MCP stdio).
  */
 export function ensureNotificationLinkColumn(): void {
-  const columns = columnsOf("notifications");
   // Table not created yet (fresh DB mid-migration): the base migration creates it first.
-  if (columns.size === 0) return;
-  if (!columns.has("link")) db.run(sql`ALTER TABLE notifications ADD COLUMN link TEXT`);
+  if (tableColumns("notifications").size === 0) return;
+  addColumnIfMissing("notifications", "link", "TEXT");
 }
 
 /**
@@ -22,9 +18,8 @@ export function ensureNotificationLinkColumn(): void {
  * runs under (JSON TokenScopes). NULL = owner-level (dashboard, local stdio).
  */
 function ensureAutomationActorScopesColumn(): void {
-  const columns = columnsOf("automations");
-  if (columns.size === 0) return;
-  if (!columns.has("actor_scopes")) db.run(sql`ALTER TABLE automations ADD COLUMN actor_scopes TEXT`);
+  if (tableColumns("automations").size === 0) return;
+  addColumnIfMissing("automations", "actor_scopes", "TEXT");
 }
 
 /** remediation_escalations — persisted agent-loop escalations awaiting the owner. */
