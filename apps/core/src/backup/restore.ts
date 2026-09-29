@@ -14,7 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, readdir, readFile, rename, rm, cp, writeFile } from "node:fs/promises";
+import { chmod, chown, lstat, mkdir, readdir, readFile, rename, rm, cp, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
@@ -351,6 +351,41 @@ async function waitForDbReady(
     if (Date.now() >= deadline) throw new Error(`Database ${service} did not become ready: ${lastError}`);
     await sleep(pollMs);
   }
+}
+
+/**
+ * Ownership and mode for a database data directory re-created for a dump load.
+ * Root hands it to the previous owner; a non-root Talome that did not own the
+ * previous directory (the database's own user did) cannot, so the directory
+ * is made writable for that user — the image's entrypoint initialises it and
+ * tightens the permissions itself.
+ */
+export function freshDataDirPlan(
+  previous: { uid: number; gid: number; mode: number } | null,
+  selfUid: number | null,
+): { mode: number; chown?: { uid: number; gid: number } } {
+  if (!previous) return { mode: 0o700 };
+  const mode = previous.mode & 0o7777;
+  if (selfUid === 0) return { mode, chown: { uid: previous.uid, gid: previous.gid } };
+  if (selfUid === null || previous.uid === selfUid) return { mode };
+  return { mode: 0o777 };
+}
+
+async function applyDataDirPlan(path: string, plan: ReturnType<typeof freshDataDirPlan>): Promise<void> {
+  if (plan.chown) await chown(path, plan.chown.uid, plan.chown.gid).catch((err: unknown) => log.warn(`chown ${path}: ${errorMessage(err)}`));
+  await chmod(path, plan.mode).catch((err: unknown) => log.warn(`chmod ${path}: ${errorMessage(err)}`));
+}
+
+/** uid/gid `docker exec` runs as in a container (its configured user), or null when unknown. */
+async function containerExecUser(containerId: string): Promise<{ uid: number; gid: number } | null> {
+  const read = async (flag: "-u" | "-g"): Promise<number | null> => {
+    const r = await execCapture(containerId, ["id", flag], 15_000).catch(() => null);
+    const n = r && r.exitCode === 0 ? Number.parseInt(r.stdout.trim(), 10) : Number.NaN;
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  };
+  const uid = await read("-u");
+  const gid = uid === null ? null : await read("-g");
+  return uid !== null && gid !== null ? { uid, gid } : null;
 }
 
 // ── Restore ─────────────────────────────────────────────────────────────────
@@ -691,11 +726,15 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
       for (const dataPath of d.replacesVolumes) {
         const old = `${dataPath}.talome-old-${short}`;
         const existed = await pathExists(dataPath);
+        const previous = existed ? await lstat(dataPath).catch(() => null) : null;
         swaps.push({ hostPath: dataPath, old, existed, carried: [] });
         persist();
         if (existed) await rename(dataPath, old);
-        // Fresh, empty data directory: the database image initialises it on start
+        // Fresh, empty data directory: the database image initialises it on start.
+        // It gets the previous directory's owner/mode so a database running as
+        // its own user (postgres 999, bitnami 1001) can initialise it.
         await mkdir(dataPath, { recursive: true, mode: 0o700 });
+        await applyDataDirPlan(dataPath, freshDataDirPlan(previous, process.getuid?.() ?? null));
       }
       const loadInPlace = d.replacesVolumes.length === 0;
       if (loadInPlace) {
@@ -708,8 +747,17 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
       const inContainer = `/tmp/talome-restore-${short}-${slugify(d.service)}.sql`;
       const tarPath = join(stagingDir, `load-${slugify(d.service)}.tar.gz`);
       const localDump = dumpFiles.get(d.path!)!;
+      // Owned by the user `docker exec` runs as (the one that reads it and removes it afterwards)
+      const execUser = await containerExecUser(container.id);
+      const dumpStat = await lstat(localDump);
       const w = new TarGzWriter(tarPath);
-      await w.addFile(basename(inContainer), localDump, await lstat(localDump));
+      await w.addFile(basename(inContainer), localDump, {
+        size: dumpStat.size,
+        mtimeMs: dumpStat.mtimeMs,
+        uid: execUser?.uid ?? 0,
+        gid: execUser?.gid ?? 0,
+        mode: execUser ? 0o600 : 0o644,
+      });
       await w.close();
       await putArchive(container.id, tarPath, "/tmp");
       const r = await execCapture(container.id, loadCommand(engine, inContainer), 60 * 60_000);
