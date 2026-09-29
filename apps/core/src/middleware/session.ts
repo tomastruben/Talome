@@ -90,7 +90,7 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
 
 /**
  * Hono middleware: verify session cookie. Passes 401 if missing/invalid.
- * Skips public routes (/api/health, /api/auth/*, /api/webhooks/*).
+ * Skips public routes (/api/health, /api/auth/*, /api/webhooks/*, …).
  */
 export const requireSession: MiddlewareHandler = async (c, next) => {
   const path = c.req.path;
@@ -99,9 +99,11 @@ export const requireSession: MiddlewareHandler = async (c, next) => {
   if (
     path === "/api/health" ||
     path.startsWith("/api/auth/") ||
-    // MCP and terminal use their own Bearer token auth
+    // MCP uses its own Bearer token auth
     path.startsWith("/api/mcp") ||
-    path.startsWith("/api/terminal") ||
+    // Only the daemon port lookup is public; /api/terminal/* mints PTY
+    // tokens and needs a logged-in admin (routes/terminal.ts)
+    path === "/api/terminal-daemon-port" ||
     // Webhook triggers are externally callable
     path.startsWith("/api/webhooks/") ||
     // Network setup scripts, guide page + CA cert are fetched from client devices

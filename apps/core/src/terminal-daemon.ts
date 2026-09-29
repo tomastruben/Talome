@@ -889,8 +889,12 @@ app.post("/backup-auth", async (c) => {
   return c.json({ token, bootId: BOOT_ID });
 });
 
-// Generate ephemeral auth token — called by the main server proxy
+// Generate ephemeral auth token — called by the main server proxy (which
+// requires a logged-in admin). Never while the security mode is "locked".
 app.post("/session", (c) => {
+  if (isSecurityModeLocked()) {
+    return c.json({ error: 'The terminal is disabled while the security mode is "locked".' }, 423);
+  }
   const token = createEphemeralToken();
   return c.json({ token, expiresAt: Date.now() + 60_000, bootId: BOOT_ID });
 });
@@ -1126,7 +1130,8 @@ app.get(
               return;
             }
 
-            const validEphemeral = verifyEphemeralToken(msg.token);
+            // A token minted just before the mode switched to locked is refused too.
+            const validEphemeral = verifyEphemeralToken(msg.token) && !isSecurityModeLocked();
             const validBackup = !validEphemeral && msg.token ? verifyBackupToken(msg.token) : false;
             const validMcp =
               !validEphemeral && !validBackup && verifyBearerToken(`Bearer ${msg.token}`);
