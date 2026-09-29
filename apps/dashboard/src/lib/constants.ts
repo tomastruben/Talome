@@ -18,10 +18,13 @@ export function getHostUrl(port: number): string {
 /** Direct URL to the core backend, bypassing the Next.js rewrite proxy.
  *  Required for streaming endpoints (SSE) which Next.js rewrites buffer. */
 export function getDirectCoreUrl(): string {
+  // An explicit core URL wins (reverse proxies, remapped ports, sandboxes).
+  if (process.env.NEXT_PUBLIC_CORE_URL) return process.env.NEXT_PUBLIC_CORE_URL;
+  const port = process.env.NEXT_PUBLIC_CORE_PORT || "4000";
   if (typeof window !== "undefined") {
-    return `http://${window.location.hostname.toLowerCase()}:4000`;
+    return `http://${window.location.hostname.toLowerCase()}:${port}`;
   }
-  return "http://127.0.0.1:4000";
+  return `http://127.0.0.1:${port}`;
 }
 
 export function getWsUrl(): string {
