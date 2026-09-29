@@ -20,8 +20,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createMcpSession } from "./routes/mcp.js";
 import { localStdioActor } from "./ai/execution.js";
-import { runTrustMigrations } from "./db/migrations/trust.js";
-import { runWireBackendMigrations } from "./db/migrations/wire-backend.js";
+import { runStdioMigrations } from "./db/migrations/stdio.js";
 import { stdioActorFromEnv } from "./agent-loop/remediation-actor.js";
 import { remediationMcpSessionOptions } from "./agent-loop/remediation-guard.js";
 import { installStdioShutdown } from "./mcp-stdio-lifecycle.js";
@@ -30,19 +29,11 @@ import { inFlightAppWork } from "./mcp-stdio-pending.js";
 /** How often to re-evaluate configured domains / disabled tools. */
 const TOOL_SYNC_INTERVAL_MS = 15_000;
 
-// The main server may be older than this process (or not running): make sure
-// the trust tables/columns this process writes exist. Idempotent.
-try {
-  runTrustMigrations();
-} catch (err) {
-  process.stderr.write(`[mcp-stdio] trust migrations failed: ${err instanceof Error ? err.message : String(err)}\n`);
-}
-// Columns this process reads and writes (notifications.link, automations.actor_scopes, …).
-try {
-  runWireBackendMigrations();
-} catch (err) {
-  process.stderr.write(`[mcp-stdio] wire-backend migrations failed: ${err instanceof Error ? err.message : String(err)}\n`);
-}
+// The main server may be older than this process (or not running), and this
+// process's drizzle schema reads columns from every migration module: run the
+// full, idempotent migration set (race-tolerant against core running it too).
+// Its console output goes to stderr — stdout carries MCP frames only.
+runStdioMigrations((line) => process.stderr.write(`${line}\n`));
 
 // Claude Code remediation (agent-loop/remediation.ts) launches this server
 // with TALOME_MCP_ACTOR so its calls run as the agent loop, not the owner —

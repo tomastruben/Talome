@@ -1,22 +1,9 @@
 import { sql } from "drizzle-orm";
 import { db } from "../index.js";
+import { addColumnIfMissing } from "./columns.js";
 
 // ── ops-updates migrations ───────────────────────────────────────────────────
 // Idempotent: safe to run on every boot. Never drops tables or columns.
-
-const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
-
-function hasColumn(table: string, column: string): boolean {
-  if (!IDENTIFIER.test(table)) throw new Error(`Invalid table name: ${table}`);
-  const rows = db.all(sql.raw(`PRAGMA table_info(${table})`)) as { name: string }[];
-  return rows.some((r) => r.name === column);
-}
-
-function addColumnIfMissing(table: string, column: string, ddl: string): void {
-  if (!IDENTIFIER.test(column)) throw new Error(`Invalid column name: ${column}`);
-  if (hasColumn(table, column)) return;
-  db.run(sql.raw(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`));
-}
 
 export function runOpsUpdatesMigrations(): void {
   // ── Durable app operations journal ─────────────────────────────────────

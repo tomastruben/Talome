@@ -31,6 +31,12 @@ const platformMock = vi.hoisted(() => ({
     ]),
     exited: Promise.resolve(),
   })),
+  // statfs("/") — the root disk figures.
+  readDiskUsage: vi.fn(async (): Promise<{ usedBytes: number; totalBytes: number; percent: number } | null> => (
+    { usedBytes: 50, totalBytes: 100, percent: 50 }
+  )),
+  // Cumulative CPU ticks (os.cpus()).
+  sampleCpuTimes: vi.fn(() => ({ idle: 0, total: 0 })),
 }));
 
 vi.mock("../platform/index.js", async (importOriginal) => {
@@ -102,6 +108,13 @@ beforeEach(async () => {
     ]),
     exited: Promise.resolve(),
   }));
+  platformMock.readDiskUsage.mockImplementation(async () => ({ usedBytes: 50, totalBytes: 100, percent: 50 }));
+  // A steady 20% load: every sample adds 100 ticks, 80 of them idle.
+  let ticks = 0;
+  platformMock.sampleCpuTimes.mockImplementation(() => {
+    ticks += 100;
+    return { idle: ticks * 0.8, total: ticks };
+  });
   eventStreamMock = new EventEmitter();
   dockerMock.getEvents.mockImplementation(async () => eventStreamMock);
   // Cached reads are only trusted while the invalidation stream is up.
@@ -437,15 +450,62 @@ describe("getSystemStats", () => {
 
     nowMs += 60_000;
     const stats = await getSystemStats(); // must not block on the pending df
-    expect(stats.disk.percent).toBe(50);
+    expect(stats.disk.mounts[0].percent).toBe(50);
     expect(platformMock.readDiskMountsTracked).toHaveBeenCalledTimes(2);
     d.resolve([{ fs: "/dev/disk1", mount: "/", usedBytes: 90, totalBytes: 100, percent: 90, type: "internal" }]);
     await d.promise;
 
     await vi.waitFor(async () => {
       nowMs += 3_000;
-      expect((await getSystemStats()).disk.percent).toBe(90);
+      expect((await getSystemStats()).disk.mounts[0].percent).toBe(90);
     });
+  });
+
+  it("keeps measuring the root disk when df hangs on a dead network mount", async () => {
+    // GNU df blocks on a hard-mounted NFS share whose NAS is off: every run times out with no output.
+    platformMock.readDiskMountsTracked.mockImplementation(() => ({ mounts: Promise.resolve(null), exited: Promise.resolve() }));
+    platformMock.readDiskUsage.mockImplementation(async () => ({ usedBytes: 99, totalBytes: 100, percent: 99 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (let i = 0; i < 5; i++) {
+      const stats = await getSystemStats();
+      expect(stats.disk).toMatchObject({ usedBytes: 99, totalBytes: 100, percent: 99 });
+      nowMs += 60_000;
+    }
+    expect(platformMock.readDiskUsage).toHaveBeenCalledWith("/");
+    // Not silent: the stale mount list is logged once, not on every tick.
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("df gave no answer"))).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it("reports the real root usage on the first reading after a restart even when df is slow", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const df = deferred<Mounts | null>();
+      platformMock.readDiskMountsTracked.mockImplementation(() => ({ mounts: df.promise, exited: df.promise.then(() => {}) }));
+      platformMock.readDiskUsage.mockImplementation(async () => ({ usedBytes: 93, totalBytes: 100, percent: 93 }));
+      const pending = getSystemStats();
+      await vi.advanceTimersByTimeAsync(6_000); // past the 5s first-read wait for df
+      const stats = await pending;
+      // Not 0%: the monitor must not initialise its disk state as "normal" and then
+      // "escalate" (re-alert) once df finally answers.
+      expect(stats.disk.percent).toBe(93);
+      expect(stats.disk.totalBytes).toBe(100);
+      df.resolve(null);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falls back to df's root mount when statfs fails", async () => {
+    platformMock.readDiskUsage.mockImplementation(async () => null);
+    platformMock.readDiskMountsTracked.mockImplementation(() => ({
+      mounts: Promise.resolve([
+        { fs: "/dev/sdb1", mount: "/mnt/media", usedBytes: 10, totalBytes: 100, percent: 10, type: "internal" as const },
+        { fs: "/dev/sda1", mount: "/", usedBytes: 70, totalBytes: 100, percent: 70, type: "internal" as const },
+      ]),
+      exited: Promise.resolve(),
+    }));
+    expect((await getSystemStats()).disk.percent).toBe(70);
   });
   it("never starts a second df while a wedged one is alive, and backs off after failures", async () => {
     const exited = deferred<void>();
@@ -476,5 +536,41 @@ describe("getSystemStats", () => {
     nowMs += 6_000;
     await getSystemStats();
     expect(platformMock.readDiskMountsTracked).toHaveBeenCalledTimes(3);
+  });
+
+  it("gives background callers a minute apart the average since the previous sample, not a 250ms snapshot", async () => {
+    // Monitor tick: first sample of the process (short measuring window).
+    let ticks = 0;
+    const samples: Array<{ idle: number; total: number }> = [];
+    platformMock.sampleCpuTimes.mockImplementation(() => {
+      const next = samples.shift();
+      if (next) return next;
+      ticks += 100;
+      return { idle: ticks * 0.8, total: ticks };
+    });
+    await getSystemStats();
+    const callsAfterFirst = platformMock.sampleCpuTimes.mock.calls.length;
+
+    // 60s later (next monitor / agent-loop tick): the last minute averaged 20%,
+    // but Talome's own tick makes the current instant 100% busy.
+    const last = { idle: ticks * 0.8, total: ticks };
+    const minuteLater = { idle: last.idle + 4_800, total: last.total + 6_000 }; // 20% over the minute
+    const burstEnd = { idle: minuteLater.idle, total: minuteLater.total + 25 }; // 250ms at 100%
+    samples.push(minuteLater, burstEnd);
+    nowMs += 60_000;
+    const stats = await getSystemStats();
+    expect(stats.cpu.usage).toBe(20);
+    // One sample against the kept baseline — no fresh 250ms window.
+    expect(platformMock.sampleCpuTimes.mock.calls.length - callsAfterFirst).toBe(1);
+  });
+
+  it("takes the CPU sample before spawning its helper processes", async () => {
+    await getSystemStats(); // warm the CPU baseline and the disk cache
+    vi.clearAllMocks();
+    nowMs += 3_000;
+    await getSystemStats();
+    const cpuAt = platformMock.sampleCpuTimes.mock.invocationCallOrder[0];
+    expect(cpuAt).toBeLessThan(platformMock.getAppMemoryUsedAsync.mock.invocationCallOrder[0]);
+    expect(cpuAt).toBeLessThan(platformMock.sampleNetworkBytesAsync.mock.invocationCallOrder[0]);
   });
 });

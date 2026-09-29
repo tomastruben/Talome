@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import type { ModelMessage, Tool, UIMessage } from "ai";
 
-const { streamTextMock, getTopMemoriesMock, getFeatureStackStatusMock, saveScreenshotsMock } = vi.hoisted(() => ({
+const { streamTextMock, getTopMemoriesMock, getFeatureStackStatusMock, saveScreenshotsMock, memoriesTable } = vi.hoisted(() => ({
   streamTextMock: vi.fn(),
   getTopMemoriesMock: vi.fn(),
   getFeatureStackStatusMock: vi.fn(),
   saveScreenshotsMock: vi.fn(),
+  /** The memories table as the per-conversation snapshot check reads it. */
+  memoriesTable: { rows: [] as Array<{ id: number; content: string; enabled: boolean }> },
+}));
+const { settingsRows } = vi.hoisted(() => ({
+  settingsRows: [{ key: "sonarr_url", value: "http://localhost:8989" }] as Array<{ key: string; value: string }>,
 }));
 
 vi.mock("ai", async (importOriginal) => {
@@ -14,14 +19,15 @@ vi.mock("ai", async (importOriginal) => {
 });
 
 vi.mock("../db/index.js", () => {
-  const from = () => ({
-    where: () => ({ get: () => null, all: () => [] }),
-    all: () => [{ key: "sonarr_url", value: "http://localhost:8989" }],
+  const memories = {};
+  const from = (table: unknown) => ({
+    where: () => ({ get: () => null, all: () => (table === memories ? memoriesTable.rows : []) }),
+    all: () => settingsRows,
     orderBy: () => ({ limit: () => ({ all: () => [] }) }),
   });
   return {
     db: { select: () => ({ from }) },
-    schema: { settings: { key: "key" }, installedApps: { appId: "app_id" }, mcpTokens: {}, memories: {} },
+    schema: { settings: { key: "key" }, installedApps: { appId: "app_id" }, mcpTokens: {}, memories },
   };
 });
 vi.mock("../db/audit.js", () => ({ writeAuditEntry: vi.fn() }));
@@ -40,7 +46,7 @@ import {
 } from "../ai/prompt-cache.js";
 import { createChatStream, DEFAULT_SYSTEM_PROMPT } from "../ai/agent.js";
 import { invalidateChatContextCaches } from "../ai/chat-context-cache.js";
-import { getBaseDomainNames, getOrderedDomainTools } from "../ai/tool-registry.js";
+import { getBaseDomainNames, getOrderedDomainTools, invalidateSettingsCache } from "../ai/tool-registry.js";
 import { resetToolRoutingState } from "../ai/tool-discovery.js";
 
 const EPHEMERAL = { anthropic: { cacheControl: { type: "ephemeral" } } };
@@ -129,6 +135,7 @@ describe("createChatStream cache options", () => {
     streamTextMock.mockReturnValue({});
     getTopMemoriesMock.mockReset();
     getTopMemoriesMock.mockResolvedValue([]);
+    memoriesTable.rows = [];
     getFeatureStackStatusMock.mockReset();
     getFeatureStackStatusMock.mockResolvedValue([]);
     saveScreenshotsMock.mockReset();
@@ -201,10 +208,33 @@ describe("createChatStream cache options", () => {
     expect(args.prepareStep({ messages: history, stepNumber: 1 }).activeTools).toContain("create_automation");
   });
 
+  it("lets discover_tools load an app configured earlier in the same request", async () => {
+    await createChatStream([{ id: "p1", role: "user", parts: [{ type: "text", text: "install plex" }] }], undefined, undefined, undefined, "anthropic");
+    const args = lastArgs();
+    expect(args.activeTools).not.toContain("plex_get_on_deck");
+
+    // Step 1: install_app auto-configures Plex; onStepFinish drops the settings cache.
+    settingsRows.push({ key: "plex_url", value: "http://localhost:32400" });
+    try {
+      args.onStepFinish({ toolCalls: [{ toolName: "install_app", args: { appId: "plex" } }], toolResults: [] });
+      // Step 2: the model loads the plex domain.
+      const execute = args.tools.discover_tools.execute as (i: unknown, o: unknown) => Promise<{ activatedDomains: string[] }>;
+      const result = await execute({ domain: "plex" }, { toolCallId: "d1", messages: [] });
+      expect(result.activatedDomains).toEqual(["plex"]);
+      // Step 3: its tools are sent to the model and callable.
+      expect(args.prepareStep({ messages: history, stepNumber: 2 }).activeTools).toContain("plex_get_on_deck");
+      expect(args.tools).toHaveProperty("plex_get_on_deck");
+    } finally {
+      settingsRows.pop();
+      invalidateSettingsCache();
+    }
+  });
+
   const text = (m: ModelMessage) =>
     typeof m.content === "string" ? m.content : m.content.map((p) => ("text" in p ? String(p.text) : `[${p.type}]`)).join("|");
 
   it("keeps the system block identical across turns when a memory is added mid-conversation", async () => {
+    memoriesTable.rows = [{ id: 1, content: "media lives on /mnt/media", enabled: true }, { id: 2, content: "prefers 4K", enabled: true }];
     getTopMemoriesMock
       .mockResolvedValueOnce([{ id: 1, content: "media lives on /mnt/media" }])
       .mockResolvedValue([{ id: 1, content: "media lives on /mnt/media" }, { id: 2, content: "prefers 4K" }]);
@@ -225,6 +255,26 @@ describe("createChatStream cache options", () => {
     // A new conversation picks up the new memory.
     await createChatStream([{ id: "n1", role: "user", parts: [{ type: "text", text: "hi" }] }], undefined, undefined, undefined, "anthropic");
     expect(lastArgs().system[1].content).toContain("prefers 4K");
+  });
+
+  it("stops sending a memory deleted in Settings to a running conversation", async () => {
+    memoriesTable.rows = [{ id: 1, content: "wife's name is Ana", enabled: true }, { id: 2, content: "prefers 4K", enabled: true }];
+    getTopMemoriesMock.mockResolvedValue([{ id: 1, content: "wife's name is Ana" }, { id: 2, content: "prefers 4K" }]);
+    const turn1: UIMessage[] = [{ id: "u1", role: "user", parts: [{ type: "text", text: "hello" }] }];
+    await createChatStream(turn1, undefined, undefined, undefined, "anthropic");
+    expect(lastArgs().system[1].content).toContain("wife's name is Ana");
+
+    // DELETE /api/memories/1 — nothing in the chat path is told.
+    memoriesTable.rows = [{ id: 2, content: "prefers 4K", enabled: true }];
+    getTopMemoriesMock.mockResolvedValue([{ id: 2, content: "prefers 4K" }]);
+    await createChatStream([
+      ...turn1,
+      { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi!" }] },
+      { id: "u2", role: "user", parts: [{ type: "text", text: "thanks" }] },
+    ], undefined, undefined, undefined, "anthropic");
+    const system = lastArgs().system.map((m) => m.content).join("\n");
+    expect(system).not.toContain("wife's name is Ana");
+    expect(system).toContain("prefers 4K");
   });
 
   it("attaches page context and screenshot paths to their user message and replays them verbatim", async () => {

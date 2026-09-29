@@ -21,6 +21,7 @@ import {
   jsonResponse,
   makeDeps,
   mediaSettings,
+  plexOnlyOverseerrRoutes,
   type RouteHandler,
 } from "./outcome-probes-fixtures.js";
 import type { MountInfo } from "../verification/env.js";
@@ -125,6 +126,17 @@ describe("media-server stack chain", () => {
     const result = await stack("media-server", { routes });
     expect(link(result, "request").status).toBe("fail");
     expect(result.status).toBe("failed");
+  });
+
+  it("does not fail the stack it installs: Plex-only Overseerr next to Jellyfin is degraded, with a fix that can work", async () => {
+    const result = await stack("media-server", { routes: plexOnlyOverseerrRoutes() });
+    const c = check(result, "request:overseerr:media-server");
+    expect(c.status).toBe("warn");
+    expect(c.evidence).toContain("only supports Plex");
+    expect(c.remediation).toContain("Jellyseerr");
+    expect(c.remediation).not.toMatch(/run overseerr_configure_jellyfin/);
+    expect(link(result, "request").status).toBe("warn");
+    expect(result.status).toBe("degraded");
   });
 
   it("treats a missing request app as optional", async () => {

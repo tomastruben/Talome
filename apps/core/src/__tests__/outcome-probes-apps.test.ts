@@ -22,6 +22,7 @@ import {
   jsonResponse,
   makeDeps,
   mediaSettings,
+  plexOnlyOverseerrRoutes,
   textResponse,
   type RouteHandler,
 } from "./outcome-probes-fixtures.js";
@@ -288,6 +289,20 @@ describe("jellyfin probe", () => {
     expect(result.status).toBe("degraded");
   });
 
+  it("warns — never passes — when Jellyfin could not confirm some library folders", async () => {
+    const routes = {
+      ...healthyMediaRoutes(),
+      [`POST ${URLS.jellyfin}/Environment/ValidatePath`]: (_url: URL, init: RequestInit) =>
+        JSON.parse(String(init.body)).Path === "/data/media/movies" ? jsonResponse({ message: "boom" }, 500) : textResponse("", 204),
+    };
+    const { result } = await run("jellyfin", { routes });
+    const c = check(result, "library-paths");
+    expect(c.status).toBe("warn");
+    expect(c.evidence).toContain("/data/media/movies");
+    expect(c.evidence).not.toMatch(/^All /);
+    expect(c.evidence).toContain("1 library folder exists (/data/media/tv)");
+  });
+
   it("fails when there are no libraries", async () => {
     const { result } = await run("jellyfin", { routes: { ...healthyMediaRoutes(), [`GET ${URLS.jellyfin}/Library/VirtualFolders`]: jsonResponse([]) } });
     expect(check(result, "libraries").status).toBe("fail");
@@ -332,6 +347,26 @@ describe("overseerr/jellyseerr probe", () => {
     const { result } = await run("overseerr", { routes });
     expect(check(result, "arr").status).toBe("warn");
     expect(check(result, "media-server").status).toBe("fail");
+  });
+
+  it("checks Plex for upstream (Plex-only) Overseerr", async () => {
+    const connected = await run("overseerr", {
+      routes: plexOnlyOverseerrRoutes({ name: "home", ip: "plex", port: 32400, libraries: [{ name: "Movies", enabled: true }] }),
+    });
+    expect(check(connected.result, "media-server").status).toBe("pass");
+    expect(check(connected.result, "media-server").evidence).toContain("Plex at plex:32400");
+
+    // Plex is the user's media server but Overseerr isn't connected to it: a real, fixable failure.
+    const notConnected = await run("overseerr", { settings: { ...mediaSettings(), plex_url: "http://plex:32400" }, routes: plexOnlyOverseerrRoutes() });
+    const c = check(notConnected.result, "media-server");
+    expect(c.status).toBe("fail");
+    expect(c.remediation).toContain("Settings → Plex");
+    expect(c.remediation).not.toContain("overseerr_configure_jellyfin");
+
+    // Jellyfin only: nothing to connect Overseerr to — say so instead of pointing at a tool that can't work.
+    const jellyfinOnly = check((await run("overseerr", { routes: plexOnlyOverseerrRoutes() })).result, "media-server");
+    expect(jellyfinOnly.status).toBe("warn");
+    expect(jellyfinOnly.remediation).toContain("Jellyseerr");
   });
 
   it("jellyseerr falls back to the overseerr connection settings", async () => {
@@ -384,6 +419,26 @@ describe("immich probe", () => {
 
     const loop = await run("immich", { settings: { ...immichSettings, immich_external_url: "http://localhost:2283" }, routes: immichRoutes() });
     expect(check(loop.result, "mobile-url").status).toBe("fail");
+  });
+
+  it("warns (never passes) for a reachable home-network-only external URL", async () => {
+    for (const lanOnly of ["http://192.168.1.20:2283", "http://10.0.0.5:2283", "http://nas:2283", "http://photos.local:2283", "http://[fd12:3456::1]:2283"]) {
+      const origin = new URL(lanOnly).origin;
+      const { result } = await run("immich", {
+        settings: { ...immichSettings, immich_external_url: lanOnly },
+        routes: immichRoutes({ [`GET ${origin}/api/server/ping`]: jsonResponse({ res: "pong" }) }),
+      });
+      const c = check(result, "mobile-url");
+      expect(c.status, lanOnly).toBe("warn");
+      expect(c.evidence).toContain("backups pause when the phone leaves your network");
+      expect(c.remediation).toContain("Tailscale");
+    }
+    // Tailscale addresses (100.64.0.0/10) and public names work away from home.
+    const tailscale = await run("immich", {
+      settings: { ...immichSettings, immich_external_url: "http://100.101.102.103:2283" },
+      routes: immichRoutes({ "GET http://100.101.102.103:2283/api/server/ping": jsonResponse({ res: "pong" }) }),
+    });
+    expect(check(tailscale.result, "mobile-url").status).toBe("pass");
   });
 
   it("fails storage when the drive is nearly full and fails the URL when unreachable", async () => {

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "../index.js";
+import { addColumnIfMissing } from "./columns.js";
 
 /**
  * Outcome verification tables. Idempotent — safe to run on every boot and
@@ -21,12 +22,9 @@ export function runOutcomeProbesMigrations(): void {
   `);
 
   // Guarded column additions for tables created by earlier builds of this feature.
-  const columns = new Set(
-    (db.all(sql`PRAGMA table_info(verification_results)`) as Array<{ name: string }>).map((c) => c.name),
-  );
-  if (!columns.has("summary")) db.run(sql`ALTER TABLE verification_results ADD COLUMN summary TEXT NOT NULL DEFAULT ''`);
-  if (!columns.has("include_active")) db.run(sql`ALTER TABLE verification_results ADD COLUMN include_active INTEGER NOT NULL DEFAULT 0`);
-  if (!columns.has("duration_ms")) db.run(sql`ALTER TABLE verification_results ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0`);
+  addColumnIfMissing("verification_results", "summary", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing("verification_results", "include_active", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing("verification_results", "duration_ms", "INTEGER NOT NULL DEFAULT 0");
 
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_verification_results_target ON verification_results(target_type, target_id, verified_at)`);
 }

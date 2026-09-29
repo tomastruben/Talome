@@ -23,8 +23,10 @@ vi.mock("../db/audit.js", () => ({ writeAuditEntry: vi.fn() }));
 vi.mock("../db/memories.js", () => ({ getTopMemories: vi.fn().mockResolvedValue([]) }));
 
 import {
+  getActiveDomainNames,
   getActiveRegisteredTools,
   getAllRegisteredTools,
+  invalidateSettingsCache,
   getAllToolMeta,
   getAllDomains,
   getBaseDomainNames,
@@ -295,6 +297,36 @@ describe("discover_tools", () => {
     expect(result.activatedDomains).not.toContain("plex");
     expect(result.unconfigured).toEqual(expect.arrayContaining([expect.objectContaining({ domain: "plex", needsAnyOfSettings: ["plex_url"] })]));
     expect(session.toolNames()).not.toContain("plex_get_on_deck");
+  });
+
+  it("loads a domain that became configured earlier in the same request", async () => {
+    // The request starts before Plex is configured…
+    const session = createToolRoutingSession({ conversationKey: "conv-install", messages: [userMessage("u1", "install plex and show on deck")] });
+    const other = createToolRoutingSession({ messages: [userMessage("v1", "hi")] });
+    expect(session.toolNames()).not.toContain("plex_get_on_deck");
+    // …then install_app auto-configures it and onStepFinish drops the settings cache.
+    settingsRows.push({ key: "plex_url", value: "http://localhost:32400" });
+    invalidateSettingsCache();
+    try {
+      expect(getActiveDomainNames().has("plex")).toBe(true);
+      const byDomain = await runDiscover(session, { domain: "plex" });
+      expect(byDomain.activatedDomains).toEqual(["plex"]);
+      expect((byDomain.tools as Array<{ name: string }>).map((t) => t.name)).toContain("plex_get_on_deck");
+      expect(byDomain.note).not.toMatch(/No matching tools/);
+      expect(session.toolNames()).toContain("plex_get_on_deck");
+
+      // The query form loads it too.
+      const byQuery = await runDiscover(other, { query: "plex on deck" });
+      expect(byQuery.activatedDomains).toContain("plex");
+      expect(byQuery.unconfigured ?? []).toEqual([]);
+
+      // Later turns of the conversation keep it.
+      const next = createToolRoutingSession({ conversationKey: "conv-install", messages: [userMessage("u1", "hi")] });
+      expect(next.toolNames()).toContain("plex_get_on_deck");
+    } finally {
+      settingsRows.pop();
+      invalidateSettingsCache();
+    }
   });
 
   it("never lists or activates tools the user disabled", async () => {

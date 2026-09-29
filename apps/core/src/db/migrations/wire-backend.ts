@@ -1,9 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db, schema } from "../index.js";
-
-function columnsOf(table: string): Set<string> {
-  return new Set((db.all(sql.raw(`PRAGMA table_info(${table})`)) as Array<{ name: string }>).map((c) => c.name));
-}
+import { addColumnIfMissing, tableColumns } from "./columns.js";
 
 /**
  * notifications.link — a first-class, optional in-app link (e.g. the approval
@@ -11,10 +8,9 @@ function columnsOf(table: string): Set<string> {
  * from processes that never run the full migration set (MCP stdio).
  */
 export function ensureNotificationLinkColumn(): void {
-  const columns = columnsOf("notifications");
   // Table not created yet (fresh DB mid-migration): the base migration creates it first.
-  if (columns.size === 0) return;
-  if (!columns.has("link")) db.run(sql`ALTER TABLE notifications ADD COLUMN link TEXT`);
+  if (tableColumns("notifications").size === 0) return;
+  addColumnIfMissing("notifications", "link", "TEXT");
 }
 
 /**
@@ -22,9 +18,8 @@ export function ensureNotificationLinkColumn(): void {
  * runs under (JSON TokenScopes). NULL = owner-level (dashboard, local stdio).
  */
 function ensureAutomationActorScopesColumn(): void {
-  const columns = columnsOf("automations");
-  if (columns.size === 0) return;
-  if (!columns.has("actor_scopes")) db.run(sql`ALTER TABLE automations ADD COLUMN actor_scopes TEXT`);
+  if (tableColumns("automations").size === 0) return;
+  addColumnIfMissing("automations", "actor_scopes", "TEXT");
 }
 
 /**
@@ -34,9 +29,8 @@ function ensureAutomationActorScopesColumn(): void {
  * effect on the next run.
  */
 function ensureAutomationActorTokenColumn(): void {
-  const columns = columnsOf("automations");
-  if (columns.size === 0) return;
-  if (!columns.has("actor_token_id")) db.run(sql`ALTER TABLE automations ADD COLUMN actor_token_id TEXT`);
+  if (tableColumns("automations").size === 0) return;
+  addColumnIfMissing("automations", "actor_token_id", "TEXT");
 }
 
 /** Only numeric ids are real sender ids (Telegram group chats are negative: skipped). */
@@ -67,7 +61,7 @@ function ensureMessagingSendersTable(): void {
   if (existed) return;
 
   // conversations may not exist on a DB this process never migrated (MCP stdio against a fresh file).
-  if (columnsOf("conversations").size === 0) return;
+  if (tableColumns("conversations").size === 0) return;
   const rows = db.all(sql`
     SELECT DISTINCT platform, external_id AS externalId FROM conversations
     WHERE platform IN ('telegram', 'discord') AND external_id IS NOT NULL

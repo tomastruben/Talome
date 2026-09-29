@@ -10,6 +10,7 @@
 
 import { sql } from "drizzle-orm";
 import { db } from "../index.js";
+import { addColumnIfMissing } from "./columns.js";
 
 /** Full access — what pre-grant ("legacy") tokens could already do. */
 export const LEGACY_FULL_ACCESS_SCOPES = JSON.stringify({
@@ -19,23 +20,6 @@ export const LEGACY_FULL_ACCESS_SCOPES = JSON.stringify({
 });
 
 const LEGACY_BACKFILL_MARKER = "mcp_tokens_legacy_scopes";
-
-function columnNames(table: string): Set<string> {
-  const rows = db.all(sql.raw(`PRAGMA table_info(${table})`)) as Array<{ name: string }>;
-  return new Set(rows.map((r) => r.name));
-}
-
-function addColumnIfMissing(table: string, column: string, ddl: string): boolean {
-  if (columnNames(table).has(column)) return false;
-  try {
-    db.run(sql.raw(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`));
-    return true;
-  } catch (err) {
-    // Another process (main server vs. MCP stdio) may have won the race.
-    if (err instanceof Error && /duplicate column/i.test(err.message)) return false;
-    throw err;
-  }
-}
 
 export function runTrustMigrations(): void {
   // ── MCP token grants ────────────────────────────────────────────────────
