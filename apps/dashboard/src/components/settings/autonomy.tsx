@@ -10,6 +10,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { trustFetcher } from "@/components/trust/api";
 import { SettingsGroup, SettingsRow, settingsRequest } from "@/components/settings/settings-primitives";
 import { CORE_URL } from "@/lib/constants";
+import { useUser } from "@/hooks/use-user";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -157,7 +158,10 @@ export function ClaudeCodePromptsGroup() {
  * only; members can't launch these runs).
  */
 export function PermissionPromptsNote({ kind, className }: { kind: PromptsKind; className?: string }) {
-  const { data, error } = useSecurityProfile(true);
+  const { isAdmin } = useUser();
+  // The profile is admin-only; for members the note stays out of the way.
+  const { data, error } = useSecurityProfile(isAdmin);
+  if (!isAdmin) return null;
   if (error && !data) {
     return (
       <p className={cn("text-xs text-muted-foreground", className)}>
