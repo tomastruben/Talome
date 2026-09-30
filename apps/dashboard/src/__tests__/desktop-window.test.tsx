@@ -19,6 +19,83 @@ describe("DesktopWindow", () => {
     onMaximizeChange: vi.fn(),
   };
 
+  const openArrangeMenu = () => {
+    const trigger = screen.getByRole("button", { name: "Arrange Files" });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+  };
+
+  it("uses quiet window controls instead of coloured traffic lights", () => {
+    render(
+      <DesktopWindow {...defaultProps}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    const controls = screen.getByRole("group", { name: "Window controls" });
+    const colouredAtRest = Array.from(controls.querySelectorAll("button")).filter((button) =>
+      button.className.split(/\s+/).some((token) => token.startsWith("bg-status-")),
+    );
+    expect(colouredAtRest).toEqual([]);
+    expect(screen.getByRole("button", { name: "Minimize Files" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Arrange Files" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close Files" })).toBeVisible();
+  });
+
+  it("arranges a window into the left half and remembers its size", async () => {
+    const onTile = vi.fn();
+    render(
+      <DesktopWindow {...defaultProps} onTile={onTile}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    openArrangeMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Left half" }));
+
+    expect(onTile).toHaveBeenCalledWith(
+      { x: 0, y: 0, width: 700, height: 820 },
+      defaultProps.bounds,
+    );
+  });
+
+  it("fills the desktop from Arrange", async () => {
+    const onMaximizeChange = vi.fn();
+    const onBoundsChange = vi.fn();
+    render(
+      <DesktopWindow {...defaultProps} onTile={vi.fn()} onMaximizeChange={onMaximizeChange} onBoundsChange={onBoundsChange}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    openArrangeMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Fill" }));
+
+    expect(screen.queryByRole("menuitem", { name: "Previous size" })).toBeNull();
+    expect(onMaximizeChange).toHaveBeenCalledWith(true, defaultProps.bounds);
+    expect(onBoundsChange).toHaveBeenCalledWith({ x: 0, y: 0, width: 1400, height: 820 });
+  });
+
+  it("offers the previous size once a window is arranged", async () => {
+    const onMaximizeChange = vi.fn();
+    render(
+      <DesktopWindow
+        {...defaultProps}
+        maximized
+        bounds={{ x: 0, y: 0, width: 1400, height: 820 }}
+        restoreBounds={defaultProps.bounds}
+        onTile={vi.fn()}
+        onMaximizeChange={onMaximizeChange}
+      >
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    openArrangeMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Previous size" }));
+
+    expect(onMaximizeChange).toHaveBeenCalledWith(false, defaultProps.bounds);
+  });
+
   it("reports pointer-driven resize geometry", () => {
     const onBoundsChange = vi.fn();
 

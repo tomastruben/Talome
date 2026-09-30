@@ -30,8 +30,9 @@ describe("DesktopWallpaperDialog", () => {
     const titlebar = dialog.querySelector<HTMLElement>("[data-wallpaper-drag-handle]");
     expect(titlebar).not.toBeNull();
     expect(screen.getByRole("button", { name: "Close Desktop Wallpaper" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Minimize Desktop Wallpaper" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Maximize Desktop Wallpaper" })).toBeDisabled();
+    // A panel only closes: no minimize or arrange controls that would do nothing
+    expect(screen.queryByRole("button", { name: "Minimize Desktop Wallpaper" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Arrange Desktop Wallpaper" })).toBeNull();
     expect(screen.queryByText("Choose a Talome scene or use your own image stored in this browser.")).not.toBeInTheDocument();
 
     vi.spyOn(dialog, "getBoundingClientRect").mockReturnValue({

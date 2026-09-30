@@ -2084,9 +2084,7 @@
   [class*="group-hover"][class*="opacity-0"] { opacity: 1 !important; }
 
   /* Window controls and edges sized for a finger */
-  [data-window-controls] { gap: 0.75rem; }
-  [data-window-controls] > button { width: 1.25rem; height: 1.25rem; }
-  [data-window-controls] > button svg { opacity: 1 !important; }
+  [data-window-controls] > button { width: 2.25rem; height: 2.25rem; }
   [data-resize-edge="n"], [data-resize-edge="s"] { height: 0.875rem; }
   [data-resize-edge="e"], [data-resize-edge="w"] { width: 0.875rem; }
   [data-resize-edge="nw"], [data-resize-edge="ne"], [data-resize-edge="sw"], [data-resize-edge="se"] { width: 1.75rem; height: 1.75rem; }

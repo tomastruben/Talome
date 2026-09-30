@@ -12,7 +12,6 @@ import {
 import Image from "next/image";
 import {
   ArrowLeft01Icon,
-  Cancel01Icon,
   DashboardSquareEditIcon,
   HugeiconsIcon,
   Image01Icon,
@@ -21,6 +20,7 @@ import {
   Tick01Icon,
 } from "@/components/icons";
 import { SuccessCheck } from "@/components/ui/micro";
+import { WindowControls } from "@/components/desktop/window-controls";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -485,44 +485,21 @@ function DesktopWallpaperPicker({
     <>
       <header
         data-wallpaper-drag-handle
-        className="grid h-11 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-border/70 px-3 active:cursor-grabbing"
+        className="tm-window-titlebar grid h-11 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b px-2 active:cursor-grabbing"
         onPointerDown={onTitlebarPointerDown}
       >
-        <div className="flex items-center gap-2" aria-label="Window controls">
-          <button
-            type="button"
-            aria-label="Close Desktop Wallpaper"
-            className="group/control flex size-3.5 items-center justify-center rounded-full bg-status-critical/70 transition-colors duration-150 hover:bg-status-critical"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => onOpenChange(false)}
-          >
-            <HugeiconsIcon
-              icon={Cancel01Icon}
-              size={8}
-              strokeWidth={2}
-              className="text-background opacity-0 transition-opacity duration-150 group-hover/control:opacity-100"
-            />
-          </button>
-          <button
-            type="button"
-            aria-label="Minimize Desktop Wallpaper"
-            className="size-3.5 cursor-default rounded-full bg-muted-foreground/20"
-            disabled
-          />
-          <button
-            type="button"
-            aria-label="Maximize Desktop Wallpaper"
-            className="size-3.5 cursor-default rounded-full bg-muted-foreground/20"
-            disabled
-          />
-        </div>
+        <span />
         <DialogTitle className="pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
           Desktop Wallpaper
         </DialogTitle>
         <DialogDescription className="sr-only">
           Choose a Talome or online wallpaper, or upload a custom image.
         </DialogDescription>
-        <span />
+        <WindowControls
+          title="Desktop Wallpaper"
+          className="justify-self-end"
+          onClose={() => onOpenChange(false)}
+        />
       </header>
 
       <div className="grid gap-4 p-4">

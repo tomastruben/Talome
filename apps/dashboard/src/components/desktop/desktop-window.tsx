@@ -14,11 +14,8 @@ import {
   HugeiconsIcon,
   Add01Icon,
   ArrowLeft01Icon,
-  Cancel01Icon,
   CloudUploadIcon,
   FolderAddIcon,
-  MaximizeScreenIcon,
-  MinimizeScreenIcon,
   Projector01Icon,
   ArrowDown01Icon,
   Tick01Icon,
@@ -51,6 +48,7 @@ import {
   type DesktopResizeEdge,
   type DesktopSnapZone,
 } from "@/lib/desktop-window-state";
+import { WindowControls, type DesktopWindowLayout } from "@/components/desktop/window-controls";
 
 interface DesktopWindowProps {
   id: string;
@@ -279,6 +277,40 @@ export const DesktopWindow = memo(function DesktopWindow({
     }
     onMaximizeChange(true, bounds);
     onBoundsChange(maximizedDesktopBounds(area));
+  };
+
+  const sameBounds = (a: DesktopBounds, b: DesktopBounds) =>
+    Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1
+    && Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1;
+  const layout: DesktopWindowLayout = maximized
+    ? "fill"
+    : onTile && sameBounds(bounds, snappedDesktopBounds("left", area))
+      ? "left"
+      : onTile && sameBounds(bounds, snappedDesktopBounds("right", area))
+        ? "right"
+        : "free";
+  const canRestore = layout !== "free" && Boolean(restoreBounds);
+  // The size to come back to: the current one, unless the window is already arranged
+  const sizeToRemember = layout === "free" ? bounds : restoreBounds ?? bounds;
+
+  const arrange = (next: Exclude<DesktopWindowLayout, "free">) => {
+    onFocus();
+    if (next === layout) return;
+    if (next === "fill") {
+      onMaximizeChange(true, sizeToRemember);
+      onBoundsChange(maximizedDesktopBounds(area));
+      return;
+    }
+    onTile?.(snappedDesktopBounds(next, area), sizeToRemember);
+  };
+
+  const restore = () => {
+    onFocus();
+    if (maximized) {
+      onMaximizeChange(false, restoreBounds);
+      return;
+    }
+    if (restoreBounds) onTile?.(clampDesktopBounds(restoreBounds, area, minimum), undefined);
   };
 
   const leadingActions = actions.filter((action) => action.placement === "leading");
@@ -542,65 +574,6 @@ export const DesktopWindow = memo(function DesktopWindow({
         onDoubleClick={toggleMaximize}
       >
         <div className="flex min-w-0 items-center gap-2">
-          <div data-window-controls="" className="group/controls flex shrink-0 items-center gap-2" aria-label="Window controls">
-            <button
-              type="button"
-              aria-label={`Close ${title}`}
-              className={cn(
-                "group/control flex size-3.5 items-center justify-center rounded-full transition-colors duration-150",
-                active
-                  ? "bg-status-critical/70 hover:bg-status-critical"
-                  : "bg-muted-foreground/25 hover:bg-status-critical/70",
-              )}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={onClose}
-            >
-              <HugeiconsIcon
-                icon={Cancel01Icon}
-                size={8}
-                strokeWidth={2}
-                className="text-black/70 opacity-0 transition-opacity duration-150 group-hover/controls:opacity-100 group-focus-visible/control:opacity-100"
-              />
-            </button>
-            <button
-              type="button"
-              aria-label={`Minimize ${title}`}
-              className={cn(
-                "group/control flex size-3.5 items-center justify-center rounded-full transition-colors duration-150",
-                active
-                  ? "bg-status-warning/70 hover:bg-status-warning"
-                  : "bg-muted-foreground/25 hover:bg-status-warning/70",
-              )}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={onMinimize}
-            >
-              <HugeiconsIcon
-                icon={MinimizeScreenIcon}
-                size={8}
-                strokeWidth={2}
-                className="text-black/70 opacity-0 transition-opacity duration-150 group-hover/controls:opacity-100 group-focus-visible/control:opacity-100"
-              />
-            </button>
-            <button
-              type="button"
-              aria-label={maximized ? `Restore ${title}` : `Maximize ${title}`}
-              className={cn(
-                "group/control flex size-3.5 items-center justify-center rounded-full transition-colors duration-150",
-                active
-                  ? "bg-status-healthy/70 hover:bg-status-healthy"
-                  : "bg-muted-foreground/25 hover:bg-status-healthy/70",
-              )}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={toggleMaximize}
-            >
-              <HugeiconsIcon
-                icon={MaximizeScreenIcon}
-                size={8}
-                strokeWidth={2}
-                className="text-black/70 opacity-0 transition-opacity duration-150 group-hover/controls:opacity-100 group-focus-visible/control:opacity-100"
-              />
-            </button>
-          </div>
           {leadingActions.length > 0 && (
             <div className="flex min-w-0 items-center gap-0.5" aria-label={`${title} navigation`}>
               {leadingActions.map(renderAction)}
@@ -609,7 +582,7 @@ export const DesktopWindow = memo(function DesktopWindow({
           <span
             data-title-placement="leading"
             className={cn(
-              "pointer-events-none min-w-0 truncate text-sm font-medium transition-colors duration-150",
+              "pointer-events-none min-w-0 truncate text-sm font-medium leading-5 transition-colors duration-150",
               !active && "text-muted-foreground",
             )}
           >
@@ -623,6 +596,19 @@ export const DesktopWindow = memo(function DesktopWindow({
         >
           {otherTrailingActions.map(renderAction)}
           {renderTerminalControls()}
+          {trailingActions.length > 0 && (
+            <span className="mx-1.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+          )}
+          <WindowControls
+            title={title}
+            active={active}
+            layout={layout}
+            canRestore={canRestore}
+            onLayoutChange={arrange}
+            onRestore={restore}
+            onMinimize={onMinimize}
+            onClose={onClose}
+          />
         </div>
       </div>
 
