@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   clampDesktopBounds,
+  desktopSnapZoneAt,
+  resizeDesktopBounds,
+  snappedDesktopBounds,
+  unsnapDesktopBounds,
   desktopMinimizeOffset,
   desktopWindowMotionKeyframes,
   isPersistedDesktopDock,
@@ -8,7 +12,6 @@ import {
   maximizedDesktopBounds,
   orderDesktopDockIds,
   reorderDesktopDockIds,
-  resizeDesktopBounds,
 } from "@/lib/desktop-window-state";
 
 describe("desktop window geometry", () => {
@@ -54,6 +57,8 @@ describe("desktop window geometry", () => {
   it("keeps the bottom-right resize affordance inside the desktop", () => {
     expect(resizeDesktopBounds(
       { x: 160, y: 120, width: 1600, height: 1000 },
+      "se",
+      { x: 0, y: 0 },
       { width: 1189, height: 873 },
       { width: 520, height: 360 },
     )).toEqual({
@@ -85,6 +90,48 @@ describe("desktop window geometry", () => {
     expect(restore.opacity).toEqual([...minimize.opacity].reverse());
     // Restore runs the minimize path backwards, so its times mirror minimize's.
     expect(restore.times).toEqual([...minimize.times].reverse().map((t) => Math.round((1 - t) * 100) / 100));
+  });
+});
+
+describe("desktop window resizing and snapping", () => {
+  const area = { width: 1440, height: 860 };
+  const minimum = { width: 360, height: 260 };
+  const origin = { x: 200, y: 100, width: 700, height: 500 };
+
+  it("resizes from the left edge while keeping the right edge fixed", () => {
+    expect(resizeDesktopBounds(origin, "w", { x: -50, y: 0 }, area, minimum)).toEqual({ x: 150, y: 100, width: 750, height: 500 });
+  });
+
+  it("resizes from the top-left corner and stops at the window minimum", () => {
+    expect(resizeDesktopBounds(origin, "nw", { x: 600, y: 400 }, area, minimum)).toEqual({ x: 540, y: 340, width: 360, height: 260 });
+  });
+
+  it("keeps edge resizes inside the desktop", () => {
+    expect(resizeDesktopBounds(origin, "se", { x: 2000, y: 2000 }, area, minimum)).toEqual({ x: 200, y: 100, width: 1240, height: 760 });
+    expect(resizeDesktopBounds(origin, "n", { x: 0, y: -500 }, area, minimum)).toEqual({ x: 200, y: 0, width: 700, height: 600 });
+  });
+
+  it("offers maximize at the top edge and halves at the sides", () => {
+    expect(desktopSnapZoneAt({ x: 700, y: 2 }, area)).toBe("maximize");
+    expect(desktopSnapZoneAt({ x: 3, y: 400 }, area)).toBe("left");
+    expect(desktopSnapZoneAt({ x: 1437, y: 400 }, area)).toBe("right");
+    expect(desktopSnapZoneAt({ x: 700, y: 400 }, area)).toBeNull();
+  });
+
+  it("splits the desktop into two halves that cover it exactly", () => {
+    const left = snappedDesktopBounds("left", { width: 1441, height: 860 });
+    const right = snappedDesktopBounds("right", { width: 1441, height: 860 });
+    expect(left.width + right.width).toBe(1441);
+    expect(right.x).toBe(left.width);
+  });
+
+  it("restores the previous size under the pointer when a snapped window is dragged away", () => {
+    const snapped = snappedDesktopBounds("left", area);
+    const pointer = { x: 540, y: 20 }; // three quarters across the snapped title bar
+    const restored = unsnapDesktopBounds(snapped, origin, pointer, area, minimum);
+    expect(restored.width).toBe(700);
+    expect(restored.height).toBe(500);
+    expect((pointer.x - restored.x) / restored.width).toBeCloseTo(0.75);
   });
 });
 

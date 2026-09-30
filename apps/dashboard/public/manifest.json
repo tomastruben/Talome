@@ -1,9 +1,12 @@
 {
+  "id": "/dashboard",
   "name": "Talome",
   "short_name": "Talome",
   "description": "AI-powered home server OS",
   "start_url": "/dashboard",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "theme_color": "#0a0a0a",
   "background_color": "#0a0a0a",
   "icons": [

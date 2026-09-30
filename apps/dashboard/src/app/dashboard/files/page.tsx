@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, Suspense } from "react";
+import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import dynamic from "next/dynamic";
 import { useSetAtom } from "jotai";
-import { AnimatePresence, motion } from "motion/react";
-import { enter } from "@/lib/motion";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { enter, TRAVEL } from "@/lib/motion";
+import { SelectMark } from "@/components/ui/micro";
 import {
   HugeiconsIcon,
   Folder01Icon,
@@ -25,17 +26,29 @@ import {
   Add01Icon,
   CloudUploadIcon,
   FolderAddIcon,
+  FileUploadIcon,
+  FolderUploadIcon,
   ExternalDriveIcon,
   HardDriveIcon,
   Cancel01Icon,
   ArrowRight01Icon,
-  CheckmarkCircle02Icon,
   FolderExportIcon,
   ArrowLeft01Icon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
+  PinIcon,
+  PinOffIcon,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { UploadPanel } from "@/components/files/upload-panel";
+import { useUploadQueue, filesFromDrop, filesFromInput, type PendingFile } from "@/components/files/use-upload-queue";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
@@ -84,6 +97,9 @@ import { CORE_URL, getDirectCoreUrl } from "@/lib/constants";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useSystemStats } from "@/hooks/use-system-stats";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { FilesSidebar, useFileFavorites } from "@/components/files/files-sidebar";
+import { WindowSidebarLayout } from "@/components/ui/source-list";
 import { isCodeHighlightable } from "@/lib/file-languages";
 import { getVisibleFileRoots, type FileManagerRoot } from "@/lib/file-roots";
 const VideoPlayer = dynamic(
@@ -392,18 +408,31 @@ function RootsList({ roots, onSelect }: { roots: FileManagerRoot[]; onSelect: (r
 
 // ── Header actions (rendered via pageActionAtom) ────────────────────────
 
-function FileActions({ onNewFolder, onUpload }: { onNewFolder: () => void; onUpload: () => void }) {
+function FileActions({ onNewFolder, onUpload, onUploadFolder }: { onNewFolder: () => void; onUpload: () => void; onUploadFolder: () => void }) {
   return (
     <div className="ml-auto flex items-center gap-1 shrink-0">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-        onClick={onUpload}
-      >
-        <HugeiconsIcon icon={CloudUploadIcon} size={14} />
-        Upload
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <HugeiconsIcon icon={CloudUploadIcon} size={14} />
+            Upload
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem onSelect={onUpload}>
+            <HugeiconsIcon icon={FileUploadIcon} size={14} />
+            Files…
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onUploadFolder}>
+            <HugeiconsIcon icon={FolderUploadIcon} size={14} />
+            Folder…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <Button
         variant="ghost"
         size="sm"
@@ -879,6 +908,66 @@ function MoveDialog({
   );
 }
 
+// ── Row actions (shared by the "…" menu and the right-click menu) ─────────
+
+function FileRowActionItems({
+  menu,
+  item,
+  onOpen,
+  onRename,
+  onMove,
+  onDownload,
+  onDelete,
+  pinned,
+  onTogglePin,
+}: {
+  menu: "dropdown" | "context";
+  item: FileItem;
+  onOpen: (item: FileItem) => void;
+  onRename: (item: FileItem) => void;
+  onMove: (item: FileItem) => void;
+  onDownload: (path: string, name: string) => void;
+  onDelete: (item: FileItem) => void;
+  /** Folders only, in a desktop window: pin to or unpin from the sidebar */
+  pinned?: boolean;
+  onTogglePin?: (item: FileItem) => void;
+}) {
+  const actions: { id: string; label: string; icon: IconSvgElement; run: () => void; destructive?: boolean; separatorBefore?: boolean }[] = [
+    ...(item.isDirectory || isPreviewable(item.name)
+      ? [{ id: "open", label: item.isDirectory ? "Open" : "Quick Look", icon: item.isDirectory ? FolderOpenIcon : FileAttachmentIcon, run: () => onOpen(item) }]
+      : []),
+    ...(item.isDirectory && onTogglePin
+      ? [{ id: "pin", label: pinned ? "Remove from Sidebar" : "Add to Sidebar", icon: pinned ? PinOffIcon : PinIcon, run: () => onTogglePin(item) }]
+      : []),
+    { id: "rename", label: "Rename", icon: Edit02Icon, run: () => onRename(item) },
+    { id: "move", label: "Move to…", icon: FolderExportIcon, run: () => onMove(item) },
+    ...(!item.isDirectory ? [{ id: "download", label: "Download", icon: Download01Icon, run: () => onDownload(item.path, item.name) }] : []),
+    { id: "delete", label: "Delete permanently…", icon: Delete01Icon, destructive: true, separatorBefore: true, run: () => onDelete(item) },
+  ];
+  const Item = menu === "dropdown" ? DropdownMenuItem : ContextMenuItem;
+  const Separator = menu === "dropdown" ? DropdownMenuSeparator : ContextMenuSeparator;
+
+  return (
+    <>
+      {actions.map((action) => (
+        <Fragment key={action.id}>
+          {action.separatorBefore && <Separator />}
+          <Item
+            variant={action.destructive ? "destructive" : undefined}
+            onClick={(event: React.MouseEvent) => {
+              event.stopPropagation();
+              action.run();
+            }}
+          >
+            <HugeiconsIcon icon={action.icon} size={14} />
+            {action.label}
+          </Item>
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 // ── Page component ──────────────────────────────────────────────────────
 
 function FilesPageInner({ initialPath }: { initialPath: string | null }) {
@@ -896,6 +985,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   const scrollPositions = useRef<Map<string, number>>(new Map());
   const contentRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const lastSelectedIdx = useRef<number | null>(null);
   const setPageAction = useSetAtom(pageActionAtom);
@@ -928,6 +1018,10 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   // previous one still on screen gets the delayed skeleton too (spec §4.8).
   const loadingPhase = useLoadingPhase(!dataIsForThisFolder && !error && (isLoading || isValidating));
 
+  // In a desktop window, a Finder-style sidebar lists pinned folders and every location
+  const embedded = useIsEmbeddedFrame();
+  const favoriteFolders = useFileFavorites(embedded ? data?.allowedRoots?.[0] : undefined);
+
   // Only auto-enter a root when there's exactly one
   const hasMultipleRoots = (data?.allowedRoots?.length ?? 0) > 1;
   const isAtVirtualRoot = !currentPath && hasMultipleRoots;
@@ -946,8 +1040,14 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   }, [currentPath]);
 
   const hasSelection = selectedPaths.size > 0;
+  const reduceMotion = useReducedMotion();
 
+  // Into a folder the list arrives from the right; back out, from the left
+  const [navDirection, setNavDirection] = useState(0);
   const navigate = useCallback((path: string) => {
+    setNavDirection(
+      !currentPath || path.startsWith(`${currentPath}/`) ? 1 : currentPath.startsWith(`${path}/`) ? -1 : 0,
+    );
     // Save scroll position of current view
     const scrollParent = contentRef.current;
     if (scrollParent) {
@@ -958,13 +1058,13 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     setSelectedPaths(new Set());
     lastSelectedIdx.current = null;
     // Update title atomically to prevent blink
-    const isRoot = hasMultipleRoots && data?.allowedRoots?.includes(path);
+    const isRoot = data?.allowedRoots?.includes(path);
     const folderName = isRoot
       ? rootLabel(path).label
       : path.split("/").filter(Boolean).pop() || "Files";
     setPageTitle(folderName);
     router.replace(`/dashboard/files?path=${encodeURIComponent(path)}`, { scroll: false });
-  }, [currentPath, router, hasMultipleRoots, data?.allowedRoots, setPageTitle]);
+  }, [currentPath, router, data?.allowedRoots, setPageTitle]);
 
   const handleDownload = useCallback((filePath: string, fileName: string) => {
     const a = document.createElement("a");
@@ -1094,48 +1194,22 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     toast.error("Couldn't create a folder", { description: "A folder with that name already exists. Refresh and try again." });
   }, [currentPath, data?.items, mutate]);
 
-  const handleUpload = useCallback((files: FileList | File[]) => {
-    if (!currentPath) return;
-    const folder = currentPath;
-    const destination = folder.split("/").filter(Boolean).pop() ?? "this folder";
+  // Refresh the listing as uploads land, at most twice a second
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshAfterUpload = useCallback(() => {
+    if (refreshTimer.current) return;
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      void mutate();
+    }, 500);
+  }, [mutate]);
+  const uploads = useUploadQueue(refreshAfterUpload);
 
-    const start = (list: File[]) => {
-      if (list.length === 0) return;
-      const label = list.length === 1 ? list[0].name : `${list.length} files`;
-      const run = async (): Promise<{ uploaded: string[]; errors: string[] }> => {
-        const formData = new FormData();
-        formData.append("path", folder);
-        for (const file of list) formData.append("files", file);
-        let res: Response;
-        try {
-          res = await fetch(`${CORE_URL}/api/files/upload`, { method: "POST", credentials: "include", body: formData });
-        } catch {
-          throw new Error("the Talome server didn't answer");
-        }
-        const result = (await res.json().catch(() => null)) as { ok?: boolean; uploaded?: string[]; errors?: string[]; error?: string } | null;
-        if (!res.ok || !result) throw new Error(result?.error ?? `the server answered ${res.status}`);
-        const uploaded = result.uploaded ?? [];
-        const errors = result.errors ?? [];
-        void mutate();
-        if (uploaded.length === 0) throw new Error(errors[0] ?? "nothing was uploaded");
-        if (errors.length > 0) {
-          toastWarning(`Skipped ${errors.length === 1 ? "1 file" : `${errors.length} files`}`, { description: errors[0] });
-        }
-        return { uploaded, errors };
-      };
-
-      void promiseToast(run, {
-        loading: `Uploading ${label}…`,
-        success: ({ uploaded }) => `Uploaded ${uploaded.length === 1 ? uploaded[0] : `${uploaded.length} files`} to ${destination}`,
-        error: (err) => `Couldn't upload ${label}: ${err instanceof Error ? err.message : "unknown error"}.`,
-        onRetry: () => start(list),
-      }).catch(() => {
-        // Reported in the toast, with Retry.
-      });
-    };
-
-    start(Array.from(files));
-  }, [currentPath, mutate]);
+  const addUploads = uploads.add;
+  const handleUpload = useCallback((files: PendingFile[]) => {
+    if (!currentPath || files.length === 0) return;
+    addUploads(files, currentPath);
+  }, [currentPath, addUploads]);
 
   const handleRowClick = useCallback((item: FileItem) => {
     if (item.isDirectory) {
@@ -1146,6 +1220,17 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
       setPreviewFile(item.path);
     }
   }, [navigate]);
+
+  const renameItem = useCallback((item: FileItem) => {
+    setRenamingItem(item);
+    setRenameValue(item.name);
+  }, []);
+  const moveItem = useCallback((item: FileItem) => setMovingPaths([item.path]), []);
+  // Every delete asks first (permanent: there is no Trash yet).
+  const deleteItem = useCallback((item: FileItem) => {
+    void confirmDelete(item);
+  }, [confirmDelete]);
+
 
   // ── Multi-select ──────────────────────────────────────────────────────
 
@@ -1283,8 +1368,9 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     e.preventDefault();
     dragCounter.current = 0;
     setIsDragging(false);
-    if (e.dataTransfer.files.length > 0) {
-      void handleUpload(e.dataTransfer.files);
+    if (e.dataTransfer.items.length > 0 || e.dataTransfer.files.length > 0) {
+      // Folders dropped here upload with their structure intact
+      void filesFromDrop(e.dataTransfer).then(handleUpload);
     }
   }, [handleUpload]);
 
@@ -1334,6 +1420,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         <FileActions
           onNewFolder={() => void handleNewFolder()}
           onUpload={() => fileInputRef.current?.click()}
+          onUploadFolder={() => folderInputRef.current?.click()}
         />,
       );
       setDesktopAppActions([
@@ -1362,7 +1449,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   // before paint — prevents the "Files" default label from flashing.
   useLayoutEffect(() => {
     if (currentPath) {
-      const isRoot = hasMultipleRoots && data?.allowedRoots?.includes(currentPath);
+      const isRoot = data?.allowedRoots?.includes(currentPath);
       const folderName = isRoot
         ? rootLabel(currentPath).label
         : currentPath.split("/").filter(Boolean).pop() || "Files";
@@ -1380,12 +1467,14 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
 
   // ── Path segments ───────────────────────────────────────────────────
 
-  // Build breadcrumbs from the user-visible root instead of exposing the
-  // server's host path (for example /Users/<name>/.talome/files). This also
-  // keeps external-drive breadcrumbs stable when their mount path changes.
+  // Path bar starts at the root the folder lives in ("Talome Files / Photos / 2025"),
+  // built from the user-visible root instead of exposing the server's host path
+  // (for example /Users/<name>/.talome/files). This also keeps external-drive
+  // breadcrumbs stable when their mount path changes.
   const segments: { name: string; path: string }[] = [];
   if (data?.path) {
-    const matchingRoot = (data.roots ?? [])
+    const knownRoots: { path: string; label: string }[] = data.roots ?? (data.allowedRoots ?? []).map((root) => ({ path: root, label: rootLabel(root).label }));
+    const matchingRoot = knownRoots
       .filter((root) => data.path === root.path || data.path.startsWith(`${root.path}/`))
       .sort((a, b) => b.path.length - a.path.length)[0];
 
@@ -1428,13 +1517,46 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         multiple
         className="hidden"
         onChange={(e) => {
-          if (e.target.files) void handleUpload(e.target.files);
+          if (e.target.files) handleUpload(filesFromInput(e.target.files));
           e.target.value = "";
         }}
       />
+      {/* Hidden folder picker — keeps the folder structure */}
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        {...{ webkitdirectory: "", directory: "" }}
+        onChange={(e) => {
+          if (e.target.files) handleUpload(filesFromInput(e.target.files));
+          e.target.value = "";
+        }}
+      />
+      <UploadPanel
+        items={uploads.items}
+        onCancel={uploads.cancel}
+        onCancelAll={uploads.cancelAll}
+        onRetry={uploads.retry}
+        onClear={uploads.clearFinished}
+      />
 
+      <WindowSidebarLayout
+        sidebar={data?.allowedRoots ? (
+          <FilesSidebar
+            roots={data.allowedRoots}
+            currentPath={isAtVirtualRoot ? null : (currentPath ?? data.path ?? null)}
+            rootLabel={(root) => rootLabel(root).label}
+            favorites={favoriteFolders.favorites}
+            onNavigate={navigate}
+            onShowAllLocations={hasMultipleRoots ? goToVirtualRoot : undefined}
+            onUnpin={favoriteFolders.toggle}
+          />
+        ) : null}
+      >
       <div
-        className="flex flex-col flex-1 min-h-0 relative"
+        // In a window Files runs edge to edge, like Finder: no shell padding around the list and path bar
+        className={cn("flex flex-col flex-1 min-h-0 relative", embedded && "-m-4")}
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
@@ -1462,6 +1584,15 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
 
         {/* ── File table ──────────────────────────────────────────────── */}
         <div ref={contentRef} className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
+          {/* Into a folder the list arrives from the right, back out from the left.
+              Keyed on the folder actually shown, so a kept previous listing
+              doesn't replay the entrance while the next one loads. */}
+          <motion.div
+            key={isAtVirtualRoot ? "roots" : (data?.path ?? "loading")}
+            initial={reduceMotion ? false : { opacity: 0, x: navDirection * TRAVEL.lift * 2, filter: navDirection ? "blur(3px)" : "blur(0px)" }}
+            animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
+            transition={enter()}
+          >
               {error && dataIsForThisFolder && (
                 <StaleRow loadedAt={listLoadedAt} subject="files" onRetry={() => void mutate()} retrying={isValidating} className="px-3 pt-2" />
               )}
@@ -1516,23 +1647,18 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
               ) : (
                 <Table className="table-fixed" containerClassName="overflow-visible">
                   <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/85">
-                    <TableRow className="hover:bg-transparent border-border/50">
+                    <TableRow className="group/header hover:bg-transparent border-border/50 [&>th]:h-9 [&>th]:text-xs [&>th]:font-normal [&>th]:text-muted-foreground">
                       <TableHead className="w-9 pl-3 pr-0">
                         <div className="flex items-center justify-center">
                           <button
-                            className="flex items-center justify-center transition-all duration-150"
+                            aria-label={allSelected ? "Deselect all" : "Select all"}
+                            className={cn(
+                              "flex items-center justify-center transition-opacity duration-150 focus-visible:opacity-100",
+                              hasSelection ? "opacity-100" : "opacity-0 group-hover/header:opacity-100",
+                            )}
                             onClick={toggleSelectAll}
                           >
-                            {allSelected ? (
-                              <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} className="text-foreground" />
-                            ) : (
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className={cn(
-                                "transition-colors duration-150",
-                                hasSelection ? "text-dim-foreground" : "text-dim-foreground"
-                              )}>
-                                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" />
-                              </svg>
-                            )}
+                            <SelectMark selected={allSelected} className={allSelected ? "text-foreground" : "text-dim-foreground"} />
                           </button>
                         </div>
                       </TableHead>
@@ -1550,114 +1676,99 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                       const isHighlighted = item.name === highlightedFolder;
 
                       return (
-                        <TableRow
-                          key={item.path}
-                          className={cn(
-                            "group border-transparent transition-colors",
-                            clickable && "cursor-pointer",
-                            isSelected && "bg-muted/40",
-                          )}
-                          style={isHighlighted ? { animation: "folder-highlight 2s ease-out" } : undefined}
-                          onClick={() => handleRowClick(item)}
-                        >
-                          <TableCell className="py-1.5 w-9 pl-3 pr-0">
-                            <div className="flex items-center justify-center">
-                              <button
-                                className="flex items-center justify-center transition-all duration-150"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleSelect(item.path, idx, e.shiftKey);
-                                }}
-                              >
-                                {isSelected ? (
-                                  <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} className="text-foreground" />
-                                ) : (
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className={cn(
-                                    "transition-colors duration-150",
-                                    hasSelection ? "text-dim-foreground" : "text-dim-foreground group-hover:text-muted-foreground"
-                                  )}>
-                                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" />
-                                  </svg>
-                                )}
-                              </button>
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-1.5 overflow-hidden">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <HugeiconsIcon icon={icon} size={18} className={cn("shrink-0", color)} />
-                              <span className="truncate text-sm">{item.name}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell py-1.5 text-muted-foreground text-xs">
-                            {formatDate(item.modified)}
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell py-1.5 text-right text-muted-foreground text-xs tabular-nums">
-                            {item.isDirectory ? "\u2014" : formatBytes(item.size)}
-                          </TableCell>
-                          <TableCell className="py-1.5 w-9 pr-1">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-6 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-                                  onClick={(e) => e.stopPropagation()}
-                                  aria-label="File actions"
-                                >
-                                  <HugeiconsIcon icon={MoreHorizontalIcon} size={14} />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-40">
-                                <DropdownMenuItem
+                        <ContextMenu key={item.path}>
+                          <ContextMenuTrigger asChild>
+                          <TableRow
+                            className={cn(
+                              "group border-transparent transition-colors",
+                              clickable && "cursor-pointer",
+                              isSelected && "bg-muted/40",
+                            )}
+                            style={isHighlighted ? { animation: "folder-highlight 2s ease-out" } : undefined}
+                            onClick={() => handleRowClick(item)}
+                          >
+                            <TableCell className="py-1.5 w-9 pl-3 pr-0">
+                              <div className="flex items-center justify-center">
+                                <button
+                                  aria-label={isSelected ? `Deselect ${item.name}` : `Select ${item.name}`}
+                                  className={cn(
+                                    "flex items-center justify-center transition-opacity duration-150 focus-visible:opacity-100",
+                                    hasSelection || isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                                  )}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setRenamingItem(item);
-                                    setRenameValue(item.name);
+                                    toggleSelect(item.path, idx, e.shiftKey);
                                   }}
                                 >
-                                  <HugeiconsIcon icon={Edit02Icon} size={14} />
-                                  Rename
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setMovingPaths([item.path]);
-                                  }}
-                                >
-                                  <HugeiconsIcon icon={FolderExportIcon} size={14} />
-                                  Move to…
-                                </DropdownMenuItem>
-                                {!item.isDirectory && (
-                                  <DropdownMenuItem
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDownload(item.path, item.name);
-                                    }}
+                                  <SelectMark
+                                    selected={isSelected}
+                                    className={isSelected ? "text-foreground" : hasSelection ? "text-dim-foreground" : "text-dim-foreground group-hover:text-muted-foreground"}
+                                  />
+                                </button>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-1.5 overflow-hidden">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <HugeiconsIcon icon={icon} size={18} className={cn("shrink-0", color)} />
+                                <span className="truncate text-sm">{item.name}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="hidden sm:table-cell py-1.5 text-muted-foreground text-xs">
+                              {formatDate(item.modified)}
+                            </TableCell>
+                            <TableCell className="hidden sm:table-cell py-1.5 text-right text-muted-foreground text-xs tabular-nums">
+                              {item.isDirectory ? "\u2014" : formatBytes(item.size)}
+                            </TableCell>
+                            <TableCell className="py-1.5 w-9 pr-1">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-6 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                                    onClick={(e) => e.stopPropagation()}
+                                    aria-label="File actions"
                                   >
-                                    <HugeiconsIcon icon={Download01Icon} size={14} />
-                                    Download
-                                  </DropdownMenuItem>
-                                )}
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  variant="destructive"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void confirmDelete(item);
-                                  }}
-                                >
-                                  <HugeiconsIcon icon={Delete01Icon} size={14} />
-                                  Delete permanently…
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
+                                    <HugeiconsIcon icon={MoreHorizontalIcon} size={14} />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-40">
+                                  <FileRowActionItems
+                                    menu="dropdown"
+                                    item={item}
+                                    onOpen={handleRowClick}
+                                    onRename={renameItem}
+                                    onMove={moveItem}
+                                    onDownload={handleDownload}
+                                    onDelete={deleteItem}
+                                    pinned={favoriteFolders.isFavorite(item.path)}
+                                    onTogglePin={embedded ? (folder) => favoriteFolders.toggle(folder.path) : undefined}
+                                  />
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="w-44">
+                            <FileRowActionItems
+                              menu="context"
+                              item={item}
+                              onOpen={handleRowClick}
+                              onRename={renameItem}
+                              onMove={moveItem}
+                              onDownload={handleDownload}
+                              onDelete={deleteItem}
+                              pinned={favoriteFolders.isFavorite(item.path)}
+                              onTogglePin={embedded ? (folder) => favoriteFolders.toggle(folder.path) : undefined}
+                            />
+                          </ContextMenuContent>
+                        </ContextMenu>
                       );
                     })}
                   </TableBody>
                 </Table>
               )}
+          </motion.div>
         </div>
 
         {/* ── Floating selection bar ──────────────────────────────────── */}
@@ -1746,6 +1857,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         </div>
         )}
       </div>
+      </WindowSidebarLayout>
 
       {/* ── Rename dialog ──────────────────────────────────────────────── */}
       <Dialog open={!!renamingItem} onOpenChange={() => setRenamingItem(null)}>

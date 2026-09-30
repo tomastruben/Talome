@@ -373,3 +373,45 @@ describe("save and log-out honesty (D-P0-6)", () => {
     }));
   });
 });
+
+describe("honesty in PR #2's desktop (no menu bar): the Dock's status tray", () => {
+  const read = async (path: string) => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    return readFileSync(join(__dirname, "..", path), "utf8");
+  };
+
+  it("keeps approvals, core health with Retry and Diagnose, and save-failure reporting in the tray", async () => {
+    const source = await read("components/desktop/desktop-experience.tsx");
+    expect(source).not.toMatch(/<header[\s>]/);
+    const tray = source.slice(source.indexOf('aria-label="Status"'));
+    expect(tray).toContain("<DesktopApprovalsButton");
+    expect(tray).toMatch(/<DesktopApprovalsButton[\s\S]*?side="top"/);
+    expect(tray).toContain("data-desktop-health-dot");
+    expect(tray).toContain("health.recheck()");
+    expect(tray).toContain("Diagnose with Talome");
+    expect(tray).toContain("onSelect={selectClassicMode}");
+    expect(tray).toContain("void logOut()");
+  });
+
+  it("opens the approvals panel upward from the tray, with the count on the icon", async () => {
+    mocks.pending = [{
+      id: "apr_9", actor: { kind: "mcp_token", id: "t1", label: "Cursor" }, source: "mcp", tool: "restart_app",
+      summary: 'Cursor wants to run "Restart app" on sonarr (modify).', argsPreview: "{}", status: "pending",
+      createdAt: "2026-09-30T10:00:00Z", expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      decidedBy: null, decidedAt: null, consumedAt: null,
+    }];
+    render(<DesktopApprovalsButton isAdmin side="top" triggerClassName="relative flex size-10" iconSize={19} onReviewAll={vi.fn()} />);
+    const trigger = screen.getByRole("button", { name: "1 approval waiting" });
+    expect(trigger).toHaveClass("size-10");
+    expect(trigger.querySelector("[data-variant=count]")).toHaveTextContent("1");
+    mocks.pending = [];
+  });
+
+  it("ticks the desktop clock widget on the minute, not on an interval from mount", async () => {
+    const source = await read("components/widgets/clock-widget.tsx");
+    expect(source).toContain("msUntilNextMinute(Date.now())");
+    expect(source).toContain("visibilitychange");
+    expect(source).not.toMatch(/setInterval\(tick, 15_000\)/);
+  });
+});

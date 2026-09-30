@@ -10,14 +10,14 @@ import {
 import Image from "next/image";
 import {
   ArrowLeft01Icon,
-  Cancel01Icon,
-  CheckmarkCircle02Icon,
   DashboardSquareEditIcon,
   HugeiconsIcon,
   Image01Icon,
   ImageAdd01Icon,
   Tick01Icon,
 } from "@/components/icons";
+import { SuccessCheck } from "@/components/ui/micro";
+import { WindowControls } from "@/components/desktop/window-controls";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,7 +32,6 @@ import {
 } from "@/components/widgets/widget-grid";
 import { cn } from "@/lib/utils";
 import { toastWarning } from "@/lib/toast";
-import { WINDOW_CONTROL_GLYPH_CLASS } from "@/components/desktop/desktop-window";
 
 const MAX_WALLPAPER_BYTES = 2 * 1024 * 1024;
 const WALLPAPER_DIALOG_VIEWPORT_MARGIN = 16;
@@ -468,7 +467,7 @@ function WallpaperPresetButton({
       role="radio"
       aria-checked={selected}
       aria-label={`Use ${preset.name} wallpaper`}
-      className="group grid min-w-0 gap-2 text-left outline-none"
+      className="group grid min-w-0 gap-2 text-left outline-none transition-transform duration-150 active:scale-[0.98]"
       onClick={onSelect}
     >
       <span
@@ -486,8 +485,8 @@ function WallpaperPresetButton({
           className="transition-transform duration-150 group-hover:scale-[1.02]"
         />
         {selected ? (
-          <span className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm backdrop-blur-sm">
-            <HugeiconsIcon icon={CheckmarkCircle02Icon} size={15} />
+          <span className="tm-badge-in absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 shadow-sm backdrop-blur-sm">
+            <SuccessCheck size={18} className="text-foreground" />
           </span>
         ) : null}
       </span>
@@ -662,29 +661,15 @@ function DesktopWallpaperPicker({
     <>
       <header
         data-wallpaper-drag-handle
-        className="grid h-11 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-border/70 px-3 active:cursor-grabbing"
+        className="tm-window-titlebar grid h-10 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b px-2 active:cursor-grabbing"
         onPointerDown={onTitlebarPointerDown}
       >
-        {/* A dialog, not a window: only the close light, with the window's 28px target
-            (no disabled minimize/zoom dots that look like controls but aren't). */}
-        <div className="-ml-1.5 flex items-center" role="group" aria-label="Window controls">
-          <button
-            type="button"
-            aria-label="Close desktop wallpaper"
-            className="group/control relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:bg-window-close before:ring-1 before:ring-inset before:ring-window-control-edge focus-visible:ring-2 focus-visible:ring-ring"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => onOpenChange(false)}
-          >
-            <HugeiconsIcon
-              icon={Cancel01Icon}
-              size={10}
-              strokeWidth={2.5}
-              aria-hidden="true"
-              className={cn(WINDOW_CONTROL_GLYPH_CLASS, "group-hover/control:opacity-100 group-focus-visible/control:opacity-100 contrast-more:opacity-100")}
-            />
-          </button>
-        </div>
-        <DialogTitle className="pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
+        {/* A panel, not a window: Close only (no Minimize or Arrange that would do nothing). */}
+        <WindowControls
+          title="desktop wallpaper"
+          onClose={() => onOpenChange(false)}
+        />
+        <DialogTitle className="tm-cap-trim pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
           Desktop wallpaper
         </DialogTitle>
         <DialogDescription className="sr-only">

@@ -35,6 +35,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
 import { integrations } from "../routes/integrations.js";
+import { getSetting } from "../utils/settings.js";
 import { getEffectiveTier, isProtectedSettingKey } from "../ai/execution.js";
 
 function appAs(role: "admin" | "member") {
@@ -93,7 +94,9 @@ describe("chat-bot restart/stop routes", () => {
       const admin = appAs("admin");
       const restart = await post(admin, `/${platform}/restart`, { token: "new-token" });
       expect(restart.status).toBe(200);
-      expect(storedToken(key)).toBe("new-token");
+      // Bot tokens are secrets: stored encrypted, read back through getSetting.
+      expect(getSetting(key)).toBe("new-token");
+      expect(storedToken(key)).not.toBe("new-token");
       expect(start).toHaveBeenCalledWith("new-token");
 
       expect((await post(admin, `/${platform}/stop`)).status).toBe(200);

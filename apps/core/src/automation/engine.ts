@@ -831,6 +831,20 @@ export function markInterruptedAutomationRuns(): number {
 
 // ── Trigger entrypoint ────────────────────────────────────────────────────────
 
+/** True while a run of this automation is in progress (status "running"). */
+export function hasActiveRun(automationId: string): boolean {
+  try {
+    return !!db
+      .select({ id: schema.automationRuns.id })
+      .from(schema.automationRuns)
+      .where(and(eq(schema.automationRuns.automationId, automationId), eq(schema.automationRuns.status, "running")))
+      .limit(1)
+      .get();
+  } catch {
+    return false;
+  }
+}
+
 type ParsedWorkflow =
   | { kind: "steps"; steps: AutomationStep[] }
   | { kind: "actions"; actions: AutomationAction[] };
@@ -892,6 +906,18 @@ export async function fireTrigger(
 
       const workflow = parseWorkflow(auto);
       if (!workflow) continue;
+
+      // Overlap guard: never start a second run while one is in progress
+      // (cron tick + "Run now", or a slow run overlapping its next tick). The
+      // check and the run-row insert below are synchronous, so two triggers in
+      // this process cannot both pass it. A run blocked on an approval is
+      // finished, not active — the next run is what consumes the approval.
+      if (hasActiveRun(auto.id)) {
+        const error = `Automation "${auto.name}" is already running — this trigger was skipped`;
+        log.warn(error);
+        if (data.manual) runResults.push({ success: false, error, actionsRun: 0, results: [] });
+        continue;
+      }
 
       const runId = randomUUID();
       const triggeredAt = new Date().toISOString();
@@ -1010,4 +1036,49 @@ export async function fireTrigger(
     log.error("fireTrigger error", err);
   }
   return runResults;
+}
+
+// ── Continue after an approval ────────────────────────────────────────────────
+
+/**
+ * The owner approved a call an automation's last run stopped at: run the
+ * automation now (the re-run consumes the single-use approval) instead of
+ * waiting for its next schedule. Only when that last run is the one blocked on
+ * this approval, the automation is still enabled, and it is schedule-triggered
+ * — an event-triggered run cannot be replayed with its original event data, so
+ * it waits for the next event or "Run now". Nothing runs twice at once (the
+ * overlap guard in fireTrigger), and a crashed run is never re-run.
+ */
+export async function continueAutomationAfterApproval(approvalId: string): Promise<RunResult | null> {
+  const approval = getApproval(approvalId);
+  if (!approval || approval.status !== "approved" || approval.actorKind !== "automation") return null;
+  const automationId = approval.actorId;
+
+  const last = db
+    .select({ status: schema.automationRuns.status, resultSummary: schema.automationRuns.resultSummary })
+    .from(schema.automationRuns)
+    .where(and(eq(schema.automationRuns.automationId, automationId), isNotNull(schema.automationRuns.finishedAt)))
+    .orderBy(desc(schema.automationRuns.triggeredAt))
+    .limit(1)
+    .get();
+  if (last?.status !== "blocked_approval" || !last.resultSummary) return null;
+  try {
+    const results = JSON.parse(last.resultSummary) as Array<{ approvalRequired?: { approvalId?: unknown } }>;
+    if (!Array.isArray(results) || !results.some((r) => r?.approvalRequired?.approvalId === approvalId)) return null;
+  } catch {
+    return null;
+  }
+
+  const auto = db.select().from(schema.automations).where(eq(schema.automations.id, automationId)).get();
+  if (!auto?.enabled) return null;
+  let trigger: AutomationTrigger;
+  try {
+    trigger = JSON.parse(auto.trigger) as AutomationTrigger;
+  } catch {
+    return null;
+  }
+  if (trigger.type !== "schedule") return null;
+
+  const [result] = await fireTrigger(trigger.type, { automationId, manual: true });
+  return result ?? null;
 }

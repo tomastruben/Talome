@@ -17,6 +17,8 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { toast } from "sonner";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { DURATION, DURATION_MS, EASE_ENTER } from "@/lib/motion";
 import { HugeiconsIcon, Cancel01Icon, Add01Icon } from "@/components/icons";
 import { UNDO_WINDOW_MS } from "@/lib/motion";
 import { DraggableWrapper } from "@/components/draggable-dashboard";
@@ -42,6 +44,7 @@ import { SystemInfoWidget } from "./system-info-widget";
 import { SystemStatusWidget } from "./system-status-widget";
 import { NetworkWidget } from "./network-widget";
 import { DividerWidget } from "./divider-widget";
+import { ClockWidget } from "./clock-widget";
 import { BackupStatusWidget } from "./backup-status-widget";
 import { OllamaStatusWidget } from "./ollama-status-widget";
 import { LauncherWidget } from "./launcher-widget";
@@ -89,6 +92,7 @@ export const WIDGET_LABELS: Record<BuiltinWidgetType, string> = {
   launcher:             "Launcher",
   audiobooks:           "Continue listening",
   optimization:         "Media health",
+  clock:                "Clock",
 };
 
 /** A widget's name for people: its label, or a custom widget's manifest title (never its id). */
@@ -149,6 +153,7 @@ function widgetComponent(
       return <NetworkWidget mode={mode} />;
     }
     case "divider":             return <DividerWidget />;
+    case "clock":               return <ClockWidget compact={size?.cols === 1} />;
     case "backup-status":       return <BackupStatusWidget />;
     case "ollama-status":       return <OllamaStatusWidget />;
     case "launcher":            return <LauncherWidget />;
@@ -260,6 +265,19 @@ const WidgetItem = React.memo(function WidgetItem({
   const hasHeightOptions = heightOptions.length > 1;
   const hasResizeControls = resizable && (hasWidthOptions || hasHeightOptions);
   const compact = effectiveSize.cols === 1 && effectiveSize.rows === 1;
+  // Removing: the widget shrinks away before the grid closes the gap (at
+  // once under reduced motion). The Undo toast comes from onRemove.
+  const reduceMotion = useReducedMotion();
+  const [removing, setRemoving] = React.useState(false);
+  const remove = () => {
+    if (removing) return;
+    if (reduceMotion) {
+      onRemove();
+      return;
+    }
+    setRemoving(true);
+    window.setTimeout(onRemove, DURATION_MS.exit);
+  };
   const widgetLabel = widgetDisplayLabel(widgetType, manifestById);
 
   return (
@@ -269,7 +287,12 @@ const WidgetItem = React.memo(function WidgetItem({
       showHandle={editMode}
       gridSize={{ cols: effectiveSize.cols, rows: effectiveSize.rows }}
       availableCols={availableCols}
-      className={cn("group relative", isNew && "animate-widget-enter")}
+      className={cn(
+        "group relative",
+        isNew && "animate-widget-enter",
+        editMode && !removing && "tm-jiggle",
+        removing && "tm-widget-leave",
+      )}
     >
       {widgetComponent(widgetType, manifestById, manifestsLoading, effectiveSize, compact)}
 
@@ -279,14 +302,14 @@ const WidgetItem = React.memo(function WidgetItem({
             type="button"
             aria-label={`Remove ${widgetLabel} widget`}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onRemove(); }}
-            className="absolute -top-2 -right-2 z-20 flex items-center justify-center size-7 rounded-full bg-background border border-border/80 text-muted-foreground shadow-sm hover:text-destructive hover:border-destructive/40 transition-colors"
+            onClick={(e) => { e.stopPropagation(); remove(); }}
+            className="tm-badge-in absolute -top-2 -right-2 z-20 flex items-center justify-center size-7 rounded-full bg-background border border-border/80 text-muted-foreground shadow-sm hover:text-destructive hover:border-destructive/40 transition-[color,border-color,transform] active:scale-90"
           >
             <HugeiconsIcon icon={Cancel01Icon} size={10} />
           </button>
 
           {hasResizeControls && (
-            <div className="absolute -bottom-2.5 right-3 z-20 flex items-center gap-1">
+            <div className="tm-badge-in absolute -bottom-2.5 right-3 z-20 flex items-center gap-1">
               {hasWidthOptions && (
                 <button
                   type="button"
@@ -362,6 +385,39 @@ function DragGhost({
 
 // ── Widget Picker ─────────────────────────────────────────────────────────────
 
+const EMPTY_MANIFESTS = new Map<string, ReturnType<typeof useWidgetManifests>["widgets"][number]>();
+
+/** One widget in the gallery: a live, half-size preview you can add with a click. */
+function WidgetPreviewTile({ label, onAdd, children }: { label: string; onAdd: () => void; children?: React.ReactNode }) {
+  return (
+    <motion.button
+      layout
+      type="button"
+      onClick={onAdd}
+      aria-label={`Add ${label} widget`}
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.9, filter: "blur(3px)" }}
+      transition={{ duration: DURATION.base, ease: EASE_ENTER }}
+      className="group/tile flex flex-col gap-2 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+    >
+      <span className="relative block h-[5.5rem] w-full overflow-hidden rounded-xl border border-border/60 bg-card transition-[border-color,transform] duration-150 group-hover/tile:-translate-y-px group-hover/tile:border-border group-active/tile:scale-[0.98]">
+        {children ? (
+          <span className="pointer-events-none absolute left-0 top-0 block h-[11rem] w-[200%] origin-top-left scale-50" aria-hidden inert>
+            {children}
+          </span>
+        ) : (
+          <span className="flex size-full items-center justify-center text-xs text-muted-foreground">{label}</span>
+        )}
+        <span className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-foreground text-background opacity-0 shadow-sm transition-[opacity,transform] duration-150 group-hover/tile:opacity-100 group-focus-visible/tile:opacity-100 scale-90 group-hover/tile:scale-100">
+          <HugeiconsIcon icon={Add01Icon} size={12} />
+        </span>
+      </span>
+      <span className="truncate px-0.5 text-xs text-muted-foreground transition-colors group-hover/tile:text-foreground">{label}</span>
+    </motion.button>
+  );
+}
+
 export function WidgetAddDock({
   hiddenWidgetTypes,
   hiddenCustomIds,
@@ -406,7 +462,7 @@ export function WidgetAddDock({
           align="end"
           side={inline ? "left" : "top"}
           sideOffset={10}
-          className="z-[1400] w-[min(28rem,calc(100vw-2rem))] rounded-xl border border-border/70 bg-background/95 p-3 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-background/80"
+          className="z-[1400] w-[min(34rem,calc(100vw-2rem))] rounded-2xl border border-border/70 bg-background/95 p-3 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-background/80"
           onPointerDownOutside={(event) => {
             const target = event.target;
             if (
@@ -421,30 +477,19 @@ export function WidgetAddDock({
           <p className="mb-3 text-xs font-medium uppercase tracking-widest text-muted-foreground">
             Add widget
           </p>
-          <div className="max-h-60 overflow-y-auto pr-1">
-            <div className="flex flex-wrap gap-2">
-              {addableIds.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => onAdd(id)}
-                  className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-border hover:bg-muted/30 hover:text-foreground"
-                >
-                  <HugeiconsIcon icon={Add01Icon} size={12} />
-                  {WIDGET_LABELS[id]}
-                </button>
-              ))}
-              {DECLARATIVE_WIDGETS_ENABLED && addableCustomIds.map((id) => (
-                <button
-                  key={`widget:${id}`}
-                  type="button"
-                  onClick={() => onAdd(`widget:${id}`)}
-                  className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-border hover:bg-muted/30 hover:text-foreground"
-                >
-                  <HugeiconsIcon icon={Add01Icon} size={12} />
-                  {id}
-                </button>
-              ))}
+          {/* A gallery of live previews: you see what you'll get before adding it */}
+          <div className="max-h-[26rem] overflow-y-auto pr-1">
+            <div className="grid grid-cols-2 gap-3">
+              <AnimatePresence initial={false} mode="popLayout">
+                {addableIds.map((id) => (
+                  <WidgetPreviewTile key={id} label={WIDGET_LABELS[id]} onAdd={() => onAdd(id)}>
+                    {id === "divider" ? null : widgetComponent(id, EMPTY_MANIFESTS, false)}
+                  </WidgetPreviewTile>
+                ))}
+                {DECLARATIVE_WIDGETS_ENABLED && addableCustomIds.map((id) => (
+                  <WidgetPreviewTile key={`widget:${id}`} label={id} onAdd={() => onAdd(`widget:${id}`)} />
+                ))}
+              </AnimatePresence>
             </div>
           </div>
         </PopoverContent>

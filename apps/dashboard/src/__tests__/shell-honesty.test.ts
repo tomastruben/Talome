@@ -136,10 +136,11 @@ describe("icons (D-P0-8)", () => {
     for (const path of [
       "components/layout/app-sidebar.tsx",
       "components/layout/mobile-nav.tsx",
-      "components/desktop/desktop-experience.tsx",
     ]) {
       expect(read(path), path).not.toMatch(/cx="17\.1" cy="7"/);
       expect(read(path), path).toContain("TalomeMark");
     }
+    // The desktop has no menu bar any more (PR #2); it must still never inline its own copy.
+    expect(read("components/desktop/desktop-experience.tsx")).not.toMatch(/cx="17\.1" cy="7"/);
   });
 });

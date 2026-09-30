@@ -22,7 +22,7 @@ describe("desktop widget layout", () => {
     });
   });
 
-  it("starts with the three system widgets without copying the Home layout", () => {
+  it("starts with the clock and the three system widgets without copying the Home layout", () => {
     localStorage.setItem("talome-widget-layout-v9", JSON.stringify([
       { instanceId: "home-services", widgetType: "services", visible: true },
     ]));
@@ -32,7 +32,21 @@ describe("desktop widget layout", () => {
       .filter((widget) => widget.visible)
       .map((widget) => widget.widgetType);
 
-    expect(visibleTypes).toEqual(["cpu", "memory", "disk"]);
+    expect(visibleTypes).toEqual(["clock", "cpu", "memory", "disk"]);
+  });
+
+  it("puts the clock first on a desktop saved before the clock existed", () => {
+    localStorage.setItem("talome-desktop-widget-layout-v1", JSON.stringify([
+      { instanceId: "desktop-memory", widgetType: "memory", visible: true, size: { cols: 1, rows: 1 } },
+      { instanceId: "desktop-cpu", widgetType: "cpu", visible: true, size: { cols: 1, rows: 1 } },
+    ]));
+
+    const { result } = renderHook(() => useDesktopWidgetLayout());
+    const visibleTypes = result.current.layout
+      .filter((widget) => widget.visible)
+      .map((widget) => widget.widgetType);
+
+    expect(visibleTypes.slice(0, 3)).toEqual(["clock", "memory", "cpu"]);
   });
 
   it("persists widget visibility independently across mounts", () => {

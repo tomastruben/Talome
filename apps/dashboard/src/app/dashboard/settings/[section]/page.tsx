@@ -54,7 +54,7 @@ const SECTIONS: Record<string, SectionDef> = {
   "ai-prompt":        { component: AiPromptSection,       title: "System Prompt" },
   "ai-memory":        { component: AiMemorySection,       title: "Memory" },
   "connections":      { component: ConnectionsSection,    title: "Media Services" },
-  "integrations":     { component: IntegrationsSection,   title: "Chat Bots" },
+  "integrations":     { component: IntegrationsSection,   title: "Chat Bots", adminOnly: true },
   "notifications":    { component: NotificationsSection,   title: "Notifications" },
   "mcp":              { component: McpSection,            title: "AI Agents", adminOnly: true },
   "app-sources":      { component: AppSourcesSection,     title: "App Sources" },

@@ -126,9 +126,10 @@ describe("files page", () => {
     await screen.findByText("New Folder");
     const actions = store.get(pageActionAtom);
     expect(actions).toBeTruthy();
-    const { getByRole } = render(<>{actions}</>);
+    // Scoped to the header actions: rows now carry "Select New Folder" buttons too.
+    const { container } = render(<>{actions}</>);
     await act(async () => {
-      fireEvent.click(getByRole("button", { name: /New/ }));
+      fireEvent.click(within(container).getByRole("button", { name: /New/ }));
     });
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/files/mkdir"))).toBe(true));
     const [, init] = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/files/mkdir"))!;

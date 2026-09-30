@@ -4,6 +4,7 @@ import {
   Fragment,
   memo,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -15,8 +16,6 @@ import {
   HugeiconsIcon,
   Add01Icon,
   ArrowLeft01Icon,
-  MinusSignIcon,
-  MultiplicationSignIcon,
   CloudUploadIcon,
   FolderAddIcon,
   Projector01Icon,
@@ -40,14 +39,20 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { DURATION, EASE_ENTER } from "@/lib/motion";
+import { CSS_EASE_ENTER, DURATION, DURATION_MS, EASE_ENTER } from "@/lib/motion";
 import {
   clampDesktopBounds,
+  desktopSnapZoneAt,
   maximizedDesktopBounds,
   resizeDesktopBounds,
+  snappedDesktopBounds,
+  unsnapDesktopBounds,
   type DesktopArea,
   type DesktopBounds,
+  type DesktopResizeEdge,
+  type DesktopSnapZone,
 } from "@/lib/desktop-window-state";
+import { WindowControls, type DesktopWindowLayout } from "@/components/desktop/window-controls";
 
 interface DesktopWindowProps {
   id: string;
@@ -58,6 +63,7 @@ interface DesktopWindowProps {
   minimum: Pick<DesktopBounds, "width" | "height">;
   active: boolean;
   maximized: boolean;
+  /** Kept mounted (its app keeps running) but hidden from sight, pointer and assistive tech */
   minimized?: boolean;
   disabled?: boolean;
   zIndex: number;
@@ -68,8 +74,12 @@ interface DesktopWindowProps {
   onMinimize: () => void;
   onBoundsChange: (bounds: DesktopBounds) => void;
   onMaximizeChange: (maximized: boolean, restoreBounds?: DesktopBounds) => void;
+  /** Snap to half of the desktop (or leave a snapped state): new bounds plus the size to restore later */
+  onTile?: (bounds: DesktopBounds, restoreBounds?: DesktopBounds) => void;
   onAction?: (actionId: string) => void;
   windowRef?: (element: HTMLElement | null) => void;
+  /** Play the opening animation when first shown */
+  animateIn?: boolean;
 }
 
 interface PointerOrigin {
@@ -79,37 +89,36 @@ interface PointerOrigin {
   bounds: DesktopBounds;
 }
 
-/** Zoom and restore geometry: a 180ms tween on the enter curve (spec §7.4), no spring. */
-export const WINDOW_GEOMETRY_TRANSITION = { duration: DURATION.base, ease: EASE_ENTER } as const;
-
-type WindowControlGlyphKind = "close" | "minimize" | "maximize";
-
-function WindowControlGlyph({ kind }: { kind: WindowControlGlyphKind }) {
-  const icon = kind === "close"
-    ? MultiplicationSignIcon
-    : kind === "minimize"
-      ? MinusSignIcon
-      : Add01Icon;
-
-  return (
-    <HugeiconsIcon
-      icon={icon}
-      size={10}
-      strokeWidth={3}
-      aria-hidden="true"
-      data-window-control-glyph={kind}
-      className={WINDOW_CONTROL_GLYPH_CLASS}
-    />
-  );
+interface DragState extends PointerOrigin {
+  /** Desktop area's viewport offset, to turn pointer positions into desktop coordinates */
+  areaLeft: number;
+  areaTop: number;
+  /** Bounds before the drag started (restored when snapping) */
+  startBounds: DesktopBounds;
+  /** A maximized or snapped window gets its previous size back once the drag really starts */
+  pendingUnsnap?: DesktopBounds;
 }
 
+/** Zoom, snap and restore geometry: a 180ms tween on the enter curve (spec §7.4), no spring. */
+export const WINDOW_GEOMETRY_TRANSITION = { duration: DURATION.base, ease: EASE_ENTER } as const;
+
 /**
- * The glyph on a traffic light: dark on the light, saturated fill in both
- * themes (the lights don't change with the theme). Shown on hover and focus,
- * and always under increased contrast (the parent adds opacity-100).
+ * Edge and corner hit areas. The bottom-right corner is a real button (it
+ * takes keyboard focus and resizes with the arrow keys); the rest are
+ * pointer-only strips.
  */
-export const WINDOW_CONTROL_GLYPH_CLASS =
-  "pointer-events-none absolute left-1/2 top-1/2 shrink-0 -translate-x-1/2 -translate-y-1/2 text-black/70 opacity-0 transition-opacity duration-100";
+const RESIZE_HANDLES: { edge: Exclude<DesktopResizeEdge, "se">; className: string }[] = [
+  { edge: "n", className: "top-0 inset-x-3 h-1.5 cursor-ns-resize" },
+  { edge: "s", className: "bottom-0 inset-x-3 h-1.5 cursor-ns-resize" },
+  { edge: "e", className: "right-0 inset-y-3 w-1.5 cursor-ew-resize" },
+  { edge: "w", className: "left-0 inset-y-3 w-1.5 cursor-ew-resize" },
+  { edge: "nw", className: "top-0 left-0 size-3 cursor-nwse-resize" },
+  { edge: "ne", className: "top-0 right-0 size-3 cursor-nesw-resize" },
+  { edge: "sw", className: "bottom-0 left-0 size-3 cursor-nesw-resize" },
+];
+
+/** Pointer travel before a press on the title bar counts as a drag. */
+const DRAG_START_DISTANCE = 4;
 
 const desktopActionIcons: Record<DesktopAppActionIcon, IconSvgElement> = {
   add: Add01Icon,
@@ -141,21 +150,45 @@ export const DesktopWindow = memo(function DesktopWindow({
   onMinimize,
   onBoundsChange,
   onMaximizeChange,
+  onTile,
   onAction,
   windowRef,
+  animateIn = false,
 }: DesktopWindowProps) {
-  const dragOrigin = useRef<PointerOrigin | null>(null);
-  const resizeOrigin = useRef<PointerOrigin | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const dragOrigin = useRef<DragState | null>(null);
+  const resizeOrigin = useRef<(PointerOrigin & { edge: DesktopResizeEdge }) | null>(null);
   const captureTarget = useRef<HTMLElement | null>(null);
+  const snapZoneRef = useRef<DesktopSnapZone | null>(null);
   const [isManipulating, setIsManipulating] = useState(false);
+  const [snapZone, setSnapZone] = useState<DesktopSnapZone | null>(null);
   const reduceMotion = useReducedMotion();
 
+  // Opening: a quick scale-and-fade in, skipped for reduced motion
+  useLayoutEffect(() => {
+    const element = sectionRef.current;
+    if (!animateIn || !element || typeof element.animate !== "function") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    element.animate(
+      [
+        { opacity: 0, transform: "scale(0.96)" },
+        { opacity: 1, transform: "scale(1)" },
+      ],
+      { duration: DURATION_MS.base, easing: CSS_EASE_ENTER },
+    );
+    // Only on first mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Ends a drag or resize and releases pointer capture. Pointer-up commits a snap first. */
   const finishPointerGesture = () => {
     const origin = dragOrigin.current ?? resizeOrigin.current;
     const target = captureTarget.current;
     dragOrigin.current = null;
     resizeOrigin.current = null;
     captureTarget.current = null;
+    snapZoneRef.current = null;
+    setSnapZone(null);
     setIsManipulating(false);
 
     if (!origin || !target?.hasPointerCapture?.(origin.pointerId)) return;
@@ -170,45 +203,71 @@ export const DesktopWindow = memo(function DesktopWindow({
     if (!isManipulating) return;
 
     const handlePointerMove = (event: globalThis.PointerEvent) => {
-      if (dragOrigin.current) {
+      const drag = dragOrigin.current;
+      if (drag) {
+        const dx = event.clientX - drag.pointerX;
+        const dy = event.clientY - drag.pointerY;
+        const pointer = { x: event.clientX - drag.areaLeft, y: event.clientY - drag.areaTop };
+
+        if (drag.pendingUnsnap) {
+          if (Math.hypot(dx, dy) < DRAG_START_DISTANCE) return;
+          const restored = unsnapDesktopBounds(drag.startBounds, drag.pendingUnsnap, pointer, area, minimum);
+          onTile?.(restored, undefined);
+          dragOrigin.current = { ...drag, pointerX: event.clientX, pointerY: event.clientY, bounds: restored, pendingUnsnap: undefined };
+          return;
+        }
+
         onBoundsChange(clampDesktopBounds(
-          {
-            ...dragOrigin.current.bounds,
-            x: dragOrigin.current.bounds.x + event.clientX - dragOrigin.current.pointerX,
-            y: dragOrigin.current.bounds.y + event.clientY - dragOrigin.current.pointerY,
-          },
+          { ...drag.bounds, x: drag.bounds.x + dx, y: drag.bounds.y + dy },
           area,
           minimum,
         ));
+        const zone = onTile ? desktopSnapZoneAt(pointer, area) : null;
+        if (zone !== snapZoneRef.current) {
+          snapZoneRef.current = zone;
+          setSnapZone(zone);
+        }
       }
 
-      if (resizeOrigin.current) {
+      const resize = resizeOrigin.current;
+      if (resize) {
         onBoundsChange(resizeDesktopBounds(
-          {
-            ...resizeOrigin.current.bounds,
-            width: resizeOrigin.current.bounds.width + event.clientX - resizeOrigin.current.pointerX,
-            height: resizeOrigin.current.bounds.height + event.clientY - resizeOrigin.current.pointerY,
-          },
+          resize.bounds,
+          resize.edge,
+          { x: event.clientX - resize.pointerX, y: event.clientY - resize.pointerY },
           area,
           minimum,
         ));
       }
     };
 
-    const handlePointerUp = () => finishPointerGesture();
-    const handleWindowBlur = () => finishPointerGesture();
+    const handlePointerUp = () => {
+      const drag = dragOrigin.current;
+      const zone = snapZoneRef.current;
+      if (drag && zone) {
+        if (zone === "maximize") {
+          onMaximizeChange(true, drag.startBounds);
+          onBoundsChange(maximizedDesktopBounds(area));
+        } else {
+          onTile?.(snappedDesktopBounds(zone, area), drag.startBounds);
+        }
+      }
+      finishPointerGesture();
+    };
+    // Losing the window (switching apps mid-drag) cancels any pending snap.
+    const handleCancel = () => finishPointerGesture();
 
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerUp);
-    window.addEventListener("blur", handleWindowBlur);
+    window.addEventListener("pointercancel", handleCancel);
+    window.addEventListener("blur", handleCancel);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerUp);
-      window.removeEventListener("blur", handleWindowBlur);
+      window.removeEventListener("pointercancel", handleCancel);
+      window.removeEventListener("blur", handleCancel);
     };
-  }, [area, isManipulating, minimum, onBoundsChange]);
+  }, [area, isManipulating, minimum, onBoundsChange, onMaximizeChange, onTile]);
 
   const captureGesture = (
     target: HTMLElement,
@@ -218,25 +277,33 @@ export const DesktopWindow = memo(function DesktopWindow({
     try {
       target.setPointerCapture(event.pointerId);
     } catch {
-      // The global listeners below remain as a fallback for older WebKit.
+      // The global listeners remain as a fallback for older WebKit.
     }
     setIsManipulating(true);
   };
 
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (maximized || event.button !== 0) return;
-    event.preventDefault();
+    if (event.button !== 0) return;
     onFocus();
+    // Maximized or snapped windows return to their previous size when dragged away
+    const canUnsnap = Boolean(onTile && restoreBounds);
+    if (maximized && !canUnsnap) return;
+    event.preventDefault();
+    const areaRect = (sectionRef.current?.offsetParent as HTMLElement | null)?.getBoundingClientRect();
     dragOrigin.current = {
       pointerId: event.pointerId,
       pointerX: event.clientX,
       pointerY: event.clientY,
       bounds,
+      startBounds: bounds,
+      areaLeft: areaRect?.left ?? 0,
+      areaTop: areaRect?.top ?? 0,
+      pendingUnsnap: canUnsnap ? restoreBounds : undefined,
     };
     captureGesture(event.currentTarget, event);
   };
 
-  const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const startResize = (edge: DesktopResizeEdge) => (event: ReactPointerEvent<HTMLElement>) => {
     if (maximized || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -246,28 +313,31 @@ export const DesktopWindow = memo(function DesktopWindow({
       pointerX: event.clientX,
       pointerY: event.clientY,
       bounds,
+      edge,
     };
     captureGesture(event.currentTarget, event);
   };
 
   const resizeWithKeyboard = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     const step = event.shiftKey ? 64 : 16;
-    const delta = {
-      ArrowLeft: [-step, 0],
-      ArrowRight: [step, 0],
-      ArrowUp: [0, -step],
-      ArrowDown: [0, step],
-    }[event.key];
+    const delta = ({
+      ArrowLeft: { x: -step, y: 0 },
+      ArrowRight: { x: step, y: 0 },
+      ArrowUp: { x: 0, y: -step },
+      ArrowDown: { x: 0, y: step },
+    } as Record<string, { x: number; y: number }>)[event.key];
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
     onFocus();
-    onBoundsChange(resizeDesktopBounds({
-      ...bounds,
-      width: bounds.width + delta[0],
-      height: bounds.height + delta[1],
-    }, area, minimum));
+    onBoundsChange(resizeDesktopBounds(bounds, "se", delta, area, minimum));
   };
+
+  const snapPreview = snapZone
+    ? snapZone === "maximize"
+      ? maximizedDesktopBounds(area)
+      : snappedDesktopBounds(snapZone, area)
+    : null;
 
   const toggleMaximize = () => {
     if (maximized) {
@@ -276,6 +346,40 @@ export const DesktopWindow = memo(function DesktopWindow({
     }
     onMaximizeChange(true, bounds);
     onBoundsChange(maximizedDesktopBounds(area));
+  };
+
+  const sameBounds = (a: DesktopBounds, b: DesktopBounds) =>
+    Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1
+    && Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1;
+  const layout: DesktopWindowLayout = maximized
+    ? "fill"
+    : onTile && sameBounds(bounds, snappedDesktopBounds("left", area))
+      ? "left"
+      : onTile && sameBounds(bounds, snappedDesktopBounds("right", area))
+        ? "right"
+        : "free";
+  const canRestore = layout !== "free" && Boolean(restoreBounds);
+  // The size to come back to: the current one, unless the window is already arranged
+  const sizeToRemember = layout === "free" ? bounds : restoreBounds ?? bounds;
+
+  const arrange = (next: Exclude<DesktopWindowLayout, "free">) => {
+    onFocus();
+    if (next === layout) return;
+    if (next === "fill") {
+      onMaximizeChange(true, sizeToRemember);
+      onBoundsChange(maximizedDesktopBounds(area));
+      return;
+    }
+    onTile?.(snappedDesktopBounds(next, area), sizeToRemember);
+  };
+
+  const restore = () => {
+    onFocus();
+    if (maximized) {
+      onMaximizeChange(false, restoreBounds);
+      return;
+    }
+    if (restoreBounds) onTile?.(clampDesktopBounds(restoreBounds, area, minimum), undefined);
   };
 
   const leadingActions = actions.filter((action) => action.placement === "leading");
@@ -299,7 +403,7 @@ export const DesktopWindow = memo(function DesktopWindow({
             <button
               type="button"
               className={cn(
-                "flex h-7 min-w-0 max-w-44 shrink items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+                "flex h-6 min-w-0 max-w-44 shrink items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
                 action.active && "bg-muted/60 text-foreground",
                 action.id === "terminal-session" && "border border-border bg-background shadow-none",
               )}
@@ -309,7 +413,7 @@ export const DesktopWindow = memo(function DesktopWindow({
               onDoubleClick={(event) => event.stopPropagation()}
             >
               {icon && <HugeiconsIcon icon={icon} size={14} />}
-              <span className="truncate">{action.label}</span>
+              <span className="tm-cap-trim truncate">{action.label}</span>
               <HugeiconsIcon icon={ArrowDown01Icon} size={11} className="shrink-0" />
             </button>
           </DropdownMenuTrigger>
@@ -344,13 +448,13 @@ export const DesktopWindow = memo(function DesktopWindow({
         <div
           key={action.id}
           className={cn(
-            "flex h-7 shrink-0 select-none items-center gap-1.5 rounded-md px-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground",
+            "flex h-6 shrink-0 select-none items-center gap-1.5 rounded-md px-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground",
             action.disabled && "opacity-40",
           )}
           onPointerDown={stopTitlebarGesture}
           onDoubleClick={(event) => event.stopPropagation()}
         >
-          {action.label}
+          <span className="tm-cap-trim">{action.label}</span>
           <Switch
             size="sm"
             checked={action.active === true}
@@ -367,8 +471,8 @@ export const DesktopWindow = memo(function DesktopWindow({
         key={action.id}
         type="button"
         className={cn(
-          "flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
-          isLeading ? "size-7 p-0" : "px-2",
+          "flex h-6 shrink-0 items-center justify-center gap-1.5 rounded-md text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+          isLeading ? "size-6 p-0" : "px-2",
           action.active && "bg-muted/60 text-foreground",
         )}
         disabled={action.disabled}
@@ -378,7 +482,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         onClick={() => onAction?.(action.id)}
       >
         {icon && <HugeiconsIcon icon={icon} size={14} />}
-        {!isLeading && action.label}
+        {!isLeading && <span className="tm-cap-trim">{action.label}</span>}
       </button>
     );
   };
@@ -397,7 +501,7 @@ export const DesktopWindow = memo(function DesktopWindow({
     return (
       <div
         className={cn(
-          "flex h-7 shrink-0 items-center overflow-hidden rounded-md transition-colors",
+          "flex h-6 shrink-0 items-center overflow-hidden rounded-md transition-colors duration-150",
           autoAction?.active
             ? "bg-status-warning/10 ring-1 ring-status-warning/20"
             : "bg-muted/30 ring-1 ring-border/50",
@@ -408,7 +512,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         {autoAction && (
           <label
             className={cn(
-              "flex h-7 cursor-pointer items-center gap-1.5 rounded-l-md px-2 text-xs transition-colors duration-150 hover:bg-muted/40",
+              "flex h-6 cursor-pointer items-center gap-1.5 rounded-l-md px-2 text-xs transition-colors duration-150 hover:bg-muted/40",
               autoAction.disabled && "pointer-events-none opacity-40",
             )}
             onPointerDown={stopTitlebarGesture}
@@ -422,7 +526,7 @@ export const DesktopWindow = memo(function DesktopWindow({
               className="data-[state=checked]:bg-status-warning"
               onCheckedChange={() => onAction?.(autoAction.id)}
             />
-            <span className={cn("font-medium", autoAction.active ? "text-status-warning" : "text-muted-foreground")}>Auto</span>
+            <span className={cn("tm-cap-trim font-medium", autoAction.active ? "text-status-warning" : "text-muted-foreground")}>Auto</span>
           </label>
         )}
         {remoteAction && (
@@ -432,7 +536,7 @@ export const DesktopWindow = memo(function DesktopWindow({
             aria-pressed={remoteAction.active === true}
             disabled={remoteAction.disabled}
             className={cn(
-              "relative flex size-7 items-center justify-center transition-colors duration-150 hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-40",
+              "relative flex size-6 items-center justify-center transition-colors duration-150 hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-40",
               remoteAction.active ? "text-foreground" : "text-muted-foreground",
             )}
             onPointerDown={stopTitlebarGesture}
@@ -451,7 +555,7 @@ export const DesktopWindow = memo(function DesktopWindow({
               <button
                 type="button"
                 className={cn(
-                  "flex h-7 min-w-0 max-w-40 items-center gap-1.5 rounded-r-md px-2.5 text-xs transition-colors duration-150 hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-40",
+                  "flex h-6 min-w-0 max-w-40 items-center gap-1.5 rounded-r-md px-2.5 text-xs transition-colors duration-150 hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-40",
                   autoAction?.active ? "text-status-warning/80 hover:text-status-warning" : "text-muted-foreground hover:text-foreground",
                 )}
                 disabled={agentAction.disabled}
@@ -460,7 +564,7 @@ export const DesktopWindow = memo(function DesktopWindow({
                 onDoubleClick={(event) => event.stopPropagation()}
               >
                 <HugeiconsIcon icon={SourceCodeCircleIcon} size={14} />
-                <span className="truncate">{agentAction.label}</span>
+                <span className="tm-cap-trim truncate">{agentAction.label}</span>
                 <HugeiconsIcon icon={ArrowDown01Icon} size={11} className="shrink-0" />
               </button>
             </DropdownMenuTrigger>
@@ -491,23 +595,40 @@ export const DesktopWindow = memo(function DesktopWindow({
   };
 
   return (
+    <>
+    {snapPreview && (
+      // Shares the window's z-index (inside the window band, below the Dock)
+      <div
+        aria-hidden
+        data-window-snap-preview=""
+        className="pointer-events-none absolute rounded-xl border border-foreground/20 bg-foreground/[0.08] backdrop-blur-sm transition-[left,top,width,height] duration-150 ease-out motion-reduce:transition-none"
+        style={{
+          left: snapPreview.x + 6,
+          top: snapPreview.y + 6,
+          width: snapPreview.width - 12,
+          height: snapPreview.height - 12,
+          zIndex,
+        }}
+      />
+    )}
     <motion.section
-      ref={windowRef}
+      ref={(element: HTMLElement | null) => {
+        sectionRef.current = element;
+        windowRef?.(element);
+      }}
       data-desktop-window={id}
       data-window-manipulating={isManipulating || undefined}
       data-window-minimized={minimized || undefined}
+      data-active={active || undefined}
       aria-label={`${title} window`}
       aria-hidden={disabled || minimized || undefined}
       inert={disabled || minimized}
       tabIndex={-1}
       className={cn(
-        "absolute flex min-h-0 flex-col overflow-hidden bg-card outline-none",
+        // Focus is shown by edge, shadow and title colour (tm-window[data-active]), never by dimming content.
+        "tm-window absolute flex min-h-0 flex-col overflow-hidden outline-none",
         "transition-[border-color,box-shadow] duration-150 ease-out",
-        maximized
-          ? "rounded-none border-0 shadow-none"
-          : "rounded-xl border",
-        // Focus is shown by border, shadow and title colour, never by dimming content.
-        !maximized && (active ? "border-foreground/20 shadow-lg" : "border-border shadow-md"),
+        maximized ? "rounded-t-none rounded-b-2xl border-x-0 border-t-0 border-b" : "rounded-2xl border",
         disabled && "pointer-events-none",
         minimized && "invisible pointer-events-none opacity-0",
       )}
@@ -521,76 +642,28 @@ export const DesktopWindow = memo(function DesktopWindow({
       transition={isManipulating || reduceMotion
         ? { duration: 0 }
         : WINDOW_GEOMETRY_TRANSITION}
-      style={{
-        zIndex,
-      }}
+      style={{ zIndex }}
       onPointerDown={onFocus}
       onFocusCapture={onFocus}
     >
       <div
-        className={cn(
-          "group/titlebar grid h-11 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center border-b border-border/70 px-3",
-          "bg-card",
-        )}
+        className="group/titlebar tm-window-titlebar grid h-10 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b px-2"
         onPointerDown={startDrag}
         onLostPointerCapture={finishPointerGesture}
         onDoubleClick={toggleMaximize}
       >
         <div className="flex min-w-0 items-center gap-2">
-          {/* Traffic lights use the --window-* chrome tokens at full colour, never
-              the status tokens (spec §2.4, §7): the light status values are
-              darkened for text and turn the controls muddy. */}
-          <div
-            className="-ml-1.5 flex shrink-0 items-center gap-0 [&:focus-within_[data-window-control-glyph]]:opacity-100 [&:hover_[data-window-control-glyph]]:opacity-100 contrast-more:[&_[data-window-control-glyph]]:opacity-100"
-            role="group"
-            aria-label="Window controls"
-          >
-            <button
-              type="button"
-              aria-label={`Close ${title}`}
-              title={`Close ${title}`}
-              className={cn(
-                "relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:transition-colors before:duration-150 focus-visible:ring-2 focus-visible:ring-ring",
-                active
-                  ? "before:bg-window-close before:ring-1 before:ring-inset before:ring-window-control-edge"
-                  : "before:bg-muted-foreground/25 hover:before:bg-window-close hover:before:ring-1 hover:before:ring-inset hover:before:ring-window-control-edge",
-              )}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={onClose}
-            >
-              <WindowControlGlyph kind="close" />
-            </button>
-            <button
-              type="button"
-              aria-label={`Minimize ${title}`}
-              title={`Minimize ${title}`}
-              className={cn(
-                "relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:transition-colors before:duration-150 focus-visible:ring-2 focus-visible:ring-ring",
-                active
-                  ? "before:bg-window-minimize before:ring-1 before:ring-inset before:ring-window-control-edge"
-                  : "before:bg-muted-foreground/25 hover:before:bg-window-minimize hover:before:ring-1 hover:before:ring-inset hover:before:ring-window-control-edge",
-              )}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={onMinimize}
-            >
-              <WindowControlGlyph kind="minimize" />
-            </button>
-            <button
-              type="button"
-              aria-label={maximized ? `Restore ${title}` : `Maximize ${title}`}
-              title={maximized ? `Restore ${title}` : `Maximize ${title}`}
-              className={cn(
-                "relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:transition-colors before:duration-150 focus-visible:ring-2 focus-visible:ring-ring",
-                active
-                  ? "before:bg-window-zoom before:ring-1 before:ring-inset before:ring-window-control-edge"
-                  : "before:bg-muted-foreground/25 hover:before:bg-window-zoom hover:before:ring-1 hover:before:ring-inset hover:before:ring-window-control-edge",
-              )}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={toggleMaximize}
-            >
-              <WindowControlGlyph kind="maximize" />
-            </button>
-          </div>
+          <WindowControls
+            className="mr-1"
+            title={title}
+            active={active}
+            layout={layout}
+            canRestore={canRestore}
+            onLayoutChange={arrange}
+            onRestore={restore}
+            onMinimize={onMinimize}
+            onClose={onClose}
+          />
           {leadingActions.length > 0 && (
             <div className="flex min-w-0 items-center gap-0.5" role="group" aria-label={`${title} navigation`}>
               {leadingActions.map(renderAction)}
@@ -599,7 +672,7 @@ export const DesktopWindow = memo(function DesktopWindow({
           <span
             data-title-placement="leading"
             className={cn(
-              "pointer-events-none min-w-0 truncate text-sm font-medium transition-colors duration-150",
+              "tm-cap-trim pointer-events-none min-w-0 truncate text-sm font-medium leading-5 transition-colors duration-150",
               !active && "text-muted-foreground",
             )}
           >
@@ -617,26 +690,37 @@ export const DesktopWindow = memo(function DesktopWindow({
         </div>
       </div>
 
-      <div className="relative flex-1 min-h-0 overflow-hidden bg-background">
+      <div className="tm-window-body relative flex-1 min-h-0 overflow-hidden">
         <div className={cn("size-full", isManipulating && "pointer-events-none")}>
           {children}
         </div>
-        {!maximized && (
-          <button
-            type="button"
-            aria-label={`Resize ${title}`}
-            title="Resize with arrow keys; hold Shift for larger steps"
-            aria-describedby={`desktop-resize-help-${id}`}
-            className="absolute right-0 bottom-0 size-7 cursor-nwse-resize touch-none rounded-tl-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            onKeyDown={resizeWithKeyboard}
-            onPointerDown={startResize}
-            onLostPointerCapture={finishPointerGesture}
-          >
-            <span id={`desktop-resize-help-${id}`} className="sr-only">Use arrow keys to resize. Hold Shift for larger steps.</span>
-            <span className="absolute right-1.5 bottom-1.5 size-2 border-r border-b border-muted-foreground/50" />
-          </button>
-        )}
       </div>
+      {!maximized && RESIZE_HANDLES.map(({ edge, className }) => (
+        <div
+          key={edge}
+          aria-hidden
+          data-resize-edge={edge}
+          className={cn("absolute z-20 touch-none", className)}
+          onPointerDown={startResize(edge)}
+          onLostPointerCapture={finishPointerGesture}
+        />
+      ))}
+      {!maximized && (
+        <button
+          type="button"
+          data-resize-edge="se"
+          aria-label={`Resize ${title}`}
+          title="Resize with arrow keys; hold Shift for larger steps"
+          aria-describedby={`desktop-resize-help-${id}`}
+          className="absolute right-0 bottom-0 z-20 size-3 cursor-nwse-resize touch-none rounded-tl-md outline-none focus-visible:size-5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          onKeyDown={resizeWithKeyboard}
+          onPointerDown={startResize("se")}
+          onLostPointerCapture={finishPointerGesture}
+        >
+          <span id={`desktop-resize-help-${id}`} className="sr-only">Use arrow keys to resize. Hold Shift for larger steps.</span>
+        </button>
+      )}
     </motion.section>
+    </>
   );
 });

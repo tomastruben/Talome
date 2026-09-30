@@ -50,8 +50,12 @@ interface AutomationRow {
   createdAt: string;
   lastRunSuccess?: boolean;
   lastRunError?: string | null;
-  /** "succeeded" | "failed" | "blocked_approval" | "blocked" … (runs recorded before statuses may have none). */
-  lastRunStatus?: string | null;
+  /**
+   * The release run journal's status (runs recorded before statuses may have
+   * none). "interrupted" = the server restarted mid-run; Talome never re-runs it
+   * on its own. "blocked_approval" = a step is waiting for an owner approval.
+   */
+  lastRunStatus?: "running" | "succeeded" | "failed" | "blocked_approval" | "blocked" | "interrupted" | (string & {}) | null;
   lastRunTriggeredAt?: string;
 }
 
@@ -244,8 +248,12 @@ export default function AutomationsPage() {
 
             // Derive status from enriched data
             const hasRun = row.lastRunTriggeredAt != null;
-            const statusVariant: "success" | "error" =
-              row.lastRunSuccess ? "success" : "error";
+            const lastStatus = row.lastRunStatus ?? (row.lastRunSuccess ? "succeeded" : "failed");
+            const statusVariant: "success" | "error" | "warning" | "info" =
+              lastStatus === "succeeded" ? "success"
+                : lastStatus === "failed" ? "error"
+                : lastStatus === "running" ? "info"
+                : "warning";
 
             return (
               <div
@@ -314,17 +322,19 @@ export default function AutomationsPage() {
                 {/* Last run status — honest, inline */}
                 {(hasRun || row.runCount > 0) && (
                   <div className="flex items-center gap-1.5 mt-1 ml-11 text-xs text-muted-foreground">
-                    {isRunning ? (
+                    {isRunning || lastStatus === "running" ? (
                       <span>Running…</span>
+                    ) : hasRun && lastStatus === "blocked_approval" ? (
+                      <span className="text-status-warning">
+                        Waiting for approval since {relativeTime(row.lastRunTriggeredAt!)} ·{" "}
+                        <Link href="/dashboard/settings/approvals" className="rounded-sm underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                          Review
+                        </Link>
+                      </span>
+                    ) : hasRun && lastStatus === "interrupted" ? (
+                      <span className="text-status-warning">Interrupted {relativeTime(row.lastRunTriggeredAt!)}</span>
                     ) : hasRun ? (
-                      row.lastRunStatus === "blocked_approval" ? (
-                        <span className="text-status-warning">
-                          Waiting for approval since {relativeTime(row.lastRunTriggeredAt!)} ·{" "}
-                          <Link href="/dashboard/settings/approvals" className="rounded-sm underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                            Review
-                          </Link>
-                        </span>
-                      ) : row.lastRunSuccess ? (
+                      lastStatus === "succeeded" ? (
                         <span>Succeeded {relativeTime(row.lastRunTriggeredAt!)}</span>
                       ) : row.lastRunError ? (
                         <Tooltip>

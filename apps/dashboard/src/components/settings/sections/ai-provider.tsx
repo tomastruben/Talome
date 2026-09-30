@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { SettingsGroup, SettingsRow, SecretRow, TextRow, settingsFetcher, settingsRequest } from "@/components/settings/settings-primitives";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { formatBytes } from "@/lib/format";
+import { VoiceSettings } from "@/components/settings/voice-settings";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 
 /* ── Types ───────────────────────────────────────────────────────────────── */
@@ -685,6 +686,8 @@ export function AiProviderSection() {
           )}
         </div>
       )}
+
+      <VoiceSettings />
 
       <ConfigureWithAI prompt="I'd like to review my AI provider configuration" />
     </div>

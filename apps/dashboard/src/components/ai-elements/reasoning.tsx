@@ -1,21 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ThinkingOrb } from "thinking-orbs";
 
 import { MessageResponse } from "@/components/ai-elements/message";
-import {
-  AiBrain01Icon,
-  AiIdeaIcon,
-  ArrowDown01Icon,
-  HugeiconsIcon,
-} from "@/components/icons";
-import { Badge } from "@/components/ui/badge";
+import { Shimmer } from "@/components/ai-elements/shimmer";
+import { ArrowDown01Icon, HugeiconsIcon } from "@/components/icons";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 interface ReasoningSummaryProps {
@@ -24,10 +19,22 @@ interface ReasoningSummaryProps {
   isMessageStreaming?: boolean;
 }
 
+function formatThoughtFor(ms: number | null): string {
+  if (ms === null) return "Thought";
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return seconds < 60 ? `Thought for ${seconds}s` : `Thought for ${Math.round(seconds / 60)}m`;
+}
+
 /**
- * Shows the provider-supplied reasoning summary without exposing private model
- * state. The status row remains visible for older messages whose provider only
- * persisted encrypted reasoning metadata and no displayable summary.
+ * The provider-supplied reasoning summary, quiet by default: an orb and
+ * "Thinking" while it streams, then a one-line "Thought for 4s" you can open.
+ *
+ * It never exposes private model state. Older messages whose provider only
+ * persisted encrypted reasoning metadata keep an honest, non-expandable row
+ * ("no summary was provided") instead of an empty disclosure.
+ *
+ * The orb renders a single static frame under reduced motion (thinking-orbs
+ * checks prefers-reduced-motion itself) and the shimmer is static text there.
  */
 export function ReasoningSummary({
   text,
@@ -37,72 +44,60 @@ export function ReasoningSummary({
   const summary = text.trim();
   const hasSummary = summary.length > 0;
   const isThinking = state === "streaming" || (isMessageStreaming && state !== "done");
-  const [open, setOpen] = useState(true);
+  const startedAt = useRef<number | null>(null);
+  const [duration, setDuration] = useState<number | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (isThinking) {
+      startedAt.current ??= Date.now();
+    } else if (startedAt.current !== null) {
+      // Only measured when we saw it stream; history just says "Thought".
+      const elapsed = Date.now() - startedAt.current;
+      startedAt.current = null;
+      setDuration(elapsed);
+    }
+  }, [isThinking]);
+
+  const doneLabel = hasSummary
+    ? formatThoughtFor(duration)
+    : `${formatThoughtFor(duration)} · no summary was provided`;
 
   return (
     <Collapsible
-      className="group/reasoning not-prose mb-2 w-full rounded-xl border border-border/40 bg-card/20 backdrop-blur-sm"
-      open={hasSummary ? isThinking || open : false}
+      open={hasSummary ? open : false}
       onOpenChange={setOpen}
+      className="not-prose mb-2"
     >
       <CollapsibleTrigger
         className={cn(
-          "flex w-full items-center gap-3 px-3.5 py-3 text-left",
-          !hasSummary && "cursor-default",
+          "group/reasoning flex items-center gap-2 rounded-sm py-1 text-sm text-muted-foreground transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          hasSummary ? "hover:text-foreground" : "cursor-default",
         )}
         disabled={!hasSummary}
         aria-label={hasSummary ? "Toggle reasoning summary" : "Reasoning status"}
       >
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/8 text-primary">
-          <HugeiconsIcon icon={isThinking ? AiIdeaIcon : AiBrain01Icon} size={18} />
-        </div>
-
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-      <span
-        className={cn(
-          "text-sm font-medium leading-none",
-          isThinking
-            ? "shimmer shimmer-duration-1800 text-muted-foreground"
-            : "text-foreground",
+        {isThinking ? (
+          <>
+            <ThinkingOrb state="solving" size={20} aria-hidden />
+            <Shimmer as="span" className="text-sm" duration={1.8}>
+              Thinking
+            </Shimmer>
+          </>
+        ) : (
+          <span>{doneLabel}</span>
         )}
-      >
-            {isThinking ? "Thinking" : "Reasoning"}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {isThinking
-              ? "Working through the request"
-              : hasSummary
-                ? "Summary"
-                : "Completed · no summary was provided"}
-          </span>
-        </div>
-
-        <Badge
-          variant="outline"
-          className="h-6 border-border/50 bg-background/30 px-2 text-[11px] font-normal text-muted-foreground"
-        >
-          {isThinking ? (
-            <>
-              <Spinner className="size-3" />
-              Live
-            </>
-          ) : (
-            "Complete"
-          )}
-        </Badge>
-
         {hasSummary && (
           <HugeiconsIcon
             icon={ArrowDown01Icon}
-            size={14}
-            className="shrink-0 text-dim-foreground transition-transform group-data-[state=open]/reasoning:rotate-180"
+            size={12}
+            className="transition-transform duration-150 group-data-[state=open]/reasoning:rotate-180"
           />
         )}
       </CollapsibleTrigger>
-
       {hasSummary && (
-        <CollapsibleContent>
-          <div className="border-t border-border/30 px-4 py-3 text-sm leading-relaxed text-muted-foreground">
+        <CollapsibleContent className="data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0">
+          <div className="mt-1 border-l border-border pl-3 text-sm leading-relaxed text-muted-foreground">
             <MessageResponse className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
               {summary}
             </MessageResponse>

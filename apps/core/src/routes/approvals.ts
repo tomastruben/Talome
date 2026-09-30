@@ -103,6 +103,14 @@ function decide(decision: "approved" | "denied") {
           .then(({ resumeApprovedRemediation }) => resumeApprovedRemediation(approvalId))
           .catch((err) => console.warn("[approvals] remediation resume failed:", err instanceof Error ? err.message : err));
       }
+      // An automation blocked on this approval continues now rather than on its
+      // next schedule (automation/engine.ts continueAutomationAfterApproval).
+      if (decision === "approved" && result.approval.actorKind === "automation") {
+        const approvalId = result.approval.id;
+        void import("../automation/engine.js")
+          .then(({ continueAutomationAfterApproval }) => continueAutomationAfterApproval(approvalId))
+          .catch((err) => console.warn("[approvals] automation continue failed:", err instanceof Error ? err.message : err));
+      }
       return c.json({ ok: true, approval: serialize(result.approval) });
     } catch (err) {
       return serverError(c, err, { message: `Failed to ${decision === "approved" ? "approve" : "deny"} request` });

@@ -5,12 +5,12 @@ import { useTheme } from "next-themes"
 import { Toaster as Sonner, toast, type ToasterProps } from "sonner"
 import {
   HugeiconsIcon,
-  CheckmarkCircle02Icon,
   InformationCircleIcon,
   Alert02Icon,
   AlertCircleIcon,
 } from "@/components/icons"
 import { Spinner } from "@/components/ui/spinner"
+import { SuccessCheck } from "@/components/ui/micro"
 import { TOAST_DURATION, toastWarning } from "@/lib/toast"
 
 /** Clears the desktop-mode dock (dock height plus its bottom gap). */
@@ -23,14 +23,11 @@ const DEFAULT_TOAST_OFFSET = 16
  * distinguished by colour alone.
  */
 export const toastIcons = {
+  // The check draws itself as the toast arrives (static under reduced motion).
   success: (
-    <HugeiconsIcon
-      icon={CheckmarkCircle02Icon}
-      size={16}
-      strokeWidth={1.5}
-      className="text-status-healthy"
-      data-toast-icon="success"
-    />
+    <span className="inline-flex text-status-healthy" data-toast-icon="success">
+      <SuccessCheck size={16} />
+    </span>
   ),
   info: (
     <HugeiconsIcon

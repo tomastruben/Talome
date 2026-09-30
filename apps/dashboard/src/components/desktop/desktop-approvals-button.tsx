@@ -152,18 +152,26 @@ function ApprovalRow({
 }
 
 /**
- * The menu bar's "needs you" count (D-P0-1). Admins in desktop mode could not
- * see pending approvals at all (the count lived only in the classic sidebar),
- * so an agent's request could expire unseen. Hidden when nothing waits and
- * for members.
+ * The desktop's "needs you" count (D-P0-1), in the Dock's status tray. Admins
+ * in desktop mode could not see pending approvals at all (the count lived only
+ * in the classic sidebar), so an agent's request could expire unseen. Hidden
+ * when nothing waits and for members.
  */
 export function DesktopApprovalsButton({
   isAdmin,
   onReviewAll,
+  triggerClassName,
+  iconSize = 14,
+  side = "bottom",
 }: {
   isAdmin: boolean;
   /** Opens Settings › Approvals, at one approval's details when `href` is given. */
   onReviewAll: (href?: string) => void;
+  /** Replaces the trigger's look (the Dock tray passes its button class); the count then sits on the icon. */
+  triggerClassName?: string;
+  iconSize?: number;
+  /** Which side of the trigger the panel opens on (the Dock opens upward). */
+  side?: "top" | "bottom";
 }) {
   const { pending, count, mutate } = usePendingApprovals(isAdmin);
   const [open, setOpen] = useState(false);
@@ -178,14 +186,24 @@ export function DesktopApprovalsButton({
         <button
           type="button"
           data-desktop-approvals
-          className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-foreground transition-colors duration-150 hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring outline-none"
+          className={triggerClassName
+            ? cn(triggerClassName, "text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring")
+            : "flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-foreground transition-colors duration-150 hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring outline-none"}
           aria-label={label}
         >
-          <HugeiconsIcon icon={SecurityCheckIcon} size={14} aria-hidden="true" />
-          <Badge variant="count" aria-hidden="true">{count}</Badge>
+          <HugeiconsIcon icon={SecurityCheckIcon} size={iconSize} aria-hidden="true" />
+          {/* Amber is reserved for this count (status grammar); it pops in when it appears. */}
+          <Badge
+            key={count}
+            variant="count"
+            aria-hidden="true"
+            className={cn("tm-badge-in", triggerClassName && "absolute top-1 right-0.5")}
+          >
+            {count}
+          </Badge>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" side="bottom" sideOffset={8} className="z-[1300] w-80 p-0" aria-label="Approvals">
+      <PopoverContent align="end" side={side} sideOffset={side === "top" ? 12 : 8} className="z-[1300] w-80 p-0" aria-label="Approvals">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <span className="text-sm font-medium">{label}</span>
         </div>

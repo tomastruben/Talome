@@ -425,3 +425,16 @@ export function getAllToolMeta(): ToolMeta[] {
   }
   return tools;
 }
+
+/** The domain a built-in tool belongs to, or undefined for custom/unknown tools. */
+export function getToolDomain(toolName: string): string | undefined {
+  for (const domain of domains) {
+    if (toolName in domain.tools) return domain.name;
+  }
+  return undefined;
+}
+
+/** Registered domains with their tool counts — used to build MCP token scopes. */
+export function listDomains(): { name: string; toolCount: number; settingsKeys: string[] }[] {
+  return domains.map((d) => ({ name: d.name, toolCount: Object.keys(d.tools).length, settingsKeys: d.settingsKeys }));
+}

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { db, schema } from "../db/index.js";
+import { getSetting } from "../utils/settings.js";
 import { eq, desc, sql } from "drizzle-orm";
 import { recordGracefulError, serverError } from "../middleware/request-logger.js";
 import { allowedSenderIds } from "../messaging/allowlist.js";
@@ -50,11 +51,7 @@ async function pushToMessaging(title: string, message: string, level = "warning"
           .filter((c) => c.externalId !== null && allowed.has(c.externalId));
 
         if (telegramChats.length > 0) {
-          const telegramToken = db
-            .select()
-            .from(schema.settings)
-            .where(eq(schema.settings.key, "telegram_bot_token"))
-            .get()?.value;
+          const telegramToken = getSetting("telegram_bot_token");
 
           if (telegramToken) {
             const { Bot } = await import("grammy");
@@ -89,11 +86,7 @@ async function pushToMessaging(title: string, message: string, level = "warning"
 
         if (discordChats.length > 0) {
           const { Client } = await import("discord.js");
-          const discordToken = db
-            .select()
-            .from(schema.settings)
-            .where(eq(schema.settings.key, "discord_bot_token"))
-            .get()?.value;
+          const discordToken = getSetting("discord_bot_token");
 
           if (discordToken) {
             const client = new Client({ intents: [] });

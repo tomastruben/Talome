@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { db, schema } from "../db/index.js";
-import { eq, desc, inArray, sql } from "drizzle-orm";
+import { and, eq, desc, inArray, isNull, or, sql } from "drizzle-orm";
 import { fireTrigger } from "../automation/engine.js";
 import type { AutomationTrigger, AutomationAction, AutomationStep } from "../automation/engine.js";
 import { getAutomationSafeTools } from "../ai/automation-safe-tools.js";
@@ -56,7 +56,12 @@ automations.get("/failures", (c) => {
       })
       .from(schema.automationRuns)
       .innerJoin(schema.automations, eq(schema.automationRuns.automationId, schema.automations.id))
-      .where(eq(schema.automationRuns.success, false))
+      // Runs in progress or blocked on an approval are not failures; legacy
+      // rows (no status) fall back to the success flag.
+      .where(or(
+        inArray(schema.automationRuns.status, ["failed", "interrupted"]),
+        and(isNull(schema.automationRuns.status), eq(schema.automationRuns.success, false)),
+      ))
       .orderBy(desc(schema.automationRuns.triggeredAt))
       .limit(5)
       .all();
@@ -99,8 +104,10 @@ automations.get("/", (c) => {
       latestRuns.map((r) => [r.automation_id, {
         lastRunSuccess: !!r.success,
         lastRunError: r.error,
-        // "blocked_approval" is waiting for the owner, not a failure.
-        lastRunStatus: r.status,
+        // running | succeeded | failed | blocked_approval | interrupted.
+        // "blocked_approval" is waiting for the owner, not a failure. Legacy
+        // rows have no status, so derive it from the success flag.
+        lastRunStatus: r.status ?? (r.success ? "succeeded" : "failed"),
         lastRunTriggeredAt: r.triggered_at,
       }]),
     );

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { db, schema } from "../db/index.js";
+import { getSetting } from "../utils/settings.js";
 import { eq, desc, and, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { generateText } from "ai";
@@ -252,9 +253,7 @@ conversations.post("/:id/title", async (c) => {
 
     // Try Claude Haiku for a short, descriptive title (fire-and-forget quality)
     try {
-      const apiKey =
-        db.select().from(schema.settings).where(eq(schema.settings.key, "anthropic_key")).get()?.value ||
-        process.env.ANTHROPIC_API_KEY;
+      const apiKey = getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
       if (apiKey) {
         const anthropic = createAnthropic({ apiKey });
         const titleModel = "claude-haiku-4-5-20251001";

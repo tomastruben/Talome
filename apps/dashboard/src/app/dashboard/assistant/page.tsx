@@ -12,11 +12,11 @@ import {
   LayoutAlignLeftIcon,
   DashboardCircleIcon,
   ArrowLeft01Icon,
+  ArrowRight01Icon,
   Add01Icon,
   CheckmarkCircle02Icon,
   AlertCircleIcon,
   PackageOpenIcon,
-  AiIdeaIcon,
 } from "@/components/icons";
 import {
   Conversation,
@@ -28,6 +28,18 @@ import {
   MessageContent,
 } from "@/components/ai-elements/message";
 import { ChatInputBar } from "@/components/ai-elements/chat-input-bar";
+import { VoiceMode } from "@/components/assistant/voice-mode";
+import { ThinkingIndicator } from "@/components/assistant/thinking-indicator";
+import { ThinkingOrb } from "thinking-orbs";
+import {
+  SourceList,
+  SourceListItem,
+  SourceListSection,
+  WINDOW_SIDEBAR_REPLACES,
+  WindowSidebarLayout,
+} from "@/components/ui/source-list";
+import { pendingActivity } from "@/lib/agent-activity";
+import { humanToolName, parseApprovalRequest } from "@/components/trust/format";
 import { ChatMessage } from "@/components/chat/chat-message";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { AssistantModelSelector } from "@/components/assistant/assistant-model-selector";
@@ -103,40 +115,31 @@ function getDateGroup(dateStr: string): string {
   return "Older";
 }
 
-function ThinkingMessage() {
+function ThinkingMessage({ label }: { label: string }) {
   return (
     <Message from="assistant">
       <MessageContent>
-        <div
-          className="flex items-center gap-2 rounded-xl border border-border/40 bg-card/20 px-3.5 py-3 text-sm text-muted-foreground backdrop-blur-sm"
-          role="status"
-          aria-live="polite"
-        >
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/8 text-primary">
-            <HugeiconsIcon icon={AiIdeaIcon} size={17} />
-          </div>
-          <div className="flex min-w-0 flex-col gap-1">
-            <span className="shimmer shimmer-duration-1800 font-medium leading-none text-muted-foreground">
-              Thinking…
-            </span>
-            <span className="text-xs text-muted-foreground">
-              Working through the request
-            </span>
-          </div>
-        </div>
+        <ThinkingIndicator label={label} />
       </MessageContent>
     </Message>
   );
 }
 
-function hasVisibleAssistantProgress(message: UIMessage | undefined): boolean {
-  if (!message || message.role !== "assistant") return false;
-
-  return message.parts.some((part) => {
-    if (part.type === "reasoning" || part.type === "file") return true;
-    if (part.type === "text") return part.text.trim().length > 0;
-    return isToolUIPart(part);
-  });
+/**
+ * The latest tool call in an assistant message that is held for a
+ * server-issued approval (`approval_required`, see core ai/execution.ts), if
+ * its request was still pending when the result was written. The approval
+ * card under that tool call is where it is decided.
+ */
+function pendingApprovalRequest(message: UIMessage | undefined) {
+  if (!message || message.role !== "assistant") return null;
+  for (let i = message.parts.length - 1; i >= 0; i--) {
+    const part = message.parts[i];
+    if (!isToolUIPart(part) || part.state !== "output-available") continue;
+    const request = parseApprovalRequest(part.output);
+    if (request) return request.approvalStatus === "pending" ? request : null;
+  }
+  return null;
 }
 
 /** Extract blueprint section update from a design_app_blueprint tool input. */
@@ -354,7 +357,7 @@ export default function AssistantPage() {
   const {
     messages, status, error, clearError, stop,
     conversations, activeId, setActiveId, deleteConversation,
-    handleSubmit, addToolApprovalResponse, regenerate,
+    handleSubmit, regenerate,
     model, setModel, modelOptions, activeProvider, modelReady, startNew, chatAutoApprove, setChatAutoApprove,
   } = useAssistant();
   const embeddedFrame = useIsEmbeddedFrame();
@@ -388,6 +391,8 @@ export default function AssistantPage() {
   } | null>(null);
 
   const isActive = status === "streaming" || status === "submitted";
+  // A tool held for approval shows its approval card, not "Thinking".
+  const pendingLabel = pendingApprovalRequest(messages[messages.length - 1]) ? null : pendingActivity(messages, status);
   const hasBlueprint = !!blueprint.identity?.name;
 
   // `dismissed` hides the chat view without stopping the stream.
@@ -664,6 +669,36 @@ export default function AssistantPage() {
     return groups;
   }, [conversations]);
 
+  // Voice conversation: speaks the latest assistant reply when it finishes
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const lastAssistant = useMemo(() => {
+    const message = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!message) return null;
+    const text = message.parts
+      .map((part) => (part.type === "text" ? part.text : ""))
+      .join("")
+      .trim();
+    // A tool held for a server-issued approval (`approval_required`): the voice
+    // asks you to approve it on screen (the approval card), never by voice.
+    const waiting = pendingApprovalRequest(message);
+    const pendingApproval = waiting ? humanToolName(waiting.tool) : undefined;
+    return { id: message.id, text, pendingApproval };
+  }, [messages]);
+  const voiceHistory = useCallback(
+    () =>
+      messages
+        .map((m) => ({
+          role: m.role,
+          content: m.parts.map((part) => (part.type === "text" ? part.text : "")).join("").trim().slice(0, 2000),
+        }))
+        .filter((m): m is { role: "user" | "assistant"; content: string } => (m.role === "user" || m.role === "assistant") && m.content.length > 0),
+    [messages],
+  );
+  const sendVoiceMessage = useCallback((text: string) => {
+    setDismissed(false);
+    handleSubmit(text, `Current page: ${pathname}. The user is speaking in voice mode — answer briefly and conversationally, without tables or code unless asked.`);
+  }, [handleSubmit, pathname]);
+
   const onSubmit = useCallback(
     ({ text, files }: { text: string; files: FileUIPart[] }) => {
       setDismissed(false);
@@ -693,16 +728,13 @@ export default function AssistantPage() {
           <ChatMessage
             key={`${message.id}-${index}`}
             message={message}
-            addToolApprovalResponse={addToolApprovalResponse}
             onRegenerate={regenerate}
             onBlueprintUpdate={handleBlueprintUpdate}
             isLast={index === messages.length - 1}
             isStreaming={isActive && index === messages.length - 1}
           />
         ))}
-        {isActive && !hasVisibleAssistantProgress(messages[messages.length - 1]) && (
-          <ThinkingMessage />
-        )}
+        {pendingLabel && <ThinkingMessage label={pendingLabel} />}
         {error && <AssistantChatError error={error} provider={activeProvider} onDismiss={clearError} />}
       </ConversationContent>
       <ConversationScrollButton />
@@ -716,24 +748,32 @@ export default function AssistantPage() {
               <AssistantChatError error={error} provider={activeProvider} onDismiss={clearError} />
             </div>
           ) : null}
+          <div className="mb-4 flex size-12 items-center justify-center" aria-hidden>
+            <ThinkingOrb state="breathing" size={32} />
+          </div>
           <h2 className="text-xl sm:text-2xl font-medium tracking-tight text-foreground mb-6 sm:mb-8">
             How can I help?
           </h2>
 
-          <div className="grid grid-cols-2 gap-2 w-full max-w-sm mb-8 sm:mb-10">
+          <div className="tm-rise grid grid-cols-2 gap-2 w-full max-w-xl mb-8 sm:mb-10">
             {suggestions.map((s, i) => (
               <button
                 key={`${i}-${s.label}`}
                 onClick={() => handleSuggestion(s.prompt)}
-                className="rounded-2xl px-3 sm:px-4 py-3 text-sm text-left text-muted-foreground bg-foreground/[0.04] active:bg-foreground/[0.08] transition-all duration-150 hover:bg-foreground/[0.07] hover:text-foreground"
+                className="group/suggestion flex items-center gap-2 rounded-2xl px-3 sm:px-4 py-3 text-sm text-left text-muted-foreground bg-foreground/[0.04] transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/[0.07] hover:text-foreground active:scale-[0.98] active:bg-foreground/[0.08]"
               >
-                {s.label}
+                <span className="min-w-0 flex-1 truncate">{s.label}</span>
+                <HugeiconsIcon
+                  icon={ArrowRight01Icon}
+                  size={14}
+                  className="shrink-0 -translate-x-1 opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/suggestion:translate-x-0 group-hover/suggestion:opacity-60"
+                />
               </button>
             ))}
           </div>
 
           {conversations.length > 0 && (
-            <div className="w-full max-w-sm">
+            <div className={`w-full max-w-xl ${WINDOW_SIDEBAR_REPLACES}`}>
               {Object.entries(grouped).map(([group, convs]) => {
                 const isExpanded = !!expandedGroups[group];
                 const visibleConvs = isExpanded ? convs : convs.slice(0, MAX_VISIBLE_HISTORY_PER_GROUP);
@@ -803,6 +843,7 @@ export default function AssistantPage() {
       status={status as ChatStatus}
       onSubmit={onSubmit}
       onStop={stop}
+      onVoiceMode={() => setVoiceOpen(true)}
       placeholder="Ask Talome anything..."
       extraTools={
         <>
@@ -835,8 +876,38 @@ export default function AssistantPage() {
     />
   );
 
+  // In a desktop window, chat history stays one click away in a sidebar
+  const sidebar = (
+    <SourceList label="Chats">
+      <SourceListSection>
+        <SourceListItem icon={Add01Icon} label="New Chat" active={!showingChat} onSelect={() => void handleNew()} />
+      </SourceListSection>
+      {Object.entries(grouped).map(([group, convs]) => (
+        <SourceListSection key={group} title={group}>
+          {convs.map((conv) => (
+            <SourceListItem
+              key={conv.id}
+              label={conv.title}
+              active={showingChat && activeId === conv.id}
+              onSelect={() => { setActiveId(conv.id); setDismissed(false); }}
+            />
+          ))}
+        </SourceListSection>
+      ))}
+    </SourceList>
+  );
+
   return (
+    <WindowSidebarLayout sidebar={sidebar}>
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden overscroll-none">
+      <VoiceMode
+        open={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        onSend={sendVoiceMessage}
+        status={status as ChatStatus}
+        lastAssistant={lastAssistant}
+        history={voiceHistory}
+      />
       {!embeddedFrame && (
         <AssistantHeader showingChat={showingChat} onBack={handleBack} onNew={handleNew} />
       )}
@@ -884,5 +955,6 @@ export default function AssistantPage() {
         </div>
       )}
     </div>
+    </WindowSidebarLayout>
   );
 }

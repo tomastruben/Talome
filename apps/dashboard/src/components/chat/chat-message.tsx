@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UIMessage, DynamicToolUIPart, FileUIPart, ReasoningUIPart } from "ai";
 import { isToolUIPart, getToolName } from "ai";
 import Image from "next/image";
+import useSWR from "swr";
+import { useTheme } from "next-themes";
+import { BorderBeam } from "border-beam";
 import {
   HugeiconsIcon,
   Copy01Icon,
@@ -28,24 +31,21 @@ import {
   ToolOutput,
   LaunchTerminalCard,
 } from "@/components/ai-elements/tool";
-import {
-  Confirmation,
-  ConfirmationTitle,
-  ConfirmationRequest,
-  ConfirmationActions,
-  ConfirmationAction,
-} from "@/components/ai-elements/confirmation";
 import { ReasoningSummary } from "@/components/ai-elements/reasoning";
+import { IconSwap } from "@/components/ui/micro";
 import { extractAssistantEntityReferences } from "@/lib/assistant-entity-references";
 import { ApprovalCard } from "@/components/trust/approval-card";
+import { APPROVALS_URL, trustFetcher, useNowAtDeadline } from "@/components/trust/api";
+import {
+  effectiveApprovalStatus,
+  parseApprovalRequest,
+  type ApprovalItem,
+  type ApprovalRequest,
+} from "@/components/trust/format";
+import { useUser } from "@/hooks/use-user";
 
 interface ChatMessageProps {
   message: UIMessage;
-  addToolApprovalResponse?: (response: {
-    id: string;
-    approved: boolean;
-    reason?: string;
-  }) => void;
   onRegenerate?: () => void;
   onBlueprintUpdate?: (input: Record<string, unknown>) => void;
   isLast?: boolean;
@@ -103,11 +103,46 @@ function MessageAttachment({ part }: { part: FileUIPart }) {
   );
 }
 
-function formatToolName(name: string): string {
-  return name
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+/**
+ * The release's server-issued approval card (`approval_required` tool result →
+ * admin-only `/api/approvals/:id/approve`), wrapped in a border beam while the
+ * decision is outstanding. The beam goes quiet once the approval is approved,
+ * denied, consumed or past its TTL. Consent is never client-side: there is no
+ * AI SDK `needsApproval` / `addToolApprovalResponse` path here.
+ *
+ * The status comes from the same SWR key the card polls, so this adds no
+ * extra polling. border-beam drops its animation under reduced motion,
+ * leaving a static border.
+ */
+function BeamedApprovalCard({ output }: { output: unknown }) {
+  const request = parseApprovalRequest(output);
+  if (!request) return null;
+  return <BeamedApprovalCardInner output={output} request={request} />;
+}
+
+function BeamedApprovalCardInner({ output, request }: { output: unknown; request: ApprovalRequest }) {
+  const { resolvedTheme } = useTheme();
+  const { isAdmin } = useUser();
+  const { data: live } = useSWR<ApprovalItem>(
+    isAdmin ? `${APPROVALS_URL}/${encodeURIComponent(request.approvalId)}` : null,
+    trustFetcher,
+  );
+  const current = live ?? { status: request.approvalStatus, expiresAt: request.expiresAt };
+  const now = useNowAtDeadline(current.expiresAt, current.status === "pending");
+  const waiting = effectiveApprovalStatus(current, now) === "pending";
+
+  return (
+    <BorderBeam
+      size="pulse-inner"
+      colorVariant="sunset"
+      staticColors
+      active={waiting}
+      theme={resolvedTheme === "light" ? "light" : "dark"}
+      strength={0.8}
+    >
+      <ApprovalCard output={output} />
+    </BorderBeam>
+  );
 }
 
 const STREAMING_TOOLS = new Set(["plan_change", "apply_change"]);
@@ -254,7 +289,6 @@ function BlueprintMarker({ input }: { input: Record<string, unknown> }) {
 
 export function ChatMessage({
   message,
-  addToolApprovalResponse,
   onRegenerate,
   onBlueprintUpdate,
   isLast,
@@ -296,7 +330,7 @@ export function ChatMessage({
   // Group consecutive text parts
   type RenderBlock =
     | { kind: "text"; key: string; text: string; toolContextNames: string[] }
-    | { kind: "reasoning"; key: string; part: ReasoningUIPart }
+    | { kind: "reasoning"; key: string; text: string; state: ReasoningUIPart["state"] }
     | { kind: "file"; key: string; part: FileUIPart }
     | { kind: "tool"; key: string; part: DynamicToolUIPart };
 
@@ -330,11 +364,21 @@ export function ChatMessage({
       ) {
         continue;
       }
-      blocks.push({
-        kind: "reasoning",
-        key: `reasoning-${blocks.length}`,
-        part,
-      });
+      // Consecutive reasoning parts read as one "Thinking → Thought for Ns" row.
+      const last = blocks[blocks.length - 1];
+      if (last?.kind === "reasoning") {
+        if (part.text.trim()) {
+          last.text = last.text.trim() ? `${last.text}\n\n${part.text}` : part.text;
+        }
+        last.state = part.state;
+      } else {
+        blocks.push({
+          kind: "reasoning",
+          key: `reasoning-${blocks.length}`,
+          text: part.text,
+          state: part.state,
+        });
+      }
     } else if (part.type === "file") {
       blocks.push({
         kind: "file",
@@ -393,8 +437,8 @@ export function ChatMessage({
             return (
               <ReasoningSummary
                 key={block.key}
-                text={block.part.text}
-                state={block.part.state}
+                text={block.text}
+                state={block.state}
                 isMessageStreaming={isStreaming}
               />
             );
@@ -402,9 +446,6 @@ export function ChatMessage({
 
           const p = block.part;
           const name = getToolName(p);
-          const approval = (p as Record<string, unknown>).approval as
-            | { id: string; approved?: boolean }
-            | undefined;
 
           // Blueprint tool calls → compact inline marker
           if (name === "design_app_blueprint") {
@@ -464,42 +505,7 @@ export function ChatMessage({
                   <LiveToolOutput isRunning={p.state === "input-available"} />
                 )}
               </Tool>
-              {p.state === "output-available" && <ApprovalCard output={p.output} />}
-
-              {approval && addToolApprovalResponse && (
-                <Confirmation approval={approval} state={p.state}>
-                  <ConfirmationRequest>
-                    <ConfirmationTitle>
-                      The Assistant wants to run{" "}
-                      <strong>{formatToolName(name)}</strong>.
-                    </ConfirmationTitle>
-                    <ConfirmationActions>
-                      <ConfirmationAction
-                        variant="outline"
-                        onClick={() =>
-                          addToolApprovalResponse({
-                            id: approval.id,
-                            approved: false,
-                            reason: "User denied",
-                          })
-                        }
-                      >
-                        Deny
-                      </ConfirmationAction>
-                      <ConfirmationAction
-                        onClick={() =>
-                          addToolApprovalResponse({
-                            id: approval.id,
-                            approved: true,
-                          })
-                        }
-                      >
-                        Approve
-                      </ConfirmationAction>
-                    </ConfirmationActions>
-                  </ConfirmationRequest>
-                </Confirmation>
-              )}
+              {p.state === "output-available" && <BeamedApprovalCard output={p.output} />}
             </div>
           );
         })}
@@ -512,11 +518,11 @@ export function ChatMessage({
       {message.role === "assistant" && textContent && (
         <MessageActions className="opacity-100 sm:opacity-0 sm:transition-opacity sm:duration-100 sm:group-hover:opacity-100">
           <MessageAction tooltip="Copy" onClick={handleCopy}>
-            {copied ? (
-              <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} />
-            ) : (
-              <HugeiconsIcon icon={Copy01Icon} size={14} />
-            )}
+            <IconSwap
+              active={copied ? "b" : "a"}
+              a={<HugeiconsIcon icon={Copy01Icon} size={14} />}
+              b={<HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} />}
+            />
           </MessageAction>
           {isLast && onRegenerate && (
             <MessageAction tooltip="Regenerate" onClick={onRegenerate}>

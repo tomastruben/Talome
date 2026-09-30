@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { db, schema } from "../db/index.js";
+import { getSetting } from "../utils/settings.js";
 import { eq, desc } from "drizzle-orm";
 import { logAiUsage } from "../agent-loop/budget.js";
 import { recordGracefulError } from "../middleware/request-logger.js";
@@ -56,9 +57,7 @@ suggestions.get("/", async (c) => {
   }
 
   // Check for API key
-  const apiKey =
-    db.select().from(schema.settings).where(eq(schema.settings.key, "anthropic_key")).get()?.value ||
-    process.env.ANTHROPIC_API_KEY;
+  const apiKey = getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
     return c.json({ suggestions: FALLBACK_SUGGESTIONS, source: "fallback" });

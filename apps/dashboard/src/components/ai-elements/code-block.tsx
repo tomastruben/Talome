@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { HugeiconsIcon, Copy01Icon, CheckmarkCircle01Icon } from "@/components/icons";
+import { IconSwap } from "@/components/ui/micro";
 import {
   createContext,
   memo,
@@ -505,7 +506,6 @@ export const CodeBlockCopyButton = ({
     []
   );
 
-  const icon = isCopied ? CheckmarkCircle01Icon : Copy01Icon;
 
   return (
     <Button
@@ -515,7 +515,13 @@ export const CodeBlockCopyButton = ({
       variant="ghost"
       {...props}
     >
-      {children ?? <HugeiconsIcon icon={icon} size={15} />}
+      {children ?? (
+        <IconSwap
+          active={isCopied ? "b" : "a"}
+          a={<HugeiconsIcon icon={Copy01Icon} size={15} />}
+          b={<HugeiconsIcon icon={CheckmarkCircle01Icon} size={15} />}
+        />
+      )}
     </Button>
   );
 };

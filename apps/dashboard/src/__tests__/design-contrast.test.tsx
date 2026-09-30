@@ -106,13 +106,17 @@ describe("system health banner (tint recipe, never solid)", () => {
   });
 });
 
-describe("desktop-mode traffic lights", () => {
-  it("fill with the --window-* chrome tokens and the light-mode edge, never the status tokens", () => {
-    const source = read("components/desktop/desktop-window.tsx");
-    for (const token of ["close", "minimize", "zoom"]) {
-      expect(source).toContain(`"before:bg-window-${token} before:ring-1 before:ring-inset before:ring-window-control-edge"`);
-    }
-    expect(source).not.toMatch(/before:bg-status-/);
+describe("desktop-mode window controls", () => {
+  it("are quiet at rest: status colours never paint window chrome (red, amber and green mean status)", () => {
+    // PR #2 replaced the traffic lights with monochrome controls (window-controls.tsx).
+    const controls = read("components/desktop/window-controls.tsx");
+    // Close may tint critical on hover only (a destructive hint), never at rest.
+    const atRest = controls.match(/(?<![\w:-])(?:bg|text|ring)-status-[\w/-]+/g) ?? [];
+    expect(atRest).toEqual([]);
+    expect(controls).not.toMatch(/bg-window-(close|minimize|zoom)/);
+    const windowSource = read("components/desktop/desktop-window.tsx");
+    expect(windowSource).toContain("<WindowControls");
+    expect(windowSource).not.toMatch(/before:bg-status-/);
     expect(read("components/desktop/desktop-customization.tsx")).not.toMatch(/bg-status-critical\/70/);
   });
 

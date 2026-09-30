@@ -117,10 +117,24 @@ export interface AutomationRun {
   automationId: string;
   triggeredAt: string;
   success: boolean;
+  /** Older runs predate durable execution and have no status */
+  status?: "running" | "succeeded" | "failed" | "waiting_approval" | "interrupted" | null;
   error: string | null;
   actionsRun: number;
   resultSummary?: string | null;
   stepRuns?: StepRun[];
+}
+
+const RUN_STATUS: Record<NonNullable<AutomationRun["status"]>, { label: string; variant: "success" | "error" | "warning" | "info" }> = {
+  running: { label: "Running", variant: "info" },
+  succeeded: { label: "Success", variant: "success" },
+  failed: { label: "Failed", variant: "error" },
+  waiting_approval: { label: "Waiting for approval", variant: "warning" },
+  interrupted: { label: "Interrupted", variant: "warning" },
+};
+
+function runStatus(run: AutomationRun) {
+  return RUN_STATUS[run.status ?? (run.success ? "succeeded" : "failed")];
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -833,8 +847,8 @@ function RunHistory({ automationId }: { automationId: string }) {
           {/* Run header */}
           <div className="flex items-center gap-3 px-4 py-2.5 bg-muted/20 border-b">
             <Pill variant="secondary" className="text-xs gap-1.5 py-0.5 px-2">
-              <PillIndicator variant={run.success ? "success" : "error"} />
-              {run.success ? "Success" : "Failed"}
+              <PillIndicator variant={runStatus(run).variant} />
+              {runStatus(run).label}
             </Pill>
             <span
               className="text-xs text-muted-foreground tabular-nums"

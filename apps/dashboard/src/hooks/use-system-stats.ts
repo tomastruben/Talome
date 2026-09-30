@@ -91,7 +91,8 @@ function createSystemStatsStore(): SystemStatsStore {
   }
 
   function connect() {
-    if (eventSource || typeof window === "undefined") return;
+    // No live stats where EventSource is missing (tests, very old browsers)
+    if (eventSource || typeof window === "undefined" || typeof EventSource === "undefined") return;
 
     setSnapshot({
       ...snapshot,

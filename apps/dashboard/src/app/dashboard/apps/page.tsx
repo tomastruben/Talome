@@ -12,7 +12,18 @@ import {
   CheckmarkCircle01Icon,
   AiMagicIcon,
   Package01Icon,
+  Globe02Icon,
+  LayoutGridIcon,
+  Package02Icon,
+  PackageOpenIcon,
 } from "@/components/icons";
+import {
+  SourceList,
+  SourceListItem,
+  SourceListSection,
+  WINDOW_SIDEBAR_REPLACES,
+  WindowSidebarLayout,
+} from "@/components/ui/source-list";
 import { Tabs, TabsList, TabsTrigger, TabsBadge } from "@/components/ui/tabs";
 import { AppCard } from "@/components/dashboard/app-card";
 import { StackCard } from "@/components/dashboard/stack-card";
@@ -326,12 +337,49 @@ function AppsPageContent() {
     return () => setDesktopAppActions([]);
   }, [changeTab, setDesktopAppActions, tab, totalInstalled]);
 
+  // In a desktop window, sources, your apps and categories live in a sidebar
+  const showCategories = !isInstalled && tab !== "user-created" && categories.length > 0;
+  const sidebar = (
+    <SourceList label="App Store sidebar">
+      <SourceListSection title="Discover">
+        <SourceListItem icon={LayoutGridIcon} label="All Apps" active={tab === "all"} onSelect={() => changeTab("all")} />
+        {sourceTypes.filter((t) => t !== "user-created").map((t) => (
+          <SourceListItem key={t} icon={Globe02Icon} label={sourceLabel(t)} active={tab === t} onSelect={() => changeTab(t)} />
+        ))}
+      </SourceListSection>
+      <SourceListSection title="Library">
+        <SourceListItem icon={Package02Icon} label="My Apps" active={tab === "user-created"} onSelect={() => changeTab("user-created")} />
+        <SourceListItem
+          icon={PackageOpenIcon}
+          label="Installed"
+          active={isInstalled}
+          trailing={totalInstalled > 0 ? totalInstalled : undefined}
+          onSelect={() => changeTab("installed")}
+        />
+      </SourceListSection>
+      {showCategories && (
+        <SourceListSection title="Categories">
+          <SourceListItem label="All Categories" active={category === "all"} onSelect={() => changeCategory("all")} />
+          {categories.map((cat) => (
+            <SourceListItem
+              key={cat}
+              label={cat.length <= 2 ? cat.toUpperCase() : cat.charAt(0).toUpperCase() + cat.slice(1)}
+              active={category === cat}
+              onSelect={() => changeCategory(cat)}
+            />
+          ))}
+        </SourceListSection>
+      )}
+    </SourceList>
+  );
+
   return (
+    <WindowSidebarLayout sidebar={sidebar}>
     <div className="min-w-0 grid gap-5">
       <DesktopAppToolbar className="grid min-w-0 gap-3">
         {/* ── Source tabs + search ─────────────────────── */}
         <div className="page-controls-row min-w-0 flex-wrap justify-between gap-2">
-          <Tabs value={tab} onValueChange={changeTab}>
+          <Tabs className={WINDOW_SIDEBAR_REPLACES} value={tab} onValueChange={changeTab}>
             <TabsList>
               <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
               {sourceTypes.filter((t) => !embeddedFrame || t !== "user-created").map((t) => (
@@ -365,8 +413,8 @@ function AppsPageContent() {
         </div>
 
         {/* ── Category pills — "all" pinned, rest scroll ── */}
-        {!isInstalled && tab !== "user-created" && categories.length > 0 && (
-          <div className="flex items-center gap-1.5 min-w-0">
+        {showCategories && (
+          <div className={`flex items-center gap-1.5 min-w-0 ${WINDOW_SIDEBAR_REPLACES}`}>
             <button
               className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
                 category === "all"
@@ -548,5 +596,6 @@ function AppsPageContent() {
         </>
       )}
     </div>
+    </WindowSidebarLayout>
   );
 }
