@@ -27,9 +27,10 @@ export interface PendingFile {
 const CONCURRENCY = 3;
 
 /**
- * Uploads go straight to the core server so large files stream to disk without
- * passing through the Next.js proxy. Over HTTPS (behind a reverse proxy) the
- * direct http:4000 URL would be blocked as mixed content, so use the same origin.
+ * Uploads go straight to the core server over plain HTTP. Over HTTPS (behind a
+ * reverse proxy) the direct http:4000 URL would be blocked as mixed content, so
+ * they use the same origin, where app/api/[...path]/route.ts streams the body on
+ * to core (the upload path is excluded from proxy.ts, which would buffer it).
  */
 function uploadBaseUrl(): string {
   if (typeof window !== "undefined" && window.location.protocol === "https:") return CORE_URL;

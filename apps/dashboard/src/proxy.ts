@@ -68,7 +68,10 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico
+     * - api/files/upload-stream — the proxy buffers request bodies (10 MB
+     *   proxyClientMaxBodySize), which would truncate uploads. Excluded here, it
+     *   is served by app/api/[...path]/route.ts, which streams the body to core.
      */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/files/upload-stream).*)",
   ],
 };
