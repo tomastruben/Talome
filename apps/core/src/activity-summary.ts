@@ -2,6 +2,7 @@ import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { spawn } from "node:child_process";
 import { db, schema } from "./db/index.js";
+import { getSetting } from "./utils/settings.js";
 import { desc, eq } from "drizzle-orm";
 import { logAiUsage, shouldRunService, isInStartupGrace } from "./agent-loop/budget.js";
 import { createLogger } from "./utils/logger.js";
@@ -50,9 +51,7 @@ async function generateActivitySummary(): Promise<void> {
   }
 
   try {
-    const apiKey =
-      process.env.ANTHROPIC_API_KEY ||
-      db.select().from(schema.settings).where(eq(schema.settings.key, "anthropic_key")).get()?.value;
+    const apiKey = process.env.ANTHROPIC_API_KEY || getSetting("anthropic_key");
 
     if (!apiKey) return;
 

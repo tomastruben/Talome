@@ -1,4 +1,5 @@
 import { db, schema } from "../db/index.js";
+import { getSetting } from "../utils/settings.js";
 import { eq, and, desc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { createChatStream } from "../ai/agent.js";
@@ -70,9 +71,7 @@ async function extractMemoriesBackground(conversationId: string, text: string) {
   try {
     const { generateText } = await import("ai");
     const { createAnthropic } = await import("@ai-sdk/anthropic");
-    const apiKey =
-      db.select().from(schema.settings).where(eq(schema.settings.key, "anthropic_key")).get()
-        ?.value || process.env.ANTHROPIC_API_KEY;
+    const apiKey = getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return;
 
     const enabledRow = db

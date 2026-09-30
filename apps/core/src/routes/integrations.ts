@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { db, schema } from "../db/index.js";
+import { getSetting, setSetting } from "../utils/settings.js";
 import { eq } from "drizzle-orm";
 import { startTelegramBot, stopTelegramBot, getTelegramBotStatus } from "../messaging/telegram.js";
 import { startDiscordBot, stopDiscordBot, getDiscordBotStatus } from "../messaging/discord-bot.js";
@@ -31,22 +32,14 @@ integrations.post("/telegram/restart", async (c) => {
     if (!parsed.success) return c.json({ ok: false, error: parsed.error.flatten() }, 400);
 
     const resolvedToken =
-      parsed.data.token?.trim() ||
-      db
-        .select()
-        .from(schema.settings)
-        .where(eq(schema.settings.key, "telegram_bot_token"))
-        .get()?.value;
+      parsed.data.token?.trim() || getSetting("telegram_bot_token");
 
     if (!resolvedToken) {
       return c.json({ ok: false, error: "No token provided" }, 400);
     }
 
     // Persist the token
-    db.insert(schema.settings)
-      .values({ key: "telegram_bot_token", value: resolvedToken })
-      .onConflictDoUpdate({ target: schema.settings.key, set: { value: resolvedToken } })
-      .run();
+    setSetting("telegram_bot_token", resolvedToken);
 
     const result = await startTelegramBot(resolvedToken);
     if (!result.ok) {
@@ -79,22 +72,14 @@ integrations.post("/discord/restart", async (c) => {
     if (!parsed.success) return c.json({ ok: false, error: parsed.error.flatten() }, 400);
 
     const resolvedToken =
-      parsed.data.token?.trim() ||
-      db
-        .select()
-        .from(schema.settings)
-        .where(eq(schema.settings.key, "discord_bot_token"))
-        .get()?.value;
+      parsed.data.token?.trim() || getSetting("discord_bot_token");
 
     if (!resolvedToken) {
       return c.json({ ok: false, error: "No token provided" }, 400);
     }
 
     // Persist the token
-    db.insert(schema.settings)
-      .values({ key: "discord_bot_token", value: resolvedToken })
-      .onConflictDoUpdate({ target: schema.settings.key, set: { value: resolvedToken } })
-      .run();
+    setSetting("discord_bot_token", resolvedToken);
 
     const result = await startDiscordBot(resolvedToken);
     if (!result.ok) {

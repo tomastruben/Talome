@@ -3,6 +3,7 @@ import { z } from "zod";
 import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { db, schema } from "../db/index.js";
+import { getSetting } from "../utils/settings.js";
 import { eq, desc } from "drizzle-orm";
 import { serverError } from "../middleware/request-logger.js";
 import { writeMemory, deleteMemory, clearAllMemories } from "../db/memories.js";
@@ -150,9 +151,7 @@ memories.post("/extract", async (c) => {
       return c.json({ ok: true, skipped: true });
     }
 
-    const apiKey =
-      db.select().from(schema.settings).where(eq(schema.settings.key, "anthropic_key")).get()
-        ?.value || process.env.ANTHROPIC_API_KEY;
+    const apiKey = getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
 
     if (!apiKey) return c.json({ ok: true, skipped: true });
 

@@ -64,6 +64,7 @@ import { runMigrations } from "./db/migrate.js";
 import { initializeStores } from "./stores/sync.js";
 import { migrateLegacyNetworks } from "./stores/lifecycle.js";
 import { db, schema } from "./db/index.js";
+import { getSetting } from "./utils/settings.js";
 import { eq } from "drizzle-orm";
 import { startTelegramBot } from "./messaging/telegram.js";
 // discord-bot.js is imported dynamically below to avoid loading discord.js at startup
@@ -642,13 +643,9 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
   }
 
   try {
-    const tokenRow = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, "telegram_bot_token"))
-      .get();
-    if (tokenRow?.value) {
-      startTelegramBot(tokenRow.value).then((result) => {
+    const telegramToken = getSetting("telegram_bot_token");
+    if (telegramToken) {
+      startTelegramBot(telegramToken).then((result) => {
         if (!result.ok) {
           startupLog.error("Telegram bot failed to start", result.error);
         }
@@ -692,14 +689,10 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
 
   // Auto-start Discord bot if token is saved (lazy-load discord.js)
   try {
-    const discordRow = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, "discord_bot_token"))
-      .get();
-    if (discordRow?.value) {
+    const discordToken = getSetting("discord_bot_token");
+    if (discordToken) {
       import("./messaging/discord-bot.js").then(({ startDiscordBot }) => {
-        startDiscordBot(discordRow.value).then((result: { ok: boolean; error?: string }) => {
+        startDiscordBot(discordToken).then((result: { ok: boolean; error?: string }) => {
           if (!result.ok) {
             startupLog.error("Discord bot failed to start", result.error);
           }
