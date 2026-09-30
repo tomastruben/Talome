@@ -262,7 +262,7 @@ export function SecuritySection() {
             <div className="flex-1 min-w-0" role="alert">
               <p className="text-sm font-medium">Couldn&apos;t load the security mode</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {error instanceof Error ? error.message : "Check that the Talome server is reachable."} Agents keep using the mode that is saved.
+                {error instanceof Error ? error.message : "Check that the Talome server is reachable."} Agents keep using the saved mode.
               </p>
             </div>
             <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void mutate()}>

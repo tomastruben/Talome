@@ -262,7 +262,7 @@ function AssistantHeader({
           </TooltipTrigger>
           <TooltipContent side="bottom" className="max-w-64 text-xs">
             {chatAutoApprove
-              ? "On until you close this tab. Tool requests in chat are approved without asking. Cautious-mode approvals and confirmations still ask."
+              ? "On until you close this tab: the Assistant's tool requests are approved without asking you. Cautious-mode approvals and confirmation dialogs still appear."
               : "Off. The Assistant asks before running tools that need your OK."}
           </TooltipContent>
         </Tooltip>

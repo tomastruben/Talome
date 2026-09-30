@@ -659,7 +659,7 @@ export function AiProviderSection() {
               {testResult?.ok ? (
                 <span className="flex items-center gap-1.5 text-status-healthy">
                   <HugeiconsIcon icon={CheckmarkCircle02Icon} size={12} aria-hidden="true" />
-                  {PROVIDER_META[activeProvider].label} replied
+                  Test passed · {PROVIDER_META[activeProvider].label} replied
                 </span>
               ) : null}
             </span>

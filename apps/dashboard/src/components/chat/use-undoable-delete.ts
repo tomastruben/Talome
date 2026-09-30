@@ -41,7 +41,7 @@ export function useUndoableDelete(remove: (id: string) => Promise<boolean>) {
     entries.current.delete(id);
     const ok = await removeRef.current(id).catch(() => false);
     drop(id);
-    if (!ok) toast.error(`Couldn't delete "${entry.label}". It's back in the list, so try again.`);
+    if (!ok) toast.error(`Couldn't delete "${entry.label}", so it's back in the list. Try again.`);
   }, [drop]);
 
   const undo = useCallback((id: string) => {

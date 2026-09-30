@@ -73,7 +73,7 @@ describe("AI provider selection (P0-8)", () => {
     expect(use).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Test OpenAI" }));
-    expect(await screen.findByText("OpenAI replied")).toBeInTheDocument();
+    expect(await screen.findByText("Test passed · OpenAI replied")).toBeInTheDocument();
     const testCall = fetchMock.mock.calls.find(([url]) => url === "http://core/api/ai/test")!;
     expect(JSON.parse(String((testCall[1] as RequestInit).body))).toEqual({ provider: "openai" });
 
