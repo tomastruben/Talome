@@ -632,9 +632,17 @@ apps.patch("/:storeId/:appId", async (c) => {
 
 apps.delete("/:storeId/:appId", async (c) => {
   const { appId } = c.req.param();
-  const result = await uninstallApp(appId, { actor: actorFor(c) });
+  // Anonymous volumes may hold the app's only data: deleted only on explicit opt-in.
+  const removeAnonymousVolumes = c.req.query("removeAnonymousVolumes") === "true";
+  const result = await uninstallApp(appId, { actor: actorFor(c), removeAnonymousVolumes });
   if (!result.success) return operationError(c, result);
-  return c.json({ ok: true, message: `${appId} uninstalled`, operationId: result.operationId });
+  return c.json({
+    ok: true,
+    message: `${appId} uninstalled`,
+    operationId: result.operationId,
+    ...(result.warning ? { warning: result.warning } : {}),
+    ...(result.anonymousVolumes ? { anonymousVolumes: result.anonymousVolumes } : {}),
+  });
 });
 
 /* ── Serve local store assets (icons, screenshots, covers) ─────────── */

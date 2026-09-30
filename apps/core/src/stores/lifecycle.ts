@@ -699,8 +699,32 @@ async function installAppInner(
 
 // ── Uninstall ─────────────────────────────────────────────────────────────
 
-export function uninstallApp(appId: string, opts?: LifecycleOptions): Promise<{ success: boolean; error?: string; warning?: string } & OperationResultMeta> {
-  return runAppOperation(appId, "uninstall", opts, (ctx) => uninstallAppInner(appId, ctx), requireInstalled(appId));
+export interface UninstallOptions extends LifecycleOptions {
+  /**
+   * Also delete the anonymous Docker volumes the app's containers used. They
+   * can be the app's only copy of its data (a database image's VOLUME with no
+   * volume in the compose file), so by default they are kept and reported.
+   * Named volumes and bind-mounted app data are never deleted.
+   */
+  removeAnonymousVolumes?: boolean;
+}
+
+export interface UninstallResult {
+  success: boolean;
+  error?: string;
+  warning?: string;
+  /** Anonymous volumes of the removed containers: deleted (opt-in) or kept. */
+  anonymousVolumes?: { removed: string[]; kept: string[] };
+}
+
+export function uninstallApp(appId: string, opts?: UninstallOptions): Promise<UninstallResult & OperationResultMeta> {
+  return runAppOperation(
+    appId,
+    "uninstall",
+    opts,
+    (ctx) => uninstallAppInner(appId, ctx, { removeAnonymousVolumes: opts?.removeAnonymousVolumes === true }),
+    requireInstalled(appId),
+  );
 }
 
 // Docker object names interpolated into shell commands: ids and names only.
@@ -751,13 +775,31 @@ async function collectAnonymousVolumes(containerIds: string[]): Promise<string[]
   }
 }
 
-async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<{ success: boolean; error?: string; warning?: string }> {
+async function uninstallAppInner(
+  appId: string,
+  ctx: OperationContext,
+  opts: { removeAnonymousVolumes: boolean },
+): Promise<UninstallResult> {
   const installed = getInstalledApp(appId);
   if (!installed) return { success: false, error: "App is not installed" };
 
   const app = getCatalogApp(appId, installed.storeSourceId);
   const effectiveCompose = installed.overrideComposePath ?? app?.composePath ?? null;
   const composeUsable = effectiveCompose !== null && existsSync(effectiveCompose);
+
+  // The project's containers and their anonymous volumes, recorded BEFORE
+  // anything runs (afterwards nothing links the volumes to the app any more) —
+  // and before the pre-uninstall hook, so a refusal here has done nothing.
+  ctx.step("list_containers", 5, "Listing the app's containers");
+  let before: Awaited<ReturnType<typeof listProjectContainers>> = [];
+  try {
+    before = await listProjectContainers(appId, effectiveCompose);
+  } catch (err: unknown) {
+    // Without a container listing, removal cannot be verified: refuse, keep tracking the app.
+    const reason = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Could not list ${appId}'s containers from Docker (${reason}). Nothing was removed; the app is still installed.` };
+  }
+  const anonymousVolumes = await collectAnonymousVolumes(before.map((c) => c.id));
 
   // Execute preUninstall hook (best-effort)
   if (app) {
@@ -768,17 +810,6 @@ async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<
   }
 
   ctx.step("remove_containers", 30, "Stopping and removing containers");
-  // The project's containers and their anonymous volumes, recorded BEFORE they
-  // are removed (afterwards nothing links the volumes to the app any more).
-  let before: Awaited<ReturnType<typeof listProjectContainers>> = [];
-  try {
-    before = await listProjectContainers(appId, effectiveCompose);
-  } catch (err: unknown) {
-    // Without a container listing, removal cannot be verified: refuse, keep tracking the app.
-    const reason = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `Could not list ${appId}'s containers from Docker (${reason}). Nothing was removed; the app is still installed.` };
-  }
-  const anonymousVolumes = await collectAnonymousVolumes(before.map((c) => c.id));
 
   let downError: string | null = null;
   if (composeUsable) {
@@ -832,21 +863,30 @@ async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<
     return { success: false, error };
   }
 
-  // Anonymous volumes belonged to the removed containers only. Named volumes
-  // and bind-mounted data (app-data) are kept.
+  // Anonymous volumes belonged to the removed containers only. They may be the
+  // app's only copy of its data (an image VOLUME such as a database's data
+  // dir when the compose declares no volume), so they are deleted only when
+  // the caller asked for it; otherwise kept and reported. Named volumes and
+  // bind-mounted data (app-data) are always kept.
+  const volumes = { removed: [] as string[], kept: [] as string[] };
   if (anonymousVolumes.length > 0) {
-    ctx.step("remove_anonymous_volumes", 60, `Removing ${anonymousVolumes.length} anonymous volume(s)`);
-    const removed: string[] = [];
-    const kept: string[] = [];
-    for (const volume of anonymousVolumes) {
-      try {
-        await run(`docker volume rm ${volume}`, { timeout: 30_000 });
-        removed.push(volume);
-      } catch {
-        kept.push(volume); // e.g. still used by another container
+    if (opts.removeAnonymousVolumes) {
+      ctx.step("remove_anonymous_volumes", 60, `Removing ${anonymousVolumes.length} anonymous volume(s)`);
+      for (const volume of anonymousVolumes) {
+        try {
+          await run(`docker volume rm ${volume}`, { timeout: 30_000 });
+          volumes.removed.push(volume);
+        } catch {
+          volumes.kept.push(volume); // e.g. still used by another container
+        }
       }
+    } else {
+      volumes.kept.push(...anonymousVolumes);
     }
-    ctx.setDetail({ anonymousVolumesRemoved: removed, ...(kept.length > 0 ? { anonymousVolumesKept: kept } : {}) });
+    ctx.setDetail({
+      ...(volumes.removed.length > 0 ? { anonymousVolumesRemoved: volumes.removed } : {}),
+      ...(volumes.kept.length > 0 ? { anonymousVolumesKept: volumes.kept } : {}),
+    });
   }
 
   // Clean up app-specific networks (not the shared talome network)
@@ -869,7 +909,24 @@ async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<
     .where(eq(schema.installedApps.appId, appId))
     .run();
 
-  return { success: true, ...(downError ? { warning: `docker compose down failed (${downError.slice(0, 200)}); the containers were removed directly.` } : {}) };
+  const warnings: string[] = [];
+  if (downError) warnings.push(`docker compose down failed (${downError.slice(0, 200)}); the containers were removed directly.`);
+  if (volumes.kept.length > 0) {
+    const shown = volumes.kept.slice(0, 5).map((v) => (/^[0-9a-f]{64}$/.test(v) ? v.slice(0, 12) : v)).join(", ");
+    const more = volumes.kept.length > 5 ? ` and ${volumes.kept.length - 5} more` : "";
+    warnings.push(
+      `Kept ${volumes.kept.length} anonymous Docker volume(s) the app's containers used (${shown}${more}). ` +
+      `They may hold data the app stored outside its compose volumes (for example a database with no volume configured). ` +
+      (opts.removeAnonymousVolumes
+        ? `They could not be removed (still in use?).`
+        : `Remove them with \`docker volume rm\` when they are no longer needed, or uninstall with removeAnonymousVolumes to delete them.`),
+    );
+  }
+  return {
+    success: true,
+    ...(anonymousVolumes.length > 0 ? { anonymousVolumes: volumes } : {}),
+    ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
+  };
 }
 
 // ── Start / Stop / Restart ────────────────────────────────────────────────

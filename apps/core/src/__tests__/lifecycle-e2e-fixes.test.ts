@@ -104,6 +104,7 @@ import { runInActorContext } from "../ai/actor-context.js";
 import { __resetActiveOperationsForTests } from "../ops/operations.js";
 import type { ServiceImageState } from "../ops/docker-probe.js";
 import { apps } from "../routes/apps.js";
+import { executeHook } from "../stores/lifecycle-hooks.js";
 
 const STORE = "user-apps";
 const APP = "bkrs-pgapp";
@@ -268,10 +269,7 @@ describe("uninstall verifies removal and keeps user data", () => {
     expect(commands().some((c) => / -v\b/.test(c))).toBe(false);
   });
 
-  it("removes only the project's anonymous volumes, recorded before `down`, never named volumes", async () => {
-    const anon = "a".repeat(64);
-    const legacyAnon = "b".repeat(64);
-    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+  function mockVolumes(anon: string, legacyAnon: string): void {
     m.run.mockImplementation(async (cmd: string) => {
       if (cmd.startsWith("docker inspect")) {
         return {
@@ -300,8 +298,32 @@ describe("uninstall verifies removal and keeps user data", () => {
       if (cmd.includes(" down")) live = [];
       return { stdout: "", stderr: "" };
     });
+  }
+
+  it("keeps the project's anonymous volumes by default (they may be a database's only data) and reports them", async () => {
+    const anon = "a".repeat(64);
+    const legacyAnon = "b".repeat(64);
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    mockVolumes(anon, legacyAnon);
 
     const result = await uninstallApp(APP);
+
+    expect(result.success).toBe(true);
+    expect(commands().some((c) => c.startsWith("docker volume rm"))).toBe(false);
+    expect(result.anonymousVolumes).toEqual({ removed: [], kept: [anon, legacyAnon] });
+    expect(result.warning).toContain("Kept 2 anonymous Docker volume(s)");
+    expect(result.warning).toContain(anon.slice(0, 12));
+    const op = operationRows()[0];
+    expect(JSON.parse(op.detail ?? "{}").anonymousVolumesKept).toEqual([anon, legacyAnon]);
+  });
+
+  it("removes only the project's anonymous volumes on opt-in, recorded before `down`, never named volumes", async () => {
+    const anon = "a".repeat(64);
+    const legacyAnon = "b".repeat(64);
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    mockVolumes(anon, legacyAnon);
+
+    const result = await uninstallApp(APP, { removeAnonymousVolumes: true });
 
     expect(result.success).toBe(true);
     const cmds = commands();
@@ -312,6 +334,52 @@ describe("uninstall verifies removal and keeps user data", () => {
     const removed = cmds.filter((c) => c.startsWith("docker volume rm")).map((c) => c.split(" ").pop());
     expect(removed.sort()).toEqual([anon, legacyAnon].sort());
     expect(cmds.some((c) => c.includes("down -v") || c.includes("--volumes"))).toBe(false);
+    expect(result.anonymousVolumes).toEqual({ removed: [anon, legacyAnon], kept: [] });
+    expect(result.warning).toBeUndefined();
+  });
+
+  it("runs the pre-uninstall hook only after Docker listed the app's containers", async () => {
+    m.listContainers.mockRejectedValueOnce(new Error("docker unreachable"));
+
+    const result = await uninstallApp(APP);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Nothing was removed");
+    expect(executeHook).not.toHaveBeenCalled();
+    expect(installedRow()).toBeDefined();
+  });
+
+  it("the REST route returns the warning and the kept volumes, and passes the opt-in", async () => {
+    const anon = "a".repeat(64);
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    mockVolumes(anon, "b".repeat(64));
+    m.run.mockImplementation(async (cmd: string) => {
+      if (cmd.startsWith("docker inspect")) return { stdout: JSON.stringify([{ Type: "volume", Name: anon }]) + "\n", stderr: "" };
+      if (cmd.startsWith("docker volume inspect")) return { stdout: `${anon} {"com.docker.volume.anonymous":""}`, stderr: "" };
+      if (cmd.includes(" down")) throw Object.assign(new Error("down failed"), { stderr: "yaml: line 3: bad indentation" });
+      if (cmd.startsWith("docker rm -f")) live = [];
+      return { stdout: "", stderr: "" };
+    });
+    const app = new Hono().route("/api/apps", apps);
+
+    const res = await app.request(`/api/apps/${STORE}/${APP}`, { method: "DELETE", headers: { "Content-Type": "application/json" } });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { warning?: string; anonymousVolumes?: { kept: string[] } };
+    expect(body.warning).toContain("docker compose down failed");
+    expect(body.warning).toContain("anonymous Docker volume");
+    expect(body.anonymousVolumes?.kept).toEqual([anon]);
+    expect(commands().some((c) => c.startsWith("docker volume rm"))).toBe(false);
+
+    // Opt-in through the query string
+    db.insert(schema.installedApps).values({
+      appId: APP, storeSourceId: STORE, status: "running", envConfig: "{}", containerIds: "[]", version: "1.0.0",
+      overrideComposePath: composePath, installedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    }).run();
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    const res2 = await app.request(`/api/apps/${STORE}/${APP}?removeAnonymousVolumes=true`, { method: "DELETE", headers: { "Content-Type": "application/json" } });
+    expect(res2.status).toBe(200);
+    expect(commands()).toContain(`docker volume rm ${anon}`);
   });
 
   it("still removes the containers when the catalog entry is gone", async () => {

@@ -226,16 +226,20 @@ All apps are placed on the shared 'talome' Docker network so they can reach each
 });
 
 export const uninstallAppTool = tool({
-  description: "Uninstall an app and remove its containers. DESTRUCTIVE: tell the user what will be removed first; in cautious mode Talome returns approval_required and the owner approves it before it runs.",
+  description:
+    "Uninstall an app and remove its containers. Named volumes and the app's data folder are kept; anonymous Docker volumes " +
+    "(which can hold a database's only copy of its data) are kept and listed in the result's warning unless removeAnonymousVolumes is set. " +
+    "DESTRUCTIVE: tell the user what will be removed first; in cautious mode Talome returns approval_required and the owner approves it before it runs.",
   inputSchema: z.object({
     appId: z.string().describe("App ID to uninstall"),
+    removeAnonymousVolumes: z.boolean().optional().describe("Also delete the anonymous volumes of the app's containers (permanent data loss if the app kept data there). Only when the user explicitly asked for it."),
     confirmed: z.boolean().optional().describe("Leave unset. Talome sets it once this call is authorized (the owner approved it, or permissive mode)."),
   }),
-  execute: async ({ appId, confirmed }) => {
+  execute: async ({ appId, removeAnonymousVolumes, confirmed }) => {
     if (!confirmed) {
       return { error: "This destructive action was not authorized. Call it without confirmed: Talome asks the owner to approve it (approval_required), then retry with approval_id." };
     }
-    const result = await uninstallApp(appId);
+    const result = await uninstallApp(appId, { removeAnonymousVolumes: removeAnonymousVolumes === true });
     if (result.success) {
       writeAuditEntry("Uninstalled app", "destructive", appId);
     } else {
