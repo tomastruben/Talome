@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import { useSearchParams } from "next/navigation";
 import { CORE_URL } from "@/lib/constants";
@@ -146,4 +147,48 @@ export function useSetupStatus(): SetupStatus {
     completeStackCount: completeStacks.length,
     nearestStack: incompleteStacks[0] ?? null,
   };
+}
+
+// ── Sign-in probe ────────────────────────────────────────────────────────────
+
+export type AuthStatus =
+  | { state: "loading" }
+  | { state: "ready"; accountExists: boolean }
+  | { state: "error"; message: string };
+
+/**
+ * Asks core whether an account exists. A failed probe is an error the
+ * screen shows with Retry: it is never read as "no account", so the sign-in
+ * form can't turn into account creation because the server was briefly down.
+ */
+export async function fetchAuthStatus(): Promise<AuthStatus> {
+  try {
+    const res = await fetch("/api/auth/status", { credentials: "include", cache: "no-store" });
+    const body = (await res.json().catch(() => null)) as { passwordConfigured?: unknown } | null;
+    if (!res.ok || typeof body?.passwordConfigured !== "boolean") {
+      return { state: "error", message: "Couldn't reach the Talome server. Check that it's running, then retry." };
+    }
+    return { state: "ready", accountExists: body.passwordConfigured };
+  } catch {
+    return { state: "error", message: "Couldn't reach the Talome server. Check that it's running, then retry." };
+  }
+}
+
+export function useAuthStatus(): { status: AuthStatus; retry: () => void } {
+  const [status, setStatus] = useState<AuthStatus>({ state: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchAuthStatus().then((next) => {
+      if (!cancelled) setStatus(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
+  const retry = useCallback(() => {
+    setStatus({ state: "loading" });
+    setAttempt((n) => n + 1);
+  }, []);
+  return { status, retry };
 }

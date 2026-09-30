@@ -49,6 +49,11 @@ const loginSchema = z.object({
   password: z.string().min(1).max(500),
 });
 
+const setupSchema = z.object({
+  username: z.string().max(100).optional(),
+  password: z.string().max(500).optional(),
+});
+
 const recoverSchema = z.object({
   username: z.string().min(1).max(100),
   recoveryCode: z.string().min(1).max(100),
@@ -76,20 +81,72 @@ const desktopWallpaperPreferenceSchema = z.object({
   attribution: wallpaperAttributionSchema.nullable().optional(),
 });
 
-/** Generate a 24-character alphanumeric recovery code (URL-safe, easy to copy). */
+/**
+ * Recovery codes (v2): 24 Crockford base32 characters (120 bits) shown as
+ * six groups of four, "7K3M-Q9TD-…". Crockford's alphabet leaves out I, L,
+ * O and U, so a code read aloud or copied by hand can't be mistyped into a
+ * look-alike. Input is normalised (case, hyphens, spaces, I/L → 1, O → 0)
+ * before it is compared, and the hash is of the normalised form.
+ */
+export const RECOVERY_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+export const RECOVERY_CODE_LENGTH = 24;
+export const RECOVERY_CODE_GROUP = 4;
+
+/** Generate a recovery code, grouped for display: "XXXX-XXXX-XXXX-XXXX-XXXX-XXXX". */
 export function generateRecoveryCode(): string {
-  return randomBytes(18).toString("base64url").slice(0, 24);
+  // 256 is a multiple of 32, so `byte & 31` is uniform over the alphabet.
+  const bytes = randomBytes(RECOVERY_CODE_LENGTH);
+  let raw = "";
+  for (const byte of bytes) raw += RECOVERY_CODE_ALPHABET[byte & 31];
+  return formatRecoveryCode(raw);
+}
+
+/** Group a normalised code into blocks of four joined by hyphens. */
+export function formatRecoveryCode(normalised: string): string {
+  const groups: string[] = [];
+  for (let i = 0; i < normalised.length; i += RECOVERY_CODE_GROUP) {
+    groups.push(normalised.slice(i, i + RECOVERY_CODE_GROUP));
+  }
+  return groups.join("-");
+}
+
+/**
+ * Normalise typed input to the canonical, ungrouped form: upper case, no
+ * hyphens or whitespace, and Crockford's look-alikes folded (I and L to 1,
+ * O to 0).
+ */
+export function normalizeRecoveryCode(input: string): string {
+  return input
+    .toUpperCase()
+    .replace(/[\s-]+/g, "")
+    .replace(/[IL]/g, "1")
+    .replace(/O/g, "0");
+}
+
+/** Hash a recovery code for storage (always of the normalised form). */
+export async function hashRecoveryCode(code: string): Promise<string> {
+  return bcryptHash(normalizeRecoveryCode(code), BCRYPT_ROUNDS);
+}
+
+/**
+ * Check typed input against a stored hash. v2 hashes are of the normalised
+ * code; codes issued before v2 (24 case-sensitive base64url characters) were
+ * hashed as issued, so the trimmed input is tried as well.
+ */
+export async function verifyRecoveryCode(input: string, storedHash: string): Promise<boolean> {
+  const normalised = normalizeRecoveryCode(input);
+  if (normalised && await bcryptCompare(normalised, storedHash)) return true;
+  const legacy = input.trim();
+  if (legacy && legacy !== normalised) return bcryptCompare(legacy, storedHash);
+  return false;
 }
 
 const BCRYPT_ROUNDS = 12;
 
-function hasAnyUsers(): boolean {
-  try {
-    const row = db.select().from(schema.users).limit(1).get();
-    return !!row;
-  } catch {
-    return false;
-  }
+/** Whether any account exists. Throws when the database can't be read. */
+function usersExist(): boolean {
+  const row = db.select({ id: schema.users.id }).from(schema.users).limit(1).get();
+  return !!row;
 }
 
 function parsePreferences(raw: string | null): Record<string, unknown> {
@@ -104,49 +161,71 @@ function parsePreferences(raw: string | null): Record<string, unknown> {
   }
 }
 
-/** POST /api/auth/login — { username: string, password: string } */
+/**
+ * POST /api/auth/setup — create the first (admin) account. Only works while
+ * no account exists; afterwards it refuses, so a failed status probe on the
+ * sign-in screen can never turn a login attempt into account creation.
+ */
+auth.post("/setup", async (c) => {
+  const parsed = setupSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Enter a username and a password." }, 400);
+  const name = parsed.data.username?.trim() ?? "";
+  const password = parsed.data.password ?? "";
+  if (name.length < 2) {
+    return c.json({ error: "Choose a username with at least 2 characters.", field: "username" }, 400);
+  }
+  if (password.length < 8) {
+    return c.json({ error: "Choose a password with at least 8 characters.", field: "password" }, 400);
+  }
+
+  const newHash = await bcryptHash(password, BCRYPT_ROUNDS);
+  const recoveryCode = generateRecoveryCode();
+  const recoveryHash = await hashRecoveryCode(recoveryCode);
+  const userId = randomUUID();
+  const now = new Date().toISOString();
+
+  try {
+    // One transaction: two setup requests racing can't both create an admin.
+    db.transaction((tx) => {
+      const existing = tx.select({ id: schema.users.id }).from(schema.users).limit(1).get();
+      if (existing) throw new Error("ALREADY_SET_UP");
+      tx.insert(schema.users)
+        .values({ id: userId, username: name, passwordHash: newHash, role: "admin", recoveryCodeHash: recoveryHash, createdAt: now, lastLoginAt: now })
+        .run();
+      // Also store in settings for backward compatibility
+      tx.insert(schema.settings)
+        .values({ key: "admin_password_hash", value: newHash })
+        .onConflictDoUpdate({ target: schema.settings.key, set: { value: newHash } })
+        .run();
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "ALREADY_SET_UP") {
+      return c.json({ error: "Talome already has an account. Sign in instead.", code: "already_set_up" }, 409);
+    }
+    throw error;
+  }
+
+  const token = await createSessionToken(userId, "admin", name);
+  setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(c));
+  writeAuditEntry("account_created", "modify", `user=${name} role=admin (first-run setup)`);
+
+  return c.json({ ok: true, username: name, recoveryCode });
+});
+
+/** POST /api/auth/login — { username: string, password: string }. Never creates an account. */
 auth.post("/login", async (c) => {
   const parsed = loginSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Invalid credentials" }, 400);
   const { username, password } = parsed.data;
 
-  const isFirstTime = !hasAnyUsers();
-
-  if (isFirstTime) {
-    // First-time setup: create the admin account
-    if (password.length < 8) {
-      return c.json({ error: "Password must be at least 8 characters" }, 400);
-    }
-    const name = username?.trim() || "admin";
-    if (name.length < 2) {
-      return c.json({ error: "Username must be at least 2 characters" }, 400);
-    }
-    const newHash = await bcryptHash(password, BCRYPT_ROUNDS);
-    const userId = randomUUID();
-    const now = new Date().toISOString();
-
-    // Generate recovery code for password reset
-    const recoveryCode = generateRecoveryCode();
-    const recoveryHash = await bcryptHash(recoveryCode, BCRYPT_ROUNDS);
-
-    db.insert(schema.users)
-      .values({ id: userId, username: name, passwordHash: newHash, role: "admin", recoveryCodeHash: recoveryHash, createdAt: now })
-      .run();
-
-    // Also store in settings for backward compatibility
-    db.insert(schema.settings)
-      .values({ key: "admin_password_hash", value: newHash })
-      .onConflictDoUpdate({ target: schema.settings.key, set: { value: newHash } })
-      .run();
-
-    const token = await createSessionToken(userId, "admin", name);
-    setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(c));
-
-    return c.json({ ok: true, setup: true, recoveryCode });
+  if (!usersExist()) {
+    return c.json({ error: "Talome has no account yet. Set it up first.", code: "setup_required" }, 409);
   }
 
-  // Normal login: look up user by username
-  const name = username?.trim() || "admin";
+  const name = username?.trim() ?? "";
+  if (!name) {
+    return c.json({ error: "Enter your username.", field: "username" }, 400);
+  }
   const user = db.select().from(schema.users).where(eq(schema.users.username, name)).get();
 
   if (!user) {
@@ -226,7 +305,7 @@ auth.post("/invitations/:token/accept", async (c) => {
 
   const passwordHash = await bcryptHash(parsed.data.password, BCRYPT_ROUNDS);
   const recoveryCode = generateRecoveryCode();
-  const recoveryCodeHash = await bcryptHash(recoveryCode, BCRYPT_ROUNDS);
+  const recoveryCodeHash = await hashRecoveryCode(recoveryCode);
   const userId = randomUUID();
   const now = new Date().toISOString();
   const permissions = invitation.role === "admin"
@@ -410,13 +489,13 @@ auth.post("/recover", async (c) => {
   if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
   const { username, recoveryCode, newPassword } = parsed.data;
 
-  const user = db.select().from(schema.users).where(eq(schema.users.username, username)).get();
+  const user = db.select().from(schema.users).where(eq(schema.users.username, username.trim())).get();
   if (!user || !user.recoveryCodeHash) {
     // Don't reveal whether the user exists
     return c.json({ error: "Invalid username or recovery code" }, 401);
   }
 
-  const valid = await bcryptCompare(recoveryCode, user.recoveryCodeHash);
+  const valid = await verifyRecoveryCode(recoveryCode, user.recoveryCodeHash);
   if (!valid) {
     return c.json({ error: "Invalid username or recovery code" }, 401);
   }
@@ -424,7 +503,7 @@ auth.post("/recover", async (c) => {
   // Recovery code is single-use — set new password and generate a new code
   const newPasswordHash = await bcryptHash(newPassword, BCRYPT_ROUNDS);
   const newRecoveryCode = generateRecoveryCode();
-  const newRecoveryHash = await bcryptHash(newRecoveryCode, BCRYPT_ROUNDS);
+  const newRecoveryHash = await hashRecoveryCode(newRecoveryCode);
 
   db.update(schema.users)
     .set({
@@ -444,8 +523,13 @@ auth.post("/recover", async (c) => {
 
 /** GET /api/auth/status — unauthenticated probe: is any user configured? */
 auth.get("/status", (c) => {
-  const configured = hasAnyUsers();
-  return c.json({ passwordConfigured: configured });
+  try {
+    return c.json({ passwordConfigured: usersExist() });
+  } catch {
+    // Never answer "no account" when we simply couldn't tell: the sign-in
+    // screen shows an error with Retry instead of the setup form.
+    return c.json({ error: "Couldn't read the account database." }, 503);
+  }
 });
 
 export { auth };

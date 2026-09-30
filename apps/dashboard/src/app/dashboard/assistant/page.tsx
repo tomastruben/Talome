@@ -53,6 +53,7 @@ import { useConfirmAction } from "@/hooks/use-confirm-action";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import useSWR from "swr";
+import { safeRedirectPath } from "@/lib/safe-redirect";
 
 interface SuggestionItem {
   label: string;
@@ -490,8 +491,9 @@ export default function AssistantPage() {
     const conversationId = params.get("c");
 
     // Store origin before stripping — validate it's a dashboard path
-    if (from && from.startsWith("/dashboard/")) {
-      originRef.current = from;
+    const safeOrigin = from ? safeRedirectPath(from, "", { within: "/dashboard" }) : "";
+    if (safeOrigin) {
+      originRef.current = safeOrigin;
     }
 
     // Restore active conversation from URL (only if provider state is empty)

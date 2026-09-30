@@ -193,3 +193,11 @@ export {
   Tick02Icon,
   Alert02Icon,
 } from "@hugeicons/core-free-icons";
+
+// Auth, recovery codes and trust (show password, print, undo)
+export {
+  ViewIcon,
+  ViewOffSlashIcon,
+  PrinterIcon,
+  ArrowTurnBackwardIcon,
+} from "@hugeicons/core-free-icons";

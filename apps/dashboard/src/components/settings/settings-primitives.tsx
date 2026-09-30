@@ -6,11 +6,19 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { CORE_URL } from "@/lib/constants";
+import { copyText } from "@/components/ui/copy-button";
 
 // ── Utility helpers ──────────────────────────────────────────────────────────
 
-export function relativeTime(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
+/**
+ * "3m ago", "2h ago", "5d ago", then a date. A missing or unparseable
+ * timestamp reads `never` ("Never" by default), never "Invalid Date".
+ */
+export function relativeTime(dateStr: string | null | undefined, never = "Never"): string {
+  if (!dateStr) return never;
+  const then = new Date(dateStr).getTime();
+  if (!Number.isFinite(then)) return never;
+  const diff = Date.now() - then;
   const mins = Math.floor(diff / 60_000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -18,37 +26,53 @@ export function relativeTime(dateStr: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 30) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
+  return new Date(then).toLocaleDateString();
 }
 
+/** Copies text (Clipboard API, then the legacy fallback on plain-http origins). Prefer `<CopyButton>` for UI. */
 export async function copyToClipboard(text: string): Promise<boolean> {
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // Fall through to legacy fallback below.
-    }
-  }
+  return copyText(text);
+}
 
-  if (typeof document === "undefined") return false;
-
+/**
+ * A settings write that throws with the server's message when it fails
+ * (`!res.ok`, or a JSON `{ ok: false }` / `{ error }`), so no caller can
+ * show "Saved" for a write that didn't happen.
+ */
+export async function settingsRequest<T = unknown>(
+  url: string,
+  init: { method: "POST" | "PUT" | "PATCH" | "DELETE"; body?: unknown },
+  fallback = "Couldn't save. Check that the Talome server is reachable, then try again.",
+): Promise<T> {
+  let res: Response;
   try {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    textarea.style.pointerEvents = "none";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(textarea);
-    return ok;
+    res = await fetch(url, {
+      method: init.method,
+      credentials: "include",
+      headers: init.body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    });
   } catch {
-    return false;
+    throw new Error("Couldn't reach the Talome server. Check that it's running, then try again.");
   }
+  const data = (await res.json().catch(() => null)) as unknown;
+  const record = data && typeof data === "object" ? (data as { ok?: unknown; error?: unknown }) : null;
+  if (!res.ok || record?.ok === false || (record && typeof record.error === "string" && record.error)) {
+    const message = typeof record?.error === "string" && record.error ? record.error : fallback;
+    throw new Error(message);
+  }
+  return data as T;
+}
+
+/** A GET fetcher for SWR that throws on failure, so a failed load never renders as empty data. */
+export async function settingsFetcher<T = unknown>(url: string): Promise<T> {
+  const res = await fetch(url, { credentials: "include" });
+  const data = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    const error = data && typeof data === "object" ? (data as { error?: unknown }).error : undefined;
+    throw new Error(typeof error === "string" && error ? error : `Couldn't load this (${res.status}).`);
+  }
+  return data as T;
 }
 
 export function maskKey(key: string): string {
@@ -60,7 +84,7 @@ export function maskKey(key: string): string {
 
 export function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground px-1 mb-2">
+    <p className="text-sm font-medium text-muted-foreground px-1 mb-2">
       {children}
     </p>
   );
@@ -166,7 +190,7 @@ export function ToggleRow({ label, hint, checked, onCheckedChange }: {
         <p className="text-sm font-medium">{label}</p>
         {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={label} />
     </SettingsRow>
   );
 }
@@ -185,8 +209,8 @@ export function InfoRow({ label, value }: { label: string; value: string }) {
 export function SaveRow({ onSave, saving }: { onSave: () => void; saving: boolean }) {
   return (
     <SettingsRow className="bg-muted/30 justify-end py-3">
-      <Button size="sm" onClick={onSave} disabled={saving} className="h-7 text-xs px-4">
-        {saving ? "Saving..." : "Save"}
+      <Button size="sm" onClick={onSave} busy={saving} busyLabel="Saving…" className="h-7 text-xs px-4">
+        Save
       </Button>
     </SettingsRow>
   );
@@ -207,19 +231,20 @@ export function ConnectionTestRow({ service, url, apiKey }: { service: string; u
       const res = await fetch(`${CORE_URL}/api/settings/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ service, url, apiKey }),
       });
-      const data = await res.json();
-      if (data.ok) {
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (res.ok && data?.ok) {
         setStatus("ok");
         setTimeout(() => setStatus("idle"), 4000);
       } else {
         setStatus("error");
-        setErrorMsg(data.error || "Connection failed");
+        setErrorMsg(data?.error || `Couldn't connect to ${service}. Check the URL and API key, then test again.`);
       }
     } catch {
       setStatus("error");
-      setErrorMsg("Request failed");
+      setErrorMsg("Couldn't reach the Talome server. Check that it's running, then test again.");
     }
   };
 
@@ -229,16 +254,18 @@ export function ConnectionTestRow({ service, url, apiKey }: { service: string; u
         <span className="text-xs text-status-healthy mr-2">Connected</span>
       )}
       {status === "error" && (
-        <span className="text-xs text-destructive mr-2 truncate max-w-[200px]">{errorMsg}</span>
+        <span role="alert" className="text-xs text-status-critical mr-2 truncate max-w-48" title={errorMsg}>{errorMsg}</span>
       )}
       <Button
         variant="outline"
         size="sm"
         onClick={runTest}
-        disabled={status === "testing" || !url}
+        busy={status === "testing"}
+        busyLabel="Testing connection…"
+        disabled={!url}
         className="h-7 text-xs px-3"
       >
-        {status === "testing" ? "Testing..." : "Test Connection"}
+        Test connection
       </Button>
     </SettingsRow>
   );
@@ -259,11 +286,11 @@ export function MediaServiceGroup({
   return (
     <>
       <SettingsRow className="py-2.5">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{name}</p>
+        <p className="text-sm font-medium text-foreground">{name}</p>
       </SettingsRow>
       <TextRow label="URL" id={urlId} placeholder={urlPlaceholder} value={urlValue} onChange={onUrlChange} />
       <SecretRow
-        label="API Key" id={keyId} placeholder={keyPlaceholder}
+        label="API key" id={keyId} placeholder={keyPlaceholder}
         storedValue={keyValue} isEditing={isEditing} onEdit={onEdit} onChange={onKeyChange}
       />
       <ConnectionTestRow service={service} url={urlValue} apiKey={keyValue} />

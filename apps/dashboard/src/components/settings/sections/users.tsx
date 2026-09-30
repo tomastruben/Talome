@@ -1,17 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import useSWR from "swr";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { HugeiconsIcon, Add01Icon, Copy01Icon, LinkSquare01Icon } from "@/components/icons";
+import { HugeiconsIcon, Add01Icon, LinkSquare01Icon } from "@/components/icons";
+import { CopyButton } from "@/components/ui/copy-button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { ErrorState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
+import { RecoveryCodeDialog } from "@/components/trust/recovery-code";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
 import { useUser } from "@/hooks/use-user";
-import { SettingsGroup, SettingsRow, relativeTime } from "@/components/settings/settings-primitives";
+import { SettingsGroup, SettingsRow, relativeTime, settingsFetcher, settingsRequest } from "@/components/settings/settings-primitives";
 import { FEATURE_PERMISSIONS, PERMISSION_LABELS, getDefaultPermissions } from "@talome/types";
 import type { UserPermissions } from "@talome/types";
 
@@ -82,12 +87,16 @@ function UserCard({
   isSelf,
   isLastAdmin,
   onMutate,
+  onRecoveryCode,
 }: {
   u: UserRow;
   isSelf: boolean;
   isLastAdmin: boolean;
   onMutate: () => void;
+  onRecoveryCode: (code: string, username: string) => void;
 }) {
+  const confirm = useConfirm();
+  const adminSwitchId = useId();
   const [expanded, setExpanded] = useState(false);
   const [editUsername, setEditUsername] = useState(u.username);
   const [newPassword, setNewPassword] = useState("");
@@ -115,7 +124,7 @@ function UserCard({
         });
         if (!res.ok) {
           const data = await res.json() as { error?: string };
-          toast.error(data.error ?? "Failed to update username");
+          toast.error(data.error ?? "Couldn't change the username. Try another one.");
           setSaving(false);
           return;
         }
@@ -130,7 +139,7 @@ function UserCard({
         });
         if (!res.ok) {
           const data = await res.json() as { error?: string };
-          toast.error(data.error ?? "Failed to reset password");
+          toast.error(data.error ?? "Couldn't set the new password. Use at least 8 characters, then try again.");
           setSaving(false);
           return;
         }
@@ -145,81 +154,81 @@ function UserCard({
         });
         if (!res.ok) {
           const data = await res.json() as { error?: string };
-          toast.error(data.error ?? "Failed to update permissions");
+          toast.error(data.error ?? "Couldn't update feature access. Try again.");
           setSaving(false);
           return;
         }
       }
 
-      toast.success("User updated");
+      toast.success(`Saved changes to ${editUsername}`);
       setNewPassword("");
       setExpanded(false);
       onMutate();
     } catch {
-      toast.error("Network error");
+      toast.error("Couldn't reach the Talome server. Check that it's running, then try again.");
     } finally {
       setSaving(false);
     }
   }
 
   async function handleRoleToggle() {
-    const nextRole = u.role === "admin" ? "member" : "admin";
-    try {
-      const res = await fetch(`${CORE_URL}/api/users/${u.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ role: nextRole }),
-      });
-      if (!res.ok) {
-        const data = await res.json() as { error?: string };
-        toast.error(data.error ?? "Failed to update role");
-        return;
-      }
-      toast.success(`${u.username} is now ${nextRole}`);
-      onMutate();
-    } catch {
-      toast.error("Network error");
-    }
+    const promoting = u.role !== "admin";
+    const nextRole = promoting ? "admin" : "member";
+    // Promotion widens privilege: destructive tier. Demotion is reversible: soft.
+    await confirm({
+      tier: promoting ? "destructive" : "soft",
+      title: promoting ? `Make ${u.username} an admin?` : `Make ${u.username} a member?`,
+      consequence: promoting
+        ? `${u.username} gets full access: every app and setting, other people's accounts, approvals and agent access.`
+        : `${u.username} keeps their account but only reaches the features you allow.`,
+      recovery: promoting
+        ? "You can make them a member again at any time."
+        : "You can make them an admin again at any time.",
+      confirmLabel: promoting ? "Make admin" : "Make member",
+      busyLabel: "Updating role…",
+      run: () => settingsRequest(`${CORE_URL}/api/users/${u.id}`, { method: "PUT", body: { role: nextRole } }, "Couldn't change the role. Try again."),
+      receipt: promoting ? `${u.username} is now an admin` : `${u.username} is now a member`,
+    }).then(({ confirmed }) => {
+      if (confirmed) onMutate();
+    });
   }
 
   async function handleRegenerateRecoveryCode() {
-    try {
-      const res = await fetch(`${CORE_URL}/api/users/${u.id}/recovery-code`, {
-        method: "POST",
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const data = await res.json() as { error?: string };
-        toast.error(data.error ?? "Failed to generate code");
-        return;
-      }
-      const data = await res.json() as { recoveryCode?: string };
-      if (data.recoveryCode) {
-        prompt(`Recovery code for ${u.username} — save it now (shown once):`, data.recoveryCode);
-      }
-    } catch {
-      toast.error("Network error");
-    }
+    let issued: string | null = null;
+    const { confirmed } = await confirm({
+      tier: "destructive",
+      title: `Replace ${u.username}'s recovery code?`,
+      consequence: `Their current recovery code stops working right away. You'll see the new code once, to pass on to ${u.username}.`,
+      recovery: "Their password doesn't change, so they can still sign in.",
+      confirmLabel: "Replace recovery code",
+      busyLabel: "Creating a new code…",
+      run: async () => {
+        const data = await settingsRequest<{ recoveryCode?: string }>(
+          `${CORE_URL}/api/users/${u.id}/recovery-code`,
+          { method: "POST" },
+          "Couldn't create a new recovery code. Try again.",
+        );
+        if (!data.recoveryCode) throw new Error("The server didn't return a code. Try again.");
+        issued = data.recoveryCode;
+        return data;
+      },
+    });
+    if (confirmed && issued) onRecoveryCode(issued, u.username);
   }
 
   async function handleDelete() {
-    if (!confirm(`Delete user "${u.username}"? This cannot be undone.`)) return;
-    try {
-      const res = await fetch(`${CORE_URL}/api/users/${u.id}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const data = await res.json() as { error?: string };
-        toast.error(data.error ?? "Failed to delete");
-        return;
-      }
-      toast.success(`User "${u.username}" deleted`);
-      onMutate();
-    } catch {
-      toast.error("Network error");
-    }
+    const { confirmed } = await confirm({
+      tier: "destructive",
+      title: `Delete ${u.username}'s account?`,
+      consequence: `${u.username} is signed out and can't sign in again. Their preferences and chat history on this server are removed.`,
+      recovery: "This can't be undone. Apps and files they used stay on the server.",
+      irreversible: true,
+      confirmLabel: "Delete account",
+      busyLabel: "Deleting account…",
+      run: () => settingsRequest(`${CORE_URL}/api/users/${u.id}`, { method: "DELETE" }, "Couldn't delete the account. Try again."),
+      receipt: `Deleted ${u.username}'s account`,
+    });
+    if (confirmed) onMutate();
   }
 
   const hasChanges = editUsername !== u.username || newPassword.length > 0 || permissionsChanged;
@@ -287,19 +296,20 @@ function UserCard({
 
           <div className="flex items-center gap-3 pt-1">
             <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground">Admin</Label>
+              <Label htmlFor={adminSwitchId} className="text-xs text-muted-foreground">Admin</Label>
               <Switch
+                id={adminSwitchId}
                 checked={u.role === "admin"}
                 disabled={!canChangeRole}
-                onCheckedChange={() => handleRoleToggle()}
+                onCheckedChange={() => void handleRoleToggle()}
               />
             </div>
           </div>
 
           {!isAdmin && (
             <div className="pt-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-                Feature Access
+              <p className="text-sm font-medium text-muted-foreground mb-2">
+                Feature access
               </p>
               <PermissionsGrid
                 permissions={editPermissions}
@@ -315,29 +325,31 @@ function UserCard({
               variant="ghost"
               size="sm"
               className="h-7 text-xs text-muted-foreground"
-              onClick={handleRegenerateRecoveryCode}
+              onClick={() => void handleRegenerateRecoveryCode()}
             >
-              Recovery code
+              New recovery code…
             </Button>
 
             {canDelete && (
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 text-xs text-destructive/60 hover:text-destructive"
-                onClick={handleDelete}
+                className="h-7 text-xs text-status-critical hover:text-status-critical"
+                onClick={() => void handleDelete()}
               >
-                Delete
+                Delete…
               </Button>
             )}
 
             <Button
               size="sm"
               className="h-7 text-xs px-4"
-              disabled={saving || !hasChanges || (newPassword.length > 0 && newPassword.length < 8)}
+              busy={saving}
+              busyLabel="Saving…"
+              disabled={!hasChanges || (newPassword.length > 0 && newPassword.length < 8)}
               onClick={handleSave}
             >
-              {saving ? "Saving..." : "Save"}
+              Save
             </Button>
           </div>
 
@@ -364,16 +376,20 @@ function UserCard({
 
 export function UsersSection() {
   const { isAdmin, user } = useUser();
-  const { data: users, mutate } = useSWR<UserRow[]>(
+  const confirm = useConfirm();
+  const newAdminId = useId();
+  const inviteAdminId = useId();
+  const { data: users, error: usersError, isLoading: usersLoading, mutate } = useSWR<UserRow[]>(
     isAdmin ? `${CORE_URL}/api/users` : null,
-    (url: string) => fetch(url, { credentials: "include" }).then((r) => r.json()),
+    settingsFetcher,
     { revalidateOnFocus: false },
   );
   const { data: invitations, mutate: mutateInvitations } = useSWR<InvitationRow[]>(
     isAdmin ? `${CORE_URL}/api/users/invitations` : null,
-    (url: string) => fetch(url, { credentials: "include" }).then((r) => r.json()),
+    settingsFetcher,
     { revalidateOnFocus: false },
   );
+  const [issuedCode, setIssuedCode] = useState<{ code: string; username: string } | null>(null);
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -387,7 +403,6 @@ export function UsersSection() {
   const [inviting, setInviting] = useState(false);
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [inviteLink, setInviteLink] = useState("");
-  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
 
   if (!isAdmin) return null;
 
@@ -411,7 +426,7 @@ export function UsersSection() {
         }),
       });
       const data = await res.json() as { token?: string; email?: string; error?: unknown };
-      if (!res.ok || !data.token) throw new Error(apiErrorMessage(data.error, "Failed to create invitation"));
+      if (!res.ok || !data.token) throw new Error(apiErrorMessage(data.error, "Couldn't create the invitation. Check the email address, then try again."));
 
       setInviteLink(`${window.location.origin}/invite/${encodeURIComponent(data.token)}`);
       setInviteEmail("");
@@ -421,37 +436,24 @@ export function UsersSection() {
       await mutateInvitations();
       toast.success(`Invitation ready for ${data.email}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Network error");
+      toast.error(error instanceof Error ? error.message : "Couldn't reach the Talome server. Check that it's running, then try again.");
     } finally {
       setInviting(false);
     }
   }
 
-  async function copyInviteLink() {
-    try {
-      await navigator.clipboard.writeText(inviteLink);
-      setInviteLinkCopied(true);
-      toast.success("Invitation link copied");
-      setTimeout(() => setInviteLinkCopied(false), 2000);
-    } catch {
-      toast.error("Clipboard unavailable");
-    }
-  }
-
   async function revokeInvitation(invitation: InvitationRow) {
-    if (!confirm(`Revoke the invitation for ${invitation.email}?`)) return;
-    try {
-      const res = await fetch(`${CORE_URL}/api/users/invitations/${invitation.id}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      const data = await res.json() as { error?: unknown };
-      if (!res.ok) throw new Error(apiErrorMessage(data.error, "Failed to revoke invitation"));
-      toast.success("Invitation revoked");
-      await mutateInvitations();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Network error");
-    }
+    const { confirmed } = await confirm({
+      tier: "soft",
+      title: `Revoke the invitation for ${invitation.email}?`,
+      consequence: "The invitation link stops working.",
+      recovery: "You can send a new invitation at any time.",
+      confirmLabel: "Revoke invitation",
+      busyLabel: "Revoking invitation…",
+      run: () => settingsRequest(`${CORE_URL}/api/users/invitations/${invitation.id}`, { method: "DELETE" }, "Couldn't revoke the invitation. Try again."),
+      receipt: `Revoked the invitation for ${invitation.email}`,
+    });
+    if (confirmed) await mutateInvitations();
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -472,14 +474,12 @@ export function UsersSection() {
       });
       if (!res.ok) {
         const data = await res.json() as { error?: string };
-        toast.error(data.error ?? "Failed to create user");
+        toast.error(data.error ?? "Couldn't create the account. Try another username.");
         return;
       }
       const data = await res.json() as { recoveryCode?: string };
-      if (data.recoveryCode) {
-        prompt(`Recovery code for ${newUsername} — save it now (shown once):`, data.recoveryCode);
-      }
-      toast.success(`User "${newUsername}" created`);
+      if (data.recoveryCode) setIssuedCode({ code: data.recoveryCode, username: newUsername });
+      toast.success(`Created ${newUsername}'s account`);
       setNewUsername("");
       setNewPassword("");
       setNewRole("member");
@@ -487,15 +487,25 @@ export function UsersSection() {
       setShowForm(false);
       mutate();
     } catch {
-      toast.error("Network error");
+      toast.error("Couldn't reach the Talome server. Check that it's running, then try again.");
     } finally {
       setCreating(false);
     }
   }
 
-  async function handleBulkPermissions(permissions: UserPermissions) {
+  async function handleBulkPermissions(permissions: UserPermissions, widening: boolean) {
     const ids = memberUsers.map((u) => u.id);
     if (ids.length === 0) return;
+    const { confirmed } = await confirm({
+      tier: widening ? "destructive" : "soft",
+      title: widening ? `Give all ${ids.length} members every feature?` : `Turn off every feature for all ${ids.length} members?`,
+      consequence: widening
+        ? "Every member can use every feature, including ones you turned off for them."
+        : "Members keep their accounts but can't use any feature until you turn some back on.",
+      recovery: "Each member's previous feature list isn't kept. You can adjust members one by one afterwards.",
+      confirmLabel: widening ? "Grant all features" : "Revoke all features",
+    });
+    if (!confirmed) return;
 
     try {
       const res = await fetch(`${CORE_URL}/api/users/bulk-permissions`, {
@@ -506,14 +516,14 @@ export function UsersSection() {
       });
       if (!res.ok) {
         const data = await res.json() as { error?: string };
-        toast.error(data.error ?? "Failed to update permissions");
+        toast.error(data.error ?? "Couldn't update feature access. Try again.");
         return;
       }
       const data = await res.json() as { updated: number };
       toast.success(`Updated permissions for ${data.updated} user(s)`);
       mutate();
     } catch {
-      toast.error("Network error");
+      toast.error("Couldn't reach the Talome server. Check that it's running, then try again.");
     }
   }
 
@@ -526,7 +536,7 @@ export function UsersSection() {
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Family Invitations</p>
+          <p className="text-sm font-medium text-foreground">Family invitations</p>
           {pendingInvitations.length > 0 && (
             <Badge variant="secondary" className="ml-auto text-xs">{pendingInvitations.length} pending</Badge>
           )}
@@ -541,12 +551,9 @@ export function UsersSection() {
             <p className="text-xs text-muted-foreground">
               Send this private link to the invited person. It works once and expires after seven days.
             </p>
-            <div className="flex items-center gap-2">
-              <Input readOnly value={inviteLink} className="h-8 text-xs font-mono" onFocus={(event) => event.currentTarget.select()} />
-              <Button size="sm" className="h-8 gap-1.5 shrink-0" onClick={() => void copyInviteLink()}>
-                <HugeiconsIcon icon={Copy01Icon} size={13} />
-                {inviteLinkCopied ? "Copied" : "Copy link"}
-              </Button>
+            <div className="flex items-start gap-2">
+              <Input readOnly value={inviteLink} aria-label="Invitation link" className="h-8 text-xs font-mono" onFocus={(event) => event.currentTarget.select()} />
+              <CopyButton value={inviteLink} label="Copy invitation link" text="Copy link" size="sm" variant="default" className="h-8 shrink-0" />
             </div>
           </SettingsRow>
         )}
@@ -573,19 +580,19 @@ export function UsersSection() {
                 <Input id="invite-email" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="family@example.com" className="h-8 text-sm" autoFocus />
               </div>
               <div className="flex items-center gap-3">
-                <Label className="text-xs text-muted-foreground">Admin access</Label>
-                <Switch checked={inviteRole === "admin"} onCheckedChange={(checked) => setInviteRole(checked ? "admin" : "member")} />
+                <Label htmlFor={inviteAdminId} className="text-xs text-muted-foreground">Admin access</Label>
+                <Switch id={inviteAdminId} checked={inviteRole === "admin"} onCheckedChange={(checked) => setInviteRole(checked ? "admin" : "member")} />
               </div>
               {inviteRole === "member" && (
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">Feature Access</p>
+                  <p className="text-sm font-medium text-muted-foreground mb-2">Feature access</p>
                   <PermissionsGrid permissions={invitePermissions} onChange={setInvitePermissions} />
                 </div>
               )}
               <div className="flex items-center justify-end gap-2">
                 <Button variant="ghost" size="sm" type="button" className="h-7 text-xs" onClick={() => setShowInviteForm(false)}>Cancel</Button>
-                <Button size="sm" type="submit" className="h-7 text-xs px-4" disabled={inviting || !inviteEmail.trim()}>
-                  {inviting ? "Creating…" : "Create invitation"}
+                <Button size="sm" type="submit" className="h-7 text-xs px-4" busy={inviting} busyLabel="Creating invitation…" disabled={!inviteEmail.trim()}>
+                  Create invitation
                 </Button>
               </div>
             </form>
@@ -602,12 +609,27 @@ export function UsersSection() {
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Users</p>
+          <p className="text-sm font-medium text-foreground">Users</p>
           {users && (
             <Badge variant="secondary" className="ml-auto text-xs">{users.length}</Badge>
           )}
         </SettingsRow>
 
+        {usersError && !users ? (
+          <SettingsRow>
+            <ErrorState
+              className="w-full border-0 p-6"
+              title="Couldn't load accounts"
+              description={usersError instanceof Error ? usersError.message : "Check that the Talome server is reachable, then retry."}
+              onRetry={() => void mutate()}
+            />
+          </SettingsRow>
+        ) : null}
+        {usersLoading && !users ? (
+          <SettingsRow>
+            <Skeleton className="h-10 w-full" />
+          </SettingsRow>
+        ) : null}
         {users?.map((u) => (
           <UserCard
             key={u.id}
@@ -615,6 +637,7 @@ export function UsersSection() {
             isSelf={u.id === user?.userId}
             isLastAdmin={u.role === "admin" && adminCount <= 1}
             onMutate={() => mutate()}
+            onRecoveryCode={(code, username) => setIssuedCode({ code, username })}
           />
         ))}
 
@@ -640,15 +663,16 @@ export function UsersSection() {
                     type="password"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="min 8 characters"
+                    placeholder="At least 8 characters"
                     className="h-8 text-sm"
                   />
                 </div>
               </div>
 
               <div className="flex items-center gap-3">
-                <Label className="text-xs text-muted-foreground">Admin</Label>
+                <Label htmlFor={newAdminId} className="text-xs text-muted-foreground">Admin</Label>
                 <Switch
+                  id={newAdminId}
                   checked={newRole === "admin"}
                   onCheckedChange={(checked) => {
                     setNewRole(checked ? "admin" : "member");
@@ -659,8 +683,8 @@ export function UsersSection() {
 
               {newRole === "member" && (
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-                    Feature Access
+                  <p className="text-sm font-medium text-muted-foreground mb-2">
+                    Feature access
                   </p>
                   <PermissionsGrid
                     permissions={newPermissions}
@@ -674,8 +698,8 @@ export function UsersSection() {
                 <Button variant="ghost" size="sm" type="button" className="h-7 text-xs" onClick={() => setShowForm(false)}>
                   Cancel
                 </Button>
-                <Button size="sm" type="submit" className="h-7 text-xs px-4" disabled={creating || !newUsername || !newPassword}>
-                  {creating ? "Creating..." : "Create"}
+                <Button size="sm" type="submit" className="h-7 text-xs px-4" busy={creating} busyLabel="Creating account…" disabled={!newUsername || newPassword.length < 8}>
+                  Create account
                 </Button>
               </div>
             </form>
@@ -695,11 +719,17 @@ export function UsersSection() {
         )}
       </SettingsGroup>
 
+      <RecoveryCodeDialog
+        code={issuedCode?.code ?? null}
+        username={issuedCode?.username}
+        onDone={() => setIssuedCode(null)}
+      />
+
       {memberUsers.length > 1 && (
         <SettingsGroup>
           <SettingsRow className="py-2.5">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Bulk Permissions
+            <p className="text-sm font-medium text-foreground">
+              Bulk permissions
             </p>
           </SettingsRow>
           <SettingsRow className="flex-col !items-stretch gap-3">
@@ -711,9 +741,9 @@ export function UsersSection() {
                 variant="outline"
                 size="sm"
                 className="h-7 text-xs"
-                onClick={() => handleBulkPermissions(getDefaultPermissions())}
+                onClick={() => void handleBulkPermissions(getDefaultPermissions(), true)}
               >
-                Grant All
+                Grant all…
               </Button>
               <Button
                 variant="outline"
@@ -722,10 +752,10 @@ export function UsersSection() {
                 onClick={() => {
                   const none: UserPermissions = {};
                   FEATURE_PERMISSIONS.forEach((k) => { (none as Record<string, boolean>)[k] = false; });
-                  handleBulkPermissions(none);
+                  void handleBulkPermissions(none, false);
                 }}
               >
-                Revoke All
+                Revoke all…
               </Button>
             </div>
           </SettingsRow>
