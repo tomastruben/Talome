@@ -93,6 +93,18 @@ describe("terminal proxy access", () => {
     expect(daemonCalls).toHaveLength(1);
     expect(daemonCalls[0].url).toMatch(/\/session$/);
     expect(daemonCalls[0].headers.get("x-daemon-auth")).toBeTruthy();
+    // The daemon binds the terminal to this admin (closed when they lose access).
+    expect(daemonCalls[0].headers.get("x-talome-user-id")).toBe("user-admin");
+  });
+
+  it("the user the daemon binds a terminal to is the session user, never a client header", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/terminal/session", {
+      method: "POST",
+      headers: { cookie: await cookieFor("admin"), "x-talome-user-id": "someone-else" },
+    });
+    expect(res.status).toBe(200);
+    expect(daemonCalls[0].headers.get("x-talome-user-id")).toBe("user-admin");
   });
 
   it("no PTY token is minted in locked mode, even for an admin", async () => {
