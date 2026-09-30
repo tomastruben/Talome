@@ -196,6 +196,9 @@ importers:
       ai:
         specifier: ^6.0.158
         version: 6.0.158(zod@4.3.6)
+      border-beam:
+        specifier: 1.4.1
+        version: 1.4.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -277,12 +280,18 @@ importers:
       tailwind-merge:
         specifier: ^3.5.0
         version: 3.5.0
+      thinking-orbs:
+        specifier: 0.3.2
+        version: 0.3.2(react@19.2.3)
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
       use-stick-to-bottom:
         specifier: ^1.1.3
         version: 1.1.3(react@19.2.3)
+      voice-glow:
+        specifier: 0.2.1
+        version: 0.2.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.2.2
@@ -3774,6 +3783,12 @@ packages:
     resolution: {integrity: sha512-oP5VkATKlNwcgvxi0vM0p/D3n2C3EReYVX+DNYs5TjZFn/oQt2j+4sVJtSMr18pdRr8wjTcBl6LoV+FUwzPmNA==}
     engines: {node: '>=18'}
 
+  border-beam@1.4.1:
+    resolution: {integrity: sha512-YyugmKjrhkg1PBC1ZKX7JvFo/zYzha6NXOq24VWrnvBYmDRvGCgFS9oxZoKJ+oS9Kn436l1etYGlAdGiWK+3ag==}
+    peerDependencies:
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
+
   brace-expansion@1.1.14:
     resolution: {integrity: sha512-MWPGfDxnyzKU7rNOW9SP/c50vi3xrmrua/+6hfPbCS2ABNWfx24vPidzvC7krjU/RTo235sV776ymlsMtGKj8g==}
 
@@ -7044,6 +7059,11 @@ packages:
     resolution: {integrity: sha512-ujeqbceABgwMZxEJnk2HDY2DlnUZ+9oEcb1KzTVfYHio0UE6dG71n60d8D2I4qNvleWrrXpmjpt7vZeF1LnMZQ==}
     engines: {node: '>=6'}
 
+  thinking-orbs@0.3.2:
+    resolution: {integrity: sha512-QZFeBaPEzqhjiZoXy961EvDgaXk2WgXacF3Rbz+Sj5IfzDzBvTC86vdREUHniBffYibJFKSwbfllxLUdI/Xv6g==}
+    peerDependencies:
+      react: '>=18.0.0'
+
   throttleit@2.1.0:
     resolution: {integrity: sha512-nt6AMGKW1p/70DF/hGBdJB57B8Tspmbp5gfJ8ilhLnt7kkr2ye7hzD6NVG8GGErk2HWF34igrL2CXmNIkzKqKw==}
     engines: {node: '>=18'}
@@ -7401,6 +7421,12 @@ packages:
         optional: true
       jsdom:
         optional: true
+
+  voice-glow@0.2.1:
+    resolution: {integrity: sha512-Lpc+Ppd788kCDC88p9Hr8u3eFQh0X/hdISX76hqx1/x4BZiidrmCuQRLOE+jGOIkqB1BdaFBJ7F2rg1GsST6tw==}
+    peerDependencies:
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
 
   vscode-jsonrpc@8.2.0:
     resolution: {integrity: sha512-C+r0eKJUIfiDIfwJhria30+TYWPtuHJXHtI7J0YlOmKAo7ogxP20T0zxB7HZQIFhIyvoBPwWskjxrvAtfjyZfA==}
@@ -10702,6 +10728,11 @@ snapshots:
       type-is: 2.0.1
     transitivePeerDependencies:
       - supports-color
+
+  border-beam@1.4.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
 
   brace-expansion@1.1.14:
     dependencies:
@@ -14852,6 +14883,10 @@ snapshots:
       inherits: 2.0.4
       readable-stream: 3.6.2
 
+  thinking-orbs@0.3.2(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+
   throttleit@2.1.0: {}
 
   tiny-invariant@1.3.3: {}
@@ -15269,6 +15304,11 @@ snapshots:
       jsdom: 28.1.0(@noble/hashes@1.8.0)
     transitivePeerDependencies:
       - msw
+
+  voice-glow@0.2.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
 
   vscode-jsonrpc@8.2.0: {}
 

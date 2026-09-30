@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { UIMessage, DynamicToolUIPart, FileUIPart } from "ai";
 import { isToolUIPart, getToolName } from "ai";
 import Image from "next/image";
+import { useTheme } from "next-themes";
+import { BorderBeam } from "border-beam";
 import {
   HugeiconsIcon,
   Copy01Icon,
@@ -28,6 +30,7 @@ import {
   ToolOutput,
   LaunchTerminalCard,
 } from "@/components/ai-elements/tool";
+import { Reasoning } from "@/components/ai-elements/reasoning";
 import {
   Confirmation,
   ConfirmationTitle,
@@ -241,6 +244,7 @@ export function ChatMessage({
 }: ChatMessageProps) {
   const [copied, setCopied] = useState(false);
   const emittedBlueprints = useRef(new Set<string>());
+  const { resolvedTheme } = useTheme();
 
   const textContent = message.parts
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
@@ -262,6 +266,7 @@ export function ChatMessage({
   type RenderBlock =
     | { kind: "text"; key: string; text: string; toolContextNames: string[] }
     | { kind: "file"; key: string; part: FileUIPart }
+    | { kind: "reasoning"; key: string; text: string; streaming: boolean }
     | { kind: "tool"; key: string; part: DynamicToolUIPart };
 
   const blocks: RenderBlock[] = [];
@@ -278,6 +283,20 @@ export function ChatMessage({
           key: `text-${blocks.length}`,
           text: part.text,
           toolContextNames: lastToolName ? [lastToolName] : [],
+        });
+      }
+    } else if (part.type === "reasoning") {
+      if (!part.text.trim() && part.state !== "streaming") continue;
+      const last = blocks[blocks.length - 1];
+      if (last?.kind === "reasoning") {
+        last.text += part.text;
+        last.streaming = part.state === "streaming";
+      } else {
+        blocks.push({
+          kind: "reasoning",
+          key: `reasoning-${blocks.length}`,
+          text: part.text,
+          streaming: part.state === "streaming",
         });
       }
     } else if (part.type === "file") {
@@ -324,6 +343,10 @@ export function ChatMessage({
                 {block.text}
               </MessageResponse>
             );
+          }
+
+          if (block.kind === "reasoning") {
+            return <Reasoning key={block.key} text={block.text} streaming={isStreaming && block.streaming} />;
           }
 
           if (block.kind === "file") {
@@ -396,6 +419,14 @@ export function ChatMessage({
               </Tool>
 
               {approval && addToolApprovalResponse && (
+                <BorderBeam
+                  size="pulse-inner"
+                  colorVariant="sunset"
+                  staticColors
+                  active={p.state === "approval-requested"}
+                  theme={resolvedTheme === "light" ? "light" : "dark"}
+                  strength={0.8}
+                >
                 <Confirmation approval={approval} state={p.state}>
                   <ConfirmationRequest>
                     <ConfirmationTitle>
@@ -428,6 +459,7 @@ export function ChatMessage({
                     </ConfirmationActions>
                   </ConfirmationRequest>
                 </Confirmation>
+                </BorderBeam>
               )}
             </div>
           );

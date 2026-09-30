@@ -3,11 +3,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
 import type { ChatStatus } from "ai";
+import { useTheme } from "next-themes";
+import { ThinkingOrb, type OrbState } from "thinking-orbs";
+import { VoiceBeam } from "voice-glow";
 import { HugeiconsIcon, Cancel01Icon } from "@/components/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useSpeechOutput } from "@/hooks/use-speech-output";
 
 type Phase = "listening" | "transcribing" | "thinking" | "speaking";
+
+const PHASE_ORB: Record<Phase, OrbState> = {
+  listening: "listening",
+  transcribing: "solving",
+  thinking: "working",
+  speaking: "composing",
+};
 
 const PHASE_LABEL: Record<Phase, string> = {
   listening: "Listening",
@@ -123,10 +133,12 @@ export function VoiceMode({ open, onClose, onSend, status, lastAssistant }: Voic
     }
   };
 
-  // Orb follows the microphone while listening and the words while speaking
+  // Orb and glow follow the microphone while listening and the words while speaking
+  const { resolvedTheme } = useTheme();
   const driver = useTransform(() => (phase === "speaking" ? speechPulse.get() : voice.level.get()));
-  const target = useTransform(driver, (v) => (reduceMotion ? 1 : 1 + v * 0.22));
+  const target = useTransform(driver, (v) => (reduceMotion ? 1 : 1 + v * 0.12));
   const scale = useSpring(target, { stiffness: 380, damping: 36, mass: 0.5 });
+  const readLevel = useCallback(() => driver.get(), [driver]);
 
   return (
     <AnimatePresence>
@@ -141,23 +153,32 @@ export function VoiceMode({ open, onClose, onSend, status, lastAssistant }: Voic
           transition={{ duration: 0.18, ease: "easeOut" }}
           className="fixed inset-0 z-[1300] flex flex-col items-center justify-center gap-8 bg-background/85 p-6 backdrop-blur-xl"
         >
+          {/* The glow rises from the bottom edge with the voice and sweeps while the reply is prepared */}
+          <div className="pointer-events-none absolute inset-0" aria-hidden>
+            <VoiceBeam
+              type="mobile"
+              level={readLevel}
+              processing={phase === "transcribing" || phase === "thinking"}
+              theme={resolvedTheme === "light" ? "light" : "dark"}
+              borderRadius={0}
+              className="size-full"
+            >
+              <div className="size-full" />
+            </VoiceBeam>
+          </div>
+
           <button
             type="button"
             onClick={tapOrb}
             aria-label={phase === "speaking" ? "Stop speaking" : phase === "listening" ? "Send now" : PHASE_LABEL[phase]}
-            className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-foreground/40"
+            className="relative flex size-40 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-foreground/40"
           >
-            <motion.span
-              style={{ scale }}
-              className={`block size-40 rounded-full border transition-colors duration-150 ${
-                phase === "thinking" || phase === "transcribing"
-                  ? "border-foreground/10 bg-foreground/[0.05]"
-                  : "border-foreground/20 bg-foreground/[0.1]"
-              }`}
-            />
+            <motion.span style={{ scale }} className="flex">
+              <ThinkingOrb state={PHASE_ORB[phase]} size={64} aria-hidden />
+            </motion.span>
           </button>
 
-          <div className="flex min-h-16 max-w-md flex-col items-center gap-2 text-center">
+          <div className="relative flex min-h-16 max-w-md flex-col items-center gap-2 text-center">
             <AnimatePresence mode="wait" initial={false}>
               <motion.p
                 key={phase}
@@ -176,7 +197,7 @@ export function VoiceMode({ open, onClose, onSend, status, lastAssistant }: Voic
             </p>
           </div>
 
-          <div className="flex flex-col items-center gap-3">
+          <div className="relative flex flex-col items-center gap-3">
             <button
               type="button"
               onClick={onClose}

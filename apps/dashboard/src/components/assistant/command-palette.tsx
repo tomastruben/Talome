@@ -56,6 +56,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { usePathname } from "next/navigation";
 import type { Container, ServiceStack, SearchResult } from "@talome/types";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
+import { ThinkingOrb } from "thinking-orbs";
+import { ThinkingIndicator } from "@/components/assistant/thinking-indicator";
+import { pendingActivity } from "@/lib/agent-activity";
 import { QUALITY_TIERS, type QualityTier } from "@talome/types";
 import type { MediaSearchResult } from "@talome/types";
 
@@ -133,25 +136,6 @@ function extractLaunchable(stacks: ServiceStack[]): LaunchableService[] {
     }
   }
   return result;
-}
-
-// ── Thinking dots ─────────────────────────────────────────────────────────────
-
-function ThinkingDots() {
-  return (
-    <div className="flex items-center gap-1 py-2 px-1">
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="h-1.5 w-1.5 rounded-full bg-foreground/30"
-          style={{
-            animation: "thinking-dot 1.4s ease-in-out infinite",
-            animationDelay: `${i * 150}ms`,
-          }}
-        />
-      ))}
-    </div>
-  );
 }
 
 // ── Chat input ────────────────────────────────────────────────────────────────
@@ -303,6 +287,7 @@ export function CommandPalette() {
 
 
   const isActive = status === "streaming" || status === "submitted";
+  const pendingLabel = pendingActivity(messages, status);
   const isStreaming = status === "streaming";
   const hasMessages = messages.length > 0;
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -512,11 +497,10 @@ export function CommandPalette() {
                       addToolApprovalResponse={addToolApprovalResponse}
                       onRegenerate={regenerate}
                       isLast={index === arr.length - 1}
+                      isStreaming={isActive && index === arr.length - 1}
                     />
                   ))}
-                  {isActive && messages[messages.length - 1]?.role === "user" && (
-                    <ThinkingDots />
-                  )}
+                  {pendingLabel && <ThinkingIndicator label={pendingLabel} className="flex items-center gap-2 px-1 py-2" />}
                 </div>
                 {/* Expand affordance — only shown when there's more than the last exchange */}
                 {messages.length > 4 && (
@@ -740,11 +724,8 @@ export function CommandPalette() {
                     <span className="flex-1 text-muted-foreground">
                       Ask Talome anything
                       {isActive && (
-                        <span className="ml-2 inline-flex items-center gap-1 text-xs text-primary/70">
-                          <span className="relative flex size-1.5">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />
-                            <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
-                          </span>
+                        <span className="ml-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <ThinkingOrb state="breathing" size={20} aria-hidden />
                           thinking…
                         </span>
                       )}

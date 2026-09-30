@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { HugeiconsIcon, Mic01Icon } from "@/components/icons";
 import { PromptInputButton, usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { Spinner } from "@/components/ui/spinner";
-import { useVoiceInput } from "@/hooks/use-voice-input";
+import { useVoiceInput, type VoiceStatus } from "@/hooks/use-voice-input";
 
 /** Three bars that follow the microphone level. */
 function LevelBars({ level }: { level: MotionValue<number> }) {
@@ -26,7 +26,14 @@ function LevelBars({ level }: { level: MotionValue<number> }) {
  * Dictate into the composer. Words stream in live with the browser engine; with a
  * speech-to-text server they arrive when you stop. Esc cancels.
  */
-export function VoiceDictationButton() {
+export interface VoiceDictationButtonProps {
+  /** Follows the microphone, e.g. to light the composer while you speak */
+  onStatusChange?: (status: VoiceStatus, level: MotionValue<number>) => void;
+  /** Dictation put words into the composer */
+  onTranscript?: () => void;
+}
+
+export function VoiceDictationButton({ onStatusChange, onTranscript }: VoiceDictationButtonProps = {}) {
   const controller = usePromptInputController();
   const prefix = useRef("");
   const voice = useVoiceInput({
@@ -37,6 +44,10 @@ export function VoiceDictationButton() {
   useEffect(() => {
     if (voice.error) toast.error(voice.error);
   }, [voice.error]);
+
+  useEffect(() => {
+    onStatusChange?.(voice.status, voice.level);
+  }, [voice.status, voice.level, onStatusChange]);
 
   useEffect(() => {
     if (!active) return;
@@ -52,7 +63,10 @@ export function VoiceDictationButton() {
   const toggle = async () => {
     if (active) {
       const text = await voice.stop();
-      if (text) controller.textInput.setInput(`${prefix.current}${text}`);
+      if (text) {
+        controller.textInput.setInput(`${prefix.current}${text}`);
+        onTranscript?.();
+      }
       return;
     }
     const current = controller.textInput.value;

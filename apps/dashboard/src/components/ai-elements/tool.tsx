@@ -52,6 +52,9 @@ import { useRouter } from "next/navigation";
 import { useSetAtom } from "jotai";
 import { terminalCommandAtom } from "@/atoms/terminal";
 import { Shimmer } from "@/components/ai-elements/shimmer";
+import { motion } from "motion/react";
+import { ThinkingOrb } from "thinking-orbs";
+import { toolOrbState } from "@/lib/agent-activity";
 
 import { CodeBlock } from "./code-block";
 import { Pill } from "@/components/kibo-ui/pill";
@@ -236,11 +239,24 @@ export const ToolHeader = ({
     >
       <div
         className={cn(
-          "flex size-9 shrink-0 items-center justify-center rounded-xl",
-          styles.bg
+          "flex size-9 shrink-0 items-center justify-center rounded-xl transition-colors duration-150",
+          isToolRunning ? "bg-foreground/[0.06]" : styles.bg
         )}
       >
-        <HugeiconsIcon icon={icon} size={18} className={styles.text} />
+        {/* While it runs, an orb shows what kind of work it is; the icon returns when it's done */}
+        {isToolRunning ? (
+          <ThinkingOrb state={toolOrbState(derivedName)} size={20} aria-hidden />
+        ) : (
+          <motion.span
+            key="icon"
+            initial={{ opacity: 0, scale: 0.85 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            className="flex"
+          >
+            <HugeiconsIcon icon={icon} size={18} className={styles.text} />
+          </motion.span>
+        )}
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-1">

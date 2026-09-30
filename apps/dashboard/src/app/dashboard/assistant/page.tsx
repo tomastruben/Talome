@@ -27,6 +27,8 @@ import {
 } from "@/components/ai-elements/message";
 import { ChatInputBar } from "@/components/ai-elements/chat-input-bar";
 import { VoiceMode } from "@/components/assistant/voice-mode";
+import { ThinkingIndicator } from "@/components/assistant/thinking-indicator";
+import { pendingActivity } from "@/lib/agent-activity";
 import { ChatMessage } from "@/components/chat/chat-message";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { AssistantChatError } from "@/components/assistant/chat-error";
@@ -96,22 +98,11 @@ function getDateGroup(dateStr: string): string {
   return "Older";
 }
 
-function ThinkingMessage() {
+function ThinkingMessage({ label }: { label: string }) {
   return (
     <Message from="assistant">
       <MessageContent>
-        <div className="flex items-center gap-1.5 py-1">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="h-1.5 w-1.5 rounded-full bg-foreground/40"
-              style={{
-                animation: "thinking-dot 1.4s ease-in-out infinite",
-                animationDelay: `${i * 150}ms`,
-              }}
-            />
-          ))}
-        </div>
+        <ThinkingIndicator label={label} />
       </MessageContent>
     </Message>
   );
@@ -359,6 +350,7 @@ export default function AssistantPage() {
   } | null>(null);
 
   const isActive = status === "streaming" || status === "submitted";
+  const pendingLabel = pendingActivity(messages, status);
   const hasBlueprint = !!blueprint.identity?.name;
 
   // `dismissed` hides the chat view without stopping the stream.
@@ -708,9 +700,7 @@ export default function AssistantPage() {
             isStreaming={isActive && index === messages.length - 1}
           />
         ))}
-        {isActive && messages[messages.length - 1]?.role === "user" && (
-          <ThinkingMessage />
-        )}
+        {pendingLabel && <ThinkingMessage label={pendingLabel} />}
         {error && <AssistantChatError error={error} onDismiss={clearError} />}
       </ConversationContent>
       <ConversationScrollButton />
