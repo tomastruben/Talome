@@ -178,8 +178,13 @@ export function insertRestore(id: string, backupId: string, appId: string): void
     VALUES (${id}, ${backupId}, ${appId}, 'running', 'preparing', ${new Date().toISOString()})`);
 }
 
+/**
+ * Record a restore's stage. A known safety backup id is recorded once and
+ * never cleared: nested work (the rollback restoring the safety backup, which
+ * has no safety backup of its own) reports `null` for it.
+ */
 export function updateRestoreStage(id: string, stage: string, safetyBackupId?: string | null): void {
-  if (safetyBackupId !== undefined) {
+  if (safetyBackupId) {
     db.run(sql`UPDATE backup_restores SET stage = ${stage}, safety_backup_id = ${safetyBackupId} WHERE id = ${id}`);
   } else {
     db.run(sql`UPDATE backup_restores SET stage = ${stage} WHERE id = ${id}`);
@@ -187,7 +192,12 @@ export function updateRestoreStage(id: string, stage: string, safetyBackupId?: s
 }
 
 export function finishRestore(id: string, status: RestoreRow["status"], error: string | null, detail: unknown): void {
+  const safetyBackupId =
+    detail && typeof detail === "object" && typeof (detail as { safetyBackupId?: unknown }).safetyBackupId === "string"
+      ? (detail as { safetyBackupId: string }).safetyBackupId
+      : null;
   db.run(sql`UPDATE backup_restores SET status = ${status}, stage = NULL, error = ${error},
+    safety_backup_id = COALESCE(safety_backup_id, ${safetyBackupId}),
     detail = ${detail === undefined ? null : JSON.stringify(detail)}, completed_at = ${new Date().toISOString()} WHERE id = ${id}`);
 }
 

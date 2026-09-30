@@ -70,6 +70,34 @@ export function loadCommand(engine: Exclude<DbEngine, "redis">, pathInContainer:
   ];
 }
 
+/** Prints the server's data directory (postgres `data_directory`, MySQL `@@datadir`) on stdout. */
+export function dataDirCommand(engine: Exclude<DbEngine, "redis">): string[] {
+  if (engine === "postgres") {
+    return ["sh", "-c", 'export PGPASSWORD="${POSTGRES_PASSWORD:-}"; psql -X -tA -U "${POSTGRES_USER:-postgres}" -d postgres -c "SHOW data_directory"'];
+  }
+  return [
+    "sh",
+    "-c",
+    [
+      'ROOTPW="${MARIADB_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:-}}"',
+      'if [ -n "$ROOTPW" ]; then U=root; export MYSQL_PWD="$ROOTPW"; else U="${MARIADB_USER:-${MYSQL_USER:-root}}"; export MYSQL_PWD="${MARIADB_PASSWORD:-${MYSQL_PASSWORD:-}}"; fi',
+      "C=mysql; command -v mariadb >/dev/null 2>&1 && C=mariadb",
+      "$C -u\"$U\" -N -B -e 'SELECT @@datadir'",
+    ].join("; "),
+  ];
+}
+
+/** The data directory from dataDirCommand's output, or null. */
+export function parseDataDir(stdout: string): string | null {
+  const line = stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  if (!line || !line.startsWith("/") || /[\s]/.test(line)) return null;
+  const t = line.replace(/\/+$/, "");
+  return t === "" ? "/" : t;
+}
+
 /**
  * Errors that a dump load always produces and that do not affect the data:
  * pg_dumpall --clean tries to drop/re-create the role it is connected as.

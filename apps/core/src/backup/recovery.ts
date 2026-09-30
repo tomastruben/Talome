@@ -194,7 +194,7 @@ async function recoverRestore(rec: RecoveryRecord): Promise<RecoveryOutcome> {
     );
   }
   if (keptAside.length > 0) parts.push(`Partially restored data was kept at: ${keptAside.join(", ")}.`);
-  writeNotification(undone ? "warning" : "critical", `Restore of ${rec.appId} was interrupted`, parts.join(" "), rec.appId);
+  writeNotification(undone ? "warning" : "critical", `Restore of ${rec.appId} was interrupted`, parts.join(" "), rec.appId, { operationId: rec.id });
   return { id: rec.id, appId: rec.appId, kind: "restore", restarted, undone, errors };
 }
 

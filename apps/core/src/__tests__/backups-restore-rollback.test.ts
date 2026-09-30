@@ -36,7 +36,7 @@ const { db, schema } = await import("../db/index.js");
 const { eq } = await import("drizzle-orm");
 const { createAppBackup } = await import("../backup/engine.js");
 const { restoreAppBackup } = await import("../backup/restore.js");
-const { getRestoreRow, insertRestore, listRecoveryRecords, saveRecoveryRecord } = await import("../backup/store.js");
+const { finishRestore, getRestoreRow, insertRestore, listRecoveryRecords, saveRecoveryRecord, updateRestoreStage } = await import("../backup/store.js");
 const { recoverPendingOperations } = await import("../backup/recovery.js");
 
 afterAll(() => env.cleanup());
@@ -97,6 +97,7 @@ describe("restore rollback", () => {
     const dataDir = join(appDir, "data");
     fsHooks.failRename = (from) => from === dataDir;
     dockerState.containers[0].crashOnStart = true;
+    dockerState.containers[0].brokenStarts = 1; // the restored data breaks the app; the previous data does not
 
     const r = await restoreAppBackup(backup.backupId, FAST);
     expect(r.success).toBe(false);
@@ -106,6 +107,73 @@ describe("restore rollback", () => {
     expect(readFileSync(join(dataDir, "items.json"), "utf-8")).toBe("[1,2]");
     const installed = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, "inplaceversion")).get();
     expect(installed?.version).toBe("2.0.0");
+  });
+
+  it("does not report a rollback as done when the app does not come back healthy", async () => {
+    const { appDir, backup } = await prepare("rollbackunhealthy");
+    dockerState.containers[0].crashOnStart = true; // broken on every start, also after the rollback
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    // The previous data is back…
+    expect(readFileSync(join(appDir, "config/app.conf"), "utf-8")).toBe("version=2");
+    // …but the app is not running, so the previous state was not restored
+    expect(r.rolledBack).toBe(false);
+    expect(r.error).toMatch(/could not be fully restored.*not healthy after the rollback/);
+    expect(getRestoreRow(r.restoreId!)!.status).toBe("failed");
+  });
+
+  it("does not report a rollback as done when the app cannot be started again", async () => {
+    const { appDir, backup } = await prepare("rollbacknostart");
+    dockerState.containers[0].crashOnStart = true;
+    // the restore's start works (the app then crashes); the rollback's start fails
+    const { startAppViaLifecycle } = await import("../backup/docker-ops.js");
+    vi.mocked(startAppViaLifecycle).mockImplementationOnce(async () => {
+      dockerState.events.push("startApp");
+      dockerState.lifecycleStartErrors.push("recreated container could not be discovered");
+      for (const c of dockerState.containers) c.status = "running";
+      return { success: true };
+    });
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(readFileSync(join(appDir, "config/app.conf"), "utf-8")).toBe("version=2");
+    expect(r.rolledBack).toBe(false);
+    expect(r.error).toMatch(/could not be started again: recreated container could not be discovered/);
+    expect(getRestoreRow(r.restoreId!)!.status).toBe("failed");
+  });
+
+  it("keeps backup_restores.safety_backup_id when the rollback restores the safety backup", async () => {
+    const { appDir, backup } = await prepare("inplacesafetyid");
+    const dataDir = join(appDir, "data");
+    fsHooks.failRename = (from) => from === dataDir; // in place → the rollback restores the safety backup
+    dockerState.containers[0].crashOnStart = true;
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.safetyBackupId).toBeTruthy();
+    // The nested restore of the safety backup has no safety backup of its own:
+    // its stage updates must not clear the column the dashboard reads
+    expect(getRestoreRow(r.restoreId!)!.safety_backup_id).toBe(r.safetyBackupId);
+  });
+
+  it("never overwrites a recorded safety backup id with null", () => {
+    insertRestore("stage-null-id", "some-backup", "stagenull");
+    updateRestoreStage("stage-null-id", "stopping", "safety-1");
+    updateRestoreStage("stage-null-id", "stopping", null);
+    updateRestoreStage("stage-null-id", "extracting");
+    expect(getRestoreRow("stage-null-id")!.safety_backup_id).toBe("safety-1");
+    finishRestore("stage-null-id", "rolled_back", "x", { safetyBackupId: null });
+    expect(getRestoreRow("stage-null-id")!.safety_backup_id).toBe("safety-1");
+  });
+
+  it("records the safety backup id from the final detail when no stage carried it", () => {
+    insertRestore("finish-id", "some-backup", "finishid");
+    finishRestore("finish-id", "failed", "x", { safetyBackupId: "safety-2" });
+    expect(getRestoreRow("finish-id")!.safety_backup_id).toBe("safety-2");
   });
 });
 

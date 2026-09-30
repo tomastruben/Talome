@@ -54,6 +54,16 @@ export interface FakeContainer {
   crashOnStart?: boolean;
   /** One-shot container: exits with this code right after being started */
   oneShotExitCode?: number;
+  /**
+   * With crashOnStart/oneShotExitCode: the number of lifecycle starts that
+   * keep that behaviour (e.g. 1 = broken only by the restored data); later
+   * starts run normally. Unset = broken on every start.
+   */
+  brokenStarts?: number;
+  /** Mounts reported by getContainerMounts (default: none) */
+  mounts?: Array<{ type: string; name: string | null; source: string | null; destination: string }>;
+  /** Data directory the database reports (SHOW data_directory / @@datadir); unset = the query fails */
+  dataDir?: string;
 }
 
 export const dockerState = {
@@ -74,6 +84,10 @@ export const dockerState = {
   /** Output of `id -u` / `id -g` inside containers (empty = command fails) */
   execUid: "",
   execGid: "",
+  /** Errors returned by the next lifecycle starts (startAppViaLifecycle), one per start */
+  lifecycleStartErrors: [] as string[],
+  /** Called on each successful lifecycle start, before the containers run (e.g. to re-create one) */
+  onLifecycleStart: null as (() => void) | null,
 };
 
 export function resetDocker(containers: Array<Omit<FakeContainer, "status"> & { status?: string }>): void {
@@ -89,6 +103,8 @@ export function resetDocker(containers: Array<Omit<FakeContainer, "status"> & { 
   dockerState.putArchives = [];
   dockerState.execUid = "";
   dockerState.execGid = "";
+  dockerState.lifecycleStartErrors = [];
+  dockerState.onLifecycleStart = null;
 }
 
 function find(id: string): FakeContainer | undefined {
@@ -128,9 +144,18 @@ export function dockerOpsMock() {
         exitCode: c?.status === "exited" ? (c.oneShotExitCode ?? 137) : null,
       };
     }),
+    getContainerMounts: vi.fn(async (id: string) => {
+      const c = find(id);
+      if (!c) throw new Error(`no such container: ${id}`);
+      return (c.mounts ?? []).map((m) => ({ ...m }));
+    }),
     getImageDigests: vi.fn(async (imageId: string) => [`example/app@${imageId}`]),
-    execCapture: vi.fn(async (_id: string, cmd: string[]) => {
+    execCapture: vi.fn(async (id: string, cmd: string[]) => {
       const joined = cmd.join(" ");
+      if (joined.includes("SHOW data_directory") || joined.includes("@@datadir")) {
+        const dir = find(id)?.dataDir;
+        return dir ? { exitCode: 0, stdout: `${dir}\n`, stderr: "" } : { exitCode: 1, stdout: "", stderr: "permission denied" };
+      }
       if (joined.includes("INFO persistence")) {
         const now = Math.floor(Date.now() / 1000) + 1;
         return { exitCode: 0, stdout: `rdb_bgsave_in_progress:0\r\nrdb_last_bgsave_status:ok\r\nrdb_last_save_time:${now}\r\n`, stderr: "" };
@@ -169,7 +194,19 @@ export function dockerOpsMock() {
     }),
     startAppViaLifecycle: vi.fn(async () => {
       dockerState.events.push("startApp");
-      for (const c of dockerState.containers) c.status = c.oneShotExitCode !== undefined ? "exited" : "running";
+      const error = dockerState.lifecycleStartErrors.shift();
+      if (error !== undefined) return { success: false, error };
+      dockerState.onLifecycleStart?.();
+      for (const c of dockerState.containers) {
+        if (c.brokenStarts !== undefined) {
+          if (c.brokenStarts > 0) c.brokenStarts--;
+          else {
+            c.crashOnStart = false;
+            c.oneShotExitCode = undefined;
+          }
+        }
+        c.status = c.oneShotExitCode !== undefined ? "exited" : "running";
+      }
       return { success: true };
     }),
   };

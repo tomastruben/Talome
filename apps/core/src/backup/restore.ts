@@ -22,18 +22,29 @@ import { writeAuditEntry } from "../db/audit.js";
 import { writeNotification } from "../db/notifications.js";
 import { getSetting } from "../utils/settings.js";
 import { createLogger } from "../utils/logger.js";
-import { bindVolumes, resolveAppContext, type AppContext } from "./compose.js";
+import {
+  bindVolumes,
+  dbDataDir,
+  dbDataIsEphemeral,
+  ephemeralDbWarning,
+  EPHEMERAL_DB_WARNING_MARK,
+  mountHolding,
+  resolveAppContext,
+  type AppContext,
+} from "./compose.js";
 import {
   composeUp,
   execCapture,
+  getContainerMounts,
   getContainerState,
   listAppContainers,
   putArchive,
   startAppViaLifecycle,
   stopContainerGracefully,
   type AppContainer,
+  type ContainerMount,
 } from "./docker-ops.js";
-import { loadCommand, readinessCommand, significantLoadErrors } from "./dumps.js";
+import { dataDirCommand, loadCommand, parseDataDir, readinessCommand, significantLoadErrors } from "./dumps.js";
 import {
   appRelative,
   containerForService,
@@ -389,6 +400,95 @@ async function containerExecUser(containerId: string): Promise<{ uid: number; gi
   return uid !== null && gid !== null ? { uid, gid } : null;
 }
 
+// ── Loaded databases ────────────────────────────────────────────────────────
+
+/** A database a restore loaded a dump into, to confirm its data is still there once the app runs. */
+export interface LoadedDatabase {
+  service: string;
+  /** Container the dump was loaded into */
+  containerId: string;
+  /** Where the database keeps its data files inside the container */
+  dataDir: string;
+  /** Its mounts right after the load (null when they could not be read) */
+  mounts: ContainerMount[] | null;
+}
+
+/**
+ * The data directory of a database a dump was just loaded into: asked from
+ * the server itself, else the compose file's PGDATA or the image default.
+ */
+async function loadedDataDir(containerId: string, engine: "postgres" | "mysql", svc: AppContext["compose"]["services"][number] | undefined): Promise<string> {
+  const asked = await execCapture(containerId, dataDirCommand(engine), 30_000)
+    .then((r) => (r.exitCode === 0 ? parseDataDir(r.stdout) : null))
+    .catch(() => null);
+  return asked ?? dbDataDir(engine, svc?.environment ?? {}, svc?.image ?? null) ?? (engine === "postgres" ? "/var/lib/postgresql/data" : "/var/lib/mysql");
+}
+
+function describeMount(m: ContainerMount): string {
+  return m.type === "volume" ? `volume ${m.name ?? m.source ?? "?"}` : `${m.source ?? "?"}`;
+}
+
+/**
+ * Confirm the data loaded into each database survived starting the app.
+ * Loading a dump succeeds even when the data lands in an anonymous volume
+ * that a re-created container (e.g. `compose down` + `up`) no longer uses —
+ * the app then runs "healthy" on an empty database. The data is still there
+ * when the database runs in the same container, or in a re-created one whose
+ * data directory is on the same volume or folder. Only the mount holding the
+ * data directory counts: other anonymous volumes of the container (an image
+ * VOLUME the data does not use, a log directory) may change freely.
+ * Returns what was lost (empty = fine).
+ */
+export async function verifyLoadedDatabases(ctx: Pick<AppContext, "appId" | "composePath" | "compose">, loaded: LoadedDatabase[]): Promise<string[]> {
+  if (loaded.length === 0) return [];
+  let containers: AppContainer[];
+  try {
+    containers = await listAppContainers({ appId: ctx.appId, composePath: ctx.composePath, projectName: ctx.compose.projectName });
+  } catch (err) {
+    return [`cannot list the containers to confirm the restored databases: ${errorMessage(err)}`];
+  }
+  const problems: string[] = [];
+  for (const l of loaded) {
+    const now = containers.find((c) => c.service === l.service && c.status === "running") ?? containers.find((c) => c.service === l.service);
+    if (!now) {
+      problems.push(`the ${l.service} database container is gone, so its restored data cannot be confirmed`);
+      continue;
+    }
+    if (now.id === l.containerId) continue; // same container, same data
+    if (!l.mounts) {
+      problems.push(`the ${l.service} database container was re-created and its restored data cannot be confirmed`);
+      continue;
+    }
+    const held = mountHolding(l.mounts, l.dataDir, (m) => m.destination);
+    if (!held || (held.type !== "volume" && held.type !== "bind")) {
+      problems.push(
+        `the ${l.service} database container was re-created and its data directory ${l.dataDir} was not on a volume or folder — the restored data is gone`,
+      );
+      continue;
+    }
+    let mountsNow: ContainerMount[];
+    try {
+      mountsNow = await getContainerMounts(now.id);
+    } catch (err) {
+      problems.push(`the ${l.service} database container was re-created and its mounts cannot be read: ${errorMessage(err)}`);
+      continue;
+    }
+    const heldNow = mountHolding(mountsNow, l.dataDir, (m) => m.destination);
+    const kept =
+      heldNow !== null &&
+      heldNow.destination.replace(/\/+$/, "") === held.destination.replace(/\/+$/, "") &&
+      heldNow.type === held.type &&
+      (held.type === "volume" ? heldNow.name === held.name : heldNow.source === held.source);
+    if (kept) continue;
+    problems.push(
+      held.type === "volume"
+        ? `the ${l.service} database container was re-created with ${heldNow ? `${describeMount(heldNow)} at ${heldNow.destination}` : "no volume"} holding its data directory ${l.dataDir} — the restored data is in the detached volume ${held.name} (at ${held.destination})`
+        : `the ${l.service} database container was re-created without ${held.source} at ${held.destination}`,
+    );
+  }
+  return problems;
+}
+
 // ── Restore ─────────────────────────────────────────────────────────────────
 
 function failResult(
@@ -448,7 +548,10 @@ export async function restoreAppBackup(backupId: string, opts: RestoreOptions = 
     });
     if (result.success) {
       finishRestore(restoreId, "completed", null, { health: result.health, warnings: result.warnings, safetyBackupId: result.safetyBackupId });
-      writeNotification("info", `${appId} restored`, `Restored from backup of ${row.completed_at ?? row.started_at}. ${result.health.detail}`, appId);
+      const ephemeral = result.warnings.filter((w) => w.includes(EPHEMERAL_DB_WARNING_MARK));
+      writeNotification(ephemeral.length > 0 ? "warning" : "info", `${appId} restored`, [`Restored from backup of ${row.completed_at ?? row.started_at}. ${result.health.detail}`, ...ephemeral].join(" "), appId, {
+        operationId: restoreId,
+      });
       try {
         writeAuditEntry(`Restore: ${appId}`, "destructive", JSON.stringify({ backupId, restoreId, safetyBackupId: result.safetyBackupId }));
       } catch {
@@ -464,6 +567,7 @@ export async function restoreAppBackup(backupId: string, opts: RestoreOptions = 
         `Restore failed: ${appId}`,
         result.rolledBack ? `${result.error} — the previous state was restored.` : `${result.error}${result.safetyBackupId ? ` Safety backup: ${result.safetyBackupId}` : ""}`,
         appId,
+        { operationId: restoreId },
       );
     }
     return { ...result, restoreId };
@@ -491,6 +595,8 @@ interface PerformRestoreParams {
   opts: RestoreOptions;
   stage: (s: string, safetyId?: string | null) => void;
   allowRollback: boolean;
+  /** Receives the databases this restore loaded dumps into (a nested restore's caller verifies them after its own start) */
+  loadedOut?: LoadedDatabase[];
 }
 
 async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackupResult> {
@@ -548,6 +654,12 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
   let safetyBackupId: string | null = null;
   let stoppedBySafety: AppContainer[] = [];
   let committed = false;
+  /** Databases a dump was loaded into (checked again once the app runs) */
+  const loadedDbs: LoadedDatabase[] = [];
+  for (const d of manifest.dumps) {
+    const svc = ctx.compose.services.find((s) => s.name === d.service);
+    if (svc && d.path && d.engine !== "redis" && dbDataIsEphemeral(svc)) warnings.push(ephemeralDbWarning(svc, { leftStopped: !wasRunning }));
+  }
 
   // Pending work is persisted so a server restart mid-restore can undo it
   const persist = () => {
@@ -775,6 +887,14 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
         }
       }
       if (sqlErrors.length > 0) warnings.push(`${d.service}: ${sqlErrors.length} statement(s) reported errors while loading (e.g. ${sqlErrors[0].slice(0, 200)})`);
+      const loadedDb: LoadedDatabase = {
+        service: d.service,
+        containerId: container.id,
+        dataDir: await loadedDataDir(container.id, engine, ctx.compose.services.find((s) => s.name === d.service)),
+        mounts: await getContainerMounts(container.id).catch(() => null),
+      };
+      loadedDbs.push(loadedDb);
+      p.loadedOut?.push(loadedDb);
     }
 
     // ── Start + health ───────────────────────────────────────────────────
@@ -786,6 +906,15 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
       p.stage("health-check");
       health = await waitForHealthy(ctx, resolveHealthUrl(appId), healthTimeout, pollMs, requiredRunning);
       if (!health.healthy) throw new RestoreStepError(`App is not healthy after restore: ${health.detail}`, health);
+      // Running is not enough: the loaded data must still be in the database the app now uses
+      const lost = await verifyLoadedDatabases(ctx, loadedDbs);
+      if (lost.length > 0) {
+        throw new RestoreStepError(`The restored database data did not survive starting the app: ${lost.join("; ")}`, {
+          ...health,
+          healthy: false,
+          detail: `restored database data missing: ${lost.join("; ")}`,
+        });
+      }
     } else {
       if (loadDumps.length > 0) await stopAll(ctx);
       health = { healthy: true, containers: [], detail: "App was stopped before the restore and was left stopped" };
@@ -823,6 +952,8 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
     p.stage("rolling-back");
     let rolledBack = false;
     const problems: string[] = [];
+    /** Databases the rollback reloaded from the safety backup */
+    const rollbackLoadedDbs: LoadedDatabase[] = [];
     try {
       await stopAll(ctx).catch(() => {});
       // Directory swaps are always undone first (cheap, exact) — also when
@@ -846,6 +977,7 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
           const safetyManifest = await loadManifest(safetyRow.manifest_path);
           const uncovered = safetyManifest.ok ? uncoveredInPlaceDatabases(safetyManifest.manifest, inPlaceDbServices, ctx) : inPlaceDbServices;
           const r = await performRestore({
+            loadedOut: rollbackLoadedDbs,
             backupId: safetyBackupId,
             appId,
             archivePath: safetyRow.file_path,
@@ -861,11 +993,13 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
           }
         }
       }
-      rolledBack = problems.length === 0;
       if (wasRunning) {
-        const started = await startAppViaLifecycle(appId);
-        if (!started.success && stoppedBySafety.length > 0) await restartContainers(appId, stoppedBySafety);
+        // The previous state is back only once the app runs (and is healthy) again
+        const restartProblem = await restartAfterRollback({ appId, ctx, stoppedBySafety, requiredRunning, healthTimeoutMs: healthTimeout, pollMs });
+        if (restartProblem) problems.push(restartProblem);
+        else problems.push(...(await verifyLoadedDatabases(ctx, rollbackLoadedDbs)));
       }
+      rolledBack = problems.length === 0;
     } catch (rollbackErr) {
       log.error(`${appId}: rollback failed`, rollbackErr);
       problems.push(`rollback failed: ${errorMessage(rollbackErr)}`);
@@ -878,6 +1012,38 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
 }
 
 /**
+ * Start an app again after its data was put back and wait until it is
+ * healthy. Returns what went wrong, or null when the app is running and
+ * healthy — only then may a rollback be reported as done.
+ */
+export async function restartAfterRollback(p: {
+  appId: string;
+  ctx: AppContext;
+  /** Containers the safety backup stopped (started directly when the lifecycle start fails) */
+  stoppedBySafety: AppContainer[];
+  /** Containers that were running before (compose service, else name) */
+  requiredRunning: ReadonlySet<string>;
+  healthTimeoutMs: number;
+  pollMs: number;
+}): Promise<string | null> {
+  const { appId, ctx } = p;
+  const started = await startAppViaLifecycle(appId).catch((err: unknown) => ({ success: false, error: errorMessage(err) }));
+  if (!started.success) {
+    const startError = started.error ?? "unknown error";
+    // Best effort: start the stopped containers that still exist (a recreated
+    // container has a new id — starting the old one only reports a 404)
+    const current = await listAppContainers({ appId, composePath: ctx.composePath, projectName: ctx.compose.projectName }).catch(
+      () => [] as AppContainer[],
+    );
+    const existing = p.stoppedBySafety.filter((c) => current.some((x) => x.id === c.id));
+    if (existing.length > 0) await restartContainers(appId, existing).catch(() => {});
+    return `the app could not be started again: ${startError}`;
+  }
+  const health = await waitForHealthy(ctx, resolveHealthUrl(appId), p.healthTimeoutMs, p.pollMs, p.requiredRunning);
+  return health.healthy ? null : `the app is not healthy after the rollback: ${health.detail}`;
+}
+
+/**
  * Put an app back to the state captured by one of its safety backups (used to
  * roll back work that changed data in place). Caller holds the app's backup
  * lock. Never throws.
@@ -886,6 +1052,8 @@ export async function restoreSafetyBackup(
   appId: string,
   safetyBackupId: string,
   opts: Pick<RestoreOptions, "healthTimeoutMs" | "pollIntervalMs" | "dbReadyTimeoutMs" | "onStage"> = {},
+  /** Receives the databases it reloads from dumps (verify them with verifyLoadedDatabases once the app runs again) */
+  loadedOut?: LoadedDatabase[],
 ): Promise<RestoreAppBackupResult> {
   const row = getBackupRow(safetyBackupId);
   if (!row?.file_path || !row.manifest_path || row.app_id !== appId) return failResult(safetyBackupId, appId, "Safety backup not found");
@@ -897,6 +1065,7 @@ export async function restoreSafetyBackup(
       manifestPath: row.manifest_path,
       restoreId: randomUUID(),
       opts: { ...opts, skipSafetyBackup: true },
+      loadedOut,
       stage: (s) => {
         try {
           opts.onStage?.(s);

@@ -126,6 +126,7 @@ describe("restore_app — legacy archives", () => {
       { path: join(config, "from-backup.txt"), content: "old file" },
     ]);
     dockerState.containers[0].crashOnStart = true;
+    dockerState.containers[0].brokenStarts = 1; // the restored data breaks the app; the previous data does not
     const r = await restoreLegacyArchive("legacybad", archive, FAST);
     expect(r.success).toBe(false);
     if (r.success) return;
@@ -136,6 +137,63 @@ describe("restore_app — legacy archives", () => {
     const restores = (await import("../backup/store.js")).listRestores("legacybad");
     expect(restores[0]?.status).toBe("rolled_back");
     expect(getRestoreRow(restores[0].id)?.status).toBe("rolled_back");
+  });
+
+  it("does not claim the previous state is back when the app stays unhealthy after the rollback", async () => {
+    const { config } = await app("legacystillbad");
+    const archive = await legacyArchive("legacystillbad", [
+      { path: config, dir: true },
+      { path: join(config, "app.conf"), content: "version=1" },
+    ]);
+    dockerState.containers[0].crashOnStart = true; // broken on every start
+    const r = await restoreLegacyArchive("legacystillbad", archive, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(readFileSync(join(config, "app.conf"), "utf-8")).toBe("version=2");
+    expect(r.rolledBack).toBe(false);
+    expect(r.error).toMatch(/not healthy after the rollback/);
+    const restores = (await import("../backup/store.js")).listRestores("legacystillbad");
+    expect(restores[0]?.status).toBe("failed");
+  });
+});
+
+describe("restore_app — legacy rollback of a database", () => {
+  it("does not claim the previous state is back when the reloaded database lands in a new, empty volume", async () => {
+    // postgres with no volume in the compose file: its data is in an anonymous volume
+    const compose = `${COMPOSE}  db:\n    image: postgres:16-alpine\n`;
+    const appId = "legacyanondb";
+    const { appDir } = await installFakeApp(root, appId, compose, { "config/app.conf": "version=2" });
+    const config = join(appDir, "config");
+    const anon = (name: string) => [{ type: "volume", name, source: `/v/${name}`, destination: "/var/lib/postgresql/data" }];
+    resetDocker([
+      { id: `${appId}-app`, name: `${appId}-app`, service: "app", image: "example/app:1.0" },
+      { id: `${appId}-db`, name: `${appId}-db`, service: "db", image: "postgres:16-alpine", mounts: anon("anon-1") },
+    ]);
+    const archive = await legacyArchive(appId, [
+      { path: config, dir: true },
+      { path: join(config, "app.conf"), content: "version=1" },
+    ]);
+    const web = dockerState.containers.find((c) => c.service === "app")!;
+    web.crashOnStart = true;
+    web.brokenStarts = 1; // the restored data breaks the app; the previous data does not
+    // Every start re-creates the database container with a new anonymous volume (compose down + up)
+    let n = 1;
+    dockerState.onLifecycleStart = () => {
+      const db = dockerState.containers.find((c) => c.service === "db")!;
+      n++;
+      db.id = `${appId}-db-${n}`;
+      db.mounts = anon(`anon-${n}`);
+    };
+
+    const r = await restoreLegacyArchive(appId, archive, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(dockerState.events).toContain("exec:psql"); // the safety dump was reloaded
+    expect(r.rolledBack).toBe(false);
+    expect(r.error).toMatch(/previous state could not be fully restored/);
+    expect(r.error).toMatch(/restored data is in the detached volume/);
+    const restores = (await import("../backup/store.js")).listRestores(appId);
+    expect(restores[0]?.status).toBe("failed");
   });
 });
 

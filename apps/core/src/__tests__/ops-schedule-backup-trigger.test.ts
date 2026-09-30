@@ -46,6 +46,7 @@ import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
 import { fireTrigger } from "../automation/engine.js";
 import { checkBackupSchedules } from "../monitor.js";
+import { writeNotification } from "../db/notifications.js";
 
 function addScheduleAutomation(id: string, trigger: Record<string, unknown>): void {
   db.insert(schema.automations).values({
@@ -119,5 +120,25 @@ describe("backup schedules never fire cron automations", () => {
     const [result] = await fireTrigger("schedule", { automationId: "nightly-prune", cron: "0 4 * * *" });
     expect(result?.success).toBe(true);
     expect(runsOf("nightly-prune")).toBe(1);
+  });
+});
+
+describe("scheduled backup errors", () => {
+  it("notifies each app's error as its own outcome (never title-deduplicated against another app's)", async () => {
+    m.runScheduledBackup.mockImplementation(async () => {
+      throw new Error("boom");
+    });
+    for (const appId of ["app-x", "app-y"]) {
+      db.run(sql`INSERT INTO backup_schedules (id, app_id, cron, retention_days, enabled, created_at)
+        VALUES (${`sched-${appId}`}, ${appId}, '* * * * *', 7, 1, ${new Date().toISOString()})`);
+    }
+
+    await checkBackupSchedules();
+    await settle();
+
+    for (const appId of ["app-x", "app-y"]) {
+      expect(vi.mocked(writeNotification)).toHaveBeenCalledWith("warning", "Backup failed", `${appId}: boom`, appId, { dedupe: false });
+    }
+    m.runScheduledBackup.mockImplementation(async () => {});
   });
 });
