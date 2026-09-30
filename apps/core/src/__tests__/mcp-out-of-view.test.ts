@@ -23,9 +23,9 @@ import { and, eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
 import { hashToken, verifyBearerToken } from "../middleware/auth.js";
-import { mcp, getMcpToolView } from "../routes/mcp.js";
+import { mcp, getMcpToolView, auditOutOfViewToolCalls } from "../routes/mcp.js";
 import { setSetting } from "../utils/settings.js";
-import { invalidateSettingsCache } from "../ai/tool-registry.js";
+import { getAllRegisteredTools, invalidateSettingsCache } from "../ai/tool-registry.js";
 import type { TokenScopes } from "../approval/grants.js";
 import type { Actor } from "../ai/execution.js";
 import { registerFakeDomains, toolCalls } from "./helpers/trust-fixtures.js";
@@ -141,5 +141,67 @@ describe("app-limited tokens only list tools they can call", () => {
     const rows = blockedRows(id, "create_automation");
     expect(rows).toHaveLength(1);
     expect(rows[0]!.details).toContain("can never target");
+  });
+});
+
+describe("out-of-view auditing is bounded and only covers dispatched requests", () => {
+  const call = (id: number | string | undefined, name: string) => ({
+    jsonrpc: "2.0",
+    ...(id === undefined ? {} : { id }),
+    method: "tools/call",
+    params: { name, arguments: {} },
+  });
+
+  async function post(token: string, body: unknown, accept = "application/json, text/event-stream") {
+    const res = await mcp.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept, authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+    await res.text();
+    return res.status;
+  }
+
+  function notInViewRows(tokenId: string) {
+    return db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.actorId, tokenId))
+      .all()
+      .filter((r) => r.action.startsWith("BLOCKED (not_in_view)"));
+  }
+
+  it("a batch of many identical hidden calls writes one row with the count", async () => {
+    const { id, plaintext } = insertToken({ maxTier: "read", domains: "all", apps: "all" });
+    const batch = Array.from({ length: 500 }, (_, i) => call(i + 1, "uninstall_app"));
+    expect(await post(plaintext, batch)).toBeLessThan(400);
+    const rows = notInViewRows(id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.details).toContain("(500 calls in one request)");
+  });
+
+  it("many distinct hidden tools write at most 10 rows plus one summary", () => {
+    const actor: Actor = { kind: "mcp_token", id: "oov-cap", label: "cap", scopes: { maxTier: "read", domains: "all", apps: "all" } };
+    const names = Object.keys(getAllRegisteredTools());
+    expect(names.length).toBeGreaterThan(10);
+    // Each name several times, interleaved.
+    auditOutOfViewToolCalls(actor, [...names, ...names, ...names].map((n, i) => call(i, n)), new Set());
+    const rows = notInViewRows("oov-cap");
+    expect(rows).toHaveLength(11);
+    const summary = rows.find((r) => r.action === `BLOCKED (not_in_view): ${names.length - 10} more tools`);
+    expect(summary?.details).toContain(names.at(-1));
+    expect(summary?.outcome).toBe("blocked");
+  });
+
+  it("messages the transport would not dispatch (no id, not JSON-RPC 2.0) are not audited", async () => {
+    const { id, plaintext } = insertToken({ maxTier: "read", domains: "all", apps: "all" });
+    await post(plaintext, [call(undefined, "uninstall_app"), { ...call(7, "uninstall_app"), jsonrpc: "1.0" }]);
+    expect(notInViewRows(id)).toHaveLength(0);
+  });
+
+  it("a request the transport rejects (406: missing Accept) writes nothing", async () => {
+    const { id, plaintext } = insertToken({ maxTier: "read", domains: "all", apps: "all" });
+    expect(await post(plaintext, call(1, "uninstall_app"), "application/json")).toBe(406);
+    expect(notInViewRows(id)).toHaveLength(0);
   });
 });
