@@ -429,3 +429,42 @@ volumes:
     expect(parsed.services.find((s) => s.name === "nodata")?.dbEngine).toBeNull();
   });
 });
+
+describe("dbDataIsEphemeral — is the database's data directory on a named volume or folder?", () => {
+  async function ephemeral(service: string, topLevel = "") {
+    const { parseCompose, dbDataIsEphemeral } = await import("../backup/compose.js");
+    const parsed = parseCompose(`services:\n  db:\n${service}${topLevel}`, { composeDir: "/x", appDataDir: "/y", env: {} });
+    return dbDataIsEphemeral(parsed.services[0]);
+  }
+  const named = "volumes:\n  pgdata:\n";
+
+  it("flags a named volume at the parent of the image's data VOLUME (postgres <= 17)", async () => {
+    expect(await ephemeral("    image: postgres:16-alpine\n    volumes:\n      - pgdata:/var/lib/postgresql\n", named)).toBe(true);
+    expect(await ephemeral("    image: postgres:16-alpine\n    volumes:\n      - ./pg:/var/lib/postgresql\n")).toBe(true);
+  });
+
+  it("accepts the data directory itself or a parent that is the image's VOLUME", async () => {
+    expect(await ephemeral("    image: postgres:16-alpine\n    volumes:\n      - pgdata:/var/lib/postgresql/data\n", named)).toBe(false);
+    expect(await ephemeral("    image: postgres:16\n    volumes:\n      - ./pg:/var/lib/postgresql/data/\n")).toBe(false);
+    // postgres 18 keeps its data under /var/lib/postgresql/18/docker, and its VOLUME is /var/lib/postgresql
+    expect(await ephemeral("    image: postgres:18-alpine\n    volumes:\n      - pgdata:/var/lib/postgresql\n", named)).toBe(false);
+    // PGDATA below the mount point
+    expect(
+      await ephemeral("    image: postgres:16\n    environment:\n      PGDATA: /var/lib/postgresql/data/pgdata\n    volumes:\n      - pgdata:/var/lib/postgresql/data\n", named),
+    ).toBe(false);
+    expect(await ephemeral("    image: postgres:16\n    environment:\n      PGDATA: /srv/pg\n    volumes:\n      - pgdata:/srv/pg\n", named)).toBe(false);
+    expect(await ephemeral("    image: mariadb:11\n    volumes:\n      - ./db:/var/lib/mysql\n")).toBe(false);
+  });
+
+  it("flags data outside every mount, an anonymous compose volume and no volume at all", async () => {
+    expect(await ephemeral("    image: postgres:16\n    environment:\n      PGDATA: /pgdata\n    volumes:\n      - pgdata:/var/lib/postgresql/data\n", named)).toBe(true);
+    expect(await ephemeral("    image: postgres:16\n    volumes:\n      - pgdata:/var/lib/postgresql\n      - /var/lib/postgresql/data\n", named)).toBe(true);
+    expect(await ephemeral("    image: postgres:16\n")).toBe(true);
+    expect(await ephemeral("    image: mysql:8.4\n    volumes:\n      - /var/lib/mysql\n")).toBe(true);
+    expect(await ephemeral("    image: mysql:8.4\n    volumes:\n      - type: tmpfs\n        target: /var/lib/mysql\n")).toBe(true);
+  });
+
+  it("ignores volumes that do not hold the data (an extra log volume next to the data volume)", async () => {
+    expect(await ephemeral("    image: percona:8.0\n    volumes:\n      - ./db:/var/lib/mysql\n      - /var/log/mysql\n")).toBe(false);
+  });
+});

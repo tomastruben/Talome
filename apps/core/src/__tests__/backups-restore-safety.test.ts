@@ -494,3 +494,145 @@ describe("restore — a database whose data lives in an anonymous volume", () =>
     expect(r.success ? "" : r.error).toBe("");
   });
 });
+
+describe("restore — only the mount holding the database's data directory counts", () => {
+  const WEB = `services:
+  web:
+    image: example/web:1
+    volumes:
+      - ./config:/config
+`;
+  type Mount = { type: string; name: string | null; source: string | null; destination: string };
+  const vol = (name: string, destination: string): Mount => ({ type: "volume", name, source: `/var/lib/docker/volumes/${name}/_data`, destination });
+
+  async function prepare(appId: string, dbCompose: string, db: { mounts: Mount[]; dataDir?: string }) {
+    await installFakeApp(env.root, appId, `${WEB}  db:\n${dbCompose}`, { "config/a.txt": "a1" });
+    resetDocker([
+      { id: `${appId}-web`, name: `${appId}-web`, service: "web", image: "example/web:1" },
+      { id: `${appId}-db`, name: `${appId}-db`, service: "db", image: "postgres:16-alpine", mounts: db.mounts, dataDir: db.dataDir },
+    ]);
+    const backup = await createAppBackup(appId);
+    if (!backup.success) throw new Error(backup.error);
+    expect(backup.method).toBe("dump");
+    dockerState.events = [];
+    return backup;
+  }
+
+  /** compose down + up: a new db container; `mounts(n)` gives its mounts */
+  function recreateDbOnStart(appId: string, mounts: (n: number) => Mount[]) {
+    let n = 1;
+    dockerState.onLifecycleStart = () => {
+      const db = dockerState.containers.find((c) => c.service === "db")!;
+      n++;
+      db.id = `${appId}-db-${n}`;
+      db.mounts = mounts(n);
+    };
+  }
+
+  it("accepts a re-created database whose named data volume (custom PGDATA) is kept while an unused image volume changes", async () => {
+    // postgres always creates an anonymous volume at its VOLUME path, even when PGDATA points elsewhere
+    const db = `    image: postgres:16-alpine
+    environment:
+      PGDATA: /srv/pgdata
+    volumes:
+      - pgdata:/srv/pgdata
+`;
+    const mounts = (n: number) => [vol("customdata_pgdata", "/srv/pgdata"), vol(`anon-${n}`, "/var/lib/postgresql/data")];
+    const backup = await prepare("customdata", db + "volumes:\n  pgdata:\n", { mounts: mounts(1) });
+    expect(backup.warnings.join(" ")).not.toMatch(/anonymous Docker volume/);
+    recreateDbOnStart("customdata", mounts);
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success ? "" : r.error).toBe("");
+    if (!r.success) return;
+    expect(r.warnings.join(" ")).not.toMatch(/anonymous Docker volume/);
+    const { getRestoreRow } = await import("../backup/store.js");
+    expect(getRestoreRow(r.restoreId!)!.status).toBe("completed");
+  });
+
+  it("ignores another anonymous volume of the database container (e.g. a log directory)", async () => {
+    const db = `    image: postgres:16-alpine
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - /var/log/postgresql
+`;
+    const mounts = (n: number) => [vol("extralog_pgdata", "/var/lib/postgresql/data"), vol(`log-${n}`, "/var/log/postgresql")];
+    const backup = await prepare("extralog", db + "volumes:\n  pgdata:\n", { mounts: mounts(1) });
+    recreateDbOnStart("extralog", mounts);
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success ? "" : r.error).toBe("");
+  });
+
+  it("uses the data directory the database reports (the image's own PGDATA)", async () => {
+    // PGDATA comes from the image, not the compose file: the server is asked
+    const db = `    image: postgres:16-alpine
+    volumes:
+      - pgdata:/srv/imagedata
+`;
+    const mounts = (n: number) => [vol("reported_pgdata", "/srv/imagedata"), vol(`anon-${n}`, "/var/lib/postgresql/data")];
+    const backup = await prepare("reported", db + "volumes:\n  pgdata:\n", { mounts: mounts(1), dataDir: "/srv/imagedata/pg" });
+    recreateDbOnStart("reported", mounts);
+    // the re-created container reports the same data directory
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success ? "" : r.error).toBe("");
+  });
+
+  it("fails when the data directory is outside every mount, even though the named volume is kept", async () => {
+    // PGDATA=/pgdata with the named volume at the default path: the data is in the container's own layer
+    const db = `    image: postgres:16-alpine
+    environment:
+      PGDATA: /pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+`;
+    const mounts = () => [vol("layerdata_pgdata", "/var/lib/postgresql/data")];
+    const backup = await prepare("layerdata", db + "volumes:\n  pgdata:\n", { mounts: mounts() });
+    expect(backup.warnings.join(" ")).toMatch(/db database keeps its data only in an anonymous Docker volume/);
+    recreateDbOnStart("layerdata", mounts);
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toMatch(/restored database data did not survive starting the app/);
+    expect(r.error).toMatch(/data directory \/pgdata was not on a volume or folder/);
+  });
+
+  it("fails when a named volume sits at the parent of the image's data VOLUME (the data is in the anonymous volume below it)", async () => {
+    const db = `    image: postgres:16-alpine
+    volumes:
+      - pgdata:/var/lib/postgresql
+`;
+    const mounts = (n: number) => [vol("parentvol_pgdata", "/var/lib/postgresql"), vol(`anon-${n}`, "/var/lib/postgresql/data")];
+    const backup = await prepare("parentvol", db + "volumes:\n  pgdata:\n", { mounts: mounts(1) });
+    expect(backup.warnings.join(" ")).toMatch(/db database keeps its data only in an anonymous Docker volume/);
+    recreateDbOnStart("parentvol", mounts);
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toMatch(/detached volume anon-1/);
+  });
+
+  it("says a stopped app's restored anonymous-volume database is lost if its container is re-created before it runs", async () => {
+    const db = `    image: postgres:16-alpine
+`;
+    const backup = await prepare("stoppedanon", db, { mounts: [vol("anon-1", "/var/lib/postgresql/data")] });
+    for (const c of dockerState.containers) c.status = "exited";
+    const { writeNotification } = await import("../db/notifications.js");
+    vi.mocked(writeNotification).mockClear();
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success ? "" : r.error).toBe("");
+    if (!r.success) return;
+    expect(r.warnings.join(" ")).toMatch(/app was left stopped and the restored db data is in its stopped container/);
+    expect(r.warnings.join(" ")).toMatch(/re-created first .* the restored database is left behind in a detached volume/);
+    expect(vi.mocked(writeNotification)).toHaveBeenCalledWith(
+      "warning",
+      "stoppedanon restored",
+      expect.stringContaining("app was left stopped"),
+      "stoppedanon",
+      expect.anything(),
+    );
+  });
+});

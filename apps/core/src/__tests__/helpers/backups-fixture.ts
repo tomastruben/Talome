@@ -62,6 +62,8 @@ export interface FakeContainer {
   brokenStarts?: number;
   /** Mounts reported by getContainerMounts (default: none) */
   mounts?: Array<{ type: string; name: string | null; source: string | null; destination: string }>;
+  /** Data directory the database reports (SHOW data_directory / @@datadir); unset = the query fails */
+  dataDir?: string;
 }
 
 export const dockerState = {
@@ -148,8 +150,12 @@ export function dockerOpsMock() {
       return (c.mounts ?? []).map((m) => ({ ...m }));
     }),
     getImageDigests: vi.fn(async (imageId: string) => [`example/app@${imageId}`]),
-    execCapture: vi.fn(async (_id: string, cmd: string[]) => {
+    execCapture: vi.fn(async (id: string, cmd: string[]) => {
       const joined = cmd.join(" ");
+      if (joined.includes("SHOW data_directory") || joined.includes("@@datadir")) {
+        const dir = find(id)?.dataDir;
+        return dir ? { exitCode: 0, stdout: `${dir}\n`, stderr: "" } : { exitCode: 1, stdout: "", stderr: "permission denied" };
+      }
       if (joined.includes("INFO persistence")) {
         const now = Math.floor(Date.now() / 1000) + 1;
         return { exitCode: 0, stdout: `rdb_bgsave_in_progress:0\r\nrdb_last_bgsave_status:ok\r\nrdb_last_save_time:${now}\r\n`, stderr: "" };

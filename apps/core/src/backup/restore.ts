@@ -22,7 +22,16 @@ import { writeAuditEntry } from "../db/audit.js";
 import { writeNotification } from "../db/notifications.js";
 import { getSetting } from "../utils/settings.js";
 import { createLogger } from "../utils/logger.js";
-import { bindVolumes, dbDataIsEphemeral, ephemeralDbWarning, EPHEMERAL_DB_WARNING_MARK, resolveAppContext, type AppContext } from "./compose.js";
+import {
+  bindVolumes,
+  dbDataDir,
+  dbDataIsEphemeral,
+  ephemeralDbWarning,
+  EPHEMERAL_DB_WARNING_MARK,
+  mountHolding,
+  resolveAppContext,
+  type AppContext,
+} from "./compose.js";
 import {
   composeUp,
   execCapture,
@@ -35,7 +44,7 @@ import {
   type AppContainer,
   type ContainerMount,
 } from "./docker-ops.js";
-import { loadCommand, readinessCommand, significantLoadErrors } from "./dumps.js";
+import { dataDirCommand, loadCommand, parseDataDir, readinessCommand, significantLoadErrors } from "./dumps.js";
 import {
   appRelative,
   containerForService,
@@ -398,8 +407,25 @@ export interface LoadedDatabase {
   service: string;
   /** Container the dump was loaded into */
   containerId: string;
+  /** Where the database keeps its data files inside the container */
+  dataDir: string;
   /** Its mounts right after the load (null when they could not be read) */
   mounts: ContainerMount[] | null;
+}
+
+/**
+ * The data directory of a database a dump was just loaded into: asked from
+ * the server itself, else the compose file's PGDATA or the image default.
+ */
+async function loadedDataDir(containerId: string, engine: "postgres" | "mysql", svc: AppContext["compose"]["services"][number] | undefined): Promise<string> {
+  const asked = await execCapture(containerId, dataDirCommand(engine), 30_000)
+    .then((r) => (r.exitCode === 0 ? parseDataDir(r.stdout) : null))
+    .catch(() => null);
+  return asked ?? dbDataDir(engine, svc?.environment ?? {}, svc?.image ?? null) ?? (engine === "postgres" ? "/var/lib/postgresql/data" : "/var/lib/mysql");
+}
+
+function describeMount(m: ContainerMount): string {
+  return m.type === "volume" ? `volume ${m.name ?? m.source ?? "?"}` : `${m.source ?? "?"}`;
 }
 
 /**
@@ -407,8 +433,11 @@ export interface LoadedDatabase {
  * Loading a dump succeeds even when the data lands in an anonymous volume
  * that a re-created container (e.g. `compose down` + `up`) no longer uses —
  * the app then runs "healthy" on an empty database. The data is still there
- * when the database runs in the same container, or in a re-created one that
- * mounts the same volumes and folders. Returns what was lost (empty = fine).
+ * when the database runs in the same container, or in a re-created one whose
+ * data directory is on the same volume or folder. Only the mount holding the
+ * data directory counts: other anonymous volumes of the container (an image
+ * VOLUME the data does not use, a log directory) may change freely.
+ * Returns what was lost (empty = fine).
  */
 export async function verifyLoadedDatabases(ctx: Pick<AppContext, "appId" | "composePath" | "compose">, loaded: LoadedDatabase[]): Promise<string[]> {
   if (loaded.length === 0) return [];
@@ -430,6 +459,13 @@ export async function verifyLoadedDatabases(ctx: Pick<AppContext, "appId" | "com
       problems.push(`the ${l.service} database container was re-created and its restored data cannot be confirmed`);
       continue;
     }
+    const held = mountHolding(l.mounts, l.dataDir, (m) => m.destination);
+    if (!held || (held.type !== "volume" && held.type !== "bind")) {
+      problems.push(
+        `the ${l.service} database container was re-created and its data directory ${l.dataDir} was not on a volume or folder — the restored data is gone`,
+      );
+      continue;
+    }
     let mountsNow: ContainerMount[];
     try {
       mountsNow = await getContainerMounts(now.id);
@@ -437,21 +473,18 @@ export async function verifyLoadedDatabases(ctx: Pick<AppContext, "appId" | "com
       problems.push(`the ${l.service} database container was re-created and its mounts cannot be read: ${errorMessage(err)}`);
       continue;
     }
-    const persistent = l.mounts.filter((m) => m.type === "volume" || m.type === "bind");
-    if (persistent.length === 0) {
-      problems.push(`the ${l.service} database container was re-created and its data was not on any volume — the restored data is gone`);
-      continue;
-    }
-    for (const m of persistent) {
-      const same = mountsNow.find((x) => x.destination === m.destination);
-      const kept = same !== undefined && (m.type === "volume" ? same.type === "volume" && same.name === m.name : same.source === m.source);
-      if (kept) continue;
-      problems.push(
-        m.type === "volume"
-          ? `the ${l.service} database container was re-created with a new, empty volume at ${m.destination} — the restored data is in the detached volume ${m.name}`
-          : `the ${l.service} database container was re-created without ${m.source} at ${m.destination}`,
-      );
-    }
+    const heldNow = mountHolding(mountsNow, l.dataDir, (m) => m.destination);
+    const kept =
+      heldNow !== null &&
+      heldNow.destination.replace(/\/+$/, "") === held.destination.replace(/\/+$/, "") &&
+      heldNow.type === held.type &&
+      (held.type === "volume" ? heldNow.name === held.name : heldNow.source === held.source);
+    if (kept) continue;
+    problems.push(
+      held.type === "volume"
+        ? `the ${l.service} database container was re-created with ${heldNow ? `${describeMount(heldNow)} at ${heldNow.destination}` : "no volume"} holding its data directory ${l.dataDir} — the restored data is in the detached volume ${held.name} (at ${held.destination})`
+        : `the ${l.service} database container was re-created without ${held.source} at ${held.destination}`,
+    );
   }
   return problems;
 }
@@ -625,7 +658,7 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
   const loadedDbs: LoadedDatabase[] = [];
   for (const d of manifest.dumps) {
     const svc = ctx.compose.services.find((s) => s.name === d.service);
-    if (svc && d.path && dbDataIsEphemeral(svc)) warnings.push(ephemeralDbWarning(svc));
+    if (svc && d.path && d.engine !== "redis" && dbDataIsEphemeral(svc)) warnings.push(ephemeralDbWarning(svc, { leftStopped: !wasRunning }));
   }
 
   // Pending work is persisted so a server restart mid-restore can undo it
@@ -854,7 +887,12 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
         }
       }
       if (sqlErrors.length > 0) warnings.push(`${d.service}: ${sqlErrors.length} statement(s) reported errors while loading (e.g. ${sqlErrors[0].slice(0, 200)})`);
-      const loadedDb: LoadedDatabase = { service: d.service, containerId: container.id, mounts: await getContainerMounts(container.id).catch(() => null) };
+      const loadedDb: LoadedDatabase = {
+        service: d.service,
+        containerId: container.id,
+        dataDir: await loadedDataDir(container.id, engine, ctx.compose.services.find((s) => s.name === d.service)),
+        mounts: await getContainerMounts(container.id).catch(() => null),
+      };
       loadedDbs.push(loadedDb);
       p.loadedOut?.push(loadedDb);
     }

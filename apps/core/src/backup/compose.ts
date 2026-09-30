@@ -36,6 +36,12 @@ export interface ComposeService {
   dbEngine: DbEngine | null;
   /** Host paths of volumes that hold the database's raw data files */
   dbDataPaths: string[];
+  /**
+   * Container paths of the service's anonymous volumes and tmpfs mounts
+   * (`- /var/lib/mysql`, `type: tmpfs`): their contents do not outlive the
+   * container.
+   */
+  anonymousTargets?: string[];
 }
 
 export interface ParsedCompose {
@@ -218,6 +224,7 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
     let dbEngine = detected?.engine ?? null;
     const volumes: ComposeVolume[] = [];
     const dbDataPaths: string[] = [];
+    const anonymousTargets: string[] = [];
     let hasDataTarget = false;
 
     for (const vol of (Array.isArray(svc.volumes) ? svc.volumes : []) as unknown[]) {
@@ -227,18 +234,25 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
       let explicitType: string | null = null;
       if (typeof vol === "string") {
         const parts = vol.split(":");
-        if (parts.length < 2) continue; // anonymous volume
+        if (parts.length < 2) {
+          if (parts[0].startsWith("/")) anonymousTargets.push(parts[0]); // anonymous volume
+          continue;
+        }
         raw = parts[0];
         target = parts[1];
         readOnly = parts.slice(2).some((p) => p.split(",").includes("ro"));
       } else if (vol && typeof vol === "object") {
         const v = vol as Record<string, unknown>;
-        if (typeof v.source !== "string" || !v.source) continue;
+        explicitType = typeof v.type === "string" ? v.type : null;
+        if (typeof v.source !== "string" || !v.source || explicitType === "tmpfs") {
+          // anonymous volume or tmpfs
+          if (typeof v.target === "string" && v.target.startsWith("/") && explicitType !== "bind" && explicitType !== "npipe") anonymousTargets.push(v.target);
+          continue;
+        }
         raw = v.source;
         target = typeof v.target === "string" ? v.target : "";
         readOnly = v.read_only === true;
-        explicitType = typeof v.type === "string" ? v.type : null;
-        if (explicitType === "tmpfs" || explicitType === "npipe") continue;
+        if (explicitType === "npipe") continue;
       } else {
         continue;
       }
@@ -291,34 +305,155 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
       volumes,
       dbEngine,
       dbDataPaths,
+      anonymousTargets,
     });
   }
 
   return { projectName: typeof doc.name === "string" ? doc.name : null, services };
 }
 
+// ── Where a database keeps its data ─────────────────────────────────────────
+
+function trimTrailingSlashes(p: string): string {
+  const t = p.trim().replace(/\/+$/, "");
+  return t === "" ? "/" : t;
+}
+
+/** Major version of a postgres image from its tag (16 for postgres:16-alpine, 14 for pgvecto-rs:pg14-v0.2.0), or null. */
+function postgresMajor(image: string | null): number | null {
+  if (!image) return null;
+  const noDigest = image.split("@")[0];
+  const lastSlash = noDigest.lastIndexOf("/");
+  const lastColon = noDigest.lastIndexOf(":");
+  if (lastColon <= lastSlash) return null;
+  const tag = noDigest.slice(lastColon + 1).toLowerCase();
+  const m = /(?:^|[-_])pg(\d{1,2})(?:$|[-_.])/.exec(tag) ?? /^(\d{1,2})(?:$|[-_.])/.exec(tag);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * The directory a SQL database keeps its data files in, inside the
+ * container: PGDATA when set, else the image's default. A best guess —
+ * MySQL's datadir can be moved by a command-line flag or config file, and
+ * an image's own ENV (PGDATA) is not in the compose file.
+ */
+export function dbDataDir(engine: DbEngine, env: Record<string, string>, image: string | null): string | null {
+  const repo = image ? imageRepoName(image) : "";
+  if (engine === "postgres") {
+    if (repo.includes("bitnami/")) return trimTrailingSlashes(env.POSTGRESQL_DATA_DIR || "/bitnami/postgresql/data");
+    if (env.PGDATA?.trim()) return trimTrailingSlashes(env.PGDATA);
+    if (repo.endsWith("timescaledb-ha")) return "/home/postgres/pgdata/data";
+    const major = postgresMajor(image);
+    return major !== null && major >= 18 ? `/var/lib/postgresql/${major}/docker` : "/var/lib/postgresql/data";
+  }
+  if (engine === "mysql") {
+    if (repo.includes("bitnami/")) {
+      return trimTrailingSlashes(env.MARIADB_DATA_DIR || env.MYSQL_DATA_DIR || (repo.endsWith("mysql") ? "/bitnami/mysql/data" : "/bitnami/mariadb/data"));
+    }
+    if (repo.includes("linuxserver/mariadb")) return "/config/databases";
+    return "/var/lib/mysql";
+  }
+  return null;
+}
+
+/**
+ * The image's VOLUME paths that can hold the data directory. Docker gives
+ * each one its own anonymous volume unless something is mounted at exactly
+ * that path — a named volume at a parent (pgdata:/var/lib/postgresql with
+ * postgres <= 17) does not keep the data, the anonymous volume below it does.
+ * Empty when not known.
+ */
+function dbImageVolumes(engine: DbEngine, image: string | null): string[] {
+  const repo = image ? imageRepoName(image) : "";
+  if (engine === "postgres") {
+    if (repo.includes("bitnami/") || repo.endsWith("timescaledb-ha")) return [];
+    const major = postgresMajor(image);
+    if (major === null) return [];
+    return [major >= 18 ? "/var/lib/postgresql" : "/var/lib/postgresql/data"];
+  }
+  if (engine === "mysql") {
+    if (repo.includes("bitnami/")) return [];
+    if (repo.includes("linuxserver/mariadb")) return ["/config"];
+    return ["/var/lib/mysql"];
+  }
+  return [];
+}
+
+function isAtOrAbove(mountPath: string, dir: string): boolean {
+  const m = trimTrailingSlashes(mountPath);
+  return m === "/" || dir === m || dir.startsWith(`${m}/`);
+}
+
+/**
+ * The mount a directory's files are written to: the deepest mount at that
+ * directory or above it. Null when none is — the files are in the
+ * container's own layer.
+ */
+export function mountHolding<T>(mounts: readonly T[], dir: string, pathOf: (m: T) => string): T | null {
+  const d = trimTrailingSlashes(dir);
+  let best: T | null = null;
+  let bestLen = -1;
+  for (const m of mounts) {
+    const p = trimTrailingSlashes(pathOf(m));
+    if (!isAtOrAbove(p, d)) continue;
+    const len = p === "/" ? 0 : p.length;
+    if (len > bestLen) {
+      best = m;
+      bestLen = len;
+    }
+  }
+  return best;
+}
+
 /**
  * True when a SQL database service keeps its data neither in a bind mount nor
- * in a named volume at its data directory — i.e. only in an anonymous volume
- * (the image's VOLUME) or the container's own layer. That data survives a
- * stop/start, but not the container being removed (`docker compose down`,
- * a re-created container without its anonymous volumes).
+ * in a named volume holding its data directory — i.e. only in an anonymous
+ * volume (the image's VOLUME, or one listed in the compose file) or the
+ * container's own layer. That data survives a stop/start, but not the
+ * container being removed (`docker compose down`, a re-created container
+ * without its anonymous volumes).
  */
 export function dbDataIsEphemeral(svc: ComposeService): boolean {
   if (svc.dbEngine !== "postgres" && svc.dbEngine !== "mysql") return false;
-  if (svc.dbDataPaths.length > 0) return false;
   const engine = svc.dbEngine;
-  return !svc.volumes.some((v) => v.kind === "named" && isDbDataTarget(engine, v.target, svc.environment, svc.image));
+  const dataDir = dbDataDir(engine, svc.environment, svc.image);
+  if (!dataDir) return false;
+  const mounts: Array<{ target: string; kept: boolean }> = svc.volumes.map((v) => ({ target: trimTrailingSlashes(v.target), kept: true }));
+  for (const t of svc.anonymousTargets ?? []) mounts.push({ target: trimTrailingSlashes(t), kept: false });
+  for (const t of dbImageVolumes(engine, svc.image)) {
+    if (!mounts.some((m) => m.target === t)) mounts.push({ target: t, kept: false });
+  }
+  if (mountHolding(mounts, dataDir, (m) => m.target)?.kept) return false;
+  // MySQL's datadir may have been moved (--datadir): a named volume or folder
+  // at a data path below the default one most likely holds it
+  if (engine === "mysql") {
+    const below = svc.volumes.some((v) => {
+      const t = trimTrailingSlashes(v.target);
+      return t.startsWith(`${dataDir}/`) && isDbDataTarget(engine, t, svc.environment, svc.image);
+    });
+    if (below) return false;
+  }
+  return true;
 }
 
 /** Text every ephemeral-database warning contains (to pick them out of a warning list). */
 export const EPHEMERAL_DB_WARNING_MARK = "keeps its data only in an anonymous Docker volume";
 
-/** Warning for a database whose data lives only in an anonymous volume. */
-export function ephemeralDbWarning(svc: Pick<ComposeService, "name">): string {
-  return (
+/**
+ * Warning for a database whose data lives only in an anonymous volume.
+ * `leftStopped`: a restore loaded the data into the stopped app's container
+ * and left the app stopped — nothing has confirmed yet that the next start
+ * keeps that container.
+ */
+export function ephemeralDbWarning(svc: Pick<ComposeService, "name">, opts: { leftStopped?: boolean } = {}): string {
+  const base =
     `The ${svc.name} database ${EPHEMERAL_DB_WARNING_MARK}: it is lost whenever the container is removed ` +
-    `(e.g. docker compose down). Add a named volume or a folder for its data directory to the compose file.`
+    `(e.g. docker compose down). Add a named volume or a folder for its data directory to the compose file.`;
+  if (!opts.leftStopped) return base;
+  return (
+    `${base} The app was left stopped and the restored ${svc.name} data is in its stopped container. ` +
+    `Start the app without removing that container: if it is re-created first (docker compose down, or a start that removes ` +
+    `the containers before bringing them up), the restored database is left behind in a detached volume and the app starts on an empty one.`
   );
 }
 
