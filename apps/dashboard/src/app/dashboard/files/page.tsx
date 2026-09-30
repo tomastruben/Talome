@@ -35,6 +35,8 @@ import {
   ArrowLeft01Icon,
   ArrowLeft02Icon,
   ArrowRight02Icon,
+  PinIcon,
+  PinOffIcon,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -83,6 +85,9 @@ import { CORE_URL, getDirectCoreUrl } from "@/lib/constants";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useSystemStats } from "@/hooks/use-system-stats";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { FilesSidebar, useFileFavorites } from "@/components/files/files-sidebar";
+import { WindowSidebarLayout } from "@/components/ui/source-list";
 import { isCodeHighlightable } from "@/lib/file-languages";
 const VideoPlayer = dynamic(
   () => import("@/components/files/media-player").then((m) => ({ default: m.VideoPlayer })),
@@ -807,6 +812,8 @@ function FileRowActionItems({
   onMove,
   onDownload,
   onDelete,
+  pinned,
+  onTogglePin,
 }: {
   menu: "dropdown" | "context";
   item: FileItem;
@@ -815,10 +822,16 @@ function FileRowActionItems({
   onMove: (item: FileItem) => void;
   onDownload: (path: string, name: string) => void;
   onDelete: (item: FileItem) => void;
+  /** Folders only, in a desktop window: pin to or unpin from the sidebar */
+  pinned?: boolean;
+  onTogglePin?: (item: FileItem) => void;
 }) {
   const actions: { id: string; label: string; icon: IconSvgElement; run: () => void; destructive?: boolean; separatorBefore?: boolean }[] = [
     ...(item.isDirectory || isPreviewable(item.name)
       ? [{ id: "open", label: item.isDirectory ? "Open" : "Quick Look", icon: item.isDirectory ? FolderOpenIcon : FileAttachmentIcon, run: () => onOpen(item) }]
+      : []),
+    ...(item.isDirectory && onTogglePin
+      ? [{ id: "pin", label: pinned ? "Remove from Sidebar" : "Add to Sidebar", icon: pinned ? PinOffIcon : PinIcon, run: () => onTogglePin(item) }]
       : []),
     { id: "rename", label: "Rename", icon: Edit02Icon, run: () => onRename(item) },
     { id: "move", label: "Move to…", icon: FolderExportIcon, run: () => onMove(item) },
@@ -883,6 +896,10 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   const { data, error, mutate, isLoading } = useSWR<ListResponse>(listUrl, fetcher, {
     keepPreviousData: true,
   });
+
+  // In a desktop window, a Finder-style sidebar lists pinned folders and every location
+  const embedded = useIsEmbeddedFrame();
+  const favoriteFolders = useFileFavorites(embedded ? data?.allowedRoots?.[0] : undefined);
 
   // Only auto-enter a root when there's exactly one
   const hasMultipleRoots = (data?.allowedRoots?.length ?? 0) > 1;
@@ -1293,6 +1310,19 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         onClear={uploads.clearFinished}
       />
 
+      <WindowSidebarLayout
+        sidebar={data?.allowedRoots ? (
+          <FilesSidebar
+            roots={data.allowedRoots}
+            currentPath={isAtVirtualRoot ? null : (currentPath ?? data.path ?? null)}
+            rootLabel={(root) => rootLabel(root).label}
+            favorites={favoriteFolders.favorites}
+            onNavigate={navigate}
+            onShowAllLocations={hasMultipleRoots ? goToVirtualRoot : undefined}
+            onUnpin={favoriteFolders.toggle}
+          />
+        ) : null}
+      >
       <div
         className="flex flex-col flex-1 min-h-0 relative"
         onDragEnter={handleDragEnter}
@@ -1461,6 +1491,8 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                                     onMove={moveItem}
                                     onDownload={handleDownload}
                                     onDelete={deleteItem}
+                                    pinned={favoriteFolders.isFavorite(item.path)}
+                                    onTogglePin={embedded ? (folder) => favoriteFolders.toggle(folder.path) : undefined}
                                   />
                                 </DropdownMenuContent>
                               </DropdownMenu>
@@ -1476,6 +1508,8 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                               onMove={moveItem}
                               onDownload={handleDownload}
                               onDelete={deleteItem}
+                              pinned={favoriteFolders.isFavorite(item.path)}
+                              onTogglePin={embedded ? (folder) => favoriteFolders.toggle(folder.path) : undefined}
                             />
                           </ContextMenuContent>
                         </ContextMenu>
@@ -1576,6 +1610,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         </div>
         )}
       </div>
+      </WindowSidebarLayout>
 
       {/* ── Rename dialog ──────────────────────────────────────────────── */}
       <Dialog open={!!renamingItem} onOpenChange={() => setRenamingItem(null)}>

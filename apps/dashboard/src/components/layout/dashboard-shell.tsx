@@ -3,6 +3,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAtomValue } from "jotai";
+import { WindowSidebarSlot } from "@/components/ui/source-list";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { SiteHeader } from "@/components/layout/site-header";
@@ -94,8 +95,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 ) : null}
                 <DesktopShellHeaderActions />
                 <DesktopAppActionBridge />
-                <div ref={contentScrollRef} className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${embeddedPlayerRoute ? "overflow-hidden bg-black" : "overflow-y-auto p-4"}`}>
-                  {children}
+                <div className="flex min-h-0 flex-1">
+                  <WindowSidebarSlot />
+                  <div ref={contentScrollRef} className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${embeddedPlayerRoute ? "overflow-hidden bg-black" : "overflow-y-auto p-4"}`}>
+                    {children}
+                  </div>
                 </div>
               </main>
             ) : (

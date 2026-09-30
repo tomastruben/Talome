@@ -68,6 +68,13 @@ import { Projector01Icon } from "@/components/icons";
 import { useSetAtom } from "jotai";
 import { pageActionAtom } from "@/atoms/page-action";
 import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
+import {
+  SourceList,
+  SourceListItem,
+  SourceListSection,
+  WINDOW_SIDEBAR_REPLACES,
+  WindowSidebarLayout,
+} from "@/components/ui/source-list";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { useFeatureStack } from "@/hooks/use-feature-stacks";
 import { StackSetup } from "@/components/ui/stack-setup";
@@ -1407,20 +1414,46 @@ function MediaPageInner({
     );
   }
 
+  const selectTab = (next: Tab) => {
+    setTab(next);
+    setSearch("");
+    setSort("added-desc");
+    setSelectedGenres([]);
+    setMinRating(null);
+    setHealthFilter("all");
+  };
+
+  // In a desktop window the tabs become a labelled sidebar
+  const sidebarItem = (t: (typeof tabs)[number]) => (
+    <SourceListItem
+      key={t.id}
+      icon={t.icon}
+      label={t.label}
+      active={tab === t.id}
+      trailing={t.count}
+      onSelect={() => selectTab(t.id)}
+    />
+  );
+  const sidebar = (
+    <SourceList label="Media sidebar">
+      <SourceListSection title="Library">
+        {tabs.filter((t) => t.id === "movies" || t.id === "tv").map(sidebarItem)}
+      </SourceListSection>
+      <SourceListSection title="Activity">
+        {tabs.filter((t) => t.id !== "movies" && t.id !== "tv").map(sidebarItem)}
+      </SourceListSection>
+    </SourceList>
+  );
+
   return (
+    <WindowSidebarLayout sidebar={sidebar}>
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5">
       {/* Controls: tabs + search + sort */}
       <DesktopAppToolbar className="page-controls-row min-w-0 flex-wrap justify-between gap-2">
         <Tabs
+          className={WINDOW_SIDEBAR_REPLACES}
           value={tab}
-          onValueChange={(v) => {
-            setTab(v as Tab);
-            setSearch("");
-            setSort("added-desc");
-            setSelectedGenres([]);
-            setMinRating(null);
-            setHealthFilter("all");
-          }}
+          onValueChange={(v) => selectTab(v as Tab)}
         >
           <TabsList>
             {tabs.map((t) => (
@@ -2039,6 +2072,7 @@ function MediaPageInner({
         </DialogContent>
       </Dialog>
     </div>
+    </WindowSidebarLayout>
   );
 }
 

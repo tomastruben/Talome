@@ -17,7 +17,7 @@ interface WidgetHeaderProps {
 
 export function Widget({ children, className }: WidgetProps) {
   return (
-    <div className={cn("h-full rounded-xl border border-border bg-card overflow-hidden flex flex-col", className)}>
+    <div data-widget="" className={cn("h-full rounded-xl border border-border bg-card overflow-hidden flex flex-col", className)}>
       {children}
     </div>
   );

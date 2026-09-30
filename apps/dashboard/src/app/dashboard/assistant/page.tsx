@@ -30,6 +30,13 @@ import { ChatInputBar } from "@/components/ai-elements/chat-input-bar";
 import { VoiceMode } from "@/components/assistant/voice-mode";
 import { ThinkingIndicator } from "@/components/assistant/thinking-indicator";
 import { ThinkingOrb } from "thinking-orbs";
+import {
+  SourceList,
+  SourceListItem,
+  SourceListSection,
+  WINDOW_SIDEBAR_REPLACES,
+  WindowSidebarLayout,
+} from "@/components/ui/source-list";
 import { pendingActivity } from "@/lib/agent-activity";
 import { ChatMessage } from "@/components/chat/chat-message";
 import { useAssistant } from "@/components/assistant/assistant-context";
@@ -755,7 +762,7 @@ export default function AssistantPage() {
           </div>
 
           {conversations.length > 0 && (
-            <div className="w-full max-w-xl">
+            <div className={`w-full max-w-xl ${WINDOW_SIDEBAR_REPLACES}`}>
               {Object.entries(grouped).map(([group, convs]) => {
                 const isExpanded = !!expandedGroups[group];
                 const visibleConvs = isExpanded ? convs : convs.slice(0, MAX_VISIBLE_HISTORY_PER_GROUP);
@@ -888,7 +895,29 @@ export default function AssistantPage() {
     />
   );
 
+  // In a desktop window, chat history stays one click away in a sidebar
+  const sidebar = (
+    <SourceList label="Chats">
+      <SourceListSection>
+        <SourceListItem icon={Add01Icon} label="New Chat" active={!showingChat} onSelect={() => void handleNew()} />
+      </SourceListSection>
+      {Object.entries(grouped).map(([group, convs]) => (
+        <SourceListSection key={group} title={group}>
+          {convs.map((conv) => (
+            <SourceListItem
+              key={conv.id}
+              label={conv.title}
+              active={showingChat && activeId === conv.id}
+              onSelect={() => { setActiveId(conv.id); setDismissed(false); }}
+            />
+          ))}
+        </SourceListSection>
+      ))}
+    </SourceList>
+  );
+
   return (
+    <WindowSidebarLayout sidebar={sidebar}>
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden overscroll-none">
       <ConfirmDialog />
       <VoiceMode
@@ -944,5 +973,6 @@ export default function AssistantPage() {
         </div>
       )}
     </div>
+    </WindowSidebarLayout>
   );
 }

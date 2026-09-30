@@ -552,7 +552,7 @@ export const DesktopWindow = memo(function DesktopWindow({
       inert={disabled}
       data-active={active || undefined}
       className={cn(
-        "tm-window absolute flex min-h-0 flex-col overflow-hidden bg-card",
+        "tm-window absolute flex min-h-0 flex-col overflow-hidden",
         "transition-[border-color,opacity,box-shadow] duration-150 ease-out",
         maximized ? "rounded-t-none rounded-b-2xl border-x-0 border-t-0 border-b" : "rounded-2xl border",
         disabled && "pointer-events-none",
