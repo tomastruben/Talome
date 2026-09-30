@@ -44,7 +44,7 @@ describe("scheduled backups", () => {
     expect(remaining).toHaveLength(2);
     const first = results[0];
     if (first.success) expect(existsSync(first.archivePath)).toBe(false);
-    expect(vi.mocked(writeNotification)).toHaveBeenCalledWith("info", "Backup completed", expect.stringContaining("sched"));
+    expect(vi.mocked(writeNotification)).toHaveBeenCalledWith("info", "Backup completed", expect.stringContaining("sched"), "sched", { dedupe: false });
   });
 });
 

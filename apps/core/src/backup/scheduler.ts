@@ -118,22 +118,26 @@ export async function runScheduledBackup(
     log.info(`Scheduled backup of ${appId} waits up to ${Math.round(waitMs / 60_000)} min for another operation: ${result.error}`);
     if (await waitForAppOperation(appId, { timeoutMs: waitMs })) result = await attempt();
   }
+  // Each run's outcome is its own event: the title is the same for every app
+  // and run, so title de-duplication would drop another app's failure (two
+  // schedules at 03:00) — see writeNotification's outcome dedupe.
+  const outcome = { dedupe: false } as const;
   if (!result.success && result.conflict) {
     // Skipped, not failed: the stale-backup check alerts if it keeps happening.
-    writeNotification("warning", "Backup skipped", `${appId}: ${result.error}`);
+    writeNotification("warning", "Backup skipped", `${appId}: ${result.error}`, appId, outcome);
     log.warn(`Scheduled backup of ${appId} skipped: ${result.error}`);
     return result;
   }
   if (result.success) {
     const sizeMb = Math.round((result.sizeBytes / (1024 * 1024)) * 10) / 10;
-    writeNotification("info", "Backup completed", `${appId} backed up successfully (${sizeMb} MB, ${result.method})`);
+    writeNotification("info", "Backup completed", `${appId} backed up successfully (${sizeMb} MB, ${result.method})`, appId, outcome);
     try {
       await applyScheduleRetention(schedule, appId);
     } catch (err) {
       log.error(`retention failed for ${appId}`, err);
     }
   } else {
-    writeNotification("warning", "Backup failed", `${appId}: ${result.error}`);
+    writeNotification("warning", "Backup failed", `${appId}: ${result.error}`, appId, outcome);
     log.error(`Scheduled backup failed for ${appId}`, result.error);
   }
   return result;

@@ -355,7 +355,8 @@ async function executeScheduledBackup(appId: string, schedule: ScheduleRow) {
     // Notifications for success/failure are written by runScheduledBackup.
     await runScheduledBackup(schedule, appId);
   } catch (err) {
-    writeNotification("warning", "Backup failed", `${appId}: ${err instanceof Error ? err.message : String(err)}`);
+    // An outcome: never dropped by title dedupe against another app's failure
+    writeNotification("warning", "Backup failed", `${appId}: ${err instanceof Error ? err.message : String(err)}`, appId, { dedupe: false });
     log.error(`Scheduled backup error for ${appId}`, err);
   }
 }
