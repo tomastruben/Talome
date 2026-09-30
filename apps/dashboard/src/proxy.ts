@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const CORE_BACKEND = process.env.CORE_BACKEND_URL || "http://127.0.0.1:4000";
-const PUBLIC_PATHS = ["/login", "/api/", "/_next", "/favicon.ico", "/manifest.json"];
+// /wallpapers/ is public so the sign-in screen can show the desktop wallpaper
+const PUBLIC_PATHS = ["/login", "/api/", "/_next", "/favicon.ico", "/manifest.json", "/wallpapers/"];
 
 /** Decode a JWT payload without verification (just base64url → JSON). */
 function decodeJwtPayload(token: string): { exp?: number } | null {

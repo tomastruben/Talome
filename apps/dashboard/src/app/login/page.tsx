@@ -1,10 +1,13 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DEFAULT_SIGN_IN_WALLPAPER, readStoredWallpaper } from "@/lib/wallpaper";
+
+const MOTION = { duration: 0.18, ease: "easeOut" } as const;
 
 export default function LoginPage() {
   return (
@@ -113,18 +116,26 @@ function LoginContent() {
     router.refresh();
   }
 
-  const inputClass = "h-10 bg-muted/30 border-border/50 text-sm placeholder:text-muted-foreground";
+  const inputClass = "h-10 bg-background/40 border-border/60 text-sm placeholder:text-muted-foreground";
+  const setupStep = isFirstTime && view === "login" ? 1 : view === "setup-recovery-code" ? 2 : null;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-6">
+    <div className="relative min-h-screen flex flex-col items-center justify-center bg-background p-6 overflow-hidden">
+      <SignInBackdrop />
+
       <AnimatePresence>
         {ready && (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
-            className="w-full max-w-xs"
+            transition={MOTION}
+            className="relative z-10 w-full max-w-sm flex flex-col items-center"
           >
+            <LockClock />
+
+            <div className="w-full rounded-2xl border border-white/10 bg-background/60 backdrop-blur-xl p-6">
+            {setupStep && <SetupSteps step={setupStep} />}
+
             {/* Brand mark */}
             <div className="flex flex-col items-center mb-8">
               <div className="size-10 rounded-full bg-foreground/[0.06] flex items-center justify-center mb-4">
@@ -244,14 +255,99 @@ function LoginContent() {
               </div>
             )}
 
+            </div>
+
             {/* Footer */}
-            <p className="text-center text-sm text-muted-foreground mt-8">
+            <p className="text-center text-sm text-foreground/70 mt-6">
               Your data stays on your server
             </p>
           </motion.div>
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/**
+ * The desktop wallpaper chosen on this device fills the screen behind sign-in,
+ * under a flat scrim so the form stays legible on any image.
+ */
+function subscribeToWallpaper(onChange: () => void) {
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+}
+
+function SignInBackdrop() {
+  const stored = useSyncExternalStore(subscribeToWallpaper, () => readStoredWallpaper() ?? DEFAULT_SIGN_IN_WALLPAPER, () => null);
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const reduceMotion = useReducedMotion();
+
+  if (!stored) return null;
+  const url = failed ? DEFAULT_SIGN_IN_WALLPAPER : stored;
+  return (
+    <div className="absolute inset-0" aria-hidden>
+      {/* eslint-disable-next-line @next/next/no-img-element -- local, data: or remote wallpaper URLs */}
+      <img
+        src={url}
+        alt=""
+        onLoad={() => setLoaded(true)}
+        onError={() => { if (url !== DEFAULT_SIGN_IN_WALLPAPER) setFailed(true); }}
+        className="absolute inset-0 size-full object-cover"
+        style={{
+          opacity: loaded ? 1 : 0,
+          transform: loaded || reduceMotion ? "scale(1)" : "scale(1.03)",
+          transition: reduceMotion ? "none" : "opacity 180ms ease-out, transform 180ms ease-out",
+        }}
+      />
+      <div className="absolute inset-0 bg-background/45" />
+    </div>
+  );
+}
+
+/** Time and date above the sign-in card, like a lock screen. */
+function subscribeToClock(onTick: () => void) {
+  const timer = setInterval(onTick, 10_000);
+  return () => clearInterval(timer);
+}
+
+/** Current time, rounded to the minute so the snapshot is stable between ticks. */
+function clockSnapshot(): number {
+  return Math.floor(Date.now() / 60_000) * 60_000;
+}
+
+function LockClock() {
+  const minute = useSyncExternalStore(subscribeToClock, clockSnapshot, () => null);
+
+  if (minute === null) return <div className="h-16 mb-6" />;
+  const now = new Date(minute);
+  return (
+    <div className="mb-6 text-center select-none">
+      <p className="text-2xl font-medium tabular-nums text-foreground">
+        {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+      </p>
+      <p className="text-sm text-foreground/70 mt-1">
+        {now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
+      </p>
+    </div>
+  );
+}
+
+/** First run: where the person is in setting up their server. */
+function SetupSteps({ step }: { step: 1 | 2 }) {
+  const steps = ["Create your account", "Save your recovery code"];
+  return (
+    <ol className="flex items-center justify-center gap-2 mb-6" aria-label={`Step ${step} of ${steps.length}`}>
+      {steps.map((label, i) => (
+        <li key={label} className="flex items-center gap-2">
+          <span
+            className={`h-1.5 rounded-full transition-all duration-150 ease-out ${i + 1 === step ? "w-6 bg-foreground" : i + 1 < step ? "w-1.5 bg-foreground/60" : "w-1.5 bg-foreground/20"}`}
+            title={label}
+          />
+        </li>
+      ))}
+      <span className="sr-only">{steps[step - 1]}</span>
+    </ol>
   );
 }
 

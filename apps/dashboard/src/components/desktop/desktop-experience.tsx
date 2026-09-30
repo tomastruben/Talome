@@ -145,6 +145,7 @@ import {
   type AudioPlayerBook,
   type AudioPlayerState,
 } from "@/atoms/audio-player";
+import { DESKTOP_WALLPAPER_STORAGE_KEY } from "@/lib/wallpaper";
 
 interface DesktopAppDefinition {
   id: string;
@@ -181,7 +182,6 @@ interface DesktopAudiobookPlayback {
 type DesktopControlCenterView = "main" | "dashboard" | "audiobooks" | "downloads";
 type DesktopControlCenterNavigationDirection = "push" | "pop";
 
-const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
 const DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY = "talome-desktop-wallpaper-attribution-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
 const DESKTOP_WINDOW_MOTION_SECONDS = 0.19;
