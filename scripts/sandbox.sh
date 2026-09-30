@@ -17,6 +17,8 @@ set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SANDBOX_HOME="${TALOME_SANDBOX_HOME:-${TMPDIR:-/tmp}/talome-sandbox}"
+# The docker CLI finds its compose plugin through DOCKER_CONFIG, not HOME.
+REAL_HOME="$HOME"
 CORE_PORT="${TALOME_SANDBOX_CORE_PORT:-4210}"
 DASHBOARD_PORT="${TALOME_SANDBOX_DASHBOARD_PORT:-3210}"
 
@@ -39,6 +41,8 @@ case "$1" in
       DOCKER_HOST="${TALOME_SANDBOX_DOCKER:-unix://$SANDBOX_HOME/no-docker.sock}" \
       TALOME_SELF_BACKUP_DISABLED=1 \
       DASHBOARD_ORIGIN="http://localhost:$DASHBOARD_PORT" \
+      DOCKER_CONFIG="${DOCKER_CONFIG:-$REAL_HOME/.docker}" \
+      TSX=1 \
       pnpm exec tsx src/index.ts
     ;;
   dashboard)
