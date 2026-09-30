@@ -454,8 +454,8 @@ export async function prepareWorkspace(
     mcpServers: {
       talome: {
         type: "stdio",
-        command: join(talomeRoot, "apps/core/node_modules/.bin/tsx"),
-        args: [join(talomeRoot, "apps/core/src/mcp-stdio.ts")],
+        command: process.execPath,
+        args: [join(talomeRoot, "apps/core/dist/mcp-stdio.js")],
         env: {
           DATABASE_PATH: join(talomeRoot, "apps/core/data/talome.db"),
           DOCKER_SOCKET: dockerSocket,
