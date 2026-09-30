@@ -60,7 +60,7 @@ const AI_ITEMS: SettingsLink[] = [
 ];
 
 const INFRASTRUCTURE_ITEMS: SettingsLink[] = [
-  { slug: "security", icon: Shield01Icon, title: "Security", description: "Control AI access level and shell permissions", adminOnly: true },
+  { slug: "security", icon: Shield01Icon, title: "Security", description: "AI access level, approvals and shell permissions", adminOnly: true },
   { slug: "notifications", icon: AlertCircleIcon, title: "Notifications", description: "Alert thresholds and notification channels" },
   { slug: "networking", icon: Globe02Icon, title: "Networking", description: "Reverse proxy, remote access, Docker networks", adminOnly: true },
   { slug: "backups", icon: ArchiveIcon, title: "Backups", description: "Scheduled backups and restore history" },
@@ -71,11 +71,11 @@ const INFRASTRUCTURE_ITEMS: SettingsLink[] = [
 
 const CONNECTIONS_ITEMS: SettingsLink[] = [
   { slug: "connections", icon: PlayIcon, title: "Media Services", description: "Sonarr, Radarr, Prowlarr, qBittorrent, Overseerr" },
-  { slug: "integrations", icon: ChatBotIcon, title: "Chat Bots", description: "Telegram and Discord" },
+  { slug: "integrations", icon: ChatBotIcon, title: "Chat Bots", description: "Telegram and Discord", adminOnly: true },
 ];
 
 const DEVELOPER_ITEMS: SettingsLink[] = [
-  { slug: "mcp", icon: Plug02Icon, title: "MCP Server", description: "Connect Cursor, Claude Desktop, or Claude Code" },
+  { slug: "mcp", icon: Plug02Icon, title: "MCP Server", description: "Connect Cursor, Claude Desktop, or Claude Code", adminOnly: true },
   { slug: "app-sources", icon: PackageAdd01Icon, title: "App Sources", description: "Manage app store sources" },
   { slug: "community-review", icon: CheckmarkBadge01Icon, title: "Community Review", description: "Review and approve submitted apps", adminOnly: true },
   { slug: "stacks", icon: Layers01Icon, title: "Export & Import", description: "Share settings and app stack codes" },

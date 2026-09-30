@@ -46,9 +46,9 @@ const SECTIONS: Record<string, SectionDef> = {
   "ai-prompt":        { component: AiPromptSection,       title: "System Prompt" },
   "ai-memory":        { component: AiMemorySection,       title: "Memory" },
   "connections":      { component: ConnectionsSection,    title: "Media Services" },
-  "integrations":     { component: IntegrationsSection,   title: "Chat Bots" },
+  "integrations":     { component: IntegrationsSection,   title: "Chat Bots", adminOnly: true },
   "notifications":    { component: NotificationsSection,   title: "Notifications" },
-  "mcp":              { component: McpSection,            title: "MCP Server" },
+  "mcp":              { component: McpSection,            title: "MCP Server", adminOnly: true },
   "app-sources":      { component: AppSourcesSection,     title: "App Sources" },
   "community-review": { component: CommunityReviewSection, title: "Community Review", adminOnly: true },
   "stacks":           { component: ExportImportSection,      title: "Export & Import" },
@@ -66,18 +66,21 @@ export default function SettingsSectionPage() {
   const params = useParams();
   const router = useRouter();
   const setPageTitle = useSetAtom(pageTitleAtom);
-  const { isAdmin } = useUser();
+  const { isAdmin, isLoading: userLoading } = useUser();
   const slug = params.section as string;
   const section = SECTIONS[slug];
 
   useEffect(() => {
+    // Wait for the signed-in user before deciding — a hard load of an admin-only
+    // section would otherwise bounce admins back to the index.
+    if (section?.adminOnly && userLoading) return;
     if (!section || (section.adminOnly && !isAdmin)) {
       router.replace("/dashboard/settings");
       return;
     }
     setPageTitle(section.title);
     return () => setPageTitle(null);
-  }, [section, setPageTitle, router, isAdmin]);
+  }, [section, setPageTitle, router, isAdmin, userLoading]);
 
   if (!section) return null;
   if (section.adminOnly && !isAdmin) return null;

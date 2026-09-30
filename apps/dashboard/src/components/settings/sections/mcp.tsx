@@ -10,6 +10,30 @@ import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
 import { SettingsGroup, SettingsRow, relativeTime, copyToClipboard } from "@/components/settings/settings-primitives";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TokenAccessEditor, describeScope, DEFAULT_SCOPE, type McpTokenScope } from "@/components/settings/mcp-token-access";
+
+interface McpToken {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  scope: McpTokenScope;
+  expiresAt: string | null;
+}
+
+const EXPIRY_OPTIONS = [
+  { value: "never", label: "Never expires" },
+  { value: "7", label: "Expires in 7 days" },
+  { value: "30", label: "Expires in 30 days" },
+  { value: "90", label: "Expires in 90 days" },
+];
+
+function describeExpiry(expiresAt: string | null): string {
+  if (!expiresAt) return "";
+  const days = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86_400_000);
+  return days <= 0 ? " · Expired" : ` · Expires in ${days}d`;
+}
 
 export function McpSection() {
   const [mcpTokenName, setMcpTokenName] = useState("");
@@ -18,7 +42,12 @@ export function McpSection() {
   const [mcpTokenCopied, setMcpTokenCopied] = useState(false);
   const [mcpUrlCopied, setMcpUrlCopied] = useState(false);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
-  const { data: mcpTokens, mutate: mutateMcpTokens } = useSWR<{ id: string; name: string; createdAt: string; lastUsedAt: string | null }[]>(
+  const [newScope, setNewScope] = useState<McpTokenScope>(DEFAULT_SCOPE);
+  const [newExpiry, setNewExpiry] = useState("never");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editScope, setEditScope] = useState<McpTokenScope>(DEFAULT_SCOPE);
+  const [savingScope, setSavingScope] = useState(false);
+  const { data: mcpTokens, mutate: mutateMcpTokens } = useSWR<McpToken[]>(
     `${CORE_URL}/api/integrations/mcp/tokens`,
     (url: string) => fetch(url).then(r => r.json()),
     { revalidateOnFocus: false },
@@ -32,7 +61,7 @@ export function McpSection() {
   return (
     <div className="grid gap-6">
       <p className="text-sm text-muted-foreground leading-relaxed">
-        Talome exposes an MCP server so external AI clients can use all of Talome's tools — Docker management, media, automations, and more. Generate a token, then add the connection to your client.
+        Talome exposes an MCP server so external AI clients can use Talome&apos;s tools — Docker management, media, automations, and more. Each token has its own access: new tokens are read-only until you widen them, and destructive actions wait for your approval under Security.
       </p>
 
       {/* Server URL + token generation */}
@@ -98,12 +127,18 @@ export function McpSection() {
                   const res = await fetch(`${CORE_URL}/api/integrations/mcp/tokens`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: mcpTokenName.trim() }),
+                    body: JSON.stringify({
+                      name: mcpTokenName.trim(),
+                      scope: newScope,
+                      expiresInDays: newExpiry === "never" ? null : Number(newExpiry),
+                    }),
                   });
                   const data = await res.json();
                   if (data.ok) {
                     setMcpNewToken({ id: data.id, name: data.name, token: data.token });
                     setMcpTokenName("");
+                    setNewScope(DEFAULT_SCOPE);
+                    setNewExpiry("never");
                     mutateMcpTokens();
                   } else {
                     toast.error(data.error ?? "Failed to generate token");
@@ -118,6 +153,21 @@ export function McpSection() {
               {mcpGenerating ? "Generating..." : "Generate"}
             </Button>
           </div>
+        </SettingsRow>
+
+        {/* Access for the next token — read-only unless widened */}
+        <SettingsRow className="flex-col items-stretch gap-4">
+          <TokenAccessEditor value={newScope} onChange={setNewScope} />
+          <Select value={newExpiry} onValueChange={setNewExpiry}>
+            <SelectTrigger size="sm" className="w-full sm:w-64">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {EXPIRY_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </SettingsRow>
       </SettingsGroup>
 
@@ -163,14 +213,29 @@ export function McpSection() {
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Active Tokens</p>
           </SettingsRow>
           {mcpTokens.map((token) => (
-            <SettingsRow key={token.id}>
+            <SettingsRow key={token.id} className="flex-wrap gap-y-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{token.name}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {describeScope(token.scope)}{describeExpiry(token.expiresAt)}
+                </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Created {relativeTime(token.createdAt)}
                   {token.lastUsedAt && ` · Last used ${relativeTime(token.lastUsedAt)}`}
                 </p>
               </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs shrink-0"
+                onClick={() => {
+                  if (editingId === token.id) { setEditingId(null); return; }
+                  setEditingId(token.id);
+                  setEditScope(token.scope);
+                }}
+              >
+                {editingId === token.id ? "Cancel" : "Edit access"}
+              </Button>
               <Button
                 size="sm"
                 variant="ghost"
@@ -183,6 +248,42 @@ export function McpSection() {
               >
                 Revoke
               </Button>
+              {editingId === token.id && (
+                <div className="basis-full grid gap-4 pt-1">
+                  <TokenAccessEditor value={editScope} onChange={setEditScope} />
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs px-4"
+                      disabled={savingScope}
+                      onClick={async () => {
+                        setSavingScope(true);
+                        try {
+                          const res = await fetch(`${CORE_URL}/api/integrations/mcp/tokens/${token.id}`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ scope: editScope }),
+                          });
+                          const data = await res.json();
+                          if (data.ok) {
+                            toast.success("Token access updated");
+                            setEditingId(null);
+                            mutateMcpTokens();
+                          } else {
+                            toast.error(typeof data.error === "string" ? data.error : "Failed to update token");
+                          }
+                        } catch {
+                          toast.error("Failed to update token");
+                        } finally {
+                          setSavingScope(false);
+                        }
+                      }}
+                    >
+                      {savingScope ? "Saving..." : "Save access"}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </SettingsRow>
           ))}
         </SettingsGroup>

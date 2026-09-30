@@ -10,6 +10,7 @@ import {
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import { SettingsGroup, SettingsRow, SaveRow } from "@/components/settings/settings-primitives";
+import { PendingApprovals } from "@/components/settings/pending-approvals";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CORE_URL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -29,7 +30,7 @@ const MODES: { value: SecurityMode; label: string; description: string; icon: Ic
     value: "cautious",
     label: "Cautious",
     description:
-      "AI can read freely. Destructive actions require confirmation. Shell commands restricted to safe defaults.",
+      "AI can read and make changes. Destructive actions wait for your approval — in chat, or below for agents, chat apps and automations. Shell commands restricted to safe defaults.",
     icon: SecurityCheckIcon,
   },
   {
@@ -99,6 +100,8 @@ export function SecuritySection() {
       <p className="text-sm text-muted-foreground leading-relaxed">
         Control what the AI assistant is allowed to do on your server.
       </p>
+
+      <PendingApprovals />
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
