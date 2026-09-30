@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
 
 // Per-file SQLite database — must be set before db/index.ts is imported.
 vi.hoisted(() => {
@@ -7,6 +7,8 @@ vi.hoisted(() => {
 });
 
 const m = vi.hoisted(() => ({
+  // Never the real ~/.talome/app-data: uninstall with keepData=false erases here.
+  appDataDir: `${(process.env.TMPDIR ?? "/tmp").replace(/\/$/, "")}/talome-ops-lifecycle-app-data-${process.pid}-${Date.now()}`,
   run: vi.fn(),
   discoverContainers: vi.fn(async () => ["c0ffee000001"]),
   pinImageDigest: vi.fn(),
@@ -24,6 +26,7 @@ vi.mock("../stores/compose-exec.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../stores/compose-exec.js")>();
   return {
     ...actual,
+    APP_DATA_DIR: m.appDataDir,
     run: m.run,
     buildEnv: (_appId: string, env: Record<string, string> = {}) => ({ ...env }),
     writeAppDotEnv: vi.fn(),
@@ -72,13 +75,13 @@ vi.mock("../proxy/caddy.js", () => ({ autoRegisterProxyRoute: vi.fn(), removePro
 vi.mock("../app-registry/auto-configure.js", () => ({ autoConfigureApp: vi.fn() }));
 vi.mock("../app-registry/index.js", () => ({ getAppCapabilities: vi.fn(() => null) }));
 
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { eq, desc, like } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
-import { updateApp, restartApp, startApp, rollbackUpdate, bulkAction, syncOverrideImageRefs } from "../stores/lifecycle.js";
+import { updateApp, restartApp, startApp, rollbackUpdate, bulkAction, syncOverrideImageRefs, uninstallApp } from "../stores/lifecycle.js";
 import { decryptSetting, isEncrypted } from "../utils/crypto.js";
 import { deleteUserApp } from "../stores/creator.js";
 import {
@@ -131,6 +134,10 @@ beforeAll(() => {
   runMigrations();
   composeDir = mkdtempSync(join(tmpdir(), "talome-ops-lifecycle-"));
   composePath = join(composeDir, "docker-compose.yml");
+});
+
+afterAll(() => {
+  rmSync(m.appDataDir, { recursive: true, force: true });
 });
 
 beforeEach(() => {
@@ -573,6 +580,43 @@ describe("lifecycle entry points use the per-app operation lock", () => {
 
     release();
     await held;
+  });
+
+  it("uninstall with keepData=false erases the data folder inside the operation, after compose down", async () => {
+    const dataDir = join(m.appDataDir, APP_ID);
+    mkdirSync(join(dataDir, "config"), { recursive: true });
+    writeFileSync(join(dataDir, "config", "config.xml"), "<x/>");
+
+    const result = await uninstallApp(APP_ID, { keepData: false });
+    expect(result.success).toBe(true);
+    expect(result.dataErase).toMatchObject({ removed: true, path: dataDir });
+    expect(existsSync(dataDir)).toBe(false);
+    expect(commands().some((cmd) => cmd.includes(" down"))).toBe(true);
+    const steps = listOperationSteps(result.operationId!).map((s) => s.step);
+    expect(steps.indexOf("erase_data")).toBeGreaterThan(steps.indexOf("remove_containers"));
+  });
+
+  it("uninstall keeps the data folder when compose down failed (containers may still use it)", async () => {
+    const dataDir = join(m.appDataDir, APP_ID);
+    mkdirSync(dataDir, { recursive: true });
+    m.run.mockImplementation(async (cmd: string) => {
+      if (cmd.includes(" down")) throw new Error("Cannot connect to the Docker daemon");
+      return { stdout: "", stderr: "" };
+    });
+
+    const result = await uninstallApp(APP_ID, { keepData: false });
+    expect(result.success).toBe(true);
+    expect(result.dataErase).toMatchObject({ removed: false, reason: "containers_running" });
+    expect(existsSync(dataDir)).toBe(true);
+  });
+
+  it("uninstall keeps the data folder by default", async () => {
+    const dataDir = join(m.appDataDir, APP_ID);
+    mkdirSync(dataDir, { recursive: true });
+    const result = await uninstallApp(APP_ID);
+    expect(result.success).toBe(true);
+    expect(result.dataErase).toBeUndefined();
+    expect(existsSync(dataDir)).toBe(true);
   });
 
   it("deleteUserApp keeps the catalog entry when uninstall is refused by a running operation", async () => {

@@ -1246,7 +1246,7 @@ export function CinemaBrowserOverlay() {
                   onChange={(e) => { setSearchQuery(e.target.value); setFocusedIndex(0); }}
                   onFocus={() => { setFocusZone("tabs"); setTabFocusIndex(availableTabs.length); }}
                   onBlur={() => requestAnimationFrame(() => containerRef.current?.focus())}
-                  placeholder="Search..."
+                  placeholder="Search…"
                   className="bg-transparent border-none outline-none text-base text-white placeholder:text-white/50 w-[180px]"
                 />
               </div>

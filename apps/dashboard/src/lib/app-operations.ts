@@ -551,6 +551,8 @@ export interface UpdateResponseContext {
   outcome?: UpdateOutcome | null;
   /** Version the update targeted, for the success title. */
   toVersion?: string | null;
+  /** The caller shows the running operation's progress on screen (app detail). */
+  progressShown?: boolean;
 }
 
 /** Toast copy for the response of POST /api/apps/:storeId/:appId/update. */
@@ -567,7 +569,9 @@ export function describeUpdateResponse(
 
   const conflict = parseOperationConflict(status, body);
   if (conflict) {
-    return { kind: "conflict", title: `${appName} is busy`, description: conflict.message, operationId: conflict.operationId };
+    // Humane copy from the running operation, never the engine's message.
+    const copy = describeOperationConflict(appName, runningFromConflictBody(body), { progressShown: context.progressShown });
+    return { kind: "conflict", title: copy.title, description: copy.description, operationId: conflict.operationId };
   }
   if (status >= 200 && status < 300) {
     if (outcome === "no_change") {
@@ -593,4 +597,206 @@ export function describeUpdateResponse(
     };
   }
   return { kind: "error", title: `Failed to update ${appName}`, description: error, operationId };
+}
+
+// ── Conflicts, in people's words ─────────────────────────────────────────────
+
+/** "Jellyfin is already {…}" for each operation kind. */
+const ALREADY_LABELS: Record<OperationKind, string> = {
+  install: "installing",
+  update: "updating",
+  uninstall: "being uninstalled",
+  start: "starting",
+  stop: "stopping",
+  restart: "restarting",
+  rollback: "rolling back",
+  backup: "being backed up",
+  restore: "being restored",
+  configure: "applying changes",
+};
+
+/** What a 409 body or the adopted journal row says about the running operation. */
+export interface RunningOperationSummary {
+  kind: OperationKind;
+  actor: string;
+  startedAt: string;
+}
+
+/** The running operation described by a 409 body (`running`), if any. */
+export function runningFromConflictBody(body: unknown): RunningOperationSummary | null {
+  if (!body || typeof body !== "object") return null;
+  const running = (body as { running?: unknown }).running;
+  if (!running || typeof running !== "object") return null;
+  const r = running as Record<string, unknown>;
+  if (!isOperationKind(r.kind) || typeof r.startedAt !== "string") return null;
+  return { kind: r.kind, actor: typeof r.actor === "string" ? r.actor : "system", startedAt: r.startedAt };
+}
+
+function relativeSince(iso: string, now: number): string {
+  const time = new Date(iso).getTime();
+  if (Number.isNaN(time)) return "a moment ago";
+  const diff = Math.max(0, now - time);
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} hr ago`;
+  return `${Math.floor(diff / 86_400_000)}d ago`;
+}
+
+export interface ConflictCopyOptions {
+  /**
+   * The screen shows the running operation's progress (the app detail page
+   * adopts it into the primary slot). Only then does the copy say so.
+   */
+  progressShown?: boolean;
+  now?: number;
+}
+
+/**
+ * Toast copy for "another operation owns this app" (spec §5.5): what is
+ * happening, who started it and when, and what to do. Never the engine's
+ * message, operation id or ISO timestamp. It only promises visible progress
+ * when the caller shows it (`progressShown`).
+ */
+export function describeOperationConflict(
+  appName: string,
+  running: RunningOperationSummary | null,
+  options: ConflictCopyOptions | number = {},
+): { title: string; description: string } {
+  const { progressShown = false, now = Date.now() } = typeof options === "number" ? { now: options } : options;
+  if (!running) {
+    return {
+      title: `${appName} is busy`,
+      description: "Another change to this app is still running. Try again when it finishes.",
+    };
+  }
+  const next = progressShown ? "Its progress is shown here; try again when it finishes." : "Try again when it finishes.";
+  return {
+    title: `${appName} is already ${ALREADY_LABELS[running.kind]}`,
+    description: `Started ${relativeSince(running.startedAt, now)} by ${operationActorLabel(running.actor)}. ${next}`,
+  };
+}
+
+// ── Settled failures stay in the primary slot ─────────────────────────────────
+
+const FAILED_STATUSES = new Set<OperationStatus>(["failed", "interrupted", "rolled_back"]);
+
+export function isFailedOperationStatus(status: OperationStatus | null | undefined): boolean {
+  return !!status && FAILED_STATUSES.has(status);
+}
+
+/** Lifecycle kinds the page can simply run again. */
+export const RETRYABLE_KINDS: ReadonlySet<OperationKind> = new Set(["install", "update", "uninstall", "start", "stop", "restart"]);
+
+/**
+ * Kinds whose failure belongs in the app's primary slot: the lifecycle actions
+ * the app page drives, plus a rollback. Backups, restores and configuration
+ * changes run in the background (often on a schedule) and are reported in
+ * Activity and Backups, never in place of Open or Start.
+ */
+export const PRIMARY_SLOT_KINDS: ReadonlySet<OperationKind> = new Set([...RETRYABLE_KINDS, "rollback"]);
+
+export interface SettledFailureOptions {
+  /** Kinds considered at all (default PRIMARY_SLOT_KINDS). */
+  kinds?: ReadonlySet<OperationKind>;
+  /** A failure that ended longer ago than this is history, not news. */
+  maxAgeMs?: number;
+  now?: number;
+}
+
+/**
+ * The failure to show in the app's primary slot: the newest lifecycle
+ * operation for the app (see PRIMARY_SLOT_KINDS), when it failed, was
+ * interrupted or was rolled back, the person has not dismissed it and it is
+ * not older than `maxAgeMs`. A later lifecycle operation (a retry, a start…)
+ * replaces it, so a failure never lingers after the app moved on.
+ */
+export function settledFailureFrom(
+  live: LiveOperation | null,
+  history: readonly OperationRecord[] | null | undefined,
+  dismissed: ReadonlySet<string> = new Set(),
+  options: SettledFailureOptions = {},
+): LiveOperation | null {
+  const kinds = options.kinds ?? PRIMARY_SLOT_KINDS;
+  let newest: LiveOperation | null = live && kinds.has(live.kind) ? live : null;
+  for (const rec of history ?? []) {
+    if (!kinds.has(rec.kind)) continue;
+    if (!newest || rec.startedAt > newest.startedAt) newest = operationFromRecord(rec);
+    else if (rec.id === newest.operationId && rec.updatedAt > newest.updatedAt) newest = operationFromRecord(rec);
+  }
+  if (!newest || !isFailedOperationStatus(newest.status)) return null;
+  if (dismissed.has(newest.operationId)) return null;
+  if (options.maxAgeMs !== undefined) {
+    const ended = new Date(newest.updatedAt || newest.startedAt).getTime();
+    const now = options.now ?? Date.now();
+    if (!Number.isNaN(ended) && now - ended > options.maxAgeMs) return null;
+  }
+  return newest;
+}
+
+const VERB_INFINITIVE: Record<OperationKind, string> = {
+  install: "install",
+  update: "update",
+  uninstall: "uninstall",
+  start: "start",
+  stop: "stop",
+  restart: "restart",
+  rollback: "roll back",
+  backup: "back up",
+  restore: "restore",
+  configure: "apply the changes to",
+};
+
+const VERB_GERUND: Record<OperationKind, string> = {
+  install: "installing",
+  update: "updating",
+  uninstall: "uninstalling",
+  start: "starting",
+  stop: "stopping",
+  restart: "restarting",
+  rollback: "rolling back",
+  backup: "backing up",
+  restore: "restoring",
+  configure: "applying the changes to",
+};
+
+/**
+ * Headline and detail for a failed operation in the primary slot.
+ * Rolled back is a warning, not a failure: the app runs its previous version.
+ */
+export function operationFailureCopy(
+  op: Pick<LiveOperation, "kind" | "status" | "step" | "error">,
+  appName: string,
+): { tone: "critical" | "warning"; title: string; detail: string } {
+  if (op.status === "rolled_back") {
+    return {
+      tone: "warning",
+      title: op.kind === "update" ? `Update rolled back · ${appName} runs its previous version` : `Rolled back · ${appName} runs its previous version`,
+      detail: op.error ?? "The new version failed its checks, so Talome restored the previous one.",
+    };
+  }
+  if (op.status === "interrupted") {
+    return {
+      tone: "critical",
+      title: `Couldn't finish ${VERB_GERUND[op.kind]} ${appName}`,
+      detail: op.error ?? "Talome restarted while this was running.",
+    };
+  }
+  return {
+    tone: "critical",
+    title: `Couldn't ${VERB_INFINITIVE[op.kind]} ${appName}`,
+    detail: op.error ?? `It stopped at "${operationStepLabel(op.step)}".`,
+  };
+}
+
+/** The message "Ask Talome" starts the Assistant with, for a failed operation. */
+export function operationFixPrompt(
+  op: Pick<LiveOperation, "kind" | "status" | "step" | "progress" | "error">,
+  appName: string,
+): string {
+  const what = op.status === "rolled_back"
+    ? `The ${OPERATION_KIND_LABELS[op.kind].toLowerCase()} of ${appName} was rolled back`
+    : `Talome couldn't ${VERB_INFINITIVE[op.kind]} ${appName}`;
+  const where = `It stopped at "${operationStepLabel(op.step)}" (${op.progress}%).`;
+  const why = op.error ? ` The error was: ${op.error}` : "";
+  return `${what}. ${where}${why}\n\nFind out why and fix it. Ask me before doing anything destructive.`;
 }

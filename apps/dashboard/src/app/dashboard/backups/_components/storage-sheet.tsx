@@ -14,7 +14,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { HugeiconsIcon, Add01Icon, CloudServerIcon, Delete02Icon, HardDriveIcon } from "@/components/icons";
-import { backupErrorMessage, parseCredentials, parseKeepCount, retentionSummary } from "../_lib/backup-status";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { backupErrorMessage, formatSchedule, parseCredentials, parseKeepCount, retentionSummary } from "../_lib/backup-status";
 import type { BackupDestination, BackupSchedule } from "../_lib/types";
 
 const fetcher = (url: string) =>
@@ -158,6 +159,7 @@ function AddDestinationForm({ onAdded }: { onAdded: () => void }) {
 
 function DestinationRow({ dest, onChanged }: { dest: BackupDestination; onChanged: () => void }) {
   const [busy, setBusy] = useState<"test" | "delete" | null>(null);
+  const confirm = useConfirm();
 
   async function test() {
     setBusy("test");
@@ -173,16 +175,25 @@ function DestinationRow({ dest, onChanged }: { dest: BackupDestination; onChange
   }
 
   async function remove() {
-    setBusy("delete");
-    try {
-      await send(`${CORE_URL}/api/backups/destinations/${dest.id}`, "DELETE");
-      toast.success(`${dest.name} removed`);
-      onChanged();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not remove destination");
-    } finally {
-      setBusy(null);
-    }
+    // The copies already there are not touched; schedules stop copying to it.
+    await confirm({
+      tier: "soft",
+      title: `Remove ${dest.name}?`,
+      consequence: "Schedules that copy backups there stop copying.",
+      recovery: "Backups already copied there stay where they are. Add it again any time.",
+      confirmLabel: `Remove ${dest.name}`,
+      busyLabel: `Removing ${dest.name}…`,
+      run: async () => {
+        setBusy("delete");
+        try {
+          await send(`${CORE_URL}/api/backups/destinations/${dest.id}`, "DELETE");
+          onChanged();
+        } finally {
+          setBusy(null);
+        }
+      },
+      receipt: `Removed ${dest.name}`,
+    });
   }
 
   return (
@@ -277,7 +288,11 @@ function ScheduleRow({
     <div className="grid gap-3">
       <div className="flex items-baseline justify-between gap-3 min-w-0">
         <span className="text-sm font-medium truncate">{appName}</span>
-        <span className="text-sm text-muted-foreground font-mono shrink-0">{schedule.cron}</span>
+        {formatSchedule(schedule.cron) ? (
+          <span className="text-sm text-muted-foreground shrink-0" title={schedule.cron}>{formatSchedule(schedule.cron)}</span>
+        ) : (
+          <span className="text-sm text-muted-foreground font-mono shrink-0">{schedule.cron}</span>
+        )}
       </div>
       <p className="text-sm text-muted-foreground">
         {retentionSummary(schedule)}

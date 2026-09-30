@@ -110,7 +110,7 @@ export function VerificationPanel({
     if (error && key) {
       return (
         <section className="grid gap-2">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Verification</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">Verification</h2>
           <p className="text-sm text-muted-foreground">Couldn&apos;t load verification results.</p>
         </section>
       );
@@ -147,7 +147,7 @@ export function VerificationPanel({
 
   return (
     <section className="grid gap-2">
-      <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Verification</h2>
+      <h2 className="text-sm font-medium text-muted-foreground">Verification</h2>
       <div className="rounded-xl border border-border divide-y divide-border">
         <div className="px-4 py-3 flex items-center gap-3">
           <div className="flex-1 min-w-0 grid gap-0.5">
@@ -160,7 +160,7 @@ export function VerificationPanel({
           </div>
           <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5 shrink-0" onClick={runVerification} disabled={running}>
             {running && <Spinner className="size-3.5" />}
-            {running ? "Verifying..." : "Verify now"}
+            {running ? "Verifying…" : "Verify now"}
           </Button>
         </div>
 

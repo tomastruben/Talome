@@ -155,7 +155,7 @@ export function ReleaseResultCard({
                   isSubmitted
                     ? "Sent to download client"
                     : isSubmitting
-                      ? "Submitting..."
+                      ? "Submitting…"
                       : "Download release"
                 }
               >
@@ -172,7 +172,7 @@ export function ReleaseResultCard({
               {isSubmitted
                 ? "Sent to download client"
                 : isSubmitting
-                  ? "Submitting..."
+                  ? "Submitting…"
                   : isRejected
                     ? "Download anyway"
                     : "Download"}

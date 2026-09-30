@@ -15,7 +15,7 @@ import {
   applyComposeEditToUpdateSnapshots,
 } from "../stores/lifecycle.js";
 import { installProgress, emitProgress, type InstallProgressEvent } from "../stores/install-emitter.js";
-import { listAppOperations, hasLiveOperation } from "../ops/operations.js";
+import { listAppOperations, hasLiveOperation, getOperation } from "../ops/operations.js";
 import { UmbrelInstallOptionsSchema } from "../stores/umbrel-v2.js";
 import { getInstallAccessWarnings, runWithUmbrelInstallOptions } from "../stores/umbrel-v2-install.js";
 import { volumeMountsError, volumeMountsNeedingApproval } from "../stores/host-mounts.js";
@@ -33,10 +33,19 @@ function actorFor(c: Context): string {
   return userId ? `user:${userId}` : "user";
 }
 
-/** 409 when another operation on the app is running, 400 otherwise. */
+/**
+ * 409 when another operation on the app is running, 400 otherwise. The 409
+ * carries the running operation's kind, actor, step and start so a client can
+ * say "Jellyfin is already updating (started 2 min ago by the assistant)"
+ * without printing ids or timestamps.
+ */
 function operationError(c: Context, result: { error?: string; conflict?: boolean; operationId?: string }) {
   if (result.conflict) {
-    return c.json({ error: result.error, operationId: result.operationId, conflict: true }, 409);
+    const op = result.operationId ? getOperation(result.operationId) : null;
+    const running = op
+      ? { kind: op.kind, actor: op.actor, step: op.step, progress: op.progress, startedAt: op.startedAt }
+      : undefined;
+    return c.json({ error: result.error, operationId: result.operationId, conflict: true, ...(running ? { running } : {}) }, 409);
   }
   return c.json({ error: result.error, ...(result.operationId ? { operationId: result.operationId } : {}) }, 400);
 }
@@ -132,12 +141,81 @@ function rowToInstalledApp(row: typeof schema.installedApps.$inferSelect): Insta
   };
 }
 
-function enrichWithInstallStatus(manifest: AppManifest): CatalogApp {
-  const installed = db
+type InstalledRow = typeof schema.installedApps.$inferSelect;
+
+/**
+ * Install state is keyed by (store, app): the same app id can be listed by
+ * several stores, and only the store it was installed from shows it as
+ * installed. A row whose store no longer lists the app (the store was removed
+ * or re-added under a new id) still counts for every store that has the app,
+ * so an installed app never looks uninstalled everywhere.
+ *
+ * `storesListingApp` is the set of store ids whose catalog lists this app id.
+ */
+export function installedRowFor<R extends { storeSourceId: string }>(
+  storeId: string,
+  row: R | undefined,
+  storesListingApp: ReadonlySet<string>,
+): R | undefined {
+  if (!row) return undefined;
+  if (row.storeSourceId === storeId) return row;
+  return storesListingApp.has(row.storeSourceId) ? undefined : row;
+}
+
+/** Store ids whose catalog lists each of these app ids. */
+function catalogStoresByApp(appIds: string[]): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  if (appIds.length === 0) return map;
+  const rows = db
+    .select({ appId: schema.appCatalog.appId, storeSourceId: schema.appCatalog.storeSourceId })
+    .from(schema.appCatalog)
+    .where(inArray(schema.appCatalog.appId, appIds))
+    .all();
+  for (const row of rows) {
+    const set = map.get(row.appId) ?? new Set<string>();
+    set.add(row.storeSourceId);
+    map.set(row.appId, set);
+  }
+  return map;
+}
+
+/** Installed rows by app id, plus which stores list each installed app. */
+function loadInstallState() {
+  const rows = db.select().from(schema.installedApps).all();
+  const byAppId = new Map<string, InstalledRow>();
+  for (const row of rows) byAppId.set(row.appId, row);
+  const stores = catalogStoresByApp([...byAppId.keys()]);
+  return {
+    rowFor(manifest: AppManifest): InstalledRow | undefined {
+      return installedRowFor(manifest.storeId, byAppId.get(manifest.id), stores.get(manifest.id) ?? new Set());
+    },
+  };
+}
+
+/** When the app id is installed from another store that also lists it: that store. */
+export interface InstalledElsewhere {
+  storeId: string;
+  storeName: string;
+}
+
+function enrichWithInstallStatus(manifest: AppManifest): CatalogApp & { installedFrom?: InstalledElsewhere } {
+  const row = db
     .select()
     .from(schema.installedApps)
     .where(eq(schema.installedApps.appId, manifest.id))
     .get();
+  const stores = catalogStoresByApp(row ? [manifest.id] : []).get(manifest.id) ?? new Set<string>();
+  const installed = installedRowFor(manifest.storeId, row, stores);
+
+  let installedFrom: InstalledElsewhere | undefined;
+  if (row && !installed) {
+    const store = db
+      .select({ name: schema.storeSources.name })
+      .from(schema.storeSources)
+      .where(eq(schema.storeSources.id, row.storeSourceId))
+      .get();
+    installedFrom = { storeId: row.storeSourceId, storeName: store?.name ?? row.storeSourceId };
+  }
 
   let nativeSurface: TalomeNativeSurfaceDescriptor | undefined;
   try {
@@ -161,26 +239,8 @@ function enrichWithInstallStatus(manifest: AppManifest): CatalogApp {
     ...manifest,
     nativeSurface,
     installed: installed ? rowToInstalledApp(installed) : null,
+    ...(installedFrom ? { installedFrom } : {}),
   };
-}
-
-/** Batch-enrich manifests with install status using a single DB query. */
-function batchEnrichWithInstallStatus(manifests: AppManifest[]): CatalogApp[] {
-  if (manifests.length === 0) return [];
-
-  const allInstalled = db.select().from(schema.installedApps).all();
-  const installedMap = new Map<string, typeof allInstalled[number]>();
-  for (const row of allInstalled) {
-    installedMap.set(row.appId, row);
-  }
-
-  return manifests.map((manifest) => {
-    const installed = installedMap.get(manifest.id);
-    return {
-      ...manifest,
-      installed: installed ? rowToInstalledApp(installed) : null,
-    };
-  });
 }
 
 apps.get("/", (c) => {
@@ -235,28 +295,17 @@ apps.get("/", (c) => {
     const rows = query.limit(limit).offset(offset).all() as (typeof schema.appCatalog.$inferSelect)[];
     const manifests = rows.map((row) => applyLocale(rowToManifest(row), row.localizedFields, locale));
 
-    // Batch-enrich with install status (single DB query instead of N+1)
-    const allInstalled = db.select().from(schema.installedApps).all();
-    const installedMap = new Map<string, typeof allInstalled[number]>();
-    for (const row of allInstalled) {
-      installedMap.set(row.appId, row);
-    }
-
-    function enrich(manifest: AppManifest): CatalogApp {
-      const inst = installedMap.get(manifest.id);
+    // Batch-enrich with install status, keyed by (store, app) — two queries, not N+1.
+    const installState = loadInstallState();
+    let results: CatalogApp[] = manifests.map((manifest) => {
+      const inst = installState.rowFor(manifest);
       return { ...manifest, installed: inst ? rowToInstalledApp(inst) : null };
-    }
-
-    let results: CatalogApp[];
+    });
 
     if (installed === "true") {
-      const installedIds = new Set(allInstalled.map((r) => r.appId));
-      results = manifests.filter((m) => installedIds.has(m.id)).map(enrich);
+      results = results.filter((app) => app.installed);
     } else if (installed === "false") {
-      const installedIds = new Set(allInstalled.map((r) => r.appId));
-      results = manifests.filter((m) => !installedIds.has(m.id)).map(enrich);
-    } else {
-      results = manifests.map(enrich);
+      results = results.filter((app) => !app.installed);
     }
 
     // Sort: Umbrel first (always has covers), then Talome, then CasaOS, then user-created.
@@ -397,6 +446,25 @@ apps.post("/:storeId/:appId/install", async (c) => {
     return c.json({ error: `Only an admin can install with this mount: ${risky[0]}.` }, 403);
   }
 
+  // Installed already, from another store that lists the same app id: say
+  // where, instead of the engine's bare "App is already installed".
+  const existing = db
+    .select({ storeSourceId: schema.installedApps.storeSourceId })
+    .from(schema.installedApps)
+    .where(eq(schema.installedApps.appId, appId))
+    .get();
+  if (existing && existing.storeSourceId !== storeId && !hasLiveOperation(appId)) {
+    const store = db
+      .select({ name: schema.storeSources.name })
+      .from(schema.storeSources)
+      .where(eq(schema.storeSources.id, existing.storeSourceId))
+      .get();
+    return c.json({
+      error: `This app is already installed from ${store?.name ?? "another store"}. Open it there, or uninstall it first.`,
+      installedFrom: { storeId: existing.storeSourceId, storeName: store?.name ?? existing.storeSourceId },
+    }, 409);
+  }
+
   // Don't reset the progress of an install that is already running (double-click, second tab).
   if (!hasLiveOperation(appId)) emitProgress(appId, { stage: "queued", message: "Preparing..." });
 
@@ -528,43 +596,32 @@ apps.patch("/:storeId/:appId", async (c) => {
     return c.json({ error: "Nothing to update" }, 400);
   }
 
-  const installedRow = db
+  // Renaming and port edits apply to an installed app only. Before install
+  // they used to insert an "unknown" installed row (the app then looked
+  // installed) and rewrite the store catalog's own compose file.
+  const row = db
     .select()
     .from(schema.installedApps)
     .where(eq(schema.installedApps.appId, appId))
     .get();
+  const installedRow = installedRowFor(storeId, row, catalogStoresByApp(row ? [appId] : []).get(appId) ?? new Set());
+  if (!installedRow) {
+    return c.json({ error: "Install this app before renaming it or changing its ports.", notInstalled: true }, 409);
+  }
 
   // ── Display name update ─────────────────────────────────────────────
   if (displayName !== undefined) {
-    if (installedRow) {
-      db.update(schema.installedApps)
-        .set({ displayName, updatedAt: new Date().toISOString() })
-        .where(eq(schema.installedApps.appId, appId))
-        .run();
-    } else {
-      // Create a minimal installed_apps row to store the display name
-      db.insert(schema.installedApps)
-        .values({
-          appId,
-          storeSourceId: storeId,
-          status: "unknown",
-          installedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          displayName,
-        })
-        .onConflictDoUpdate({
-          target: schema.installedApps.appId,
-          set: { displayName, updatedAt: new Date().toISOString() },
-        })
-        .run();
-    }
+    db.update(schema.installedApps)
+      .set({ displayName, updatedAt: new Date().toISOString() })
+      .where(eq(schema.installedApps.appId, appId))
+      .run();
   }
 
   // ── Port mapping update ─────────────────────────────────────────────
   let portMessage: string | undefined;
   if (ports && Object.keys(ports).length > 0) {
     // Try installed app compose path first, then fall back to catalog compose path
-    let composePath = installedRow?.overrideComposePath;
+    let composePath: string | null | undefined = installedRow.overrideComposePath;
     if (!composePath) {
       const catalogRow = db
         .select({ composePath: schema.appCatalog.composePath })
@@ -572,7 +629,7 @@ apps.patch("/:storeId/:appId", async (c) => {
         .where(
           and(
             eq(schema.appCatalog.appId, appId),
-            eq(schema.appCatalog.storeSourceId, storeId),
+            eq(schema.appCatalog.storeSourceId, installedRow.storeSourceId),
           ),
         )
         .get();
@@ -631,18 +688,41 @@ apps.patch("/:storeId/:appId", async (c) => {
   return c.json({ ok: true, portMessage });
 });
 
+/**
+ * Uninstall. App data is kept unless `?keepData=false`: then the app's own
+ * data folder (~/.talome/app-data/<appId>) and its containers' anonymous
+ * Docker volumes are erased after the containers are gone.
+ * `?removeAnonymousVolumes=true` alone erases just those volumes. Named
+ * volumes and host folders the app mounted (media, downloads, drives) are
+ * never touched either way.
+ */
 apps.delete("/:storeId/:appId", async (c) => {
   const { appId } = c.req.param();
-  // Anonymous volumes may hold the app's only data: deleted only on explicit opt-in.
+  // Anonymous volumes may hold the app's only data: deleted only on explicit
+  // opt-in (removeAnonymousVolumes=true, or keepData=false).
   const removeAnonymousVolumes = c.req.query("removeAnonymousVolumes") === "true";
-  const result = await uninstallApp(appId, { actor: actorFor(c), removeAnonymousVolumes });
+  const keepData = c.req.query("keepData") !== "false";
+  // The erase runs inside the uninstall operation (under its lock), only once
+  // the containers are confirmed gone.
+  const result = await uninstallApp(appId, { actor: actorFor(c), removeAnonymousVolumes, keepData });
   if (!result.success) return operationError(c, result);
-  return c.json({
+  const receipt = {
     ok: true,
     message: `${appId} uninstalled`,
     operationId: result.operationId,
     ...(result.warning ? { warning: result.warning } : {}),
     ...(result.anonymousVolumes ? { anonymousVolumes: result.anonymousVolumes } : {}),
+  };
+  if (keepData) return c.json({ ...receipt, dataKept: true });
+  const erased = result.dataErase ?? { removed: false as const, path: null, reason: "failed" as const, error: "the uninstall didn't report on it" };
+  const failed = !erased.removed && erased.reason !== "not_found";
+  return c.json({
+    ...receipt,
+    dataKept: failed,
+    dataRemoved: erased.removed,
+    ...(failed && !erased.removed
+      ? { dataError: `Uninstalled, but couldn't erase its data folder${erased.path ? ` ${erased.path}` : ""}${erased.error ? `: ${erased.error}` : ""}. Delete it in Files, or ask Talome.` }
+      : {}),
   });
 });
 

@@ -371,7 +371,7 @@ function AudiobookReleaseCard({
         )}
         onClick={onDownload}
         disabled={!release.downloadUrl || isDownloading || isDownloaded}
-        aria-label={isDownloaded ? "Sent to download client" : isDownloading ? "Downloading..." : "Download"}
+        aria-label={isDownloaded ? "Sent to download client" : isDownloading ? "Downloading…" : "Download"}
       >
         {isDownloading ? (
           <Spinner className="size-3" />
@@ -447,7 +447,7 @@ function DownloadRow({
             disabled={importing}
             className="text-xs text-primary hover:text-primary/80 transition-colors cursor-pointer disabled:opacity-50"
           >
-            {importing ? "Importing..." : "Add to library"}
+            {importing ? "Importing…" : "Add to library"}
           </button>
         )}
         {stateLabel && !isCompleted && (
@@ -1058,7 +1058,7 @@ export default function AudiobooksPage() {
             </div>
             <SearchField
               containerClassName="flex-1 w-full sm:w-auto"
-              placeholder="Search library..."
+              placeholder="Search library…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -1277,7 +1277,7 @@ export default function AudiobooksPage() {
                 <div className="flex gap-2">
                   <SearchField
                     containerClassName="flex-1"
-                    placeholder="Search audiobooks across indexers..."
+                    placeholder="Search audiobooks across indexers…"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />

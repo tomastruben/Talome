@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import dynamic from "next/dynamic";
 import { useSetAtom } from "jotai";
 import { AnimatePresence, motion } from "motion/react";
@@ -38,8 +38,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState, ErrorState } from "@/components/ui/empty-state";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { promiseToast } from "@/components/ui/sonner";
+import { toastWarning } from "@/lib/toast";
+import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
+import {
+  folderErrorCopy,
+  listDataIsFor,
+  isOverTextPreviewLimit,
+  shouldHandleQuickLookKey,
+  uniqueName,
+} from "@/components/files/file-helpers";
+import { fetchJson, fetchErrorStatus } from "@/lib/fetch-json";
 import {
   Table,
   TableBody,
@@ -132,7 +143,9 @@ interface ReadResponse {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+// Throws on a failed request, so an API error shows an error state (with
+// Retry) instead of a skeleton that never ends.
+const fetcher = <T,>(url: string) => fetchJson<T>(url);
 
 function ext(name: string): string {
   const i = name.lastIndexOf(".");
@@ -192,18 +205,18 @@ function isMediaPreviewable(name: string): boolean {
   return isAudioPreviewable(name) || isVideoPreviewable(name);
 }
 
+/** Type icons are muted: the glyph says the type, colour is not a signal here. */
 function fileIcon(item: FileItem): { icon: IconSvgElement; color: string } {
-  if (item.isDirectory) return { icon: Folder01Icon, color: "text-blue-400/80" };
+  if (item.isDirectory) return { icon: Folder01Icon, color: "text-muted-foreground" };
   const e = ext(item.name);
-  if (CODE_EXTS.has(e)) return { icon: SourceCodeCircleIcon, color: "text-emerald-400/70" };
-  if (CONFIG_EXTS.has(e)) return { icon: Settings01Icon, color: "text-amber-400/70" };
-  if (IMAGE_EXTS.has(e)) return { icon: Image01Icon, color: "text-pink-400/70" };
-  if (MEDIA_AUDIO.has(e)) return { icon: FileMusicIcon, color: "text-purple-400/70" };
-  if (MEDIA_VIDEO.has(e)) return { icon: FileVideoIcon, color: "text-red-400/70" };
-  if (DB_EXTS.has(e)) return { icon: Database01Icon, color: "text-cyan-400/70" };
-  if (e === PDF_EXT) return { icon: FileAttachmentIcon, color: "text-red-400/70" };
-  if (TEXT_EXTS.has(e)) return { icon: FileAttachmentIcon, color: "text-dim-foreground" };
-  return { icon: FileAttachmentIcon, color: "text-dim-foreground" };
+  const color = "text-dim-foreground";
+  if (CODE_EXTS.has(e)) return { icon: SourceCodeCircleIcon, color };
+  if (CONFIG_EXTS.has(e)) return { icon: Settings01Icon, color };
+  if (IMAGE_EXTS.has(e)) return { icon: Image01Icon, color };
+  if (MEDIA_AUDIO.has(e)) return { icon: FileMusicIcon, color };
+  if (MEDIA_VIDEO.has(e)) return { icon: FileVideoIcon, color };
+  if (DB_EXTS.has(e)) return { icon: Database01Icon, color };
+  return { icon: FileAttachmentIcon, color };
 }
 
 function formatDate(iso: string | null): string {
@@ -411,15 +424,19 @@ function FileQuickLook({
   onClose,
   onDownload,
   previewableFiles,
+  fileSizes,
   onNavigate,
 }: {
   filePath: string | null;
   onClose: () => void;
   onDownload: (path: string, name: string) => void;
   previewableFiles: string[];
+  /** Sizes from the folder listing, so an oversized text file opens a "Too large" preview. */
+  fileSizes: ReadonlyMap<string, number>;
   onNavigate: (path: string) => void;
 }) {
   const fileName = filePath?.split("/").pop() || "";
+  const knownSize = filePath ? fileSizes.get(filePath) : undefined;
 
   // Navigation state
   const currentIndex = filePath ? previewableFiles.indexOf(filePath) : -1;
@@ -438,6 +455,9 @@ function FileQuickLook({
   useEffect(() => {
     if (!filePath) return;
     const handleKeyDown = (e: KeyboardEvent) => {
+      // The video player seeks with the arrows and marks the event handled
+      // (it listens on document, which runs before window): don't also page.
+      if (!shouldHandleQuickLookKey(e)) return;
       if (e.key === "ArrowLeft") { e.preventDefault(); goToPrev(); }
       if (e.key === "ArrowRight") { e.preventDefault(); goToNext(); }
     };
@@ -445,12 +465,17 @@ function FileQuickLook({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [filePath, goToPrev, goToNext]);
 
-  // Only fetch text content for text-based files
-  const shouldFetch = filePath ? needsTextFetch(fileName) : false;
-  const { data: file, isLoading } = useSWR<ReadResponse>(
+  // Only fetch text content for text-based files, and only up to the 5MB
+  // limit: bigger files open a "Too large" preview instead of doing nothing.
+  const wantsText = filePath ? needsTextFetch(fileName) : false;
+  const tooLargeBySize = wantsText && isOverTextPreviewLimit(knownSize);
+  const shouldFetch = wantsText && !tooLargeBySize;
+  const { data: file, error: fileError, isLoading, mutate: retryFile } = useSWR<ReadResponse>(
     shouldFetch ? `${CORE_URL}/api/files/read?path=${encodeURIComponent(filePath!)}` : null,
     fetcher,
+    { shouldRetryOnError: false },
   );
+  const tooLarge = tooLargeBySize || (shouldFetch && fetchErrorStatus(fileError) === 413);
 
   const _isImage = filePath ? isImagePreviewable(fileName) : false;
   const _isVideo = filePath ? isVideoPreviewable(fileName) : false;
@@ -470,6 +495,43 @@ function FileQuickLook({
 
   const renderContent = () => {
     if (!filePath) return null;
+
+    // Text over the preview limit (known from the listing, or a 413 from the server).
+    if (tooLarge) {
+      return (
+        <div className="flex-1 min-h-0 flex items-center justify-center p-6">
+          <EmptyState
+            icon={FileAttachmentIcon}
+            title="Too large to preview"
+            description={`${knownSize !== undefined ? `${fileName} is ${formatBytes(knownSize)}. ` : ""}Quick Look shows text files up to 5 MB. Download it to open it in another app.`}
+            action={
+              <Button variant="outline" size="sm" onClick={() => onDownload(filePath, fileName)}>
+                <HugeiconsIcon icon={Download01Icon} size={14} />
+                Download
+              </Button>
+            }
+            className="border-none"
+          />
+        </div>
+      );
+    }
+
+    if (shouldFetch && fileError && !file) {
+      return (
+        <div className="flex-1 min-h-0 flex items-center justify-center p-6">
+          <ErrorState
+            title={`Couldn't load a preview of ${fileName}`}
+            description={
+              fetchErrorStatus(fileError) === 403
+                ? "Talome doesn't have permission to read this file."
+                : "Check that the Talome server is reachable, then retry."
+            }
+            onRetry={() => void retryFile()}
+            className="border-none"
+          />
+        </div>
+      );
+    }
 
     // Video — full-bleed player, black background
     if (_isVideo) {
@@ -662,12 +724,24 @@ function MoveDialog({
     ? `${CORE_URL}/api/files/list?path=${encodeURIComponent(browsePath)}`
     : `${CORE_URL}/api/files/list`;
 
-  const { data } = useSWR<ListResponse>(open ? listUrl : null, fetcher, {
+  const { cache } = useSWRConfig();
+  const { data: keptData, error: listError, mutate: retryList, isValidating } = useSWR<ListResponse>(open ? listUrl : null, fetcher, {
     keepPreviousData: true,
   });
+  // keepPreviousData keeps the last folder on screen while the next loads. That
+  // folder must never pass for the one being browsed: its subfolders and "Move
+  // here" would point at the wrong place.
+  const dataIsForBrowsePath = listDataIsFor(keptData, browsePath, cache.get(listUrl)?.data !== undefined);
+  const data = dataIsForBrowsePath ? keptData : undefined;
+  const listFailed = !!listError && !dataIsForBrowsePath;
+  const listErrorCopy = listFailed ? folderErrorCopy(fetchErrorStatus(listError), browsePath) : null;
+  // The last folder that loaded, so Back after a failed click returns there.
+  const [lastLoaded, setLastLoaded] = useState<{ path: string | null } | null>(null);
+  if (open && dataIsForBrowsePath && lastLoaded?.path !== browsePath) setLastLoaded({ path: browsePath });
+  const backTarget = lastLoaded && lastLoaded.path !== browsePath ? lastLoaded : null;
 
   const folders = data?.items?.filter((i) => i.isDirectory) ?? [];
-  const hasMultipleRoots = (data?.allowedRoots?.length ?? 0) > 1;
+  const hasMultipleRoots = ((data ?? keptData)?.allowedRoots?.length ?? 0) > 1;
   const isAtRoot = !browsePath && hasMultipleRoots;
 
   const handleConfirm = async () => {
@@ -676,8 +750,20 @@ function MoveDialog({
     onMove(data.path);
   };
 
-  // Current folder name for the header
-  const folderName = data?.path?.split("/").filter(Boolean).pop() ?? "Files";
+  // Back is always offered below the top level, even in a folder with no
+  // subfolders (a leaf used to be a dead end).
+  const canGoBack = !isAtRoot && !!data?.path && (!!data.parent || hasMultipleRoots);
+  const goBack = () => {
+    if (!data) return;
+    if (hasMultipleRoots && (data.allowedRoots?.includes(data.path) || !data.parent)) {
+      setBrowsePath(null);
+    } else if (data.parent) {
+      setBrowsePath(data.parent);
+    }
+  };
+
+  // Current folder name for the header (the requested one while it loads or failed)
+  const folderName = (data?.path ?? browsePath)?.split("/").filter(Boolean).pop() ?? "Files";
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -692,7 +778,7 @@ function MoveDialog({
         </DialogHeader>
 
         {/* Breadcrumb bar */}
-        {!isAtRoot && data?.path && (
+        {!isAtRoot && (data?.path || browsePath) && (
           <div className="flex items-center gap-1 px-4 pb-2">
             {hasMultipleRoots && (
               <button
@@ -713,7 +799,7 @@ function MoveDialog({
 
         {/* Folder list */}
         <ScrollArea className="h-64 border-t border-border/40">
-          {isAtRoot && data?.allowedRoots ? (
+          {isAtRoot && data?.allowedRoots && !listFailed ? (
             <div className="py-1">
               {data.allowedRoots.map((root: string) => {
                 const { label, icon } = rootLabel(root);
@@ -729,34 +815,42 @@ function MoveDialog({
                 );
               })}
             </div>
-          ) : folders.length === 0 ? (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-xs text-muted-foreground">No subfolders</p>
-            </div>
           ) : (
             <div className="py-1">
-              {data?.parent && (
+              {canGoBack && (
                 <button
                   className="flex items-center gap-2.5 w-full px-4 py-2 text-left hover:bg-muted/30 transition-colors"
-                  onClick={() => {
-                    if (hasMultipleRoots && data.allowedRoots?.includes(data.path)) {
-                      setBrowsePath(null);
-                    } else {
-                      setBrowsePath(data.parent);
-                    }
-                  }}
+                  onClick={goBack}
                 >
                   <HugeiconsIcon icon={ArrowLeft01Icon} size={16} className="text-dim-foreground shrink-0" />
                   <span className="text-sm text-muted-foreground">Back</span>
                 </button>
               )}
+              {listErrorCopy ? (
+                <div role="alert" className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+                  <p className="text-sm font-medium">{listErrorCopy.title}</p>
+                  <p className="text-xs text-muted-foreground">{listErrorCopy.description}</p>
+                  <div className="flex items-center gap-2 pt-1">
+                    {backTarget ? (
+                      <Button variant="ghost" size="xs" onClick={() => setBrowsePath(backTarget.path)}>Back</Button>
+                    ) : null}
+                    <Button variant="outline" size="xs" onClick={() => void retryList()} busy={isValidating} busyLabel="Retrying…">
+                      Retry
+                    </Button>
+                  </div>
+                </div>
+              ) : !data ? (
+                <div className="h-24" aria-busy="true" />
+              ) : folders.length === 0 ? (
+                <p className="px-4 py-8 text-center text-xs text-muted-foreground">No subfolders</p>
+              ) : null}
               {folders.map((folder) => (
                 <button
                   key={folder.path}
                   className="flex items-center gap-2.5 w-full px-4 py-2 text-left hover:bg-muted/30 transition-colors group"
                   onClick={() => setBrowsePath(folder.path)}
                 >
-                  <HugeiconsIcon icon={Folder01Icon} size={16} className="text-blue-400/80 shrink-0" />
+                  <HugeiconsIcon icon={Folder01Icon} size={16} className="text-muted-foreground shrink-0" />
                   <span className="text-sm truncate flex-1">{folder.name}</span>
                   <HugeiconsIcon
                     icon={ArrowRight01Icon}
@@ -797,9 +891,8 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [highlightedFolder, setHighlightedFolder] = useState<string | null>(null);
-  const [deletingItem, setDeletingItem] = useState<FileItem | null>(null);
-  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const [movingPaths, setMovingPaths] = useState<string[]>([]);
+  const confirm = useConfirm();
   const scrollPositions = useRef<Map<string, number>>(new Map());
   const contentRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -815,9 +908,25 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     ? `${CORE_URL}/api/files/list?path=${encodeURIComponent(currentPath)}&showHidden=${showHidden}`
     : `${CORE_URL}/api/files/list?showHidden=${showHidden}`;
 
-  const { data, error, mutate, isLoading } = useSWR<ListResponse>(listUrl, fetcher, {
+  const { loadedAt: listLoadedAt, markLoaded } = useLoadedAt();
+  const { cache: swrCache } = useSWRConfig();
+  const { data, error, mutate, isLoading, isValidating } = useSWR<ListResponse>(listUrl, fetcher, {
     keepPreviousData: true,
+    onSuccess: markLoaded,
+    // "Doesn't exist" and "no permission" are answers, not blips.
+    shouldRetryOnError: (err: unknown) => {
+      const status = fetchErrorStatus(err);
+      return status === null || status >= 500;
+    },
   });
+  // keepPreviousData shows the last folder while the next one loads. When the
+  // next one fails, that old listing must not pass for this folder's. The
+  // server returns a normalized path, so compare by SWR key (the cache holds
+  // data for this exact request) or by normalized path, never byte for byte.
+  const dataIsForThisFolder = listDataIsFor(data, currentPath, swrCache.get(listUrl)?.data !== undefined);
+  // Driven by "this folder's data isn't here yet", so opening a folder with the
+  // previous one still on screen gets the delayed skeleton too (spec §4.8).
+  const loadingPhase = useLoadingPhase(!dataIsForThisFolder && !error && (isLoading || isValidating));
 
   // Only auto-enter a root when there's exactly one
   const hasMultipleRoots = (data?.allowedRoots?.length ?? 0) > 1;
@@ -864,88 +973,176 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     a.click();
   }, []);
 
-  const handleDelete = useCallback(async (filePath: string, fileName: string) => {
-    const res = await fetch(`${CORE_URL}/api/files`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: filePath }),
-    });
-    const result = await res.json();
-    if (result.ok) {
-      toast(`Deleted ${fileName}`);
-      void mutate();
-    } else {
-      toast.error(result.error || "Delete failed");
+  /** Delete one path. Resolves on success; rejects with a message that names the item. */
+  const deletePath = useCallback(async (filePath: string, fileName: string) => {
+    let res: Response;
+    try {
+      res = await fetch(`${CORE_URL}/api/files`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: filePath }),
+      });
+    } catch {
+      throw new Error(`Couldn't delete ${fileName}: the Talome server didn't answer. Retry.`);
     }
-  }, [mutate]);
+    const result = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+    if (!res.ok || !result?.ok) {
+      throw new Error(`Couldn't delete ${fileName}${result?.error ? `: ${result.error}` : ""}.`);
+    }
+  }, []);
+
+  /**
+   * Deleting is permanent (there is no Trash yet), so every delete, a single
+   * file included, asks first. The dialog runs the request and shows a
+   * failure inline with Retry.
+   */
+  const confirmDelete = useCallback(async (item: FileItem) => {
+    const where = rootLabel(currentPath ?? item.path).label;
+    await confirm({
+      tier: "destructive",
+      title: `Delete ${item.name} permanently?`,
+      consequence: item.isDirectory
+        ? `${item.name} and everything in it are erased from ${where}.`
+        : `${item.name} is erased from ${where}.`,
+      recovery: "This can't be undone.",
+      irreversible: true,
+      confirmLabel: "Delete permanently",
+      busyLabel: `Deleting ${item.name}…`,
+      run: async () => {
+        await deletePath(item.path, item.name);
+        setSelectedPaths((prev) => {
+          if (!prev.has(item.path)) return prev;
+          const next = new Set(prev);
+          next.delete(item.path);
+          return next;
+        });
+        await mutate();
+      },
+      receipt: `Deleted ${item.name}`,
+    });
+  }, [confirm, currentPath, deletePath, mutate]);
 
   const handleRename = useCallback(async () => {
-    if (!renamingItem || !renameValue.trim() || renameValue === renamingItem.name) {
+    const newName = renameValue.trim();
+    if (!renamingItem || !newName || newName === renamingItem.name) {
       setRenamingItem(null);
       return;
     }
-    const res = await fetch(`${CORE_URL}/api/files/rename`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ oldPath: renamingItem.path, newName: renameValue.trim() }),
-    });
-    const result = await res.json();
-    if (result.ok) {
-      toast(`Renamed to ${renameValue.trim()}`);
-      void mutate();
-    } else {
-      toast.error(result.error || "Rename failed");
+    let result: { ok?: boolean; error?: string } | null = null;
+    let ok = false;
+    try {
+      const res = await fetch(`${CORE_URL}/api/files/rename`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ oldPath: renamingItem.path, newName }),
+      });
+      result = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      ok = res.ok && !!result?.ok;
+    } catch {
+      result = { error: "the Talome server didn't answer" };
     }
-    setRenamingItem(null);
+    if (ok) {
+      void mutate();
+      setRenamingItem(null);
+    } else {
+      // Keep the dialog open so the name can be fixed (for example a name that's taken).
+      toast.error(`Couldn't rename ${renamingItem.name}`, { description: result?.error ?? "Retry in a moment." });
+    }
   }, [renamingItem, renameValue, mutate]);
 
   const handleNewFolder = useCallback(async () => {
-    const name = "New Folder";
-    const path = currentPath ? `${currentPath}/${name}` : name;
-    const res = await fetch(`${CORE_URL}/api/files/mkdir`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
-    });
-    const result = await res.json();
-    if (result.ok) {
-      setHighlightedFolder(name);
-      void mutate();
-      setTimeout(() => setHighlightedFolder(null), 2000);
-    } else {
-      toast.error(result.error || "Failed to create folder");
+    if (!currentPath) return;
+    const existing = (data?.items ?? []).map((item) => item.name);
+    // A free name ("New Folder 2", …) instead of silently reusing "New Folder".
+    // The server also refuses an existing name, so a race (or a hidden item)
+    // gets one more try with the next free name.
+    let name = uniqueName("New Folder", existing);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let status = 0;
+      let result: { ok?: boolean; error?: string } | null = null;
+      try {
+        const res = await fetch(`${CORE_URL}/api/files/mkdir`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: `${currentPath}/${name}` }),
+        });
+        status = res.status;
+        result = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      } catch {
+        toast.error("Couldn't create a folder", { description: "The Talome server didn't answer. Retry." });
+        return;
+      }
+      if (result?.ok) {
+        setHighlightedFolder(name);
+        await mutate();
+        setTimeout(() => setHighlightedFolder(null), 2000);
+        // Name it right away, like a desktop file manager.
+        setRenamingItem({ name, path: `${currentPath}/${name}`, isDirectory: true, size: 0, modified: null });
+        setRenameValue(name);
+        return;
+      }
+      if (status !== 409) {
+        toast.error("Couldn't create a folder", { description: result?.error ?? "Retry in a moment." });
+        return;
+      }
+      name = uniqueName("New Folder", [...existing, name]);
+      existing.push(name);
     }
-  }, [currentPath, mutate]);
+    toast.error("Couldn't create a folder", { description: "A folder with that name already exists. Refresh and try again." });
+  }, [currentPath, data?.items, mutate]);
 
-  const handleUpload = useCallback(async (files: FileList | File[]) => {
-    if (!currentPath || files.length === 0) return;
+  const handleUpload = useCallback((files: FileList | File[]) => {
+    if (!currentPath) return;
+    const folder = currentPath;
+    const destination = folder.split("/").filter(Boolean).pop() ?? "this folder";
 
-    const formData = new FormData();
-    formData.append("path", currentPath);
-    for (const file of Array.from(files)) {
-      formData.append("files", file);
-    }
+    const start = (list: File[]) => {
+      if (list.length === 0) return;
+      const label = list.length === 1 ? list[0].name : `${list.length} files`;
+      const run = async (): Promise<{ uploaded: string[]; errors: string[] }> => {
+        const formData = new FormData();
+        formData.append("path", folder);
+        for (const file of list) formData.append("files", file);
+        let res: Response;
+        try {
+          res = await fetch(`${CORE_URL}/api/files/upload`, { method: "POST", credentials: "include", body: formData });
+        } catch {
+          throw new Error("the Talome server didn't answer");
+        }
+        const result = (await res.json().catch(() => null)) as { ok?: boolean; uploaded?: string[]; errors?: string[]; error?: string } | null;
+        if (!res.ok || !result) throw new Error(result?.error ?? `the server answered ${res.status}`);
+        const uploaded = result.uploaded ?? [];
+        const errors = result.errors ?? [];
+        void mutate();
+        if (uploaded.length === 0) throw new Error(errors[0] ?? "nothing was uploaded");
+        if (errors.length > 0) {
+          toastWarning(`Skipped ${errors.length === 1 ? "1 file" : `${errors.length} files`}`, { description: errors[0] });
+        }
+        return { uploaded, errors };
+      };
 
-    const res = await fetch(`${CORE_URL}/api/files/upload`, {
-      method: "POST",
-      body: formData,
-    });
-    const result = await res.json();
-    if (result.ok && result.uploaded?.length > 0) {
-      toast(`Uploaded ${result.uploaded.length} file${result.uploaded.length > 1 ? "s" : ""}`);
-      void mutate();
-    }
-    if (result.errors?.length > 0) {
-      toast.error(result.errors[0]);
-    }
+      void promiseToast(run, {
+        loading: `Uploading ${label}…`,
+        success: ({ uploaded }) => `Uploaded ${uploaded.length === 1 ? uploaded[0] : `${uploaded.length} files`} to ${destination}`,
+        error: (err) => `Couldn't upload ${label}: ${err instanceof Error ? err.message : "unknown error"}.`,
+        onRetry: () => start(list),
+      }).catch(() => {
+        // Reported in the toast, with Retry.
+      });
+    };
+
+    start(Array.from(files));
   }, [currentPath, mutate]);
 
   const handleRowClick = useCallback((item: FileItem) => {
     if (item.isDirectory) {
       navigate(item.path);
     } else if (isPreviewable(item.name)) {
-      // Text-based previews have a 5MB cap; binary previews (media, PDF, images) stream without limit
-      if (needsTextFetch(item.name) && item.size >= 5 * 1024 * 1024) return;
+      // Every previewable file opens Quick Look; text over the 5MB limit
+      // opens a "Too large" preview with Download (it used to do nothing).
       setPreviewFile(item.path);
     }
   }, [navigate]);
@@ -981,30 +1178,41 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     }
   }, [data?.items, allSelected]);
 
-  const handleBulkDelete = useCallback(async () => {
+  const confirmBulkDelete = useCallback(async () => {
     const paths = Array.from(selectedPaths);
-    const results = await Promise.all(
-      paths.map(path =>
-        fetch(`${CORE_URL}/api/files`, {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path }),
-        }).then(r => r.json())
-      )
-    );
-    const successCount = results.filter((r: Record<string, unknown>) => r.ok).length;
-    if (successCount > 0) {
-      toast(`Deleted ${successCount} item${successCount > 1 ? "s" : ""}`);
-      setSelectedPaths(new Set());
-      lastSelectedIdx.current = null;
-      void mutate();
-    }
-    const failCount = results.filter((r: Record<string, unknown>) => !r.ok).length;
-    if (failCount > 0) {
-      toast.error(`Failed to delete ${failCount} item${failCount > 1 ? "s" : ""}`);
-    }
-    setShowBulkDeleteConfirm(false);
-  }, [selectedPaths, mutate]);
+    if (paths.length === 0) return;
+    const items = paths.map((path) => data?.items?.find((i) => i.path === path) ?? { name: path.split("/").pop() ?? path, path });
+    const first = items[0].name;
+    const count = items.length;
+    const where = rootLabel(currentPath ?? paths[0]).label;
+    await confirm({
+      tier: "destructive",
+      title: `Delete ${count} item${count === 1 ? "" : "s"} permanently?`,
+      consequence: count === 1
+        ? `${first} is erased from ${where}.`
+        : `${first} and ${count - 1} other item${count - 1 === 1 ? "" : "s"} are erased from ${where}, with everything inside any folders.`,
+      recovery: "This can't be undone.",
+      irreversible: true,
+      confirmLabel: "Delete permanently",
+      busyLabel: `Deleting ${count} item${count === 1 ? "" : "s"}…`,
+      run: async () => {
+        const results = await Promise.allSettled(items.map((item) => deletePath(item.path, item.name)));
+        const failed = items.filter((_, i) => results[i].status === "rejected");
+        const deleted = new Set(items.filter((_, i) => results[i].status === "fulfilled").map((item) => item.path));
+        setSelectedPaths((prev) => new Set([...prev].filter((p) => !deleted.has(p))));
+        lastSelectedIdx.current = null;
+        await mutate();
+        if (failed.length > 0) {
+          // What's left selected is what failed: Retry deletes only those.
+          throw new Error(
+            `Couldn't delete ${failed.length === 1 ? failed[0].name : `${failed.length} items`}${deleted.size > 0 ? ` (${deleted.size} deleted)` : ""}. Retry, or check that Talome may write here.`,
+          );
+        }
+        return deleted.size;
+      },
+      receipt: (n) => `Deleted ${n} item${n === 1 ? "" : "s"}`,
+    });
+  }, [confirm, currentPath, data?.items, deletePath, mutate, selectedPaths]);
 
   const handleBulkDownload = useCallback(() => {
     for (const path of selectedPaths) {
@@ -1019,20 +1227,36 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     const sources = movingPaths;
     if (sources.length === 0) return;
 
-    const res = await fetch(`${CORE_URL}/api/files/move`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sources, destination }),
-    });
-    const result = await res.json();
-    if (result.moved?.length > 0) {
-      toast(`Moved ${result.moved.length} item${result.moved.length > 1 ? "s" : ""}`);
+    type MoveResult = { moved?: string[]; errors?: Array<{ error: string }>; error?: string };
+    let result: MoveResult | null = null;
+    try {
+      const res = await fetch(`${CORE_URL}/api/files/move`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sources, destination }),
+      });
+      result = (await res.json().catch(() => null)) as MoveResult | null;
+      if (!res.ok && !result?.moved) {
+        toast.error("Couldn't move the selection", { description: result?.error ?? "Retry in a moment." });
+        setMovingPaths([]);
+        return;
+      }
+    } catch {
+      toast.error("Couldn't move the selection", { description: "The Talome server didn't answer. Retry." });
+      setMovingPaths([]);
+      return;
+    }
+    const moved = result?.moved ?? [];
+    if (moved.length > 0) {
+      const target = destination.split("/").filter(Boolean).pop() ?? destination;
+      toast.success(`Moved ${moved.length === 1 ? moved[0].split("/").pop() : `${moved.length} items`} to ${target}`);
       setSelectedPaths(new Set());
       lastSelectedIdx.current = null;
       void mutate();
     }
-    if (result.errors?.length > 0) {
-      toast.error(result.errors[0].error);
+    if (result?.errors && result.errors.length > 0) {
+      toast.error(`Couldn't move ${result.errors.length === 1 ? "1 item" : `${result.errors.length} items`}`, { description: result.errors[0].error });
     }
     setMovingPaths([]);
   }, [movingPaths, mutate]);
@@ -1181,13 +1405,17 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     }
   }
 
-  if (error && !data) {
+  if (error && !dataIsForThisFolder) {
+    const copy = folderErrorCopy(fetchErrorStatus(error), currentPath);
     return (
-      <EmptyState
-        icon={FolderOpenIcon}
-        title="Couldn't load files"
-        description="The file manager API is unavailable. Is the Talome server running?"
-      />
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6">
+        <ErrorState title={copy.title} description={copy.description} onRetry={() => void mutate()} className="w-full max-w-lg" />
+        {currentPath && (
+          <Button variant="ghost" size="sm" onClick={goToVirtualRoot}>
+            Back to Files
+          </Button>
+        )}
+      </div>
     );
   }
 
@@ -1234,8 +1462,15 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
 
         {/* ── File table ──────────────────────────────────────────────── */}
         <div ref={contentRef} className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
-              {isLoading && !data ? (
-                currentPath ? (
+              {error && dataIsForThisFolder && (
+                <StaleRow loadedAt={listLoadedAt} subject="files" onRetry={() => void mutate()} retrying={isValidating} className="px-3 pt-2" />
+              )}
+              {loadingPhase === "skeleton" || !data ? (
+                // Branch on the phase itself: once shown, the skeleton stays its
+                // minimum time even if the data arrived (no flash).
+                loadingPhase !== "skeleton" ? (
+                  <div className="min-h-64" aria-busy="true" />
+                ) : currentPath ? (
                   <FilesTableSkeleton />
                 ) : (
                   <div className="flex flex-col gap-3 max-w-lg mx-auto px-4 pt-2">
@@ -1265,7 +1500,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                   onSelect={(root) => navigate(root)}
                 />
               ) : !data?.items ? (
-                <FilesTableSkeleton />
+                <div className="min-h-64" aria-busy="true" />
               ) : data.items.length === 0 ? (
                 <EmptyState
                   icon={FolderOpenIcon}
@@ -1408,15 +1643,11 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                                   variant="destructive"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (item.isDirectory) {
-                                      setDeletingItem(item);
-                                    } else {
-                                      void handleDelete(item.path, item.name);
-                                    }
+                                    void confirmDelete(item);
                                   }}
                                 >
                                   <HugeiconsIcon icon={Delete01Icon} size={14} />
-                                  Delete
+                                  Delete permanently…
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
@@ -1439,12 +1670,13 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
               transition={enter()}
               className="absolute bottom-14 inset-x-0 z-20 flex justify-center pointer-events-none"
             >
+              {/* Inverted surface: status text uses the -inverse token (both themes checked in design-contrast.test). */}
               <div className="flex items-center gap-1 rounded-full bg-foreground text-background px-4 py-2 shadow-lg pointer-events-auto">
                 <span className="text-sm font-medium tabular-nums whitespace-nowrap">{selectedPaths.size} selected</span>
                 <div className="w-px h-4 bg-background/15 mx-1" />
                 <button
                   type="button"
-                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-black/[0.06] rounded-full transition-colors"
+                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-background/10 rounded-full transition-colors"
                   onClick={() => setMovingPaths(Array.from(selectedPaths))}
                 >
                   <HugeiconsIcon icon={FolderExportIcon} size={14} />
@@ -1452,7 +1684,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                 </button>
                 <button
                   type="button"
-                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-black/[0.06] rounded-full transition-colors"
+                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-background/10 rounded-full transition-colors"
                   onClick={handleBulkDownload}
                 >
                   <HugeiconsIcon icon={Download01Icon} size={14} />
@@ -1460,8 +1692,8 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                 </button>
                 <button
                   type="button"
-                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-red-700 hover:text-red-800 hover:bg-red-500/[0.08] rounded-full transition-colors"
-                  onClick={() => setShowBulkDeleteConfirm(true)}
+                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-status-critical-inverse hover:bg-background/10 rounded-full transition-colors"
+                  onClick={() => void confirmBulkDelete()}
                 >
                   <HugeiconsIcon icon={Delete01Icon} size={14} />
                   <span className="hidden sm:inline">Delete</span>
@@ -1537,49 +1769,6 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         </DialogContent>
       </Dialog>
 
-      {/* ── Delete folder confirmation ────────────────────────────────── */}
-      <Dialog open={!!deletingItem} onOpenChange={() => setDeletingItem(null)}>
-        <DialogContent className="max-w-sm" showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle>Delete folder</DialogTitle>
-            <DialogDescription className="sr-only">
-              Confirm permanent deletion of a folder and its contents
-            </DialogDescription>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Are you sure you want to delete <span className="font-medium text-foreground">{deletingItem?.name}</span> and all its contents? This can&apos;t be undone.
-          </p>
-          <DialogFooter>
-            <Button variant="ghost" size="sm" onClick={() => setDeletingItem(null)}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={() => {
-              if (deletingItem) {
-                void handleDelete(deletingItem.path, deletingItem.name);
-                setDeletingItem(null);
-              }
-            }}>Delete</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Bulk delete confirmation ──────────────────────────────────── */}
-      <Dialog open={showBulkDeleteConfirm} onOpenChange={() => setShowBulkDeleteConfirm(false)}>
-        <DialogContent className="max-w-sm" showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle>Delete {selectedPaths.size} item{selectedPaths.size !== 1 ? "s" : ""}</DialogTitle>
-            <DialogDescription className="sr-only">
-              Confirm permanent deletion of the selected items
-            </DialogDescription>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Are you sure you want to delete {selectedPaths.size} item{selectedPaths.size !== 1 ? "s" : ""}? This can&apos;t be undone.
-          </p>
-          <DialogFooter>
-            <Button variant="ghost" size="sm" onClick={() => setShowBulkDeleteConfirm(false)}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={() => void handleBulkDelete()}>Delete</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* ── Move dialog — folder picker ─────────────────────────────── */}
       <MoveDialog
         open={movingPaths.length > 0}
@@ -1597,6 +1786,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         previewableFiles={(data?.items ?? [])
           .filter((i) => !i.isDirectory && isPreviewable(i.name))
           .map((i) => i.path)}
+        fileSizes={new Map((data?.items ?? []).map((i) => [i.path, i.size]))}
         onNavigate={setPreviewFile}
       />
     </>
@@ -1611,7 +1801,7 @@ function FilesPageWithParams() {
 
 export default function FilesPage() {
   return (
-    <Suspense fallback={<FilesTableSkeleton />}>
+    <Suspense fallback={<div className="min-h-64" aria-busy="true" />}>
       <FilesPageWithParams />
     </Suspense>
   );

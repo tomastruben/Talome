@@ -11,14 +11,20 @@ import { toast } from "sonner";
 import { toastWarning } from "@/lib/toast";
 import useSWR, { mutate as globalMutate } from "swr";
 import { motion, AnimatePresence } from "motion/react";
-import { HugeiconsIcon, Cancel01Icon, AiChat02Icon, CloudUploadIcon, Edit02Icon, Share04Icon, SystemUpdate01Icon } from "@/components/icons";
+import { HugeiconsIcon, Cancel01Icon, AiChat02Icon, CloudUploadIcon, Edit02Icon, Share04Icon, SystemUpdate01Icon, LinkSquare01Icon, ArrowLeft01Icon, ArrowRight01Icon, Package01Icon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
+import { StatusDot, type StatusDotState } from "@/components/ui/status-dot";
+import { EmptyState, ErrorState } from "@/components/ui/empty-state";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { copyText } from "@/components/ui/copy-button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { CORE_URL, getHostUrl } from "@/lib/constants";
+import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
+import { CORE_URL } from "@/lib/constants";
+import { appOpenUrl } from "@/lib/app-open-url";
+import { fetchJson, fetchErrorStatus } from "@/lib/fetch-json";
 import { getContainerWebPort } from "@/lib/container-web-port";
 import { isTransitionalInstallStatus, useAdaptiveInterval, POLL_ACTIVE_MS, POLL_IDLE_MS } from "@/lib/polling";
 import { talomePost, talomeDelete, talomePatch, TalomeApiError } from "@/hooks/use-talome-api";
@@ -26,13 +32,18 @@ import { useAppOperations } from "@/hooks/use-app-operations";
 import { useUser } from "@/hooks/use-user";
 import {
   OPERATION_KIND_LABELS,
-  OPERATION_KIND_PROGRESS_LABELS,
+  describeOperationConflict,
   describeUpdateResponse,
+  runningFromConflictBody,
+  settledFailureFrom,
+  operationFailureCopy,
   updateOutcomeFromOperation,
   parseOperationConflict,
   summarizeUpdateOperation,
   type LifecycleOutcome,
   type OperationEvent,
+  type OperationKind,
+  type OperationRecord,
 } from "@/lib/app-operations";
 import {
   installBlockReason,
@@ -41,14 +52,13 @@ import {
   type UmbrelInstallOptions,
   type UmbrelInstallPlan,
 } from "@/lib/umbrel-install";
-import { OperationActivity, OperationProgress } from "@/components/app-detail/operation-panels";
+import { OperationActivity, OperationFailure, OperationProgress } from "@/components/app-detail/operation-panels";
 import { VerificationPanel, verificationUrl } from "@/components/app-detail/verification-panel";
 import { UmbrelInstallDialog } from "@/components/app-detail/umbrel-install-dialog";
 import { Streamdown } from "streamdown";
-import { PillIndicator } from "@/components/kibo-ui/pill";
 import { ClaudeTerminal } from "@/components/terminal/claude-terminal";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
-import type { CatalogApp } from "@talome/types";
+import type { CatalogApp, Container } from "@talome/types";
 import type { ServiceStack } from "@talome/types";
 import {
   resolveApplicationIcon,
@@ -64,12 +74,12 @@ function ExternalLinkDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    const ok = await copyText(url);
+    setCopyState(ok ? "copied" : "failed");
+    if (ok) setTimeout(() => setCopyState("idle"), 2000);
   };
 
   let hostname = url;
@@ -80,11 +90,11 @@ function ExternalLinkDialog({
       <DialogContent className="max-w-[19rem] gap-0 p-0 overflow-hidden" showCloseButton={false}>
         {/* Body */}
         <div className="flex flex-col items-center text-center px-7 pt-9 pb-7 gap-4">
-          <span className="text-2xl leading-none select-none">🔗</span>
+          <HugeiconsIcon icon={LinkSquare01Icon} size={24} className="text-muted-foreground" aria-hidden="true" />
 
           <div className="grid gap-1">
             <DialogTitle className="text-base font-medium tracking-tight">
-              Open External Link?
+              Open external link?
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground font-mono truncate max-w-full">
               {hostname}
@@ -98,7 +108,7 @@ function ExternalLinkDialog({
             onClick={handleCopy}
             className="py-3.5 text-sm font-medium text-muted-foreground hover:bg-muted/40 transition-colors"
           >
-            {copied ? "Copied ✓" : "Copy"}
+            {copyState === "copied" ? "Copied" : copyState === "failed" ? "Couldn't copy" : "Copy"}
           </button>
           <a
             href={url}
@@ -194,14 +204,14 @@ function ImagePreviewDialog({
                 onClick={(e) => { e.stopPropagation(); onIndexChange((currentIndex - 1 + images.length) % images.length); }}
                 aria-label="Previous image"
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                <HugeiconsIcon icon={ArrowLeft01Icon} size={16} />
               </button>
               <button
                 className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center justify-center size-10 rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white transition-colors backdrop-blur-sm"
                 onClick={(e) => { e.stopPropagation(); onIndexChange((currentIndex + 1) % images.length); }}
                 aria-label="Next image"
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                <HugeiconsIcon icon={ArrowRight01Icon} size={16} />
               </button>
             </>
           )}
@@ -212,9 +222,13 @@ function ImagePreviewDialog({
   );
 }
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const fetcher = <T,>(url: string) => fetchJson<T>(url);
+
+/** The detail response: the catalog app, plus the store it is installed from when that's another store. */
+type AppDetail = CatalogApp & { installedFrom?: { storeId: string; storeName: string } };
 
 const SOURCE_LABELS: Record<string, string> = {
+  talome: "Talome",
   talon: "Talome",
   casaos: "CasaOS",
   umbrel: "Umbrel",
@@ -226,6 +240,56 @@ const ACTION_GRACE_MS = 20_000;
 
 /** Lifecycle actions that run as journaled operations (409 when another one is running). */
 type LifecycleAction = "install" | "update" | "uninstall" | "start" | "stop" | "restart";
+
+const STATUS_LABELS: Record<string, { label: string; state: StatusDotState }> = {
+  running: { label: "Running", state: "healthy" },
+  stopped: { label: "Stopped", state: "stopped" },
+  exited: { label: "Stopped", state: "stopped" },
+  installing: { label: "Installing", state: "working" },
+  updating: { label: "Updating", state: "working" },
+  restarting: { label: "Restarting", state: "working" },
+  error: { label: "Error", state: "failed" },
+};
+
+function statusLabel(status: string | undefined): { label: string; state: StatusDotState } {
+  if (!status) return { label: "Unknown", state: "unknown" };
+  return STATUS_LABELS[status] ?? { label: status.charAt(0).toUpperCase() + status.slice(1), state: "unknown" };
+}
+
+/**
+ * Failures the person dismissed stay dismissed in this browser (localStorage,
+ * so a new tab or session doesn't bring them back). Failures older than
+ * FAILURE_MAX_AGE_MS age out of the primary slot on their own; Activity keeps
+ * the record.
+ */
+const DISMISSED_KEY = "talome.app-detail.dismissed-operations";
+const FAILURE_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+/** Background operations whose failure gets a quiet notice, never the primary slot. */
+const BACKGROUND_KINDS: ReadonlySet<OperationKind> = new Set(["backup", "restore", "configure"]);
+
+function readDismissed(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeDismissed(ids: Set<string>) {
+  try {
+    window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...ids].slice(-100)));
+  } catch {
+    // Private mode or blocked storage: dismissal lasts until reload.
+  }
+}
+
+/** Where "Open" goes for the app's web port, from the container's detected web UI when there is one. */
+function openUrlFor(port: number, container: Container | undefined): string {
+  const mapping = container?.ports.find((p) => p.host === port && p.protocol === "tcp");
+  return appOpenUrl({ port, containerPort: mapping?.container, webUi: container?.webUi ?? null });
+}
 
 function showOutcomeToast(outcome: LifecycleOutcome) {
   const options = outcome.description ? { description: outcome.description } : undefined;
@@ -276,8 +340,10 @@ export default function AppDetailPage() {
   const [savingPatch, setSavingPatch] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [umbrelDialog, setUmbrelDialog] = useState<{ plan: UmbrelInstallPlan; version: number } | null>(null);
+  const [dismissedOps, setDismissedOps] = useState<Set<string>>(() => (typeof window === "undefined" ? new Set() : readDismissed()));
   const quickLook = useQuickLook();
-  const { isAdmin, isLoading: userLoading } = useUser();
+  const confirm = useConfirm();
+  const { isAdmin, isLoading: userLoading, hasPermission } = useUser();
 
   const appKey = storeId && appId ? `${CORE_URL}/api/apps/${storeId}/${appId}` : null;
   const stacksKey = `${CORE_URL}/api/containers?grouped=true`;
@@ -298,6 +364,31 @@ export default function AppDetailPage() {
   // Live operation (SSE) + recent history from the operations journal.
   const operations = useAppOperations(appId, { busy: !!actionLoading, onSettled: onOperationSettled });
   const liveOperation = operations.isActive ? operations.live : null;
+  // A failed / interrupted / rolled-back lifecycle operation stays in the
+  // primary slot until it is retried, dismissed, superseded by a newer
+  // lifecycle operation, or ages out. Background kinds (backup, restore,
+  // configure) only get a quiet notice below the primary action.
+  const settledFailure = operations.isActive
+    ? null
+    : settledFailureFrom(operations.live, operations.history, dismissedOps, { maxAgeMs: FAILURE_MAX_AGE_MS });
+  const backgroundFailure = operations.isActive
+    ? null
+    : settledFailureFrom(operations.live, operations.history, dismissedOps, { kinds: BACKGROUND_KINDS, maxAgeMs: FAILURE_MAX_AGE_MS });
+  // Only a failure that arrives while the page is open is announced as an
+  // alert; one found on arrival is shown quietly (role="status").
+  const activeOperationId = operations.isActive ? operations.live?.operationId ?? null : null;
+  const [seenActiveOps, setSeenActiveOps] = useState<ReadonlySet<string>>(() => new Set());
+  if (activeOperationId && !seenActiveOps.has(activeOperationId)) {
+    setSeenActiveOps(new Set([...seenActiveOps, activeOperationId]));
+  }
+  const dismissFailure = useCallback((operationId: string) => {
+    setDismissedOps((prev) => {
+      const next = new Set(prev);
+      next.add(operationId);
+      writeDismissed(next);
+      return next;
+    });
+  }, []);
 
   // Poll fast (5s) only while an action / operation is in flight (plus a short
   // grace window to catch the settled state); otherwise every 30s.
@@ -319,12 +410,14 @@ export default function AppDetailPage() {
     [actionPollMs, actionInFlight],
   );
 
-  const { data: app, isLoading, mutate } = useSWR<CatalogApp>(
+  const { loadedAt: appLoadedAt, markLoaded: markAppLoaded } = useLoadedAt();
+  const { data: app, error: appError, isLoading, isValidating: appValidating, mutate } = useSWR<AppDetail>(
     appKey,
     fetcher,
     {
       refreshInterval: appRefreshInterval,
       onSuccess: (data) => {
+        markAppLoaded();
         if (!data.installed && Object.keys(envValues).length === 0) {
           const defaults: Record<string, string> = {};
           data.env?.forEach((e: { key: string; default?: string }) => {
@@ -334,8 +427,11 @@ export default function AppDetailPage() {
         }
       },
       revalidateOnFocus: false,
+      // A 404 is an answer, not a blip: don't keep asking.
+      shouldRetryOnError: (err: unknown) => fetchErrorStatus(err) !== 404,
     },
   );
+  const loadingPhase = useLoadingPhase(isLoading && !app);
 
   // Fetch service stacks to find containers for this app
   const appTransitional = isTransitionalInstallStatus(app?.installed?.status);
@@ -398,13 +494,30 @@ export default function AppDetailPage() {
     return () => setPageTitle(null);
   }, [resolvedName, appId, setPageTitle]);
 
-  const ACTION_SUCCESS: Record<LifecycleAction, string> = {
+  const ACTION_SUCCESS: Record<Exclude<LifecycleAction, "uninstall">, string> = {
     install: "installed",
     start: "started",
     stop: "stopped",
     restart: "restarted",
     update: "updated",
-    uninstall: "removed",
+  };
+
+  /**
+   * Another operation owns the app (409): adopt it so its progress shows in
+   * the primary slot, and say what is happening in people's words.
+   * Returns false when the error was not a conflict.
+   */
+  const showConflict = async (err: TalomeApiError): Promise<boolean> => {
+    const conflict = parseOperationConflict(err.status, err.body);
+    if (!conflict || !app) return false;
+    const adopted: OperationRecord | null = conflict.operationId ? await operations.adopt(conflict.operationId) : null;
+    const copy = describeOperationConflict(
+      app.installed?.displayName || app.name,
+      adopted ? { kind: adopted.kind, actor: adopted.actor, startedAt: adopted.startedAt } : runningFromConflictBody(err.body),
+      { progressShown: !!adopted },
+    );
+    toast.info(copy.title, { description: copy.description });
+    return true;
   };
 
   const runAction = async (action: LifecycleAction, options: { umbrel?: UmbrelInstallOptions } = {}) => {
@@ -419,10 +532,6 @@ export default function AppDetailPage() {
         });
         await mutate();
         toast.success(`${app.name} installed`);
-      } else if (action === "uninstall") {
-        await talomeDelete(`/api/apps/${storeId}/${appId}`);
-        await mutate();
-        toast.success(`${app.name} removed`);
       } else if (action === "update") {
         const response = await talomePost<unknown>(`/api/apps/${storeId}/${appId}/update`);
         const [, freshInfo] = await Promise.all([mutate(), mutateUpdateInfo()]);
@@ -434,26 +543,21 @@ export default function AppDetailPage() {
         const outcome = updateOutcomeFromOperation(freshInfo?.lastUpdateOperation ?? null, operationId);
         showOutcomeToast(describeUpdateResponse(app.name, 200, response, { outcome }));
       } else {
+        if (action === "uninstall") return; // always through confirmUninstall()
         await talomePost(`/api/apps/${storeId}/${appId}/${action}`);
         await mutate();
         toast.success(`${app.name} ${ACTION_SUCCESS[action]}`);
       }
     } catch (err) {
-      const conflict = err instanceof TalomeApiError ? parseOperationConflict(err.status, err.body) : null;
+      const conflict = err instanceof TalomeApiError ? await showConflict(err) : false;
       if (conflict) {
-        // Another operation owns the app: show it instead of guessing.
-        const running = conflict.operationId ? await operations.adopt(conflict.operationId) : null;
-        toast.error(
-          running ? `${app.name} is busy: ${OPERATION_KIND_PROGRESS_LABELS[running.kind].toLowerCase()}` : `${app.name} is busy`,
-          { description: conflict.message },
-        );
+        // Shown: another operation owns the app, and its progress is now on the page.
       } else if (action === "update" && err instanceof TalomeApiError) {
         await Promise.all([mutate(), mutateUpdateInfo()]);
         showOutcomeToast(describeUpdateResponse(app.name, err.status, err.body));
       } else {
-        const label = action === "install" ? "Installation failed" : `Failed to ${action} ${app.name}`;
-        toast.error(label, {
-          description: err instanceof Error ? err.message : "Please try again.",
+        toast.error(`Couldn't ${action} ${app.name}`, {
+          description: err instanceof Error ? err.message : "Check that the Talome server is reachable, then retry.",
         });
         if (action === "install") void mutate();
       }
@@ -474,6 +578,94 @@ export default function AppDetailPage() {
       }
     }
     void runAction("install");
+  };
+
+  /**
+   * Uninstall behind a destructive confirmation. "Keep app data" is on by
+   * default; turning it off also erases the app's data folder and its
+   * anonymous Docker volumes once its containers are gone (named volumes are
+   * kept). The dialog runs the request, so a failure (or a
+   * conflict) shows inline with Retry instead of closing silently.
+   */
+  const confirmUninstall = async () => {
+    if (!app) return;
+    const name = app.installed?.displayName || app.name;
+    const dataDir = `~/.talome/app-data/${appId}`;
+    await confirm<{ dataKept?: boolean; dataRemoved?: boolean; dataError?: string }>({
+      tier: "destructive",
+      title: `Uninstall ${name}?`,
+      consequence: `${name} stops and its containers are removed. Anything that depends on it stops working.`,
+      recovery: `With "Keep app data" on, its settings and data stay in ${dataDir}, so reinstalling picks up where it left off. Folders it used on your drives are never touched.`,
+      confirmLabel: `Uninstall ${name}`,
+      option: {
+        label: "Keep app data",
+        defaultChecked: true,
+        description: `Turn off to also erase ${dataDir} and the anonymous Docker volumes its containers used. Named volumes are kept. That can't be undone.`,
+      },
+      busyLabel: `Uninstalling ${name}…`,
+      run: async ({ optionChecked }) => {
+        setActionLoading("uninstall");
+        try {
+          const result = await talomeDelete<{ dataKept?: boolean; dataRemoved?: boolean; dataError?: string }>(
+            `/api/apps/${encodeURIComponent(storeId)}/${encodeURIComponent(appId)}${optionChecked ? "" : "?keepData=false"}`,
+          );
+          await mutate();
+          if (result?.dataError) toastWarning(result.dataError);
+          return result ?? {};
+        } catch (err) {
+          if (err instanceof TalomeApiError) {
+            const conflict = parseOperationConflict(err.status, err.body);
+            if (conflict) {
+              const adopted = conflict.operationId ? await operations.adopt(conflict.operationId) : null;
+              const copy = describeOperationConflict(
+                name,
+                adopted ? { kind: adopted.kind, actor: adopted.actor, startedAt: adopted.startedAt } : runningFromConflictBody(err.body),
+              );
+              throw new Error(`${copy.title}. ${copy.description}`);
+            }
+          }
+          throw new Error(`Couldn't uninstall ${name}: ${err instanceof Error ? err.message : "the server didn't answer"}. Retry, or ask Talome to diagnose it.`);
+        } finally {
+          setActionLoading(null);
+          void operations.refresh();
+        }
+      },
+      // The server says what happened to the data folder; nothing is claimed it didn't confirm.
+      receipt: (result) =>
+        result.dataRemoved
+          ? `Uninstalled ${name} · data erased`
+          : result.dataKept
+            ? `Uninstalled ${name} · data kept`
+            : `Uninstalled ${name}`,
+    });
+  };
+
+  /** Stop is a reversible disruption: a soft confirmation. */
+  const confirmStop = async () => {
+    if (!app) return;
+    const name = app.installed?.displayName || app.name;
+    const { confirmed } = await confirm({
+      tier: "soft",
+      title: `Stop ${name}?`,
+      consequence: `${name} is unavailable until you start it again.`,
+      recovery: "Nothing is deleted. Start it any time.",
+      confirmLabel: `Stop ${name}`,
+    });
+    if (confirmed) void runAction("stop");
+  };
+
+  /** Restart is the same reversible disruption as Stop: a soft confirmation. */
+  const confirmRestart = async () => {
+    if (!app) return;
+    const name = app.installed?.displayName || app.name;
+    const { confirmed } = await confirm({
+      tier: "soft",
+      title: `Restart ${name}?`,
+      consequence: `${name} is unavailable for a moment.`,
+      recovery: "Nothing is deleted.",
+      confirmLabel: `Restart ${name}`,
+    });
+    if (confirmed) void runAction("restart");
   };
 
   const confirmUmbrelInstall = async (options: UmbrelInstallOptions | undefined): Promise<string[] | null> => {
@@ -525,6 +717,7 @@ export default function AppDetailPage() {
   }, [app, appId]);
 
   const pageRef = useRef<HTMLDivElement>(null);
+  const pageReady = !!app;
 
   useEffect(() => {
     const el = pageRef.current;
@@ -532,6 +725,9 @@ export default function AppDetailPage() {
     const handler = (e: MouseEvent) => {
       const anchor = (e.target as HTMLElement).closest("a");
       if (!anchor) return;
+      // Talome's own actions (Open, the app's own interface) are not
+      // "external links": only links from store content are intercepted.
+      if (anchor.hasAttribute("data-trusted-link")) return;
       const href = anchor.getAttribute("href");
       if (!href || href.startsWith("/") || href.startsWith("#")) return;
       e.preventDefault();
@@ -540,38 +736,104 @@ export default function AppDetailPage() {
     };
     el.addEventListener("click", handler, true); // capture phase
     return () => el.removeEventListener("click", handler, true);
-  }, []);
+    // The page root only exists once the app has loaded (the first render is
+    // the loading state), so attach then — with [] it never attached.
+  }, [pageReady]);
 
-  if (isLoading) {
+  // Branch on the phase itself: nothing for the first 200ms (a fast load never
+  // flashes a skeleton), and once shown the skeleton stays its minimum time
+  // even when the app arrives sooner.
+  if (loadingPhase === "skeleton" || (!app && !appError)) {
+    if (loadingPhase !== "skeleton") return <div className="mx-auto w-full max-w-xl min-h-96" aria-busy="true" />;
     return (
-      <div className="mx-auto w-full max-w-xl grid gap-8 pt-2 pb-12">
-        <Skeleton className="h-4 w-12" />
+      <div className="mx-auto w-full max-w-xl grid gap-8 pt-2 pb-12" aria-busy="true">
         <div className="flex flex-col items-center gap-4">
-          <Skeleton className="size-20 rounded-[1.25rem]" />
+          <Skeleton className="size-20 rounded-2xl" />
           <Skeleton className="h-6 w-40" />
           <Skeleton className="h-4 w-56" />
         </div>
-        <Skeleton className="h-12 w-full rounded-xl" />
-        <Skeleton className="h-[140px] rounded-xl" />
+        <Skeleton className="h-10 w-full max-w-xs mx-auto rounded-md" />
+        <Skeleton className="h-36 rounded-xl" />
       </div>
     );
   }
 
   if (!app) {
+    const status = fetchErrorStatus(appError);
+    if (status === 404) {
+      return (
+        <div className="mx-auto w-full max-w-xl pt-8 pb-12">
+          <EmptyState
+            icon={Package01Icon}
+            title="App not found"
+            description="This store doesn't list this app any more. It may have been renamed or removed from the store."
+            action={
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/dashboard/apps">Back to App Store</Link>
+              </Button>
+            }
+          />
+        </div>
+      );
+    }
     return (
-      <div className="mx-auto w-full max-w-xl flex flex-col items-center justify-center py-32 gap-3">
-        <p className="text-sm text-muted-foreground">App not found</p>
+      <div className="mx-auto w-full max-w-xl pt-8 pb-12">
+        <ErrorState
+          title="Couldn't load this app"
+          description="Check that the Talome server is reachable, then retry."
+          onRetry={() => void mutate()}
+        />
       </div>
     );
   }
 
   const isInstalled = !!app.installed;
+  const installedFrom = !isInstalled ? app.installedFrom : undefined;
   const status = app.installed?.status;
   const isRunning = status === "running";
+  const statusInfo = statusLabel(status);
+  const displayName = app.installed?.displayName || app.name;
   const originalWebPort = app.webPort ?? (appStack ? getContainerWebPort(appStack.primaryContainer) : undefined);
+  const openUrl = originalWebPort ? openUrlFor(originalWebPort, appStack?.primaryContainer) : null;
+  const canAskTalome = hasPermission("chat");
   const realIconUrl = resolveApplicationIconUrl(app.iconUrl);
   const isUserCreated = storeId === "user-apps";
   const requiresSetup = !isInstalled && !installUnsupported && needsAiSetup(app);
+  const retryFailure = (() => {
+    if (!settledFailure) return undefined;
+    switch (settledFailure.kind) {
+      case "install":
+        // Setup-first apps, blocked or unsupported installs and another
+        // store's copy can't simply run again: Ask Talome stays available.
+        return isInstalled || installedFrom || requiresSetup || installBlocked || installUnsupported
+          ? undefined
+          : () => void startInstall();
+      case "update":
+        return isInstalled ? () => void runAction("update") : undefined;
+      case "uninstall":
+        return isInstalled ? () => void confirmUninstall() : undefined;
+      case "start":
+      case "stop":
+      case "restart":
+        return isInstalled ? () => void runAction(settledFailure.kind as LifecycleAction) : undefined;
+      default:
+        return undefined;
+    }
+  })();
+  const failurePanel = (subordinate: boolean) =>
+    settledFailure ? (
+      <OperationFailure
+        className={subordinate ? "pb-2" : undefined}
+        operation={settledFailure}
+        appName={displayName}
+        onRetry={retryFailure}
+        retryBusy={actionInFlight}
+        canAskTalome={canAskTalome}
+        announce={seenActiveOps.has(settledFailure.operationId)}
+        subordinate={subordinate}
+        onDismiss={() => dismissFailure(settledFailure.operationId)}
+      />
+    ) : null;
   const validScreenshots = (app.screenshots || []).filter(
     (s) => !s.startsWith("file://"),
   );
@@ -582,6 +844,9 @@ export default function AppDetailPage() {
 
   return (
     <div ref={pageRef} className={`mx-auto w-full max-w-xl grid gap-10 pb-12${coverImage ? " pt-0" : " pt-2"}`}>
+      {appError && (
+        <StaleRow loadedAt={appLoadedAt} subject="details" onRetry={() => void mutate()} retrying={appValidating} className="justify-center" />
+      )}
       {/* ── Hero ─────────────────────────────────────────── */}
       <div className={coverImage ? "app-detail-hero app-detail-hero--has-cover" : "app-detail-hero"}>
         {coverImage ? (
@@ -688,7 +953,7 @@ export default function AppDetailPage() {
 
       <div className="flex flex-col items-center text-center gap-5">
         <div className="grid gap-1.5">
-          {editingName ? (
+          {editingName && isInstalled ? (
             <form
               className="flex items-center gap-2 justify-center"
               onSubmit={async (e) => {
@@ -700,33 +965,50 @@ export default function AppDetailPage() {
                 try {
                   await talomePatch(`/api/apps/${storeId}/${appId}`, { displayName: trimmed });
                   await mutate();
-                  toast.success("App renamed");
-                } catch { toast.error("Failed to rename"); }
-                finally { setSavingPatch(false); setEditingName(false); }
+                  setEditingName(false);
+                } catch (err) {
+                  toast.error(`Couldn't rename ${currentName}`, {
+                    description: err instanceof Error ? err.message : "Check that the Talome server is reachable, then retry.",
+                  });
+                } finally { setSavingPatch(false); }
               }}
             >
               <Input
                 autoFocus
+                aria-label="App name"
+                maxLength={100}
                 value={draftName}
                 onChange={(e) => setDraftName(e.target.value)}
                 className="h-8 text-center text-lg font-medium w-48"
                 onKeyDown={(e) => { if (e.key === "Escape") setEditingName(false); }}
               />
-              <Button size="sm" type="submit" disabled={savingPatch}>
-                {savingPatch ? "..." : "Save"}
+              <Button size="sm" type="submit" busy={savingPatch} busyLabel="Saving name…">
+                Save
+              </Button>
+              <Button size="sm" type="button" variant="ghost" onClick={() => setEditingName(false)} disabled={savingPatch}>
+                Cancel
               </Button>
             </form>
           ) : (
-            <h1
-              className="text-xl font-medium tracking-tight group/name cursor-pointer"
-              onClick={() => {
-                setDraftName(app.installed?.displayName || app.name);
-                setEditingName(true);
-              }}
-            >
-              {app.installed?.displayName || app.name}
-              <HugeiconsIcon icon={Edit02Icon} size={14} className="inline-block ml-1.5 opacity-0 group-hover/name:opacity-40 transition-opacity" />
-            </h1>
+            <div className="flex items-center justify-center gap-1">
+              <h1 className="text-2xl font-medium tracking-tight">{displayName}</h1>
+              {/* Renaming applies to an installed app only (core answers 409 otherwise). */}
+              {isInstalled && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground"
+                  aria-label={`Rename ${displayName}`}
+                  title="Rename"
+                  onClick={() => {
+                    setDraftName(displayName);
+                    setEditingName(true);
+                  }}
+                >
+                  <HugeiconsIcon icon={Edit02Icon} size={14} />
+                </Button>
+              )}
+            </div>
           )}
           <p className="text-sm text-muted-foreground max-w-sm">
             {app.tagline || app.description}
@@ -741,18 +1023,15 @@ export default function AppDetailPage() {
             {SOURCE_LABELS[app.source] || app.source}
           </span>
           {isInstalled && (
-            <span className={`app-detail-tag app-detail-tag--muted flex items-center gap-1.5`}>
-              <PillIndicator
-                variant={isRunning ? "success" : status === "updating" || status === "installing" ? "warning" : "error"}
-                pulse={status === "updating" || status === "installing"}
-              />
-              {status}
+            <span className="app-detail-tag app-detail-tag--muted flex items-center gap-1.5">
+              <StatusDot state={statusInfo.state} label={statusInfo.label} size="sm" hideLabel />
+              <span aria-hidden="true">{statusInfo.label}</span>
             </span>
           )}
         </div>
 
         {/* Update available banner */}
-        {updateInfo?.hasUpdate && status !== "updating" && !liveOperation && (
+        {updateInfo?.hasUpdate && status !== "updating" && !liveOperation && settledFailure?.kind !== "update" && (
           <div className="w-full max-w-sm rounded-xl border border-border bg-muted/30 px-4 py-3 grid gap-2">
             <div className="flex items-center gap-2.5">
               <HugeiconsIcon icon={SystemUpdate01Icon} size={16} className="text-muted-foreground shrink-0" />
@@ -764,19 +1043,20 @@ export default function AppDetailPage() {
               </p>
             </div>
             {updateInfo.releaseNotes && (
-              <p className="text-xs text-muted-foreground leading-relaxed pl-[26px] line-clamp-2">
+              <p className="text-xs text-muted-foreground leading-relaxed pl-6 line-clamp-2">
                 {updateInfo.releaseNotes}
               </p>
             )}
-            <div className="pl-[26px]">
+            <div className="pl-6">
               <Button
                 size="sm"
                 variant="secondary"
-                className="h-7 text-xs gap-1.5"
                 onClick={() => runAction("update")}
-                disabled={actionInFlight}
+                disabled={actionInFlight && actionLoading !== "update"}
+                busy={actionLoading === "update"}
+                busyLabel={`Updating ${displayName}…`}
               >
-                {actionLoading === "update" ? "Updating..." : "Update Now"}
+                Update now
               </Button>
             </div>
           </div>
@@ -787,12 +1067,25 @@ export default function AppDetailPage() {
           {liveOperation ? (
             <OperationProgress operation={liveOperation} />
           ) : actionLoading === "install" ? (
-            <Button size="lg" className="w-full gap-2" disabled>
-              <Spinner className="size-4" />
-              Starting install...
+            <Button size="lg" className="w-full" busy busyLabel={`Installing ${displayName}…`}>
+              Install
             </Button>
+          ) : settledFailure && !isInstalled && !installedFrom ? (
+            // Nothing is installed: the failure (with Retry) is the primary action.
+            failurePanel(false)
+          ) : installedFrom ? (
+            <>
+            {settledFailure && failurePanel(true)}
+            <Button size="lg" className="w-full" asChild>
+              <Link href={`/dashboard/apps/${encodeURIComponent(installedFrom.storeId)}/${encodeURIComponent(appId)}`}>
+                Open installed copy
+              </Link>
+            </Button>
+            </>
           ) : isInstalled ? (
             <>
+              {/* A failure sits above Open / Start, never in place of them. */}
+              {settledFailure && failurePanel(true)}
               {isRunning && app.nativeSurface ? (
                 <>
                   <Button size="lg" className="w-full" asChild>
@@ -800,42 +1093,40 @@ export default function AppDetailPage() {
                       Open {app.name}
                     </Link>
                   </Button>
-                  {originalWebPort ? (
+                  {openUrl ? (
                     <Button variant="outline" className="w-full" asChild>
                       <a
-                        href={getHostUrl(originalWebPort)}
+                        href={openUrl}
                         target="_blank"
                         rel="noopener noreferrer"
+                        data-trusted-link
                       >
                         Open original interface
                       </a>
                     </Button>
                   ) : null}
                 </>
-              ) : isRunning && originalWebPort ? (
+              ) : isRunning && openUrl ? (
                 <Button size="lg" className="w-full" asChild>
                   <a
-                    href={getHostUrl(originalWebPort)}
+                    href={openUrl}
                     target="_blank"
                     rel="noopener noreferrer"
+                    data-trusted-link
                   >
-                    Open {app.name}
+                    Open {displayName}
                   </a>
                 </Button>
               ) : (
                 <Button
                   size="lg"
                   className="w-full"
-                  onClick={() => runAction(isRunning ? "stop" : "start")}
-                  disabled={actionInFlight}
+                  onClick={() => (isRunning ? void confirmStop() : void runAction("start"))}
+                  disabled={actionInFlight && actionLoading !== "start" && actionLoading !== "stop"}
+                  busy={actionLoading === "start" || actionLoading === "stop"}
+                  busyLabel={actionLoading === "stop" ? `Stopping ${displayName}…` : `Starting ${displayName}…`}
                 >
-                  {actionLoading === "start"
-                    ? "Starting..."
-                    : actionLoading === "stop"
-                      ? "Stopping..."
-                      : isRunning
-                        ? "Stop"
-                        : "Start"}
+                  {isRunning ? "Stop" : "Start"}
                 </Button>
               )}
             </>
@@ -856,7 +1147,29 @@ export default function AppDetailPage() {
               {app.detectedRunning ? "Reinstall with Talome" : "Install"}
             </Button>
           )}
-          {!isInstalled && !requiresSetup && installBlocked && !liveOperation && (
+          {isInstalled && backgroundFailure && !liveOperation && (
+            <p className="flex flex-wrap items-center justify-center gap-x-2 text-xs text-muted-foreground text-center" role="status">
+              <span>{operationFailureCopy(backgroundFailure, displayName).title}</span>
+              {(backgroundFailure.kind === "backup" || backgroundFailure.kind === "restore") && (
+                <Link href="/dashboard/backups" className="underline underline-offset-2 hover:text-foreground">
+                  See Backups
+                </Link>
+              )}
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-foreground"
+                onClick={() => dismissFailure(backgroundFailure.operationId)}
+              >
+                Dismiss
+              </button>
+            </p>
+          )}
+          {installedFrom && !liveOperation && (
+            <p className="text-xs text-muted-foreground text-center">
+              Installed from {installedFrom.storeName}. One copy of an app can be installed at a time.
+            </p>
+          )}
+          {!isInstalled && !installedFrom && !requiresSetup && installBlocked && !liveOperation && !settledFailure && (
             <p className="text-xs text-status-critical text-center break-words" role="alert">
               {installBlocked}
             </p>
@@ -866,7 +1179,7 @@ export default function AppDetailPage() {
               This app needs configuration before it can run
             </p>
           )}
-          {!isInstalled && !requiresSetup && app.detectedRunning && (
+          {!isInstalled && !installedFrom && !requiresSetup && app.detectedRunning && (
             <p className="text-xs text-muted-foreground text-center">
               Already running as a container
             </p>
@@ -901,10 +1214,10 @@ export default function AppDetailPage() {
       )}
 
       {/* ── Install Notes ───────────────────────────────── */}
-      {app.installNotes && (
+      {app.installNotes && !isInstalled && (
         <section className="grid gap-2">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Before You Install
+          <h2 className="text-sm font-medium text-muted-foreground">
+            Before you install
           </h2>
           <Streamdown
             className="text-sm text-muted-foreground leading-relaxed [&_strong]:text-foreground [&_a]:underline [&_a]:underline-offset-2 [&_ul]:list-disc [&_ul]:pl-4 [&_li]:mt-0.5"
@@ -928,8 +1241,8 @@ export default function AppDetailPage() {
       {/* ── Release Notes ───────────────────────────────── */}
       {app.releaseNotes && (
         <section className="grid gap-2">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            What&apos;s New
+          <h2 className="text-sm font-medium text-muted-foreground">
+            What&apos;s new
           </h2>
           <Streamdown
             className="text-sm text-muted-foreground leading-relaxed [&_strong]:text-foreground [&_a]:underline [&_a]:underline-offset-2 [&_ul]:list-disc [&_ul]:pl-4 [&_li]:mt-0.5"
@@ -942,7 +1255,7 @@ export default function AppDetailPage() {
       {/* ── Install-time config (only for apps without required setup) ── */}
       {!isInstalled && !requiresSetup && app.env?.length > 0 && (
         <section className="grid gap-3">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <h2 className="text-sm font-medium text-muted-foreground">
             Configuration
           </h2>
           <div className="rounded-xl border border-border p-5 grid gap-4">
@@ -978,8 +1291,8 @@ export default function AppDetailPage() {
         if (mediaVols.length === 0) return null;
         return (
           <section className="grid gap-3">
-            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Media Libraries
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Media libraries
             </h2>
             <div className="rounded-xl border border-border p-5 grid gap-4">
               {mediaVols.map((vol, i) => (
@@ -1010,7 +1323,7 @@ export default function AppDetailPage() {
 
       {/* ── Information ─────────────────────────────────── */}
       <section className="grid gap-2">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <h2 className="text-sm font-medium text-muted-foreground">
           Information
         </h2>
         <div className="divide-y divide-border">
@@ -1042,7 +1355,7 @@ export default function AppDetailPage() {
           {app.ports?.length > 0 && (
             <div className="flex justify-between items-center py-3 text-sm">
               <span className="text-muted-foreground">Ports</span>
-              {editingPorts ? (
+              {editingPorts && isInstalled ? (
                 <form
                   className="flex items-center gap-2 flex-wrap justify-end"
                   onSubmit={async (e) => {
@@ -1058,14 +1371,22 @@ export default function AppDetailPage() {
                     try {
                       const res = await talomePatch<{ portMessage?: string }>(`/api/apps/${storeId}/${appId}`, { ports: portMap });
                       await mutate();
-                      toast.success(res.portMessage || "Ports updated");
-                    } catch { toast.error("Failed to update ports"); }
-                    finally { setSavingPatch(false); setEditingPorts(false); }
+                      setEditingPorts(false);
+                      if (res.portMessage) toast.success(res.portMessage);
+                    } catch (err) {
+                      if (!(err instanceof TalomeApiError && (await showConflict(err)))) {
+                        toast.error("Couldn't change the ports", {
+                          description: err instanceof Error ? err.message : "Check that the Talome server is reachable, then retry.",
+                        });
+                      }
+                    } finally { setSavingPatch(false); }
                   }}
                 >
                   {app.ports.map((p) => (
                     <div key={p.container} className="flex items-center gap-1">
                       <Input
+                        inputMode="numeric"
+                        aria-label={`Host port for container port ${p.container}`}
                         value={draftPorts[String(p.container)] ?? String(p.host)}
                         onChange={(e) => setDraftPorts((prev) => ({ ...prev, [String(p.container)]: e.target.value }))}
                         className="h-7 w-16 text-xs font-mono text-center"
@@ -1073,29 +1394,39 @@ export default function AppDetailPage() {
                       <span className="text-muted-foreground text-xs">:{p.container}</span>
                     </div>
                   ))}
-                  <Button size="sm" type="submit" disabled={savingPatch} className="h-7 text-xs">
-                    {savingPatch ? "..." : "Save"}
+                  <Button size="xs" type="submit" busy={savingPatch} busyLabel="Saving ports…">
+                    Save
                   </Button>
-                  <Button size="sm" variant="ghost" type="button" onClick={() => setEditingPorts(false)} className="h-7 text-xs">
+                  <Button size="xs" variant="ghost" type="button" onClick={() => setEditingPorts(false)} disabled={savingPatch}>
                     Cancel
                   </Button>
                 </form>
               ) : (
-                <div
-                  className="flex gap-1.5 flex-wrap justify-end group/ports cursor-pointer"
-                  onClick={() => {
-                    const draft: Record<string, string> = {};
-                    for (const p of app.ports) draft[String(p.container)] = String(p.host);
-                    setDraftPorts(draft);
-                    setEditingPorts(true);
-                  }}
-                >
+                <div className="flex gap-1.5 flex-wrap justify-end items-center">
                   {app.ports.map((p, i) => (
                     <span key={i} className="port-chip">
                       {p.host}:{p.container}
                     </span>
                   ))}
-                  <HugeiconsIcon icon={Edit02Icon} size={12} className="self-center opacity-0 group-hover/ports:opacity-40 transition-opacity" />
+                  {/* Port edits apply to an installed app only (core answers 409 otherwise). */}
+                  {isInstalled && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="text-muted-foreground"
+                      aria-label="Change ports"
+                      title="Change ports"
+                      disabled={actionInFlight}
+                      onClick={() => {
+                        const draft: Record<string, string> = {};
+                        for (const p of app.ports) draft[String(p.container)] = String(p.host);
+                        setDraftPorts(draft);
+                        setEditingPorts(true);
+                      }}
+                    >
+                      <HugeiconsIcon icon={Edit02Icon} size={12} />
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -1131,7 +1462,7 @@ export default function AppDetailPage() {
       {isUserCreated && (
         <>
           <section className="grid gap-2">
-            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <h2 className="text-sm font-medium text-muted-foreground">
               Claude Code
             </h2>
             {claudeSession ? (
@@ -1148,7 +1479,7 @@ export default function AppDetailPage() {
             ) : (
               <div className="rounded-xl border border-border p-4 grid gap-3">
                 <p className="text-sm text-muted-foreground">
-                  Continue customizing this app — Claude remembers the workspace from when it was created.
+                  Continue customizing this app. Claude remembers the workspace from when it was created.
                 </p>
                 <Button
                   variant="outline"
@@ -1161,7 +1492,7 @@ export default function AppDetailPage() {
             )}
           </section>
           <section className="grid gap-2">
-            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <h2 className="text-sm font-medium text-muted-foreground">
               Community
             </h2>
             <div className="rounded-xl border border-border p-4 grid gap-3">
@@ -1174,7 +1505,7 @@ export default function AppDetailPage() {
                 disabled={submittingCommunity}
                 className="w-full sm:w-fit"
               >
-                {submittingCommunity ? "Submitting..." : "Submit to Community"}
+                {submittingCommunity ? "Submitting…" : "Submit to community"}
               </Button>
             </div>
           </section>
@@ -1184,7 +1515,7 @@ export default function AppDetailPage() {
       {/* ── Containers ──────────────────────────────────── */}
       {appStack && appStack.containers.length > 0 && (
         <section className="grid gap-2">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <h2 className="text-sm font-medium text-muted-foreground">
             Containers
           </h2>
           <div className="rounded-xl border border-border divide-y divide-border">
@@ -1199,16 +1530,13 @@ export default function AppDetailPage() {
                 <div key={container.id} className="px-4 py-3 grid gap-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 min-w-0">
-                      <PillIndicator
-                        variant={isContainerRunning ? "success" : container.status === "restarting" ? "warning" : "error"}
-                        pulse={container.status === "restarting"}
-                      />
+                      <StatusDot state={statusLabel(container.status).state} label={statusLabel(container.status).label} size="sm" hideLabel />
                       <span className="text-sm font-medium truncate">{container.name}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground">{container.status}</span>
+                    <span className="text-xs text-muted-foreground">{statusLabel(container.status).label}</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <code className="bg-muted px-1.5 py-0.5 rounded truncate max-w-[240px]">{container.image}</code>
+                    <code className="bg-muted px-1.5 py-0.5 rounded truncate max-w-60">{container.image}</code>
                   </div>
                   {tcpPorts.length > 0 && (
                     <div className="flex gap-1.5 flex-wrap">
@@ -1245,7 +1573,7 @@ export default function AppDetailPage() {
       {/* ── Lifecycle controls (installed only) ────────── */}
       {isInstalled && (
         <section className="grid gap-2">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <h2 className="text-sm font-medium text-muted-foreground">
             Controls
           </h2>
           {liveOperation && (
@@ -1255,13 +1583,13 @@ export default function AppDetailPage() {
           )}
           <div className="rounded-xl border border-border divide-y divide-border">
             <button
-              onClick={() => runAction("restart")}
+              onClick={() => void confirmRestart()}
               disabled={actionInFlight}
               className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
             >
               <span>Restart</span>
               {actionLoading === "restart" && (
-                <span className="text-muted-foreground text-xs">Restarting...</span>
+                <span className="text-muted-foreground text-xs">Restarting…</span>
               )}
             </button>
             <button
@@ -1275,7 +1603,7 @@ export default function AppDetailPage() {
                     toast("Already on the latest version");
                   }
                 } catch {
-                  toast.error("Failed to check for updates");
+                  toast.error("Couldn't check for updates", { description: "Check that the Talome server is reachable, then retry." });
                 } finally {
                   setCheckingUpdates(false);
                 }
@@ -1283,9 +1611,9 @@ export default function AppDetailPage() {
               disabled={actionInFlight || checkingUpdates}
               className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
             >
-              <span>Check for Updates</span>
+              <span>Check for updates</span>
               {checkingUpdates && (
-                <span className="text-muted-foreground text-xs">Checking...</span>
+                <span className="text-muted-foreground text-xs">Checking…</span>
               )}
             </button>
             {updateInfo?.hasUpdate && (
@@ -1296,19 +1624,19 @@ export default function AppDetailPage() {
               >
                 <span>Update to v{updateInfo.availableVersion}</span>
                 {actionLoading === "update" && (
-                  <span className="text-muted-foreground text-xs">Updating...</span>
+                  <span className="text-muted-foreground text-xs">Updating…</span>
                 )}
               </button>
             )}
             {isRunning ? (
               <button
-                onClick={() => runAction("stop")}
+                onClick={() => void confirmStop()}
                 disabled={actionInFlight}
                 className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
               >
                 <span>Stop</span>
                 {actionLoading === "stop" && (
-                  <span className="text-muted-foreground text-xs">Stopping...</span>
+                  <span className="text-muted-foreground text-xs">Stopping…</span>
                 )}
               </button>
             ) : (
@@ -1319,18 +1647,18 @@ export default function AppDetailPage() {
               >
                 <span>Start</span>
                 {actionLoading === "start" && (
-                  <span className="text-muted-foreground text-xs">Starting...</span>
+                  <span className="text-muted-foreground text-xs">Starting…</span>
                 )}
               </button>
             )}
             <button
-              onClick={() => runAction("uninstall")}
+              onClick={() => void confirmUninstall()}
               disabled={actionInFlight}
-              className="w-full flex justify-between items-center px-4 py-3 text-sm text-destructive hover:bg-destructive/5 transition-colors disabled:opacity-50"
+              className="w-full flex justify-between items-center px-4 py-3 text-sm text-status-critical hover:bg-status-critical/5 transition-colors disabled:opacity-50"
             >
-              <span>Uninstall</span>
+              <span>Uninstall…</span>
               {actionLoading === "uninstall" && (
-                <span className="text-xs opacity-70">Removing...</span>
+                <span className="text-xs text-muted-foreground">Uninstalling…</span>
               )}
             </button>
           </div>

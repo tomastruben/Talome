@@ -102,7 +102,7 @@ import {
 import { mergeCatalogConfig, readCatalogBase, recordCatalogBase } from "../stores/catalog-sync.js";
 import { runInActorContext, runInToolCallContext } from "../ai/actor-context.js";
 import { userApps } from "../routes/user-apps.js";
-import { __resetActiveOperationsForTests } from "../ops/operations.js";
+import { __resetActiveOperationsForTests, listOperationSteps } from "../ops/operations.js";
 import type { ServiceImageState } from "../ops/docker-probe.js";
 import { apps } from "../routes/apps.js";
 import { executeHook } from "../stores/lifecycle-hooks.js";
@@ -443,6 +443,184 @@ describe("uninstall verifies removal and keeps user data", () => {
     expect(result.success).toBe(true);
     expect(commands().some((c) => c.includes(`-f "${composePath}" down`))).toBe(true);
     expect(live).toEqual([]);
+  });
+});
+
+describe("uninstall with keepData=false (\"Keep app data\" off)", () => {
+  const anon = "a".repeat(64);
+  const legacyAnon = "b".repeat(64);
+  const namedVolumes = ["bkrs-pgapp_pgdata", "c".repeat(64)];
+
+  function seedAppData(appId: string): string {
+    const dir = join(APP_DATA_DIR, appId);
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(join(dir, "data"), { recursive: true });
+    writeFileSync(join(dir, "data", "PG_VERSION"), "16");
+    return dir;
+  }
+
+  /** Docker reports one named, two anonymous and one 64-hex named volume; `down`/`rm -f` behave as given. */
+  function mockDocker(opts: { down: "ok" | "fails"; rmRemoves: boolean }): void {
+    m.run.mockImplementation(async (cmd: string) => {
+      if (cmd.startsWith("docker inspect")) {
+        return {
+          stdout: JSON.stringify([
+            { Type: "volume", Name: namedVolumes[0] },
+            { Type: "volume", Name: anon },
+            { Type: "volume", Name: legacyAnon },
+            { Type: "volume", Name: namedVolumes[1] },
+            { Type: "bind", Source: join(APP_DATA_DIR, APP, "data") },
+          ]) + "\n",
+          stderr: "",
+        };
+      }
+      if (cmd.startsWith("docker volume inspect")) {
+        return {
+          stdout: [
+            `${namedVolumes[0]} {"com.docker.compose.project":"bkrs-pgapp","com.docker.compose.volume":"pgdata"}`,
+            `${anon} {"com.docker.volume.anonymous":""}`,
+            `${legacyAnon} null`,
+            `${namedVolumes[1]} {"com.docker.compose.volume":"x"}`,
+          ].join("\n"),
+          stderr: "",
+        };
+      }
+      if (cmd.includes(" down")) {
+        if (opts.down === "fails") throw Object.assign(new Error("down failed"), { stderr: "yaml: line 3: bad indentation" });
+        live = [];
+      }
+      if (cmd.startsWith("docker rm -f") && opts.rmRemoves) live = [];
+      return { stdout: "", stderr: "" };
+    });
+  }
+
+  function removedVolumes(): string[] {
+    return commands().filter((c) => c.startsWith("docker volume rm")).map((c) => c.split(" ").pop()!);
+  }
+
+  it("erases the app's data folder and its anonymous volumes, never named volumes, after the containers are gone", async () => {
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    mockDocker({ down: "ok", rmRemoves: false });
+    const dataDir = seedAppData(APP);
+    const sibling = seedAppData("bkrs-other");
+
+    const result = await uninstallApp(APP, { keepData: false });
+
+    expect(result.success).toBe(true);
+    expect(installedRow()).toBeUndefined();
+    expect(removedVolumes().sort()).toEqual([anon, legacyAnon].sort());
+    for (const named of namedVolumes) expect(removedVolumes()).not.toContain(named);
+    expect(commands().some((c) => / -v\b/.test(c) || c.includes("--volumes"))).toBe(false);
+    expect(result.anonymousVolumes).toEqual({ removed: [anon, legacyAnon], kept: [] });
+    expect(result.warning).toBeUndefined();
+    expect(result.dataErase).toEqual({ removed: true, path: dataDir });
+    expect(existsSync(dataDir)).toBe(false);
+    expect(existsSync(sibling)).toBe(true);
+    // The folder goes last, once the containers are gone and the app is no longer tracked.
+    const steps = listOperationSteps(result.operationId!).map((s) => s.step);
+    expect(steps.indexOf("remove_anonymous_volumes")).toBeGreaterThan(steps.indexOf("remove_containers"));
+    expect(steps.indexOf("erase_data")).toBeGreaterThan(steps.indexOf("remove_anonymous_volumes"));
+    rmSync(sibling, { recursive: true, force: true });
+  });
+
+  it("keeps the folder and the anonymous volumes by default (keepData defaults to true)", async () => {
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    mockDocker({ down: "ok", rmRemoves: false });
+    const dataDir = seedAppData(APP);
+
+    const result = await uninstallApp(APP);
+
+    expect(result.success).toBe(true);
+    expect(removedVolumes()).toEqual([]);
+    expect(result.anonymousVolumes).toEqual({ removed: [], kept: [anon, legacyAnon] });
+    expect(result.warning).toContain("Kept 2 anonymous Docker volume(s)");
+    expect(result.dataErase).toBeUndefined();
+    expect(existsSync(dataDir)).toBe(true);
+  });
+
+  it("erases nothing when the containers could not be removed (the app stays installed)", async () => {
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    mockDocker({ down: "fails", rmRemoves: false });
+    const dataDir = seedAppData(APP);
+
+    const result = await uninstallApp(APP, { keepData: false });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("still exist");
+    expect(installedRow()).toBeDefined();
+    expect(removedVolumes()).toEqual([]);
+    expect(result.dataErase).toBeUndefined();
+    expect(existsSync(dataDir)).toBe(true);
+  });
+
+  it("erases nothing when Docker cannot list the app's containers", async () => {
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    mockDocker({ down: "ok", rmRemoves: false });
+    m.listContainers.mockRejectedValueOnce(new Error("docker unreachable"));
+    const dataDir = seedAppData(APP);
+
+    const result = await uninstallApp(APP, { keepData: false });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Nothing was removed");
+    expect(installedRow()).toBeDefined();
+    expect(commands().some((c) => c.includes(" down") || c.startsWith("docker volume rm"))).toBe(false);
+    expect(existsSync(dataDir)).toBe(true);
+  });
+
+  it("erases nothing when compose down failed, even once the containers were removed by label", async () => {
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    mockDocker({ down: "fails", rmRemoves: true });
+    const dataDir = seedAppData(APP);
+
+    const result = await uninstallApp(APP, { keepData: false });
+
+    expect(result.success).toBe(true);
+    expect(installedRow()).toBeUndefined();
+    expect(removedVolumes()).toEqual([]);
+    expect(result.anonymousVolumes).toEqual({ removed: [], kept: [anon, legacyAnon] });
+    expect(result.warning).toContain("not erased because docker compose down failed");
+    expect(result.dataErase).toMatchObject({ removed: false, path: dataDir, reason: "containers_running" });
+    expect(existsSync(dataDir)).toBe(true);
+    const steps = listOperationSteps(result.operationId!).map((s) => s.step);
+    expect(steps).not.toContain("erase_data");
+  });
+
+  it("the REST route passes keepData=false and returns both the volume report and the data receipt", async () => {
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    mockDocker({ down: "ok", rmRemoves: false });
+    const dataDir = seedAppData(APP);
+    const app = new Hono().route("/api/apps", apps);
+
+    const res = await app.request(`/api/apps/${STORE}/${APP}?keepData=false`, { method: "DELETE", headers: { "Content-Type": "application/json" } });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
+      ok: true,
+      dataRemoved: true,
+      dataKept: false,
+      anonymousVolumes: { removed: [anon, legacyAnon], kept: [] },
+    });
+    expect(typeof body.operationId).toBe("string");
+    expect(body.dataError).toBeUndefined();
+    expect(existsSync(dataDir)).toBe(false);
+  });
+
+  it("the REST route reports a kept folder and kept volumes when compose down failed", async () => {
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    mockDocker({ down: "fails", rmRemoves: true });
+    const dataDir = seedAppData(APP);
+    const app = new Hono().route("/api/apps", apps);
+
+    const res = await app.request(`/api/apps/${STORE}/${APP}?keepData=false`, { method: "DELETE", headers: { "Content-Type": "application/json" } });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body).toMatchObject({ ok: true, dataRemoved: false, dataKept: true, anonymousVolumes: { removed: [], kept: [anon, legacyAnon] } });
+    expect(String(body.dataError)).toContain("couldn't erase its data folder");
+    expect(String(body.warning)).toContain("docker compose down failed");
+    expect(existsSync(dataDir)).toBe(true);
   });
 });
 

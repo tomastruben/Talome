@@ -18,6 +18,7 @@
   --color-status-healthy-foreground: var(--status-healthy-foreground);
   --color-status-warning-foreground: var(--status-warning-foreground);
   --color-status-critical-foreground: var(--status-critical-foreground);
+  --color-status-critical-inverse: var(--status-critical-inverse);
   --color-status-info-foreground: var(--status-info-foreground);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-dim-foreground: var(--dim-foreground);
@@ -163,6 +164,9 @@
   --status-warning-foreground: oklch(0.985 0 0);
   --status-critical-foreground: oklch(0.985 0 0);
   --status-info-foreground: oklch(0.985 0 0);
+  /* Critical text on an inverted surface (bg-foreground), e.g. the Files
+     selection bar: the other theme's critical value. */
+  --status-critical-inverse: oklch(0.75 0.18 22.216);
   --dim-foreground: oklch(0.56 0 0);
 
   /* Surface roles. Modals, menus, popovers and toasts are opaque.
@@ -230,6 +234,7 @@
   --status-warning-foreground: oklch(0.145 0 0);
   --status-critical-foreground: oklch(0.145 0 0);
   --status-info-foreground: oklch(0.145 0 0);
+  --status-critical-inverse: oklch(0.53 0.21 27);
   --dim-foreground: oklch(0.6 0 0);
 
   --surface-modal: oklch(0.205 0 0);

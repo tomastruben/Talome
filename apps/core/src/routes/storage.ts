@@ -1,42 +1,132 @@
 import { Hono } from "hono";
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { serverError } from "../middleware/request-logger.js";
+import { isValidSmartDevice } from "../ai/tools/storage-tools.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export const storage = new Hono();
 
+/**
+ * A drive's SMART verdict. "unknown" means the drive did not report one
+ * (no SMART support, USB bridges that hide it, permission denied, smartctl
+ * failed): that is not the same as failing, and the UI must not say it is.
+ */
+export type SmartHealth = "healthy" | "failing" | "unknown";
+
+export interface SmartDriveReport {
+  device: string;
+  type: string;
+  model: string;
+  health: SmartHealth;
+  /** Why the health is unknown, in plain words. Only set when health is "unknown". */
+  reason?: string;
+  temperature: number | null;
+  powerOnHours: number | null;
+}
+
+/** Read the overall verdict from `smartctl --json -a` output. */
+export function smartHealth(info: unknown): SmartHealth {
+  if (!info || typeof info !== "object") return "unknown";
+  const status = (info as { smart_status?: { passed?: unknown } }).smart_status;
+  if (status && typeof status.passed === "boolean") return status.passed ? "healthy" : "failing";
+  return "unknown";
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** One drive's report from parsed `smartctl --json -a` output (or null when it produced none). */
+export function smartDriveReport(dev: { name: string; type?: string }, info: unknown): SmartDriveReport {
+  const data = (info && typeof info === "object" ? info : {}) as {
+    model_name?: unknown;
+    model_family?: unknown;
+    temperature?: { current?: unknown };
+    power_on_time?: { hours?: unknown };
+  };
+  const health = smartHealth(info);
+  const model = typeof data.model_name === "string" && data.model_name
+    ? data.model_name
+    : typeof data.model_family === "string" && data.model_family
+      ? data.model_family
+      : "Unknown";
+  return {
+    device: dev.name,
+    type: dev.type ?? "unknown",
+    model,
+    health,
+    ...(health === "unknown" ? { reason: "This drive doesn't report SMART health." } : {}),
+    temperature: finiteOrNull(data.temperature?.current),
+    powerOnHours: finiteOrNull(data.power_on_time?.hours),
+  };
+}
+
+/**
+ * Run smartctl and return its stdout. smartctl exits non-zero as a bitmask
+ * even when it printed a full JSON report (bit 3 is "disk failing"), so a
+ * non-zero exit with output is still a result, not an error.
+ */
+async function smartctlJson(args: string[]): Promise<unknown> {
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("smartctl", args, { timeout: 10000 }));
+  } catch (err) {
+    const out = (err as { stdout?: unknown }).stdout;
+    if (typeof out !== "string" || !out.trim()) throw err;
+    stdout = out;
+  }
+  return JSON.parse(stdout);
+}
+
+/**
+ * A scanned name smartctl can be queried with (one argv entry, never a
+ * shell): a /dev path, or the IOService path smartctl reports for some
+ * drives on macOS. Neither can be read as an option or climb out with "..".
+ */
+export function isQueryableScannedDevice(name: string): boolean {
+  if (isValidSmartDevice(name)) return true;
+  return /^IOService:\/[A-Za-z0-9_@,.:\/ ()-]+$/.test(name) && !name.split("/").includes("..");
+}
+
+/** A scan entry that can't be a drive at all (a flag, control characters) is not listed. */
+function isPlausibleDeviceName(name: string): boolean {
+  return name.length > 0 && name.length <= 512 && !name.startsWith("-") && !/[\0\r\n]/.test(name);
+}
+
 // SMART disk health
 storage.get("/smart", async (c) => {
+  let devices: { name: string; type: string; protocol: string }[];
   try {
-    const { stdout } = await execAsync("smartctl --scan --json", { timeout: 10000 });
-    const data = JSON.parse(stdout);
-    const devices: { name: string; type: string; protocol: string }[] = data.devices ?? [];
-
-    const results = await Promise.allSettled(
-      devices.map(async (dev) => {
-        const { stdout: detail } = await execAsync(`smartctl --json -a ${dev.name}`, { timeout: 10000 });
-        const info = JSON.parse(detail);
-        return {
-          device: dev.name,
-          type: dev.type,
-          model: info.model_name ?? info.model_family ?? "Unknown",
-          health: info.smart_status?.passed ? "healthy" : "failing",
-          temperature: info.temperature?.current ?? null,
-          powerOnHours: info.power_on_time?.hours ?? null,
-        };
-      }),
-    );
-
-    return c.json(
-      results
-        .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled")
-        .map((r) => r.value),
-    );
+    const data = (await smartctlJson(["--scan", "--json"])) as { devices?: unknown };
+    devices = Array.isArray(data.devices)
+      ? (data.devices as { name: string; type: string; protocol: string }[]).filter(
+          (d) => d && typeof d.name === "string" && isPlausibleDeviceName(d.name),
+        )
+      : [];
   } catch {
     return c.json({ error: "smartctl not available" }, 503);
   }
+
+  // Every scanned drive is reported: a drive whose details can't be read (or
+  // whose name Talome won't hand to smartctl) is "unknown", never silently
+  // dropped (and never "failing").
+  const results = await Promise.all(
+    devices.map(async (dev) => {
+      if (!isQueryableScannedDevice(dev.name)) {
+        return { ...smartDriveReport(dev, null), reason: "Talome can't query this drive by the name smartctl reported." };
+      }
+      try {
+        return smartDriveReport(dev, await smartctlJson(["--json", "-a", dev.name]));
+      } catch {
+        return { ...smartDriveReport(dev, null), reason: "Talome couldn't read this drive's SMART data." };
+      }
+    }),
+  );
+
+  return c.json(results);
 });
 
 // Docker disk usage

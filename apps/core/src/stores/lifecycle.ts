@@ -91,6 +91,7 @@ import {
 import { isPreUpdateBackupEnabled, takePreUpdateBackup, findPreUpdateBackupId, backupTriggerForActor, type PreUpdateBackupResult } from "../ops/pre-update-backup.js";
 import { getSemanticBaseline, hasSemanticProbe, runSemanticVerification, type SemanticVerification } from "../ops/semantic-verify.js";
 import { holdAppMaintenance } from "../backup/state.js";
+import { appDataDirFor, removeAppData, type RemoveAppDataResult } from "../ops/app-data.js";
 import { reconcileUmbrelDependencies, applyUmbrelV2Install, getSavedDependencySelections } from "./umbrel-v2-install.js";
 import {
   clearImagePins,
@@ -703,6 +704,15 @@ export interface UninstallOptions extends LifecycleOptions {
    * Named volumes and bind-mounted app data are never deleted.
    */
   removeAnonymousVolumes?: boolean;
+  /**
+   * Keep the app's data (the default). false erases it: the anonymous Docker
+   * volumes of its containers and its own data folder
+   * (~/.talome/app-data/<appId>), the folder as the last step of the
+   * uninstall operation, under its lock. Only after a clean teardown —
+   * `docker compose down` succeeded and no container of the app is left —
+   * otherwise everything is kept and reported. Named volumes are never deleted.
+   */
+  keepData?: boolean;
 }
 
 export interface UninstallResult {
@@ -711,6 +721,8 @@ export interface UninstallResult {
   warning?: string;
   /** Anonymous volumes of the removed containers: deleted (opt-in) or kept. */
   anonymousVolumes?: { removed: string[]; kept: string[] };
+  /** What happened to the data folder when keepData was false. */
+  dataErase?: RemoveAppDataResult;
 }
 
 export function uninstallApp(appId: string, opts?: UninstallOptions): Promise<UninstallResult & OperationResultMeta> {
@@ -718,9 +730,17 @@ export function uninstallApp(appId: string, opts?: UninstallOptions): Promise<Un
     appId,
     "uninstall",
     opts,
-    (ctx) => uninstallAppInner(appId, ctx, { removeAnonymousVolumes: opts?.removeAnonymousVolumes === true }),
+    (ctx) => uninstallAppInner(appId, ctx, {
+      removeAnonymousVolumes: opts?.removeAnonymousVolumes === true,
+      keepData: opts?.keepData !== false,
+    }),
     requireInstalled(appId),
   );
+}
+
+/** The data folder was kept because its containers may still be using it. */
+function eraseSkipped(appId: string, why: string): RemoveAppDataResult {
+  return { removed: false, path: appDataDirFor(appId), reason: "containers_running", error: why };
 }
 
 // Docker object names interpolated into shell commands: ids and names only.
@@ -822,7 +842,7 @@ async function resolveContainerNameConflict(appId: string, composePath: string, 
 async function uninstallAppInner(
   appId: string,
   ctx: OperationContext,
-  opts: { removeAnonymousVolumes: boolean },
+  opts: { removeAnonymousVolumes: boolean; keepData: boolean },
 ): Promise<UninstallResult> {
   const installed = getInstalledApp(appId);
   if (!installed) return { success: false, error: "App is not installed" };
@@ -907,14 +927,23 @@ async function uninstallAppInner(
     return { success: false, error };
   }
 
+  // Docker lists no container of the app any more. keepData=false erases its
+  // data only after a clean teardown: when `compose down` failed, the
+  // containers were removed by label, and one the label listing cannot see
+  // (a missing or broken compose file hides its project name) may still
+  // mount the data folder — so nothing is erased, and everything is reported.
+  const eraseData = !opts.keepData && downError === null;
+
   // Anonymous volumes belonged to the removed containers only. They may be the
   // app's only copy of its data (an image VOLUME such as a database's data
   // dir when the compose declares no volume), so they are deleted only when
-  // the caller asked for it; otherwise kept and reported. Named volumes and
-  // bind-mounted data (app-data) are always kept.
+  // the caller asked for it (removeAnonymousVolumes, or keepData=false after
+  // a clean teardown); otherwise kept and reported. Named volumes are always
+  // kept; the app-data folder is erased last, below, only with keepData=false.
+  const removeAnonymous = opts.removeAnonymousVolumes || eraseData;
   const volumes = { removed: [] as string[], kept: [] as string[] };
   if (anonymousVolumes.length > 0) {
-    if (opts.removeAnonymousVolumes) {
+    if (removeAnonymous) {
       ctx.step("remove_anonymous_volumes", 60, `Removing ${anonymousVolumes.length} anonymous volume(s)`);
       for (const volume of anonymousVolumes) {
         try {
@@ -961,16 +990,26 @@ async function uninstallAppInner(
     warnings.push(
       `Kept ${volumes.kept.length} anonymous Docker volume(s) the app's containers used (${shown}${more}). ` +
       `They may hold data the app stored outside its compose volumes (for example a database with no volume configured). ` +
-      (opts.removeAnonymousVolumes
+      (removeAnonymous
         ? `They could not be removed (still in use?).`
-        : `Remove them with \`docker volume rm\` when they are no longer needed, or uninstall with removeAnonymousVolumes to delete them.`),
+        : !opts.keepData
+          ? `They were not erased because docker compose down failed; remove them with \`docker volume rm\` once nothing uses them.`
+          : `Remove them with \`docker volume rm\` when they are no longer needed, or uninstall with removeAnonymousVolumes to delete them.`),
     );
   }
-  return {
+  const result: UninstallResult = {
     success: true,
     ...(anonymousVolumes.length > 0 ? { anonymousVolumes: volumes } : {}),
     ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
   };
+  if (opts.keepData) return result;
+  if (!eraseData) {
+    return { ...result, dataErase: eraseSkipped(appId, "docker compose down failed, so its containers could not be confirmed stopped and may still use it") };
+  }
+  // Still inside this operation and its compose lock: an install of the same
+  // app can't start writing into the folder while it is erased.
+  ctx.step("erase_data", 90, "Erasing app data");
+  return { ...result, dataErase: await removeAppData(appId, { ownOperation: true }) };
 }
 
 // ── Start / Stop / Restart ────────────────────────────────────────────────

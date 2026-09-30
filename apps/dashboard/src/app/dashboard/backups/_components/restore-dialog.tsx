@@ -54,7 +54,7 @@ interface RestoreDialogProps {
 
 export function RestoreDialog({ app, onOpenChange, onFinished }: RestoreDialogProps) {
   const open = app !== null;
-  const { data: detail, isLoading } = useSWR<AppBackupDetail>(
+  const { data: detail, isLoading, mutate: refreshDetail } = useSWR<AppBackupDetail>(
     open ? `${CORE_URL}/api/backups/apps/${encodeURIComponent(app.appId)}` : null,
     fetcher,
   );
@@ -87,9 +87,11 @@ export function RestoreDialog({ app, onOpenChange, onFinished }: RestoreDialogPr
     if (phase !== "running" || !run || run.status === "running") return;
     setPhase("done");
     onFinished();
-    if (run.status === "completed") toast.success(`${app?.name ?? "App"} restored`);
-    else if (run.status === "rolled_back") toast.error("Restore failed — previous state restored");
-    else toast.error("Restore failed");
+    // The dialog shows the full outcome; the toast is the one-line receipt.
+    const name = app?.name ?? "The app";
+    if (run.status === "completed") toast.success(`Restored ${name} · running again`);
+    else if (run.status === "rolled_back") toast.error(`Couldn't restore ${name} · its previous data was put back`);
+    else toast.error(`Couldn't restore ${name}`, { description: run.error ?? undefined });
   }, [run, phase, app, onFinished]);
 
   async function startRestore() {
@@ -223,6 +225,11 @@ export function RestoreDialog({ app, onOpenChange, onFinished }: RestoreDialogPr
                 The app was returned to the state it was in before the restore.
               </p>
             )}
+            {run.status === "completed" && run.safety_backup_id && (
+              <p className="text-muted-foreground">
+                A safety copy of the data from before the restore is kept in the backup list. Undo restore puts it back.
+              </p>
+            )}
             {run.status === "failed" && run.safety_backup_id && (
               <p className="text-muted-foreground">
                 The safety copy from {relativeTime(run.started_at)} is available in the backup list.
@@ -250,6 +257,23 @@ export function RestoreDialog({ app, onOpenChange, onFinished }: RestoreDialogPr
                 {submitting ? "Starting…" : `Restore ${app?.name ?? ""}`}
               </Button>
             </>
+          )}
+          {phase === "done" && run?.status === "completed" && run.safety_backup_id && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                // Back to the confirm step with the safety copy chosen: the
+                // same consequences are shown before anything changes.
+                const safetyId = run.safety_backup_id!;
+                void refreshDetail().then(() => {
+                  setSelectedId(safetyId);
+                  setRestoreId(null);
+                  setPhase("confirm");
+                });
+              }}
+            >
+              Undo restore
+            </Button>
           )}
           {phase === "done" && <Button onClick={() => onOpenChange(false)}>Done</Button>}
         </DialogFooter>

@@ -11,17 +11,23 @@ import {
   HugeiconsIcon,
   CheckmarkCircle01Icon,
   AiMagicIcon,
+  Package01Icon,
 } from "@/components/icons";
 import { Tabs, TabsList, TabsTrigger, TabsBadge } from "@/components/ui/tabs";
 import { AppCard } from "@/components/dashboard/app-card";
 import { StackCard } from "@/components/dashboard/stack-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { ErrorState } from "@/components/ui/empty-state";
+import { EmptyState, ErrorState } from "@/components/ui/empty-state";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
+import { fetchJson } from "@/lib/fetch-json";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { CORE_URL } from "@/lib/constants";
+import { deleteCreatedAppCopy, emptyCatalogCopy } from "@/lib/app-store-copy";
+import { Button } from "@/components/ui/button";
 import { installedAppsRefreshInterval, installedStateSignature } from "@/lib/polling";
 import type { CatalogApp, StoreSource, StackListItem } from "@talome/types";
 
@@ -110,15 +116,18 @@ function AppsPageContent() {
     router.replace(`/dashboard/apps${qs ? `?${qs}` : ""}`, { scroll: false });
   }, [router]);
 
-  const jsonFetcher = useCallback((url: string) => fetch(url).then((r) => r.ok ? r.json() : Promise.reject(new Error("fetch failed"))), []);
+  const confirm = useConfirm();
+  const [sourceErrors, setSourceErrors] = useState<Record<string, boolean>>({});
+  const jsonFetcher = fetchJson;
   const swrOpts = { revalidateOnFocus: true, revalidateOnReconnect: true, keepPreviousData: true } as const;
 
   // The full catalog is several MB and changes rarely — don't refetch it on
   // every window focus or remount within a few minutes (explicit retries and
   // mutations still refresh it).
-  const { data: catalogData, mutate: mutateApps, error: appsError } = useSWR<CatalogApp[]>(
+  const { loadedAt: catalogLoadedAt, markLoaded: markCatalogLoaded } = useLoadedAt();
+  const { data: catalogData, mutate: mutateApps, error: appsError, isValidating: catalogValidating } = useSWR<CatalogApp[]>(
     `${CORE_URL}/api/apps?limit=2000`, jsonFetcher,
-    { ...swrOpts, revalidateOnFocus: false, dedupingInterval: CATALOG_DEDUPE_MS },
+    { ...swrOpts, revalidateOnFocus: false, dedupingInterval: CATALOG_DEDUPE_MS, onSuccess: markCatalogLoaded },
   );
   // Installed tab: poll fast only while an install/update is in progress.
   const { data: installedData, mutate: mutateInstalled } = useSWR<CatalogApp[]>(
@@ -148,9 +157,13 @@ function AppsPageContent() {
     if (catalogInstalledSig === null || installedListSig === null) return;
     if (catalogInstalledSig !== installedListSig) void mutateApps();
   }, [catalogInstalledSig, installedListSig, mutateApps]);
-  const { data: stores = [] } = useSWR<StoreSource[]>(
+  const { data: storesData } = useSWR<StoreSource[]>(
     `${CORE_URL}/api/stores`, jsonFetcher, swrOpts,
   );
+  const stores = useMemo(() => storesData ?? [], [storesData]);
+  // Undefined while /api/stores loads or after it failed: then we don't know
+  // whether any sources exist, and the empty state must not claim there are none.
+  const catalogEmpty = emptyCatalogCopy(storesData);
   const { data: categories = [] } = useSWR<string[]>(
     `${CORE_URL}/api/apps/categories`, jsonFetcher, swrOpts,
   );
@@ -167,8 +180,11 @@ function AppsPageContent() {
     () => new Set(updatesData.filter((u) => u.hasUpdate).map((u) => u.appId)),
     [updatesData],
   );
-  const loading = !apps.length && !appsError;
-  const fetchError = appsError && !apps.length ? "Failed to load apps. Check that the Talome server is running." : null;
+  // Loading means "no answer yet", not "no apps": an empty catalog (no
+  // stores) is an answer and gets its own empty state, never a skeleton
+  // that runs forever.
+  const loading = catalogData === undefined && !appsError;
+  const fetchError = appsError && catalogData === undefined ? "Check that the Talome server is reachable, then retry." : null;
 
   const fetchData = useCallback(() => {
     void mutateApps();
@@ -177,7 +193,7 @@ function AppsPageContent() {
 
   useEffect(() => {
     if (tab === "all" || tab === "installed") return;
-    if (sourceCache[tab]) return;
+    if (sourceCache[tab] || sourceErrors[tab]) return;
 
     let cancelled = false;
     fetch(`${CORE_URL}/api/apps?limit=2000&source=${encodeURIComponent(tab)}`)
@@ -187,17 +203,19 @@ function AppsPageContent() {
       })
       .then((data) => {
         if (cancelled) return;
+        setSourceErrors((prev) => ({ ...prev, [tab]: false }));
         setSourceCache((prev) => ({ ...prev, [tab]: Array.isArray(data) ? data : [] }));
       })
       .catch(() => {
         if (cancelled) return;
-        setSourceCache((prev) => ({ ...prev, [tab]: [] }));
+        // Not an empty store: say it failed, with Retry.
+        setSourceErrors((prev) => ({ ...prev, [tab]: true }));
       });
 
     return () => {
       cancelled = true;
     };
-  }, [tab, sourceCache]);
+  }, [tab, sourceCache, sourceErrors]);
 
   const sourceTypes = useMemo(
     () => [...new Set(stores.map((s) => s.type))].sort(
@@ -206,18 +224,37 @@ function AppsPageContent() {
     [stores],
   );
 
+  // Deleting a created app removes its source: a destructive confirmation
+  // that runs the request, so a failure shows in the dialog with Retry.
   const handleDeleteUserApp = useCallback(async (appId: string) => {
-    try {
-      const res = await fetch(`${CORE_URL}/api/user-apps/${appId}`, { method: "DELETE" });
-      if (!res.ok) return;
-      setSourceCache((prev) => {
-        const cached = prev["user-created"];
-        if (!cached) return prev;
-        return { ...prev, "user-created": cached.filter((a) => a.id !== appId) };
-      });
-      void mutateApps((prev) => prev?.filter((a) => !(a.id === appId && a.storeId === "user-apps")), false);
-    } catch { /* ignore */ }
-  }, [mutateApps]);
+    const app = (sourceCache["user-created"] ?? []).find((a) => a.id === appId) ?? apps.find((a) => a.id === appId);
+    const name = app?.installed?.displayName || app?.name || appId;
+    // Core uninstalls an installed app first and keeps the source files.
+    const copy = deleteCreatedAppCopy(name, appId, !!app?.installed);
+    await confirm({
+      tier: "destructive",
+      title: copy.title,
+      consequence: copy.consequence,
+      recovery: copy.recovery,
+      irreversible: true,
+      confirmLabel: copy.confirmLabel,
+      busyLabel: copy.busyLabel,
+      run: async () => {
+        const res = await fetch(`${CORE_URL}/api/user-apps/${encodeURIComponent(appId)}`, { method: "DELETE", credentials: "include" });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(`Couldn't delete ${name}${body?.error ? `: ${body.error}` : ""}. Retry, or check that the Talome server is reachable.`);
+        }
+        setSourceCache((prev) => {
+          const cached = prev["user-created"];
+          if (!cached) return prev;
+          return { ...prev, "user-created": cached.filter((a) => a.id !== appId) };
+        });
+        await mutateApps((prev) => prev?.filter((a) => !(a.id === appId && a.storeId === "user-apps")), false);
+      },
+      receipt: copy.receipt,
+    });
+  }, [apps, confirm, mutateApps, sourceCache]);
 
   const isInstalled = tab === "installed";
   const currentApps = useMemo(
@@ -264,8 +301,10 @@ function AppsPageContent() {
 
   const totalInstalled = installedApps.length;
   const hasSourceCache = tab === "all" || tab === "installed" || !!sourceCache[tab];
+  const sourceFailed = !hasSourceCache && !!sourceErrors[tab];
   // The source-tab fetch is in flight exactly while that tab has no cached result.
-  const showSourceLoading = !isInstalled && !loading && !hasSourceCache;
+  const showSourceLoading = !isInstalled && !loading && !hasSourceCache && !sourceFailed;
+  const loadingPhase = useLoadingPhase(loading || showSourceLoading);
   const leftFadeOpacity = hoveredStackIndex === 0 ? 0 : hoveredStackIndex === null ? 1 : 0.72;
   const rightFadeOpacity = hoveredStackIndex === stacks.length - 1 ? 0 : hoveredStackIndex === null ? 1 : 0.72;
   useEffect(() => {
@@ -318,7 +357,7 @@ function AppsPageContent() {
           <div className="ml-auto flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-2">
             <SearchField
               containerClassName="flex-1 w-full sm:w-auto"
-              placeholder="Search apps..."
+              placeholder="Search apps…"
               value={search}
               onChange={(e) => changeSearch(e.target.value)}
             />
@@ -390,18 +429,44 @@ function AppsPageContent() {
         </section>
       )}
 
+      {appsError && catalogData !== undefined && (
+        <StaleRow loadedAt={catalogLoadedAt} subject="apps" onRetry={fetchData} retrying={catalogValidating} />
+      )}
+
       {/* ── Results ─────────────────────────────────────── */}
-      {loading || showSourceLoading ? (
-        <div className="app-grid">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <Skeleton key={i} className="h-[248px] rounded-xl" />
-          ))}
-        </div>
+      {loading || showSourceLoading || loadingPhase === "skeleton" ? (
+        // Once shown, the skeleton stays its minimum time even if apps arrived.
+        loadingPhase === "skeleton" ? (
+          <div className="app-grid" aria-busy="true">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <Skeleton key={i} className="h-[248px] rounded-xl" />
+            ))}
+          </div>
+        ) : (
+          <div className="min-h-96" aria-busy="true" />
+        )
       ) : fetchError ? (
         <ErrorState
-          title="Couldn't load App Store"
+          title="Couldn't load the App Store"
           description={fetchError}
           onRetry={fetchData}
+        />
+      ) : sourceFailed ? (
+        <ErrorState
+          title={`Couldn't load ${sourceLabel(tab)} apps`}
+          description="Check that the Talome server is reachable, then retry."
+          onRetry={() => setSourceErrors((prev) => ({ ...prev, [tab]: false }))}
+        />
+      ) : tab === "all" && apps.length === 0 ? (
+        <EmptyState
+          icon={Package01Icon}
+          title={catalogEmpty.title}
+          description={catalogEmpty.description}
+          action={
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/dashboard/settings/app-sources">{catalogEmpty.action}</Link>
+            </Button>
+          }
         />
       ) : filtered.length === 0 ? (
         tab === "user-created" ? (
@@ -477,7 +542,7 @@ function AppsPageContent() {
           </div>
           {hasMore && (
             <div ref={loadSentinelRef} className="flex justify-center py-2">
-              <span className="text-xs text-muted-foreground">Loading more apps...</span>
+              <span className="text-xs text-muted-foreground">Loading more apps…</span>
             </div>
           )}
         </>
