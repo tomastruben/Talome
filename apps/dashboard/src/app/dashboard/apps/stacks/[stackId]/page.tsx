@@ -8,13 +8,18 @@ import useSWR from "swr";
 import { useSetAtom } from "jotai";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState, ErrorState } from "@/components/ui/empty-state";
+import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
 import {
   HugeiconsIcon,
   ArrowRight01Icon,
   AiChat02Icon,
   CheckmarkCircle01Icon,
+  Package01Icon,
 } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
+import { fetchJson, fetchErrorStatus } from "@/lib/fetch-json";
 import {
   resolveApplicationIcon,
   resolveApplicationIconUrl,
@@ -39,7 +44,7 @@ interface EnrichedStackDetail {
 
 /* ── Helpers ───────────────────────────────────────────── */
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const fetcher = (url: string) => fetchJson<EnrichedStackDetail>(url);
 
 function extractPorts(compose?: string): number[] {
   if (!compose) return [];
@@ -53,11 +58,14 @@ export default function StackDetailPage() {
   const stackId = params.stackId as string;
   const setPageTitle = useSetAtom(pageTitleAtom);
 
-  const { data: stack } = useSWR<EnrichedStackDetail>(
-    `${CORE_URL}/api/stacks/${encodeURIComponent(stackId)}`,
+  const stackKey = `${CORE_URL}/api/stacks/${encodeURIComponent(stackId)}`;
+  const { loadedAt, markLoaded } = useLoadedAt();
+  const { data: stack, error, isLoading, isValidating, mutate } = useSWR<EnrichedStackDetail>(
+    stackKey,
     fetcher,
-    { revalidateOnFocus: false },
+    { revalidateOnFocus: false, onSuccess: markLoaded, shouldRetryOnError: (err: unknown) => fetchErrorStatus(err) !== 404 },
   );
+  const loadingPhase = useLoadingPhase(isLoading && !stack);
 
   // Set title synchronously from URL slug, update when SWR data arrives.
   // No cleanup — stale pageTitleAtom is harmless (header ignores it when not in drilldown).
@@ -69,15 +77,44 @@ export default function StackDetailPage() {
     );
   }, [stack?.name, stackId, setPageTitle]);
 
-  if (!stack) {
+  if (!stack && error) {
+    if (fetchErrorStatus(error) === 404) {
+      return (
+        <div className="mx-auto w-full max-w-xl pt-8 pb-12">
+          <EmptyState
+            icon={Package01Icon}
+            title="Stack not found"
+            description="This stack isn't available any more. Browse the App Store for other stacks."
+            action={
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/dashboard/apps">Back to App Store</Link>
+              </Button>
+            }
+          />
+        </div>
+      );
+    }
     return (
-      <div className="mx-auto w-full max-w-xl grid gap-6 py-12">
-        <div className="h-6 w-48 bg-muted/50 rounded motion-safe:animate-pulse" />
-        <div className="h-4 w-64 bg-muted/30 rounded motion-safe:animate-pulse" />
-        <div className="h-10 w-full bg-muted/30 rounded-lg motion-safe:animate-pulse" />
+      <div className="mx-auto w-full max-w-xl pt-8 pb-12">
+        <ErrorState
+          title="Couldn't load this stack"
+          description="Check that the Talome server is reachable, then retry."
+          onRetry={() => void mutate()}
+        />
+      </div>
+    );
+  }
+
+  if (!stack) {
+    if (loadingPhase !== "skeleton") return <div className="mx-auto w-full max-w-xl min-h-96" aria-busy="true" />;
+    return (
+      <div className="mx-auto w-full max-w-xl grid gap-6 py-12" aria-busy="true">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="h-4 w-64" />
+        <Skeleton className="h-10 w-full rounded-lg" />
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-14 bg-muted/20 rounded-lg motion-safe:animate-pulse" />
+            <Skeleton key={i} className="h-14 rounded-lg" />
           ))}
         </div>
       </div>
@@ -98,9 +135,10 @@ export default function StackDetailPage() {
 
   return (
     <div className="mx-auto w-full max-w-xl grid gap-8 py-4 pb-12">
+      {error && <StaleRow loadedAt={loadedAt} subject="details" onRetry={() => void mutate()} retrying={isValidating} />}
       {/* ── Hero ── */}
       <div className="grid gap-2">
-        <h1 className="text-xl font-medium">{stack.name}</h1>
+        <h1 className="text-2xl font-medium">{stack.name}</h1>
         <p className="text-sm text-muted-foreground leading-relaxed">{stack.tagline}</p>
         <div className="flex flex-wrap gap-1.5 mt-1">
           {stack.tags.map((tag) => (
@@ -134,7 +172,7 @@ export default function StackDetailPage() {
 
       {/* ── Apps in this stack ── */}
       <section className="grid gap-3">
-        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <p className="text-sm font-medium text-muted-foreground">
           Apps in this stack
         </p>
         <div className="rounded-xl border border-border bg-card divide-y divide-border overflow-hidden">
@@ -202,13 +240,13 @@ export default function StackDetailPage() {
 
       {/* ── About ── */}
       <section className="grid gap-3">
-        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">About</p>
+        <p className="text-sm font-medium text-muted-foreground">About</p>
         <p className="text-sm text-muted-foreground leading-relaxed">{stack.description}</p>
       </section>
 
       {/* ── Information ── */}
       <section className="grid gap-3">
-        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Information</p>
+        <p className="text-sm font-medium text-muted-foreground">Information</p>
         <div className="rounded-xl border border-border bg-card divide-y divide-border overflow-hidden">
           <div className="px-4 py-3 flex items-center justify-between">
             <span className="text-sm text-muted-foreground">Author</span>

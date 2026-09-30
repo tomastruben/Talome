@@ -9,6 +9,7 @@ import {
 } from "@/components/native-app/native-app-icons";
 
 const SOURCE_LABELS: Record<string, string> = {
+  talome: "Talome",
   talon: "Talome",
   casaos: "CasaOS",
   umbrel: "Umbrel",
@@ -84,13 +85,15 @@ export function AppCard({ app, onDelete, priority = false, eager = false, hasUpd
       </div>
       {onDelete && (
         <button
-          className="absolute top-2 left-2 z-10 flex items-center justify-center size-7 rounded-md bg-background/80 backdrop-blur-sm border border-border/60 text-muted-foreground hover:text-destructive hover:border-destructive/40 transition-colors opacity-0 group-hover/card:opacity-100"
+          type="button"
+          className="absolute top-2 left-2 z-10 flex items-center justify-center size-7 pointer-coarse:size-11 rounded-md bg-background border border-border text-muted-foreground hover:text-status-critical hover:border-status-critical/40 transition-[color,border-color,opacity] duration-150 opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
             onDelete(app.id);
           }}
-          title="Remove app"
+          aria-label={`Delete ${app.installed?.displayName || app.name}`}
+          title="Delete app"
         >
           <HugeiconsIcon icon={Delete02Icon} size={14} />
         </button>
