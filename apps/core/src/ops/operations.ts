@@ -153,7 +153,7 @@ export class OperationConflictError extends Error {
   constructor(appId: string, requestedKind: OperationKind, running: RunningOperationInfo) {
     const stepInfo = running.step ? `, step "${running.step}" at ${running.progress}%` : "";
     super(
-      `Cannot ${requestedKind} ${appId}: a ${running.kind} operation (${running.id}) started by ${running.actor} ` +
+      `Cannot ${requestedKind} ${appId}: ${/^[aeiou]/.test(running.kind) ? "an" : "a"} ${running.kind} operation (${running.id}) started by ${running.actor} ` +
       `at ${running.startedAt} is still running${stepInfo}. Wait for it to finish and try again.`,
     );
     this.name = "OperationConflictError";

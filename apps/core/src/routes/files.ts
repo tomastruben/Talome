@@ -146,6 +146,13 @@ files.get("/list", async (c) => {
       roots: getAllowedRootInfos(),
     });
   } catch (err) {
+    // Answers the file manager can explain, instead of a generic 500.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return c.json({ error: "This folder doesn't exist any more.", code }, 404);
+    if (code === "ENOTDIR") return c.json({ error: "This is a file, not a folder.", code }, 400);
+    if (code === "EACCES" || code === "EPERM") {
+      return c.json({ error: "Talome doesn't have permission to read this folder.", code }, 403);
+    }
     return serverError(c, err, { message: "Failed to list directory" });
   }
 });
@@ -1419,6 +1426,13 @@ files.post("/rename", async (c) => {
   const absNew = join(dirname(absOld), body.newName);
   if (!isAllowed(absNew)) return c.json({ error: "Access denied" }, 403);
 
+  // rename(2) silently replaces an existing file: never overwrite on rename.
+  // A case-only rename ("photo.JPG" → "photo.jpg") is allowed, since on a
+  // case-insensitive disk the "existing" target is the item itself.
+  if (absNew !== absOld && absNew.toLowerCase() !== absOld.toLowerCase() && existsSync(absNew)) {
+    return c.json({ error: `An item named "${body.newName}" already exists here. Choose another name.`, exists: true }, 409);
+  }
+
   try {
     await rename(absOld, absNew);
     return c.json({ ok: true, oldPath: absOld, newPath: absNew });
@@ -1479,6 +1493,12 @@ files.post("/move", async (c) => {
       continue;
     }
 
+    // Never replace an item that is already there.
+    if (existsSync(destPath)) {
+      errors.push({ path: src, error: `An item named "${basename(absSrc)}" already exists there` });
+      continue;
+    }
+
     try {
       await rename(absSrc, destPath);
       moved.push(absSrc);
@@ -1502,6 +1522,12 @@ files.post("/mkdir", async (c) => {
 
   const abs = sanitizePath(body.path);
   if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
+
+  // An existing folder used to be a silent success, so "New" did nothing the
+  // second time. Say so instead; the client picks a free name first.
+  if (existsSync(abs)) {
+    return c.json({ error: `"${basename(abs)}" already exists here.`, exists: true }, 409);
+  }
 
   try {
     await mkdir(abs, { recursive: true });
