@@ -112,6 +112,18 @@ export interface CreateAppInput {
  *    (including `/`, `/etc`, `$HOME`). Relative paths under the app's
  *    install directory are the only safe default.
  */
+/**
+ * True when compose reads a volume source as a named volume rather than a
+ * host path: no leading "." "/" or "~" and no slash (compose rejects a slash
+ * in a volume name).
+ */
+export function isNamedVolumeSource(hostPath: string): boolean {
+  return !/^[./~]/.test(hostPath) && !hostPath.includes("/");
+}
+
+/** Characters Docker accepts in a volume name. */
+const VOLUME_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+
 function validateCreateAppInput(input: CreateAppInput): string | null {
   for (const svc of input.services) {
     if (!svc.image || typeof svc.image !== "string") {
@@ -144,6 +156,14 @@ function validateCreateAppInput(input: CreateAppInput): string | null {
       }
       if (vol.hostPath.startsWith("~")) {
         return `Service "${svc.name}" mounts tilde path "${vol.hostPath}". Use a named volume or a relative path.`;
+      }
+      if (isNamedVolumeSource(vol.hostPath)) {
+        if (!VOLUME_NAME.test(vol.hostPath)) {
+          return `Service "${svc.name}" uses the volume name "${vol.hostPath}". Volume names may contain only letters, numbers, "_", "." and "-".`;
+        }
+      } else if (!vol.hostPath.startsWith(".")) {
+        // "data/db" is neither a path compose resolves nor a valid volume name
+        return `Service "${svc.name}" mounts "${vol.hostPath}". Use "./${vol.hostPath}" for a folder in the app directory, or a name without slashes for a named volume.`;
       }
     }
   }
@@ -242,56 +262,7 @@ export function createUserApp(input: CreateAppInput, options: { validatedScaffol
         atomicWriteFileSync(join(appDir, "docker-compose.yml"), raw);
       }
     } else {
-      const composeServices: Record<string, any> = {};
-      for (const svc of input.services) {
-        const svcDef: any = {
-          image: svc.image,
-          container_name: svc.name,
-          restart: "unless-stopped",
-          // Default log cap so a chatty container can't fill the host disk.
-          // 20 MB × 3 rotations = 60 MB ceiling per service. User can
-          // override by providing their own logging block in the blueprint.
-          logging: {
-            driver: "json-file",
-            options: {
-              "max-size": "20m",
-              "max-file": "3",
-            },
-          },
-        };
-
-        if (svc.ports.length > 0) {
-          svcDef.ports = svc.ports.map((p) => `${p.host}:${p.container}`);
-        }
-
-        if (svc.volumes.length > 0) {
-          svcDef.volumes = svc.volumes.map((v) => `${v.hostPath}:${v.containerPath}`);
-        }
-
-        if (Object.keys(svc.environment).length > 0) {
-          svcDef.environment = svc.environment;
-        }
-
-        if (svc.healthcheck) {
-          svcDef.healthcheck = svc.healthcheck;
-        }
-
-        if (svc.resources && (svc.resources.memory || svc.resources.cpus)) {
-          svcDef.deploy = {
-            resources: {
-              limits: {
-                ...(svc.resources.memory ? { memory: svc.resources.memory } : {}),
-                ...(svc.resources.cpus ? { cpus: svc.resources.cpus } : {}),
-              },
-            },
-          };
-        }
-
-        composeServices[svc.name] = svcDef;
-      }
-
-      const composeYaml = generateComposeYaml(composeServices);
-      atomicWriteFileSync(join(appDir, "docker-compose.yml"), composeYaml);
+      atomicWriteFileSync(join(appDir, "docker-compose.yml"), buildUserAppComposeYaml(input.services));
     }
 
     // Generated source cannot replace the server-issued validation metadata.
@@ -369,7 +340,67 @@ export function createUserApp(input: CreateAppInput, options: { validatedScaffol
   }
 }
 
-function generateComposeYaml(services: Record<string, any>): string {
+/**
+ * The compose file for a user app built from its service list. Named volumes
+ * (a source without a path, e.g. "pgdata") are declared at the top level —
+ * compose refuses a service that uses an undeclared volume.
+ */
+export function buildUserAppComposeYaml(services: CreateAppInput["services"]): string {
+  const composeServices: Record<string, any> = {};
+  for (const svc of services) {
+    const svcDef: any = {
+      image: svc.image,
+      container_name: svc.name,
+      restart: "unless-stopped",
+      // Default log cap so a chatty container can't fill the host disk.
+      // 20 MB × 3 rotations = 60 MB ceiling per service. User can
+      // override by providing their own logging block in the blueprint.
+      logging: {
+        driver: "json-file",
+        options: {
+          "max-size": "20m",
+          "max-file": "3",
+        },
+      },
+    };
+
+    if (svc.ports.length > 0) {
+      svcDef.ports = svc.ports.map((p) => `${p.host}:${p.container}`);
+    }
+
+    if (svc.volumes.length > 0) {
+      svcDef.volumes = svc.volumes.map((v) => `${v.hostPath}:${v.containerPath}`);
+    }
+
+    if (Object.keys(svc.environment).length > 0) {
+      svcDef.environment = svc.environment;
+    }
+
+    if (svc.healthcheck) {
+      svcDef.healthcheck = svc.healthcheck;
+    }
+
+    if (svc.resources && (svc.resources.memory || svc.resources.cpus)) {
+      svcDef.deploy = {
+        resources: {
+          limits: {
+            ...(svc.resources.memory ? { memory: svc.resources.memory } : {}),
+            ...(svc.resources.cpus ? { cpus: svc.resources.cpus } : {}),
+          },
+        },
+      };
+    }
+
+    composeServices[svc.name] = svcDef;
+  }
+
+  const namedVolumes = [
+    ...new Set(services.flatMap((svc) => svc.volumes.map((v) => v.hostPath).filter(isNamedVolumeSource))),
+  ];
+  return generateComposeYaml(composeServices, namedVolumes);
+}
+
+function generateComposeYaml(services: Record<string, any>, namedVolumes: string[] = []): string {
   const lines: string[] = ["services:"];
 
   for (const [name, svc] of Object.entries(services)) {
@@ -424,6 +455,11 @@ function generateComposeYaml(services: Record<string, any>): string {
         lines.push(`          cpus: ${svc.deploy.resources.limits.cpus}`);
       }
     }
+  }
+
+  if (namedVolumes.length > 0) {
+    lines.push("volumes:");
+    for (const name of namedVolumes) lines.push(`  ${name}: {}`);
   }
 
   return lines.join("\n") + "\n";
