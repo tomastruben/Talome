@@ -36,9 +36,28 @@ function detectDockerSocket(): string {
 
 const detectedSocket = detectDockerSocket();
 
-const docker = new Docker({
-  socketPath: detectedSocket,
-});
+/**
+ * A remote Docker engine given as DOCKER_HOST=tcp://host:port (a Docker host on
+ * another machine, or an isolated test engine). Local unix sockets stay the
+ * default; the docker CLI that compose operations shell out to reads the same
+ * DOCKER_HOST, so both talk to one engine.
+ */
+export function parseTcpDockerHost(value: string | undefined): { host: string; port: number } | null {
+  if (!value || !value.startsWith("tcp://")) return null;
+  try {
+    const url = new URL(value.replace(/^tcp:/, "http:"));
+    if (!url.hostname) return null;
+    return { host: url.hostname, port: url.port ? Number(url.port) : 2375 };
+  } catch {
+    return null;
+  }
+}
+
+const tcpDockerHost = parseTcpDockerHost(process.env.DOCKER_HOST);
+
+const docker = new Docker(
+  tcpDockerHost ? { host: tcpDockerHost.host, port: tcpDockerHost.port, protocol: "http" } : { socketPath: detectedSocket },
+);
 
 const AUTO_PRUNE_MIN_STOPPED_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -116,6 +135,7 @@ export function isOrbStack(): boolean {
 }
 
 export function getDockerSocketPath(): string {
+  if (tcpDockerHost) return `tcp://${tcpDockerHost.host}:${tcpDockerHost.port}`;
   return detectedSocket;
 }
 

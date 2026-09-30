@@ -9,7 +9,9 @@
 # Isolation: its own HOME (so ~/.talome, stores, backups, PID files live in
 # the sandbox), its own SQLite database, its own ports, and a Docker socket
 # path that does not exist — the sandbox can never touch real containers,
-# Caddy, Avahi or another Talome instance. Docker-backed panels show their
+# Caddy, Avahi or another Talome instance. Set TALOME_SANDBOX_DOCKER to a
+# disposable engine (e.g. tcp://127.0.0.1:23750 from a docker:dind container)
+# to exercise real container flows without touching the host's Docker. Docker-backed panels show their
 # empty/error states; everything else works.
 set -e
 
@@ -34,7 +36,7 @@ case "$1" in
       CORE_PORT="$CORE_PORT" \
       TERMINAL_DAEMON_PORT="$((CORE_PORT + 1))" \
       DOCKER_SOCKET="$SANDBOX_HOME/no-docker.sock" \
-      DOCKER_HOST="unix://$SANDBOX_HOME/no-docker.sock" \
+      DOCKER_HOST="${TALOME_SANDBOX_DOCKER:-unix://$SANDBOX_HOME/no-docker.sock}" \
       TALOME_SELF_BACKUP_DISABLED=1 \
       DASHBOARD_ORIGIN="http://localhost:$DASHBOARD_PORT" \
       pnpm exec tsx src/index.ts
