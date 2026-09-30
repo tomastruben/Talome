@@ -1,14 +1,21 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import { useSearchParams } from "next/navigation";
 import { CORE_URL } from "@/lib/constants";
 import type { StackStatusResult } from "@/hooks/use-feature-stacks";
 
+/** Throws on failure: a failed load must never read as "nothing configured". */
 async function fetcher(url: string) {
-  const res = await fetch(url);
-  if (!res.ok) return {};
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) throw new Error(`Request failed (${res.status})`);
   return res.json();
+}
+
+interface AiModelsSummary {
+  activeProvider: string;
+  providers: { provider: string; configured: boolean }[];
 }
 
 async function appsFetcher(url: string): Promise<unknown[]> {
@@ -92,6 +99,15 @@ export function useSetupStatus(): SetupStatus {
     { revalidateOnFocus: true, dedupingInterval: 30000 }
   );
 
+  // "AI configured" means the active provider is usable (a key for hosted
+  // providers, a reachable server with a model for Ollama), not that some
+  // key exists somewhere.
+  const { data: aiModels } = useSWR<AiModelsSummary>(
+    `${CORE_URL}/api/ai/models`,
+    fetcher,
+    { revalidateOnFocus: true, dedupingInterval: 30000 }
+  );
+
   const { data: apps } = useSWR<unknown[]>(
     `${CORE_URL}/api/apps/installed`,
     appsFetcher,
@@ -110,9 +126,12 @@ export function useSetupStatus(): SetupStatus {
     .filter(s => s.readiness > 0 && s.readiness < 1.0)
     .sort((a, b) => b.readiness - a.readiness);
 
-  const hasAiKey = !!(data?.anthropic_key || data?.openai_key || data?.ollama_url);
+  const hasAiKey = !!(data?.anthropic_key || data?.openai_key || data?.kimi_key || data?.ollama_url);
+  const activeProviderReady = aiModels
+    ? aiModels.providers.find((p) => p.provider === aiModels.activeProvider)?.configured === true
+    : undefined;
   const appCount = apps?.length ?? 0;
-  const realConfigured = hasAiKey;
+  const realConfigured = activeProviderReady ?? hasAiKey;
   const realHasApps = appCount > 0;
 
   // Detect configured integrations
@@ -146,4 +165,48 @@ export function useSetupStatus(): SetupStatus {
     completeStackCount: completeStacks.length,
     nearestStack: incompleteStacks[0] ?? null,
   };
+}
+
+// ── Sign-in probe ────────────────────────────────────────────────────────────
+
+export type AuthStatus =
+  | { state: "loading" }
+  | { state: "ready"; accountExists: boolean }
+  | { state: "error"; message: string };
+
+/**
+ * Asks core whether an account exists. A failed probe is an error the
+ * screen shows with Retry: it is never read as "no account", so the sign-in
+ * form can't turn into account creation because the server was briefly down.
+ */
+export async function fetchAuthStatus(): Promise<AuthStatus> {
+  try {
+    const res = await fetch("/api/auth/status", { credentials: "include", cache: "no-store" });
+    const body = (await res.json().catch(() => null)) as { passwordConfigured?: unknown } | null;
+    if (!res.ok || typeof body?.passwordConfigured !== "boolean") {
+      return { state: "error", message: "Couldn't reach the Talome server. Check that it's running, then retry." };
+    }
+    return { state: "ready", accountExists: body.passwordConfigured };
+  } catch {
+    return { state: "error", message: "Couldn't reach the Talome server. Check that it's running, then retry." };
+  }
+}
+
+export function useAuthStatus(): { status: AuthStatus; retry: () => void } {
+  const [status, setStatus] = useState<AuthStatus>({ state: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchAuthStatus().then((next) => {
+      if (!cancelled) setStatus(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
+  const retry = useCallback(() => {
+    setStatus({ state: "loading" });
+    setAttempt((n) => n + 1);
+  }, []);
+  return { status, retry };
 }

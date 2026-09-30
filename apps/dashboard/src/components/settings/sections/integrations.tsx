@@ -11,15 +11,22 @@ import {
 } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
-import { SettingsGroup, SettingsRow, SecretRow } from "@/components/settings/settings-primitives";
+import { SettingsGroup, SettingsRow, SecretRow, settingsFetcher, settingsRequest } from "@/components/settings/settings-primitives";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Banner, BannerIcon, BannerTitle, BannerAction } from "@/components/kibo-ui/banner";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 import { LevelPicker } from "@/components/settings/sections/notifications";
 import { ChatBotSenders } from "@/components/settings/sections/chat-bot-senders";
 
+function parseLevels(raw: string): string[] {
+  // "none" is how an empty list is stored.
+  return raw === "none" ? [] : raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 // ── Main integrations section (chat bots only) ──────────────────────────────
 
 export function IntegrationsSection() {
+  const confirm = useConfirm();
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramTokenEditing, setTelegramTokenEditing] = useState(false);
   const [telegramSaving, setTelegramSaving] = useState(false);
@@ -40,51 +47,82 @@ export function IntegrationsSection() {
     { refreshInterval: 30000, revalidateOnFocus: false },
   );
 
+  const [settingsLoadFailed, setSettingsLoadFailed] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   useEffect(() => {
-    fetch(`${CORE_URL}/api/settings`)
-      .then((r) => r.json())
-      .then((data: Record<string, string>) => {
+    let cancelled = false;
+    settingsFetcher<Record<string, string>>(`${CORE_URL}/api/settings`)
+      .then((data) => {
+        if (cancelled) return;
+        setSettingsLoadFailed(false);
         if (data.telegram_bot_token) setTelegramToken(data.telegram_bot_token);
         if (data.discord_bot_token) setDiscordToken(data.discord_bot_token);
         if (data.telegram_notification_levels) {
-          setTelegramLevels(data.telegram_notification_levels.split(",").map((s) => s.trim()).filter(Boolean));
+          setTelegramLevels(parseLevels(data.telegram_notification_levels));
         }
         if (data.discord_notification_levels) {
-          setDiscordLevels(data.discord_notification_levels.split(",").map((s) => s.trim()).filter(Boolean));
+          setDiscordLevels(parseLevels(data.discord_notification_levels));
         }
       })
-      .catch(() => {});
-  }, []);
+      .catch(() => {
+        if (!cancelled) setSettingsLoadFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadAttempt]);
 
   const saveNotificationLevels = useCallback(async (platform: "telegram" | "discord", levels: string[]) => {
     const key = `${platform}_notification_levels`;
     const value = levels.join(",");
     try {
-      await fetch(`${CORE_URL}/api/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [key]: value }),
-      });
-    } catch {
-      // best-effort
+      // An empty list is stored as "none": the settings API skips empty values.
+      await settingsRequest(`${CORE_URL}/api/settings`, { method: "POST", body: { [key]: value || "none" } }, "Couldn't save the notification levels. Try again.");
+      return true;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save the notification levels. Try again.");
+      return false;
     }
   }, []);
 
-  const handleTelegramLevels = useCallback((levels: string[]) => {
-    setTelegramLevels(levels);
-    saveNotificationLevels("telegram", levels);
+  // Never optimistic: the picker shows the new levels only once they're saved.
+  const [levelsSaving, setLevelsSaving] = useState<"telegram" | "discord" | null>(null);
+  const changeLevels = useCallback(async (platform: "telegram" | "discord", levels: string[]) => {
+    setLevelsSaving(platform);
+    const ok = await saveNotificationLevels(platform, levels);
+    setLevelsSaving(null);
+    if (!ok) return;
+    if (platform === "telegram") setTelegramLevels(levels);
+    else setDiscordLevels(levels);
   }, [saveNotificationLevels]);
 
+  const handleTelegramLevels = useCallback((levels: string[]) => {
+    void changeLevels("telegram", levels);
+  }, [changeLevels]);
+
   const handleDiscordLevels = useCallback((levels: string[]) => {
-    setDiscordLevels(levels);
-    saveNotificationLevels("discord", levels);
-  }, [saveNotificationLevels]);
+    void changeLevels("discord", levels);
+  }, [changeLevels]);
 
   return (
     <div className="grid gap-8">
       <p className="text-sm text-muted-foreground">
         Talk to Talome from your phone or desktop — no dashboard needed.
       </p>
+
+      {settingsLoadFailed ? (
+        <p role="alert" className="flex items-center gap-2 text-xs text-muted-foreground">
+          <HugeiconsIcon icon={AlertCircleIcon} size={12} strokeWidth={1.5} className="shrink-0 text-status-critical" aria-hidden="true" />
+          Couldn&apos;t load the saved bot settings, so what&apos;s shown may not be what Talome uses.
+          <button
+            type="button"
+            className="rounded-sm underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setLoadAttempt((n) => n + 1)}
+          >
+            Retry
+          </button>
+        </p>
+      ) : null}
 
       {/* Telegram */}
       <div className="grid gap-2">
@@ -111,7 +149,7 @@ export function IntegrationsSection() {
         <SettingsGroup>
           <SettingsRow className="py-2.5">
             <HugeiconsIcon icon={TelegramIcon} size={14} className="text-muted-foreground" />
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Telegram</p>
+            <p className="text-sm font-medium text-foreground">Telegram</p>
           </SettingsRow>
           <SecretRow
             label="Bot Token"
@@ -136,7 +174,7 @@ export function IntegrationsSection() {
           {telegramStatus?.connected && (
             <SettingsRow>
               <span className="text-sm flex-1 text-muted-foreground">Send alerts for</span>
-              <LevelPicker value={telegramLevels} onChange={handleTelegramLevels} />
+              <LevelPicker value={telegramLevels} onChange={handleTelegramLevels} busy={levelsSaving === "telegram"} />
             </SettingsRow>
           )}
           <ChatBotSenders platform="telegram" />
@@ -145,14 +183,22 @@ export function IntegrationsSection() {
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 text-xs text-destructive/70 hover:text-destructive"
+                className="h-7 text-xs text-status-critical hover:text-status-critical"
                 onClick={async () => {
-                  await fetch(`${CORE_URL}/api/integrations/telegram/stop`, { method: "POST" });
-                  mutateTelegramStatus();
-                  toast.success("Telegram bot stopped");
+                  const { confirmed } = await confirm({
+                    tier: "soft",
+                    title: "Disconnect the Telegram bot?",
+                    consequence: "The bot stops answering messages until you connect it again.",
+                    recovery: "The bot token and allowed senders are kept, so reconnecting takes one click.",
+                    confirmLabel: "Disconnect",
+                    busyLabel: "Disconnecting…",
+                    run: () => settingsRequest(`${CORE_URL}/api/integrations/telegram/stop`, { method: "POST" }, "Couldn't disconnect the Telegram bot. Try again."),
+                    receipt: "Disconnected the Telegram bot",
+                  });
+                  if (confirmed) mutateTelegramStatus();
                 }}
               >
-                Disconnect
+                Disconnect…
               </Button>
             )}
             <Button
@@ -214,7 +260,7 @@ export function IntegrationsSection() {
         <SettingsGroup>
           <SettingsRow className="py-2.5">
             <HugeiconsIcon icon={DiscordIcon} size={14} className="text-muted-foreground" />
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Discord</p>
+            <p className="text-sm font-medium text-foreground">Discord</p>
           </SettingsRow>
           <SecretRow
             label="Bot Token"
@@ -239,7 +285,7 @@ export function IntegrationsSection() {
           {discordStatus?.connected && (
             <SettingsRow>
               <span className="text-sm flex-1 text-muted-foreground">Send alerts for</span>
-              <LevelPicker value={discordLevels} onChange={handleDiscordLevels} />
+              <LevelPicker value={discordLevels} onChange={handleDiscordLevels} busy={levelsSaving === "discord"} />
             </SettingsRow>
           )}
           <ChatBotSenders platform="discord" />
@@ -248,14 +294,22 @@ export function IntegrationsSection() {
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 text-xs text-destructive/70 hover:text-destructive"
+                className="h-7 text-xs text-status-critical hover:text-status-critical"
                 onClick={async () => {
-                  await fetch(`${CORE_URL}/api/integrations/discord/stop`, { method: "POST" });
-                  mutateDiscordStatus();
-                  toast.success("Discord bot stopped");
+                  const { confirmed } = await confirm({
+                    tier: "soft",
+                    title: "Disconnect the Discord bot?",
+                    consequence: "The bot stops answering messages until you connect it again.",
+                    recovery: "The bot token and allowed senders are kept, so reconnecting takes one click.",
+                    confirmLabel: "Disconnect",
+                    busyLabel: "Disconnecting…",
+                    run: () => settingsRequest(`${CORE_URL}/api/integrations/discord/stop`, { method: "POST" }, "Couldn't disconnect the Discord bot. Try again."),
+                    receipt: "Disconnected the Discord bot",
+                  });
+                  if (confirmed) mutateDiscordStatus();
                 }}
               >
-                Disconnect
+                Disconnect…
               </Button>
             )}
             <Button

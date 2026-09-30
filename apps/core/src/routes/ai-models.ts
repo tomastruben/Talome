@@ -218,7 +218,14 @@ aiModels.get("/models", async (c) => {
 
 /** POST /api/ai/test — validate that the active provider is reachable */
 aiModels.post("/test", async (c) => {
-  const activeProvider = (getSetting("ai_provider") || "anthropic") as AiProvider;
+  // Test a provider before switching to it (Settings › AI): the body may name
+  // one; otherwise the active provider is tested.
+  const body = (await c.req.json().catch(() => null)) as { provider?: unknown } | null;
+  const requested = typeof body?.provider === "string" ? body.provider : undefined;
+  if (requested !== undefined && !["anthropic", "openai", "kimi", "ollama"].includes(requested)) {
+    return c.json({ ok: false, error: "Unknown provider" }, 400);
+  }
+  const activeProvider = (requested || getSetting("ai_provider") || "anthropic") as AiProvider;
   const anthropicKey = getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
   const openaiKey = getSetting("openai_key") || process.env.OPENAI_API_KEY;
   const kimiKey = getSetting("kimi_key") || process.env.MOONSHOT_API_KEY;

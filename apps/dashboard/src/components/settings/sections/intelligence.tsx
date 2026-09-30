@@ -296,9 +296,7 @@ export function IntelligenceSection() {
           <div className="rounded-xl border border-border bg-card px-4 py-4 sm:px-6 sm:py-5">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">
-                  Projected monthly
-                </p>
+                <p className="text-sm font-medium text-foreground mb-1">Projected monthly</p>
                 <p className="text-2xl font-medium tabular-nums tracking-tight">
                   ~{formatCost(projectedMonthly)}
                   <span className="text-base text-muted-foreground">/mo</span>

@@ -10,7 +10,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { HugeiconsIcon, SecurityCheckIcon, Clock01Icon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import { SettingsGroup, SettingsRow, relativeTime } from "@/components/settings/settings-primitives";
-import { APPROVALS_URL, decideApproval, trustFetcher, useNow } from "@/components/trust/api";
+import { APPROVALS_URL, decideApproval, trustFetcher, useNow, usePendingApprovals } from "@/components/trust/api";
+import { useSecurityProfile } from "@/components/settings/autonomy";
+import { AlertCircleIcon } from "@/components/icons";
 import {
   actorDisplay,
   approvalStatusLabel,
@@ -26,7 +28,7 @@ import {
 function GroupHeader({ children }: { children: React.ReactNode }) {
   return (
     <SettingsRow className="py-2.5">
-      <p className="flex-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{children}</p>
+      <p className="flex-1 text-xs font-medium text-muted-foreground">{children}</p>
     </SettingsRow>
   );
 }
@@ -35,11 +37,14 @@ function PendingRow({
   item,
   now,
   highlighted,
+  primary,
   onDecided,
 }: {
   item: ApprovalItem;
   now: number;
   highlighted: boolean;
+  /** Only the oldest waiting request gets the primary Approve button. */
+  primary: boolean;
   onDecided: () => void;
 }) {
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
@@ -54,9 +59,9 @@ function PendingRow({
     setBusy(decision);
     try {
       await decideApproval(item.id, decision);
-      toast.success(decision === "approve" ? "Approved — the agent can run it once" : "Denied");
+      toast.success(decision === "approve" ? `Approved ${humanToolName(item.tool)}. The agent can run it once.` : `Denied ${humanToolName(item.tool)}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not record decision");
+      toast.error(err instanceof Error ? err.message : "Couldn't record your decision. Try again.");
     } finally {
       setBusy(null);
       onDecided();
@@ -97,11 +102,25 @@ function PendingRow({
         </pre>
       )}
       <div className="flex items-center justify-end gap-2">
-        <Button size="sm" variant="ghost" disabled={busy !== null || left <= 0} onClick={() => void decide("deny")}>
-          {busy === "deny" ? "Denying…" : "Deny"}
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={left <= 0 || busy === "approve"}
+          busy={busy === "deny"}
+          busyLabel="Denying…"
+          onClick={() => void decide("deny")}
+        >
+          Deny
         </Button>
-        <Button size="sm" disabled={busy !== null || left <= 0} onClick={() => void decide("approve")}>
-          {busy === "approve" ? "Approving…" : "Approve"}
+        <Button
+          size="sm"
+          variant={primary ? "default" : "outline"}
+          disabled={left <= 0 || busy === "deny"}
+          busy={busy === "approve"}
+          busyLabel="Approving…"
+          onClick={() => void decide("approve")}
+        >
+          Approve
         </Button>
       </div>
     </div>
@@ -140,15 +159,32 @@ function ApprovalsContent() {
   const params = useSearchParams();
   const focusId = params.get("id");
 
-  const { data, error, isLoading, mutate } = useSWR<ApprovalItem[]>(`${APPROVALS_URL}?limit=60`, trustFetcher, {
-    refreshInterval: 5_000,
-    revalidateOnFocus: true,
-  });
+  // The same pending query the sidebar badge uses, so the list and the count agree.
+  const {
+    pending: livePendingList,
+    error: pendingError,
+    isLoading: pendingLoading,
+    mutate: mutatePending,
+  } = usePendingApprovals(true, 5_000);
+  const { data, error: recentError, isLoading: recentLoading, mutate: mutateRecent } = useSWR<ApprovalItem[]>(
+    `${APPROVALS_URL}?limit=60`,
+    trustFetcher,
+    { refreshInterval: 15_000, revalidateOnFocus: true },
+  );
+  const { data: profile } = useSecurityProfile(true);
   const items = Array.isArray(data) ? data : [];
-  const hasPending = items.some((a) => a.status === "pending");
-  const now = useNow(hasPending);
-  const pending = livePending(items, now);
-  const recent = items.filter((a) => !pending.includes(a)).slice(0, 20);
+  const now = useNow(livePendingList.length > 0);
+  const pending = livePending(livePendingList, now).sort(
+    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+  );
+  const pendingIds = new Set(pending.map((a) => a.id));
+  const recent = items.filter((a) => !pendingIds.has(a.id) && a.status !== "pending").slice(0, 20);
+  const isLoading = pendingLoading || recentLoading;
+  const error = pendingError ?? recentError;
+  const mutate = async () => {
+    await Promise.all([mutatePending(), mutateRecent()]);
+  };
+  const ttl = profile?.approvalTtlMinutes;
 
   // A deep link to a request that is no longer in the recent window.
   const focusMissing = !!focusId && !isLoading && !items.some((a) => a.id === focusId);
@@ -161,8 +197,11 @@ function ApprovalsContent() {
   return (
     <div className="grid gap-6">
       <p className="text-sm text-muted-foreground leading-relaxed">
-        In Cautious mode, destructive actions from AI agents wait here for your decision. An approval lets the agent
-        run that exact action once, and expires after 15 minutes.
+        In Cautious mode, destructive actions from agents wait here for your decision. An approval lets the agent
+        run that exact action once.{" "}
+        {ttl
+          ? `Requests expire after ${ttl.interactive} minutes, or ${Math.round(ttl.unattended / 60)} hours for automations and the background agent, which can't retry while you watch.`
+          : "Each request expires if nobody decides in time."}
       </p>
 
       {focusedDecided && effectiveApprovalStatus(focusedDecided, now) !== "pending" && (
@@ -179,12 +218,12 @@ function ApprovalsContent() {
         <GroupHeader>
           Waiting for you
           {pending.length > 0 && (
-            <Badge variant="secondary" className="ml-2 tabular-nums">
+            <Badge variant="count" className="ml-2" aria-label={`${pending.length} waiting`}>
               {pending.length}
             </Badge>
           )}
         </GroupHeader>
-        {isLoading && (
+        {isLoading && pending.length === 0 && (
           <SettingsRow>
             <div className="flex-1 space-y-2">
               <Skeleton className="h-4 w-40" />
@@ -194,9 +233,15 @@ function ApprovalsContent() {
         )}
         {error && (
           <SettingsRow>
-            <p className="text-xs text-muted-foreground">
-              {error instanceof Error ? error.message : "Could not load approvals"}
+            <HugeiconsIcon icon={AlertCircleIcon} size={14} strokeWidth={1.5} className="shrink-0 text-status-critical" aria-hidden="true" />
+            <p role="alert" className="flex-1 text-xs text-muted-foreground">
+              {pending.length > 0 || items.length > 0
+                ? "Couldn't refresh approvals. Showing what was loaded last."
+                : error instanceof Error ? `Couldn't load approvals: ${error.message}` : "Couldn't load approvals."}
             </p>
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void mutate()}>
+              Retry
+            </Button>
           </SettingsRow>
         )}
         {!isLoading && !error && pending.length === 0 && (
@@ -205,12 +250,13 @@ function ApprovalsContent() {
             <p className="text-sm text-muted-foreground">Nothing waiting for approval</p>
           </SettingsRow>
         )}
-        {pending.map((item) => (
+        {pending.map((item, index) => (
           <PendingRow
             key={item.id}
             item={item}
             now={now}
             highlighted={item.id === focusId}
+            primary={index === 0}
             onDecided={() => void mutate()}
           />
         ))}

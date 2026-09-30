@@ -25,6 +25,7 @@ import { execSync } from "node:child_process";
 import { existsSync, renameSync, rmSync, cpSync } from "node:fs";
 import { createLogger } from "../utils/logger.js";
 import { getSetting } from "../utils/settings.js";
+import { evolutionSkipsPermissionPrompts } from "../ai/autonomy.js";
 
 const log = createLogger("evolution");
 
@@ -586,12 +587,13 @@ evolution.post("/bug-hunt/submit", async (c) => {
     taskPrompt: z.string(),
     screenshotPaths: z.array(z.string()).optional(),
     autoExecute: z.boolean().default(false),
-    auto: z.boolean().default(false),
-    yolo: z.boolean().default(false), // legacy alias
+    // Narrow-only: the owner's server setting decides whether prompts are skipped.
+    auto: z.boolean().optional(),
+    yolo: z.boolean().optional(), // legacy alias
   });
 
   const body = bodySchema.parse(await c.req.json());
-  const autoMode = body.auto || body.yolo;
+  const autoMode = evolutionSkipsPermissionPrompts(body.auto ?? body.yolo);
   const now = new Date().toISOString();
   const id = `sug_${Date.now()}_bughunt`;
 
@@ -688,7 +690,9 @@ evolution.post("/execute", async (c) => {
     suggestionId: z.string().optional(),
     taskPrompt: z.string().optional(),
     scope: z.enum(["backend", "frontend", "full"]).default("full"),
-    auto: z.boolean().default(false),
+    // Narrow-only: the owner's server setting decides whether prompts are skipped.
+    auto: z.boolean().optional(),
+    yolo: z.boolean().optional(), // legacy alias
   });
 
   const body = bodySchema.parse(await c.req.json());
@@ -766,7 +770,8 @@ evolution.post("/execute", async (c) => {
   // Single command: start Claude Code with the full prompt baked in.
   // "$(cat ...)" is shell-safe — double-quoted command substitution preserves
   // all special characters without re-interpretation.
-  const skipPerms = body.auto ? " --dangerously-skip-permissions" : "";
+  const autoMode = evolutionSkipsPermissionPrompts(body.auto ?? body.yolo);
+  const skipPerms = autoMode ? " --dangerously-skip-permissions" : "";
   const command = `cd ${PROJECT_ROOT} && env -u ANTHROPIC_API_KEY claude${skipPerms} "$(cat ${promptFile})"`;
 
   return c.json({
@@ -783,10 +788,12 @@ evolution.post("/execute", async (c) => {
 
 evolution.post("/runs/:id/reinject", async (c) => {
   const reinjectBody = z.object({
-    auto: z.boolean().default(false),
-    yolo: z.boolean().default(false), // legacy alias
+    auto: z.boolean().optional(),
+    yolo: z.boolean().optional(), // legacy alias
   }).safeParse(await c.req.json().catch(() => ({})));
-  const autoMode = reinjectBody.success ? (reinjectBody.data.auto || reinjectBody.data.yolo) : false;
+  const autoMode = reinjectBody.success
+    ? evolutionSkipsPermissionPrompts(reinjectBody.data.auto ?? reinjectBody.data.yolo)
+    : false;
 
   const oldRunId = c.req.param("id");
 

@@ -30,6 +30,7 @@ import {
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { CORE_URL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { PermissionPromptsNote } from "@/components/settings/autonomy";
 import { useBugHunt } from "./bug-hunt-context";
 import { useBugContext, type BugContext } from "@/hooks/use-bug-context";
 import { EvolutionTerminal, type CompleteResult } from "@/app/dashboard/evolution/components/evolution-terminal";
@@ -93,12 +94,6 @@ export function BugHuntOverlay() {
   const [lastRunId, setLastRunId] = useState<string | null>(null);
   const [selectedSignals, setSelectedSignals] = useState<Set<string>>(new Set());
   const [signalsExpanded, setSignalsExpanded] = useState(false);
-  const [autoMode, setAutoMode] = useState(false);
-
-  // Sync auto mode from localStorage after hydration to avoid SSR mismatch
-  useEffect(() => {
-    setAutoMode(localStorage.getItem("talome-auto-mode") === "true");
-  }, []);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -247,7 +242,7 @@ export function BugHuntOverlay() {
         setPhase("augmented");
       }
     } catch {
-      setError("Failed to connect to server");
+      setError("Couldn't reach the Talome server. Check that it's running, then try again.");
     } finally {
       setAugmenting(false);
     }
@@ -273,13 +268,14 @@ export function BugHuntOverlay() {
           taskPrompt: editingPrompt ? editedPrompt : augmented.taskPrompt,
           screenshotPaths,
           autoExecute,
-          auto: autoExecute ? autoMode : false,
+          // Whether prompts are skipped is the owner's server setting; `true` only defers to it.
+          auto: autoExecute,
         }),
       });
 
       const data = (await res.json()) as { execution?: ExecutionData; error?: string };
       if (!res.ok) {
-        setError(data.error ?? "Submission failed");
+        setError(data.error ?? "Couldn't submit the report. Try again.");
         return;
       }
 
@@ -290,11 +286,11 @@ export function BugHuntOverlay() {
         handleClose();
       }
     } catch {
-      setError("Failed to connect to server");
+      setError("Couldn't reach the Talome server. Check that it's running, then try again.");
     } finally {
       setSubmitting(false);
     }
-  }, [augmented, editingPrompt, editedPrompt, screenshotPaths, autoMode]);
+  }, [augmented, editingPrompt, editedPrompt, screenshotPaths]);
 
   // ── Evolution callbacks ────────────────────────────────────────────
 
@@ -324,7 +320,6 @@ export function BugHuntOverlay() {
       setLastRunId(null);
       setSelectedSignals(new Set());
       setSignalsExpanded(false);
-      // Keep auto mode preference — it's persisted in localStorage
     }, 200);
   }, [close]);
 
@@ -789,34 +784,7 @@ export function BugHuntOverlay() {
                   Back
                 </Button>
               </div>
-              {/* Auto mode toggle */}
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setAutoMode((v) => {
-                    const next = !v;
-                    localStorage.setItem("talome-auto-mode", String(next));
-                    return next;
-                  })}
-                  className={cn(
-                    "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors",
-                    autoMode ? "bg-status-warning" : "bg-input"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "inline-block size-3 rounded-full bg-white transition-transform",
-                      autoMode ? "translate-x-3.5" : "translate-x-0.5"
-                    )}
-                  />
-                </button>
-                <span className="text-xs text-muted-foreground">
-                  Auto
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  — skip approvals, auto-revert on failure
-                </span>
-              </div>
+              <PermissionPromptsNote kind="evolution" />
             </div>
           </div>
         )}

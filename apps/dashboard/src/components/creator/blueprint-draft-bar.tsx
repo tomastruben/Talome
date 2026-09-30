@@ -16,8 +16,8 @@ import {
   AiSearch02Icon,
   LayoutGridIcon,
 } from "@/components/icons";
-import { cn } from "@/lib/utils";
-import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@/components/ui/button";
+import { PermissionPromptsNote } from "@/components/settings/autonomy";
 import type { TalomeAppSpec } from "@talome/types";
 import { resolveApplicationIcon } from "@/components/native-app/native-app-icons";
 
@@ -294,15 +294,11 @@ export function BlueprintDraftBar({
   onBuild,
   building,
   onDismiss,
-  auto: autoMode,
-  onAutoChange,
 }: {
   blueprint: BlueprintState;
   onBuild: () => void;
   building?: boolean;
   onDismiss: () => void;
-  auto: boolean;
-  onAutoChange: (value: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const { checks, ready } = getReadiness(blueprint);
@@ -375,48 +371,19 @@ export function BlueprintDraftBar({
         </div>
       )}
 
-      {/* Auto mode toggle + Build button */}
+      {/* Build button + whether the build skips Claude Code's permission prompts (a server setting) */}
       <div className="px-4 pb-3 space-y-2">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onAutoChange(!autoMode)}
-            className={cn(
-              "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors",
-              autoMode ? "bg-status-warning" : "bg-input"
-            )}
-          >
-            <span
-              className={cn(
-                "inline-block size-3 rounded-full bg-white transition-transform",
-                autoMode ? "translate-x-3.5" : "translate-x-0.5"
-              )}
-            />
-          </button>
-          <span className="text-xs text-muted-foreground">
-            Auto
-          </span>
-          <span className="text-xs text-muted-foreground">
-            — skip approvals
-          </span>
-        </div>
-        <button
-          className="w-full flex items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2 text-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-15 disabled:cursor-not-allowed"
-          disabled={!ready || building}
+        <Button
+          className="w-full h-8 text-xs"
+          disabled={!ready}
+          busy={Boolean(building)}
+          busyLabel="Starting the build…"
           onClick={onBuild}
         >
-          {building ? (
-            <>
-              <Spinner className="size-3.5" />
-              Building...
-            </>
-          ) : (
-            <>
-              <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} />
-              Build with Claude Code
-            </>
-          )}
-        </button>
+          <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} aria-hidden="true" />
+          Build with Claude Code
+        </Button>
+        <PermissionPromptsNote kind="builds" className="text-center" />
       </div>
     </div>
   );

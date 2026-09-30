@@ -68,7 +68,7 @@ const AI_ITEMS: SettingsLink[] = [
 ];
 
 const INFRASTRUCTURE_ITEMS: SettingsLink[] = [
-  { slug: "security", icon: Shield01Icon, title: "Security", description: "Control AI access level and shell permissions", adminOnly: true },
+  { slug: "security", icon: Shield01Icon, title: "Security", description: "Choose what agents may do without asking", adminOnly: true },
   { slug: "audit", icon: Activity01Icon, title: "Audit Log", description: "Every action by the assistant, agents, and automations", adminOnly: true },
   { slug: "data-retention", icon: Database01Icon, title: "Data Retention", description: "How long logs, events and notifications are kept", adminOnly: true },
   { slug: "notifications", icon: AlertCircleIcon, title: "Notifications", description: "Alert thresholds and notification channels" },

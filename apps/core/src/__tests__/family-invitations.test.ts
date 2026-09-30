@@ -66,7 +66,7 @@ describe("family invitation journey", () => {
     expect(acceptResponse.status).toBe(200);
     expect(acceptResponse.headers.get("set-cookie")).toContain("talome_session=");
     const accepted = await acceptResponse.json() as { recoveryCode: string };
-    expect(accepted.recoveryCode).toHaveLength(24);
+    expect(accepted.recoveryCode).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){5}$/);
 
     const user = db.select().from(schema.users).where(eq(schema.users.username, username)).get();
     expect(user).toEqual(expect.objectContaining({ email: acceptedEmail, role: "member" }));

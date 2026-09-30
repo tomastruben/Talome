@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const CORE_BACKEND = process.env.CORE_BACKEND_URL || "http://127.0.0.1:4000";
-const PUBLIC_PATHS = ["/login", "/import", "/invite/", "/s/", "/api/", "/_next", "/favicon.ico", "/manifest.json"];
+const PUBLIC_PATHS = ["/login", "/setup", "/import", "/invite/", "/s/", "/api/", "/_next", "/favicon.ico", "/manifest.json"];
 
 /** Decode a JWT payload without verification (just base64url → JSON). */
 function decodeJwtPayload(token: string): { exp?: number } | null {
@@ -41,7 +41,7 @@ export function proxy(request: NextRequest) {
 
   if (!sessionCookie?.value) {
     const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("from", pathname);
+    loginUrl.searchParams.set("from", pathname + request.nextUrl.search);
     return NextResponse.redirect(loginUrl);
   }
 
@@ -51,7 +51,7 @@ export function proxy(request: NextRequest) {
   if (payload?.exp && payload.exp < Math.floor(Date.now() / 1000)) {
     // Token expired — clear the stale cookie and redirect to login
     const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("from", pathname);
+    loginUrl.searchParams.set("from", pathname + request.nextUrl.search);
     const response = NextResponse.redirect(loginUrl);
     response.cookies.delete("talome_session");
     return response;

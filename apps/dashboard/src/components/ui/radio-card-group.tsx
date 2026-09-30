@@ -31,6 +31,13 @@ export interface RadioCardGroupProps<T extends string> {
   "aria-labelledby"?: string
   columns?: 1 | 2 | 3
   disabled?: boolean
+  /**
+   * "automatic" (default): arrow keys move and select, as a plain radio group.
+   * "manual": arrow keys only move focus; Space, Enter or a click selects. Use
+   * it when choosing has a side effect (a server-wide setting), so moving
+   * through the options never applies one.
+   */
+  activation?: "automatic" | "manual"
   className?: string
 }
 
@@ -60,8 +67,8 @@ export function nextEnabledIndex(
 
 /**
  * A single choice shown as cards. `role="radiogroup"` with roving tabIndex:
- * Tab enters on the selected card, arrow keys move and select, Space and
- * Enter select, Home and End jump to the ends.
+ * Tab enters on the selected card, arrow keys move (and select, unless
+ * `activation="manual"`), Space and Enter select, Home and End jump to the ends.
  */
 function RadioCardGroup<T extends string>({
   value,
@@ -69,6 +76,7 @@ function RadioCardGroup<T extends string>({
   options,
   columns = 1,
   disabled = false,
+  activation = "automatic",
   className,
   ...aria
 }: RadioCardGroupProps<T>) {
@@ -77,7 +85,20 @@ function RadioCardGroup<T extends string>({
   const isDisabled = options.map((option) => disabled || Boolean(option.disabled))
   const selectedIndex = options.findIndex((option) => option.value === value)
   const firstEnabled = isDisabled.findIndex((d) => !d)
-  const tabStop = selectedIndex >= 0 && !isDisabled[selectedIndex] ? selectedIndex : firstEnabled
+  // Manual activation: the roving tab stop follows focus, not the selection.
+  const [focusedIndex, setFocusedIndex] = React.useState<number | null>(null)
+  const tabStop =
+    activation === "manual" && focusedIndex !== null && !isDisabled[focusedIndex]
+      ? focusedIndex
+      : selectedIndex >= 0 && !isDisabled[selectedIndex]
+        ? selectedIndex
+        : firstEnabled
+
+  const move = (index: number) => {
+    if (!options[index] || isDisabled[index]) return
+    setFocusedIndex(index)
+    refs.current[index]?.focus()
+  }
 
   const select = (index: number) => {
     const option = options[index]
@@ -114,7 +135,9 @@ function RadioCardGroup<T extends string>({
         return
     }
     event.preventDefault()
-    if (target !== null && target >= 0) select(target)
+    if (target === null || target < 0) return
+    if (activation === "manual") move(target)
+    else select(target)
   }
 
   return (
@@ -123,6 +146,10 @@ function RadioCardGroup<T extends string>({
       aria-disabled={disabled || undefined}
       data-slot="radio-card-group"
       className={cn("grid gap-2", COLUMN_CLASS[columns], className)}
+      onBlur={(event) => {
+        // Leaving the group: Tab comes back in on the selected card.
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusedIndex(null)
+      }}
       {...aria}
     >
       {options.map((option, index) => {
@@ -144,6 +171,7 @@ function RadioCardGroup<T extends string>({
             data-state={checked ? "checked" : "unchecked"}
             data-slot="radio-card"
             onClick={() => select(index)}
+            onFocus={() => setFocusedIndex(index)}
             onKeyDown={(event) => onKeyDown(event, index)}
             className={cn(
               "group/radio-card relative flex w-full items-start gap-3 rounded-xl border p-4 text-left",

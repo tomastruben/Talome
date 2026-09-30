@@ -27,7 +27,10 @@ import {
 } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
-import { SettingsGroup, SettingsRow, SaveRow } from "@/components/settings/settings-primitives";
+import { SettingsGroup, SettingsRow, SaveRow, settingsRequest } from "@/components/settings/settings-primitives";
+import { CopyButton } from "@/components/ui/copy-button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { toastWarning } from "@/lib/toast";
 import { useUser } from "@/hooks/use-user";
 
 const fetcher = (url: string) => fetch(url, { credentials: "include" }).then((r) => r.json());
@@ -81,6 +84,7 @@ function LocalDomainsSection({
 
   const [baseDomain, setBaseDomain] = useState("talome.local");
   const [enabling, setEnabling] = useState(false);
+  const confirm = useConfirm();
   const [applying, setApplying] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
@@ -111,16 +115,23 @@ function LocalDomainsSection({
         }
         toast.success(`Local domains enabled — ${data.proxyRoutes?.length ?? 0} route(s) created`);
       } else {
-        await fetch(`${CORE_URL}/api/network/disable`, {
-          method: "POST",
-          credentials: "include",
+        setEnabling(false);
+        const { confirmed } = await confirm({
+          tier: "soft",
+          title: "Turn off local domains?",
+          consequence: `Apps stop answering at their *.${baseDomain || "local"} addresses on your network.`,
+          recovery: "Apps keep running and stay reachable by IP and port. Turn local domains on again at any time.",
+          confirmLabel: "Turn off local domains",
+          busyLabel: "Turning off local domains…",
+          run: () => settingsRequest(`${CORE_URL}/api/network/disable`, { method: "POST" }, "Couldn't turn off local domains. Try again."),
+          receipt: "Turned off local domains",
         });
-        toast.success("Local domains disabled");
+        if (!confirmed) return;
       }
       mutateStatus();
       mutateProxy();
     } catch {
-      toast.error("Network error");
+      toast.error("Couldn't reach the Talome server. Check that it's running, then try again.");
     } finally {
       setEnabling(false);
     }
@@ -136,7 +147,11 @@ function LocalDomainsSection({
         credentials: "include",
         body: JSON.stringify({ baseDomain, tlsMode: "selfsigned" }),
       });
-      const data = await res.json() as { ok: boolean; created: string[]; skipped: number };
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; created?: string[]; skipped?: number; error?: string } | null;
+      if (!res.ok || !data || !Array.isArray(data.created)) {
+        toast.error(data?.error || "Couldn't add routes for your apps. Try again.");
+        return;
+      }
       if (data.created.length > 0) {
         toast.success(`Created ${data.created.length} route(s)`);
       } else {
@@ -144,7 +159,7 @@ function LocalDomainsSection({
       }
       mutateProxy();
     } catch {
-      toast.error("Failed to apply domain");
+      toast.error("Couldn't reach the Talome server. Check that it's running, then try again.");
     } finally {
       setApplying(false);
     }
@@ -162,7 +177,7 @@ function LocalDomainsSection({
       {/* Main controls */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Local Domains</p>
+          <p className="text-sm font-medium text-foreground">Local domains</p>
           <div className="ml-auto flex items-center gap-2">
             {status?.dns.running && (
               <Badge variant="secondary" className="text-xs gap-1.5 px-2 py-0">
@@ -262,7 +277,7 @@ function LocalDomainsSection({
       {isEnabled && status?.dns.running && (
         <SettingsGroup>
           <SettingsRow className="py-2.5">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Client Setup</p>
+            <p className="text-sm font-medium text-foreground">Client setup</p>
           </SettingsRow>
 
           <SettingsRow>
@@ -285,17 +300,12 @@ function LocalDomainsSection({
                   >
                     http://{status?.serverIp}:4000/api/network/setup
                   </a>
-                  <Button
-                    variant="ghost"
+                  <CopyButton
+                    value={`http://${status?.serverIp}:4000/api/network/setup`}
+                    label="Copy setup page address"
                     size="sm"
-                    className="h-8 w-8 p-0 shrink-0"
-                    onClick={() => {
-                      navigator.clipboard.writeText(`http://${status?.serverIp}:4000/api/network/setup`);
-                      toast.success("Copied to clipboard");
-                    }}
-                  >
-                    <span className="text-xs">Copy</span>
-                  </Button>
+                    className="h-8 shrink-0"
+                  />
                 </div>
               </div>
 
@@ -305,17 +315,7 @@ function LocalDomainsSection({
                   <code className="flex-1 text-xs bg-muted/50 rounded-lg px-3 py-2 font-mono break-all leading-relaxed">
                     {setupCommand}
                   </code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0 shrink-0"
-                    onClick={() => {
-                      navigator.clipboard.writeText(setupCommand);
-                      toast.success("Copied to clipboard");
-                    }}
-                  >
-                    <span className="text-xs">Copy</span>
-                  </Button>
+                  <CopyButton value={setupCommand} label="Copy Mac and Linux setup command" size="sm" className="h-8 shrink-0" />
                 </div>
               </div>
 
@@ -325,17 +325,7 @@ function LocalDomainsSection({
                   <code className="flex-1 text-xs bg-muted/50 rounded-lg px-3 py-2 font-mono break-all leading-relaxed">
                     {setupPs1}
                   </code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0 shrink-0"
-                    onClick={() => {
-                      navigator.clipboard.writeText(setupPs1);
-                      toast.success("Copied to clipboard");
-                    }}
-                  >
-                    <span className="text-xs">Copy</span>
-                  </Button>
+                  <CopyButton value={setupPs1} label="Copy Windows setup command" size="sm" className="h-8 shrink-0" />
                 </div>
               </div>
 
@@ -367,6 +357,7 @@ function RoutesSection({
   const [adding, setAdding] = useState(false);
   const [showRouteForm, setShowRouteForm] = useState(false);
   const [routesOpen, setRoutesOpen] = useState(false);
+  const confirm = useConfirm();
 
   const routes = proxyData?.routes ?? [];
   const appRoutes = useMemo(() => routes.filter((r) => r.app_id), [routes]);
@@ -391,27 +382,36 @@ function RoutesSection({
       toast.success(`Route added: ${newDomain}`);
       setNewDomain(""); setNewUpstream(""); setNewTls("auto"); setShowRouteForm(false);
       mutateProxy();
-    } catch { toast.error("Network error"); }
+    } catch { toast.error("Couldn't reach the Talome server. Check that it's running, then try again."); }
     finally { setAdding(false); }
   }
 
-  async function handleDeleteRoute(id: string) {
-    try {
-      await fetch(`${CORE_URL}/api/proxy/routes/${id}`, { method: "DELETE", credentials: "include" });
-      toast.success("Route removed"); mutateProxy();
-    } catch { toast.error("Failed to remove"); }
+  async function handleDeleteRoute(route: ProxyRoute) {
+    const { confirmed } = await confirm({
+      tier: "soft",
+      title: `Remove the route for ${route.domain}?`,
+      consequence: `${route.domain} stops forwarding to ${route.upstream}.`,
+      recovery: "The app itself isn't touched. You can add the route again here.",
+      confirmLabel: "Remove route",
+      busyLabel: "Removing the route…",
+      run: () => settingsRequest(`${CORE_URL}/api/proxy/routes/${route.id}`, { method: "DELETE" }, "Couldn't remove the route. Try again."),
+      receipt: `Removed the route for ${route.domain}`,
+    });
+    if (confirmed) mutateProxy();
   }
 
   async function handleToggleRoute(route: ProxyRoute) {
     try {
-      await fetch(`${CORE_URL}/api/proxy/routes/${route.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ enabled: route.enabled !== 1 }),
-      });
+      await settingsRequest(
+        `${CORE_URL}/api/proxy/routes/${route.id}`,
+        { method: "PATCH", body: { enabled: route.enabled !== 1 } },
+        `Couldn't ${route.enabled === 1 ? "turn off" : "turn on"} ${route.domain}. Try again.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update the route. Try again.");
+    } finally {
       mutateProxy();
-    } catch { toast.error("Failed to update"); }
+    }
   }
 
   function certBadge(route: ProxyRoute) {
@@ -443,10 +443,15 @@ function RoutesSection({
         </div>
         {isAdmin && (
           <div className="flex items-center gap-2 shrink-0">
-            <Switch checked={route.enabled === 1} onCheckedChange={() => handleToggleRoute(route)} />
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-              onClick={() => handleDeleteRoute(route.id)}>
-              <HugeiconsIcon icon={Delete01Icon} size={14} />
+            <Switch
+              checked={route.enabled === 1}
+              onCheckedChange={() => void handleToggleRoute(route)}
+              aria-label={`Route for ${route.domain}`}
+            />
+            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-status-critical"
+              aria-label={`Remove the route for ${route.domain}`} title="Remove route"
+              onClick={() => void handleDeleteRoute(route)}>
+              <HugeiconsIcon icon={Delete01Icon} size={14} aria-hidden="true" />
             </Button>
           </div>
         )}
@@ -458,7 +463,7 @@ function RoutesSection({
     return (
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Proxy Routes</p>
+          <p className="text-sm font-medium text-foreground">Proxy routes</p>
           <Badge variant="secondary" className="ml-auto text-xs">0</Badge>
         </SettingsRow>
         <SettingsRow>
@@ -479,7 +484,7 @@ function RoutesSection({
       <CollapsibleTrigger asChild>
         <button type="button" className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors px-1 w-full">
           <HugeiconsIcon icon={routesOpen ? ArrowDown01Icon : ArrowRight01Icon} size={14} />
-          <span className="font-medium uppercase tracking-wider">Proxy Routes</span>
+          <span className="font-medium">Proxy routes</span>
           <span className="font-normal tabular-nums">{routes.length}</span>
         </button>
       </CollapsibleTrigger>
@@ -489,7 +494,7 @@ function RoutesSection({
             <SettingsGroup>
               <SettingsRow className="py-2.5">
                 <HugeiconsIcon icon={LinkSquare01Icon} size={14} className="text-muted-foreground" />
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">App Subdomains</p>
+                <p className="text-sm font-medium text-foreground">App subdomains</p>
                 <Badge variant="secondary" className="ml-auto text-xs">{appRoutes.length}</Badge>
               </SettingsRow>
               {appRoutes.map(renderRoute)}
@@ -498,7 +503,7 @@ function RoutesSection({
 
           <SettingsGroup>
             <SettingsRow className="py-2.5">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Custom Routes</p>
+              <p className="text-sm font-medium text-foreground">Custom routes</p>
               <Badge variant="secondary" className="ml-auto text-xs">{customRoutes.length}</Badge>
             </SettingsRow>
             {customRoutes.map(renderRoute)}
@@ -594,17 +599,20 @@ function AuthProxySection() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        toast.error("Failed to save settings");
+        toast.error("Couldn't save the auth proxy settings. Try again.");
         return;
       }
-      toast.success("Auth proxy settings saved");
       setDirty(false);
       mutateSettings();
 
-      // Trigger Caddy reload to apply the new auth config
-      await fetch(`${CORE_URL}/api/proxy/reload`, { method: "POST", credentials: "include" }).catch(() => {});
+      // Reload Caddy so the new auth config applies; say so when it didn't.
+      const reloaded = await fetch(`${CORE_URL}/api/proxy/reload`, { method: "POST", credentials: "include" })
+        .then((r) => r.ok)
+        .catch(() => false);
+      if (reloaded) toast.success("Saved and applied the auth proxy settings");
+      else toastWarning("Saved, but the proxy didn't reload, so the change isn't live yet. Save again to retry.");
     } catch {
-      toast.error("Network error");
+      toast.error("Couldn't reach the Talome server. Check that it's running, then try again.");
     } finally {
       setSaving(false);
     }
@@ -614,7 +622,7 @@ function AuthProxySection() {
     <SettingsGroup>
       <SettingsRow className="py-2.5">
         <HugeiconsIcon icon={Shield01Icon} size={14} className="text-muted-foreground" />
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Auth Proxy</p>
+        <p className="text-sm font-medium text-foreground">Auth proxy</p>
       </SettingsRow>
 
       <SettingsRow>

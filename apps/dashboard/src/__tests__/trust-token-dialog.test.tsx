@@ -10,6 +10,9 @@ vi.mock("@/components/icons", () => ({
   Copy01Icon: {},
   CheckmarkCircle01Icon: {},
   Cancel01Icon: {},
+  Tick02Icon: {},
+  Loading03Icon: {},
+  MinusSignIcon: {},
 }));
 
 // Radix Switch measures itself; jsdom has no ResizeObserver.
@@ -70,11 +73,11 @@ describe("TokenDialog", () => {
     const onSaved = vi.fn();
     render(<TokenDialog open onOpenChange={() => {}} mode={{ kind: "create" }} catalog={catalog} onSaved={onSaved} />);
 
-    const create = screen.getByRole("button", { name: "Create token" });
+    const create = screen.getByRole("button", { name: "Create access" });
     expect(create).toBeDisabled();
     expect(screen.getByText("2 of 3 tools available to this token")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Client"), { target: { value: "Cursor" } });
+    fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "Cursor" } });
     fireEvent.click(screen.getByRole("radio", { name: /Modify/ }));
     expect(screen.getByText("3 of 3 tools available to this token")).toBeInTheDocument();
 
@@ -83,9 +86,13 @@ describe("TokenDialog", () => {
     expect(screen.getByText("Pick at least one app.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "sonarr" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create access" }));
 
-    expect(await screen.findByText("tlm_secret_value")).toBeInTheDocument();
+    // Revealed once, masked on screen until "Show".
+    expect(await screen.findByRole("heading", { name: "Connect Cursor" })).toBeInTheDocument();
+    expect(screen.queryByText("tlm_secret_value")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(screen.getByText("tlm_secret_value")).toBeInTheDocument();
     expect(onSaved).toHaveBeenCalled();
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/integrations/mcp/tokens");
@@ -104,10 +111,10 @@ describe("TokenDialog", () => {
       }),
     );
     render(<TokenDialog open onOpenChange={() => {}} mode={{ kind: "create" }} catalog={catalog} onSaved={() => {}} />);
-    fireEvent.change(screen.getByLabelText("Client"), { target: { value: "X" } });
+    fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "X" } });
     fireEvent.click(screen.getByRole("radio", { name: "Never" }));
-    fireEvent.click(screen.getByRole("button", { name: "Create token" }));
-    await screen.findByText("tlm_x");
+    fireEvent.click(screen.getByRole("button", { name: "Create access" }));
+    await screen.findByRole("heading", { name: "Connect X" });
     expect(lastBody()).toMatchObject({ expiresAt: null });
     expect(lastBody()).not.toHaveProperty("expiresInDays");
   });
@@ -141,9 +148,9 @@ describe("TokenDialog", () => {
     const { toast } = await import("sonner");
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: false, error: "expiresAt must be in the future" }), { status: 400 }));
     render(<TokenDialog open onOpenChange={() => {}} mode={{ kind: "create" }} catalog={catalog} onSaved={() => {}} />);
-    fireEvent.change(screen.getByLabelText("Client"), { target: { value: "Y" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+    fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "Y" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create access" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("expiresAt must be in the future"));
-    expect(screen.getByRole("button", { name: "Create token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create access" })).toBeInTheDocument();
   });
 });

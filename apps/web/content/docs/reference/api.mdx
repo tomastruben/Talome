@@ -31,9 +31,11 @@ curl http://localhost:4000/api/containers \
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/auth/login` | Authenticate with username and password. On first call with no existing users, creates the admin account. Returns JWT token. |
+| POST | `/api/auth/setup` | Create the first (admin) account. Requires `username` (2+ characters) and `password` (8+ characters). Works only while no account exists (409 afterwards). Returns a one-time recovery code. |
+| POST | `/api/auth/login` | Authenticate with `username` and `password`. Never creates an account: with no account yet it returns 409 `setup_required`. |
+| GET | `/api/auth/status` | Unauthenticated probe: `{ passwordConfigured }`. Returns 503 when the account database can't be read. |
 | POST | `/api/auth/logout` | Revoke the current session and clear the session cookie. |
-| POST | `/api/auth/recover` | Reset password using a recovery code. Requires `username`, `recoveryCode`, and `newPassword`. |
+| POST | `/api/auth/recover` | Reset password using a recovery code. Requires `username`, `recoveryCode` (case, spaces and hyphens are ignored), and `newPassword`. Returns a new recovery code; the old one stops working. |
 | GET | `/api/auth/me` | Get the currently authenticated user's profile. |
 | GET | `/api/health` | Health check endpoint (no auth required). Returns `{ status: "ok" }`. |
 

@@ -198,6 +198,8 @@ import {
   audiobookshelfGetProgressTool,
   audiobookshelfUpdateProgressTool,
   audiobookshelfScanLibraryTool,
+  audiobookSearchReleasesTool,
+  audiobookDownloadTool,
 } from "./tools/audiobookshelf-tools.js";
 // ── Phase 18: Overseerr tools ─────────────────────────────────────────────────
 import {
@@ -918,6 +920,24 @@ registerDomain({
     audiobookshelf_get_progress: "read",
     audiobookshelf_update_progress: "modify",
     audiobookshelf_scan_library: "modify",
+  },
+});
+
+// Audiobook releases: find one through Prowlarr, send it to qBittorrent. The
+// Assistant's release cards (Download) run audiobook_download through
+// POST /api/chat/actions, so it must be registered to work at all.
+registerDomain({
+  name: "audiobook-releases",
+  settingsKeys: ["prowlarr_url", "qbittorrent_url"],
+  keywords: ["audiobook", "audiobooks", "audiokniha", "audioknihy", "hörbuch"],
+  summary: "Search indexers for audiobook releases and send one to qBittorrent.",
+  tools: {
+    audiobook_search_releases: audiobookSearchReleasesTool,
+    audiobook_download: audiobookDownloadTool,
+  },
+  tiers: {
+    audiobook_search_releases: "read",
+    audiobook_download: "modify",
   },
 });
 

@@ -56,7 +56,7 @@ function Probe() {
       <span data-testid="model">{ctx.model}</span>
       <span data-testid="provider">{ctx.activeProvider}</span>
       <span data-testid="options">{ctx.modelOptions.map((o) => o.name).join("|")}</span>
-      <span data-testid="auto">{String(ctx.autoMode)}</span>
+      <span data-testid="auto">{String(ctx.chatAutoApprove)}</span>
     </div>
   );
 }
@@ -158,17 +158,43 @@ describe("AssistantProvider", () => {
     expect(screen.getByTestId("model").textContent).toBe("gpt-a");
   });
 
-  it("reads auto mode from localStorage and persists changes", () => {
+  it("keeps chat auto-approve to this tab's session, separate from the old shared Auto key (P0-5)", () => {
+    // The legacy key also drove the terminal, builds and evolution: it no longer turns chat auto-approve on.
     localStorage.setItem("talome-auto-mode", "true");
+    sessionStorage.removeItem("talome-chat-auto-approve");
     render(
       <AssistantProvider>
         <Probe />
       </AssistantProvider>,
     );
-    expect(screen.getByTestId("auto").textContent).toBe("true");
-
-    act(() => api!.setAutoMode(false));
     expect(screen.getByTestId("auto").textContent).toBe("false");
-    expect(localStorage.getItem("talome-auto-mode")).toBe("false");
+
+    act(() => api!.setChatAutoApprove(true));
+    expect(screen.getByTestId("auto").textContent).toBe("true");
+    expect(sessionStorage.getItem("talome-chat-auto-approve")).toBe("true");
+    // Nothing else changes: the terminal's key is untouched.
+    expect(localStorage.getItem("talome-auto-mode")).toBe("true");
+
+    act(() => api!.setChatAutoApprove(false));
+    expect(screen.getByTestId("auto").textContent).toBe("false");
+    expect(sessionStorage.getItem("talome-chat-auto-approve")).toBeNull();
+    localStorage.removeItem("talome-auto-mode");
+  });
+
+  it("asks the browser to keep a delete alive when it is sent as the page goes away", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssistantProvider>
+        <Probe />
+      </AssistantProvider>,
+    );
+    await act(async () => { await api!.deleteConversation("c1", { keepalive: true }); });
+    await act(async () => { await api!.deleteConversation("c2"); });
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    const byUrl = (id: string) => calls.find(([url]) => url === `http://core/api/conversations/${id}`)?.[1];
+    expect(byUrl("c1")).toMatchObject({ method: "DELETE", keepalive: true });
+    expect(byUrl("c2")?.keepalive).toBeUndefined();
+    vi.unstubAllGlobals();
   });
 });

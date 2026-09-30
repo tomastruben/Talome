@@ -172,3 +172,15 @@ describe("allTools registration", () => {
     }
   });
 });
+
+// Tool-card buttons run through POST /api/chat/actions, which looks the tool
+// up in the registry: an allow-listed action with no registered tool can only
+// answer "the tool is turned off".
+describe("card actions resolve to registered tools", () => {
+  it("registers every tool in CARD_ACTIONS", async () => {
+    const { CARD_ACTIONS } = await import("../routes/tool-actions.js");
+    const registered = new Set(Object.keys(getAllRegisteredTools()));
+    const missing = Object.keys(CARD_ACTIONS).filter((name) => !registered.has(name));
+    expect(missing).toEqual([]);
+  });
+});

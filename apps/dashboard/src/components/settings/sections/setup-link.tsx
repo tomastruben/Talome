@@ -276,7 +276,7 @@ export function ExportImportSection() {
       {/* ── Export ── */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Export</p>
+          <p className="text-sm font-medium text-foreground">Export</p>
         </SettingsRow>
 
         {/* Settings export */}
@@ -349,7 +349,7 @@ export function ExportImportSection() {
       {/* ── Import ── */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Import</p>
+          <p className="text-sm font-medium text-foreground">Import</p>
         </SettingsRow>
         <SettingsRow className="flex-col items-stretch gap-3 py-4">
           <p className="text-sm text-muted-foreground">

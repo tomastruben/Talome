@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { hash as bcryptHash } from "bcryptjs";
-import { generateRecoveryCode } from "./auth.js";
+import { generateRecoveryCode, hashRecoveryCode } from "./auth.js";
 import { db, schema } from "../db/index.js";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -132,7 +132,7 @@ users.post("/", async (c) => {
   const id = randomUUID();
   const passwordHash = await bcryptHash(password, BCRYPT_ROUNDS);
   const recoveryCode = generateRecoveryCode();
-  const recoveryCodeHash = await bcryptHash(recoveryCode, BCRYPT_ROUNDS);
+  const recoveryCodeHash = await hashRecoveryCode(recoveryCode);
   const now = new Date().toISOString();
   const userRole = role ?? "member";
   const permissions = userRole === "admin" ? null : JSON.stringify(body.permissions ?? getDefaultPermissions());
@@ -439,7 +439,7 @@ users.post("/:id/recovery-code", async (c) => {
   if (!user) return c.json({ error: "User not found" }, 404);
 
   const recoveryCode = generateRecoveryCode();
-  const recoveryCodeHash = await bcryptHash(recoveryCode, BCRYPT_ROUNDS);
+  const recoveryCodeHash = await hashRecoveryCode(recoveryCode);
 
   db.update(schema.users)
     .set({ recoveryCodeHash })
@@ -447,7 +447,7 @@ users.post("/:id/recovery-code", async (c) => {
     .run();
   // A recovery code resets the password and signs in: record who minted one
   // (never the code itself).
-  writeAuditEntry("user_recovery_code_regenerated", "modify", `user=${user.username} id=${userId}`, true, {
+  writeAuditEntry("user_recovery_code_regenerated", "destructive", `user=${user.username} id=${userId}`, true, {
     ...sessionAuditActor(c),
     outcome: "success",
   });

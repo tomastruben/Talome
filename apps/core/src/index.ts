@@ -24,6 +24,7 @@ import { approvals } from "./routes/approvals.js";
 import { setupTerminal } from "./routes/terminal.js";
 import { automations } from "./routes/automations.js";
 import { auth } from "./routes/auth.js";
+import { toolActions } from "./routes/tool-actions.js";
 import { users } from "./routes/users.js";
 import { stacks } from "./routes/stacks.js";
 import { creator } from "./routes/creator.js";
@@ -72,6 +73,7 @@ import { eq } from "drizzle-orm";
 import { startTelegramBot } from "./messaging/telegram.js";
 // discord-bot.js is imported dynamically below to avoid loading discord.js at startup
 import { checkDockerConnection, startPeriodicPrune } from "./docker/client.js";
+import { registerAuthAttemptLimit } from "./middleware/auth-rate-limit.js";
 import { safeRoute, rateLimit, requireSession, requireRole, requireAnyPermission, requirePermission, requestLogger } from "./middleware/index.js";
 import { appErrorHandler, csrfProtection } from "./middleware/http-errors.js";
 import { loadCustomTools } from "./ai/custom-tools.js";
@@ -413,6 +415,9 @@ app.use("/api/audit-log", requireAnyPermission("dashboard", "intelligence"));
 app.use("/api/audit-log/*", requireAnyPermission("dashboard", "intelligence"));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
+// Brute-force protection for the password, recovery-code and invite endpoints.
+// Must come before the auth routes: a route handler ends the chain.
+registerAuthAttemptLimit(app);
 app.route("/api/auth", auth);
 app.route("/api/users", users);
 app.route("/api/system", system);
@@ -423,10 +428,10 @@ app.route("/api/stores", stores);
 
 // Rate-limit the AI chat route: 20 requests per 60 seconds per IP
 app.use("/api/chat/*", rateLimit(20, 60_000));
+// Tool-card buttons run through executeTool() (mode, approvals, audit).
+app.route("/api/chat/actions", toolActions);
 app.route("/api/chat", chat);
 
-// Rate-limit auth endpoints: 10 requests per 60 seconds per IP (brute-force protection)
-app.use("/api/auth/*", rateLimit(10, 60_000));
 // Rate-limit webhook endpoints: 30 requests per 60 seconds per IP
 app.use("/api/webhooks/*", rateLimit(30, 60_000));
 

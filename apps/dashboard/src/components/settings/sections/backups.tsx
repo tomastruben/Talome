@@ -21,7 +21,8 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import { SettingsGroup, SettingsRow, relativeTime } from "@/components/settings/settings-primitives";
+import { SettingsGroup, SettingsRow, relativeTime, settingsRequest } from "@/components/settings/settings-primitives";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 import { useInstalledApps } from "@/hooks/use-installed-apps";
 // Stage names written by core backup/** (dumping, uploading, restore stages, …).
@@ -237,6 +238,7 @@ function ScheduleBuilder({ onSubmit, disabled }: { onSubmit: (cron: string) => v
 /* ── Section ───────────────────────────────────────── */
 
 export function BackupsSection() {
+  const confirm = useConfirm();
   const [creating, setCreating] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [selectedApp, setSelectedApp] = useState<string>("");
@@ -349,41 +351,53 @@ export function BackupsSection() {
   }
 
   const handleCancelBackup = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`${CORE_URL}/api/backups/${id}/cancel`, { method: "POST" });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? "Failed to cancel");
-      }
-      toast.success("Backup cancelled");
-      mutateBackups();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to cancel backup");
-    }
-  }, [mutateBackups]);
+    const { confirmed } = await confirm({
+      tier: "soft",
+      title: "Stop this backup?",
+      consequence: "The backup stops now and its partial copy is discarded.",
+      recovery: "Earlier backups aren't affected. You can back up again at any time.",
+      confirmLabel: "Stop backup",
+      busyLabel: "Stopping the backup…",
+      run: () => settingsRequest(`${CORE_URL}/api/backups/${id}/cancel`, { method: "POST" }, "Couldn't stop the backup. Try again."),
+      receipt: "Stopped the backup",
+    });
+    if (confirmed) await mutateBackups();
+  }, [confirm, mutateBackups]);
 
-  async function handleDeleteSchedule(id: string) {
-    try {
-      await fetch(`${CORE_URL}/api/backups/schedules/${id}`, { method: "DELETE" });
-      toast.success("Schedule removed");
-      mutateSchedules();
-    } catch {
-      toast.error("Failed to remove schedule");
-    }
+  async function handleDeleteSchedule(id: string, description: string) {
+    const { confirmed } = await confirm({
+      tier: "soft",
+      title: "Remove this backup schedule?",
+      consequence: `Talome stops backing up on this schedule (${description}).`,
+      recovery: "Backups it already made are kept. You can add the schedule again below.",
+      confirmLabel: "Remove schedule",
+      busyLabel: "Removing the schedule…",
+      run: () => settingsRequest(`${CORE_URL}/api/backups/schedules/${id}`, { method: "DELETE" }, "Couldn't remove the schedule. Try again."),
+      receipt: "Removed the backup schedule",
+    });
+    if (confirmed) await mutateSchedules();
   }
 
-  async function handleDeleteBackup(id: string) {
-    try {
-      const res = await fetch(`${CORE_URL}/api/backups/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? "Failed to delete backup");
-      }
-      toast.success("Backup deleted");
-      mutateBackups();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to delete backup");
-    }
+  /** "12 Sep, 03:00": an absolute moment reads correctly inside a sentence. */
+  function backupDateLabel(iso: string): string {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "this time";
+    return date.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  }
+
+  async function handleDeleteBackup(id: string, label: string) {
+    const { confirmed } = await confirm({
+      tier: "destructive",
+      title: "Delete this backup?",
+      consequence: `The backup from ${label} is erased from this server.`,
+      recovery: "This can't be undone. Other backups of the app are kept.",
+      irreversible: true,
+      confirmLabel: "Delete backup",
+      busyLabel: "Deleting the backup…",
+      run: () => settingsRequest(`${CORE_URL}/api/backups/${id}`, { method: "DELETE" }, "Couldn't delete the backup. Try again."),
+      receipt: "Deleted the backup",
+    });
+    if (confirmed) await mutateBackups();
   }
 
   const isActive = backingUp || hasRunning;
@@ -412,7 +426,7 @@ export function BackupsSection() {
       {scheduleList.length > 0 && (
         <SettingsGroup>
           <SettingsRow className="py-2.5">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Active Schedules</p>
+            <p className="text-sm font-medium text-foreground">Active schedules</p>
             <Badge variant="secondary" className="ml-auto text-xs">{scheduleList.length}</Badge>
           </SettingsRow>
           {scheduleList.map((s) => (
@@ -423,16 +437,18 @@ export function BackupsSection() {
                   {s.app_id ? s.app_id : "All apps"}
                   {" · "}{s.retention_days}d retention
                   {s.cloud_target && ` · ${s.cloud_target}`}
-                  {" · "}Last run {relativeTime(s.last_run_at ?? "")}
+                  {" · "}{s.last_run_at ? `Last run ${relativeTime(s.last_run_at)}` : "Never run"}
                 </p>
               </div>
               <Button
                 variant="ghost"
                 size="sm"
-                className="size-8 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                onClick={() => handleDeleteSchedule(s.id)}
+                className="size-8 p-0 text-muted-foreground hover:text-status-critical shrink-0"
+                aria-label={`Remove schedule: ${describeCron(s.cron)}`}
+                title="Remove schedule"
+                onClick={() => void handleDeleteSchedule(s.id, describeCron(s.cron))}
               >
-                <HugeiconsIcon icon={Delete01Icon} size={16} />
+                <HugeiconsIcon icon={Delete01Icon} size={16} aria-hidden="true" />
               </Button>
             </SettingsRow>
           ))}
@@ -442,7 +458,7 @@ export function BackupsSection() {
       {/* New schedule */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">New Schedule</p>
+          <p className="text-sm font-medium text-foreground">New schedule</p>
         </SettingsRow>
         <SettingsRow className="flex-col items-stretch py-4">
           <ScheduleBuilder onSubmit={createSchedule} disabled={creating} />
@@ -452,7 +468,7 @@ export function BackupsSection() {
       {/* Backup now */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Backup Now</p>
+          <p className="text-sm font-medium text-foreground">Back up now</p>
         </SettingsRow>
         <SettingsRow className="flex-col items-stretch gap-3">
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full">
@@ -521,7 +537,7 @@ export function BackupsSection() {
         <CollapsibleTrigger asChild>
           <button type="button" className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors px-1 py-2 w-full">
             <HugeiconsIcon icon={historyOpen ? ArrowDown01Icon : ArrowRight01Icon} size={14} />
-            <span className="font-medium uppercase tracking-wider">History</span>
+            <span className="font-medium">History</span>
             <span className="font-normal tabular-nums">{backupList.length}</span>
           </button>
         </CollapsibleTrigger>
@@ -569,19 +585,23 @@ export function BackupsSection() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="size-8 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                        onClick={() => handleCancelBackup(b.id)}
+                        className="size-8 p-0 text-muted-foreground hover:text-status-critical shrink-0"
+                        aria-label="Stop backup"
+                        title="Stop backup"
+                        onClick={() => void handleCancelBackup(b.id)}
                       >
-                        <HugeiconsIcon icon={Cancel01Icon} size={16} />
+                        <HugeiconsIcon icon={Cancel01Icon} size={16} aria-hidden="true" />
                       </Button>
                     ) : (
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="size-8 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                        onClick={() => handleDeleteBackup(b.id)}
+                        className="size-8 p-0 text-muted-foreground hover:text-status-critical shrink-0"
+                        aria-label="Delete backup"
+                        title="Delete backup"
+                        onClick={() => void handleDeleteBackup(b.id, backupDateLabel(b.started_at))}
                       >
-                        <HugeiconsIcon icon={Delete01Icon} size={16} />
+                        <HugeiconsIcon icon={Delete01Icon} size={16} aria-hidden="true" />
                       </Button>
                     )}
                   </SettingsRow>

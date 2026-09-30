@@ -4,11 +4,13 @@ vi.mock("../utils/settings.js", () => ({
   getSetting: vi.fn((key: string) => {
     if (key === "audiobookshelf_url") return "http://audiobookshelf.test";
     if (key === "audiobookshelf_api_key") return "test-token";
+    if (key === "qbittorrent_url") return "http://qbt.test";
     return null;
   }),
 }));
 
 import {
+  addAudiobookTorrent,
   audiobookshelfGetLibraryItemsTool,
   audiobookshelfGetProgressTool,
 } from "../ai/tools/audiobookshelf-tools.js";
@@ -134,5 +136,42 @@ describe("Audiobookshelf assistant tools", () => {
       total: 1,
       items: [{ id: "book-1", title: "Finished Book", userProgress: { progress: 1, isFinished: true } }],
     });
+  });
+});
+
+describe("audiobook_download", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function stubFetch() {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === "http://prowlarr.test/download/1") return new Response(new Uint8Array([100, 56, 58]), { status: 200 });
+      if (url.endsWith("/api/v2/auth/login")) return new Response("Ok.", { status: 200, headers: { "set-cookie": "SID=abc; path=/" } });
+      return new Response("Ok.", { status: 200 });
+    }));
+    return calls;
+  }
+
+  it("fetches an indexer URL itself and uploads the .torrent, so qBittorrent never has to reach Prowlarr", async () => {
+    const calls = stubFetch();
+    const res = await addAudiobookTorrent("http://prowlarr.test/download/1", "audiobooks");
+    expect(res.ok).toBe(true);
+    expect(calls.some((c) => c.url === "http://prowlarr.test/download/1")).toBe(true);
+    const add = calls.find((c) => c.url === "http://qbt.test/api/v2/torrents/add")!;
+    const body = add.init?.body as FormData;
+    expect(body).toBeInstanceOf(FormData);
+    expect(body.get("category")).toBe("audiobooks");
+    expect(body.get("torrents")).toBeInstanceOf(Blob);
+  });
+
+  it("passes a magnet link to qBittorrent as-is", async () => {
+    const calls = stubFetch();
+    await addAudiobookTorrent("magnet:?xt=urn:btih:abc", "audiobooks");
+    const add = calls.find((c) => c.url === "http://qbt.test/api/v2/torrents/add")!;
+    expect(String(add.init?.body)).toContain("urls=magnet%3A%3Fxt%3Durn%3Abtih%3Aabc");
+    expect(calls.some((c) => c.url.startsWith("magnet:"))).toBe(false);
   });
 });

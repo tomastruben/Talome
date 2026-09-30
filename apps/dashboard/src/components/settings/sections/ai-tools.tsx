@@ -105,7 +105,7 @@ function BuiltInToolsCard() {
   return (
     <SettingsGroup>
       <SettingsRow className="py-2.5">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Built-in Tools</p>
+        <p className="text-sm font-medium text-foreground">Built-in tools</p>
       </SettingsRow>
 
       {/* Destructive tier */}
@@ -113,7 +113,7 @@ function BuiltInToolsCard() {
         <SettingsRow className="flex-col items-stretch gap-3 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Destructive</span>
+              <span className="text-xs font-medium text-muted-foreground">Destructive</span>
               <span className="text-xs text-muted-foreground tabular-nums">
                 {destructiveTools.length - destructiveOff} of {destructiveTools.length} enabled
               </span>
@@ -138,7 +138,7 @@ function BuiltInToolsCard() {
         <SettingsRow className="flex-col items-stretch gap-3 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Modify</span>
+              <span className="text-xs font-medium text-muted-foreground">Modify</span>
               <span className="text-xs text-muted-foreground tabular-nums">
                 {modifyTools.length - modifyOff} of {modifyTools.length} enabled
               </span>
@@ -188,7 +188,7 @@ function ToolGrid({
       <div className="flex flex-col gap-3">
         {[...groups.entries()].map(([category, tools]) => (
           <div key={category} className="flex flex-col gap-1.5">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{category}</p>
+            <p className="text-xs font-medium text-muted-foreground">{category}</p>
             <div className="flex flex-wrap gap-1.5">
               {tools.map((tool) => {
                 const isOff = disabled.includes(tool.name);
@@ -355,7 +355,7 @@ function CustomToolsCard() {
   return (
     <SettingsGroup>
       <SettingsRow className="py-2.5">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Custom Tools</p>
+        <p className="text-sm font-medium text-foreground">Custom tools</p>
         {toolFiles.length > 0 && (
           <Badge variant="secondary" className="ml-auto text-xs">{toolFiles.length}</Badge>
         )}

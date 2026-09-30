@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { HugeiconsIcon, Delete01Icon, ArrowDown01Icon, ArrowRight01Icon } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
-import { SettingsGroup, SettingsRow, relativeTime } from "@/components/settings/settings-primitives";
+import { SettingsGroup, SettingsRow, relativeTime, settingsRequest } from "@/components/settings/settings-primitives";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 
 interface Memory {
@@ -30,7 +31,7 @@ const TYPE_LABELS: Record<string, string> = {
 
 export function AiMemorySection() {
   const [memoryEnabled, setMemoryEnabled] = useState(true);
-  const [clearingMemories, setClearingMemories] = useState(false);
+  const confirm = useConfirm();
   const [openTypes, setOpenTypes] = useState<Set<string>>(new Set());
 
   const { data: memoriesList, mutate: mutateMemories } = useSWR<Memory[]>(
@@ -81,12 +82,13 @@ export function AiMemorySection() {
             checked={memoryEnabled}
             onCheckedChange={async (checked) => {
               setMemoryEnabled(checked);
-              await fetch(`${CORE_URL}/api/memories/enabled`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ enabled: checked }),
-              });
-              toast.success(checked ? "Memory enabled" : "Memory disabled");
+              try {
+                await settingsRequest(`${CORE_URL}/api/memories/enabled`, { method: "POST", body: { enabled: checked } }, "Couldn't change memory. Try again.");
+              } catch (err) {
+                // The switch reverts: it only shows what the server saved.
+                setMemoryEnabled(!checked);
+                toast.error(err instanceof Error ? err.message : "Couldn't change memory. Try again.");
+              }
             }}
           />
         </SettingsRow>
@@ -102,23 +104,23 @@ export function AiMemorySection() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-xs text-muted-foreground hover:text-destructive"
-              disabled={clearingMemories}
+              className="h-7 text-xs text-muted-foreground hover:text-status-critical"
               onClick={async () => {
-                if (!confirm("Clear all memories? This cannot be undone.")) return;
-                setClearingMemories(true);
-                try {
-                  await fetch(`${CORE_URL}/api/memories?confirm=true`, { method: "DELETE" });
-                  mutateMemories();
-                  toast.success("All memories cleared");
-                } catch {
-                  toast.error("Failed to clear memories");
-                } finally {
-                  setClearingMemories(false);
-                }
+                const { confirmed } = await confirm({
+                  tier: "destructive",
+                  title: `Delete all ${count} ${count === 1 ? "memory" : "memories"}?`,
+                  consequence: "The Assistant forgets your preferences, facts and corrections, and starts learning them again.",
+                  recovery: "This can't be undone.",
+                  irreversible: true,
+                  confirmLabel: "Delete all memories",
+                  busyLabel: "Deleting memories…",
+                  run: () => settingsRequest(`${CORE_URL}/api/memories?confirm=true`, { method: "DELETE" }, "Couldn't delete the memories. Try again."),
+                  receipt: "Deleted all memories",
+                });
+                if (confirmed) mutateMemories();
               }}
             >
-              {clearingMemories ? "Clearing..." : "Clear all"}
+              Delete all…
             </Button>
           </div>
 
@@ -140,7 +142,7 @@ export function AiMemorySection() {
                     size={14}
                     className="shrink-0"
                   />
-                  <span className="uppercase tracking-wider">{TYPE_LABELS[type]}</span>
+                  <span>{TYPE_LABELS[type]}</span>
                   <span className="font-normal tabular-nums">{group.length}</span>
                 </button>
 
@@ -162,15 +164,21 @@ export function AiMemorySection() {
                         </div>
                         <button
                           type="button"
-                          className="p-1.5 rounded-lg text-muted-foreground/0 group-hover/row:text-muted-foreground hover:!text-destructive active:!text-destructive hover:bg-muted/50 transition-colors shrink-0 self-start sm:opacity-0 sm:group-hover/row:opacity-100 [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:text-dim-foreground"
+                          className="p-1.5 rounded-lg text-muted-foreground hover:text-status-critical hover:bg-muted/50 transition-colors duration-150 shrink-0 self-start outline-none focus-visible:ring-2 focus-visible:ring-ring sm:opacity-0 sm:group-hover/row:opacity-100 sm:focus-visible:opacity-100 pointer-coarse:opacity-100"
                           onClick={async () => {
-                            await fetch(`${CORE_URL}/api/memories/${memory.id}`, { method: "DELETE" });
-                            mutateMemories();
-                            toast.success("Memory removed");
+                            try {
+                              await settingsRequest(`${CORE_URL}/api/memories/${memory.id}`, { method: "DELETE" }, "Couldn't forget this memory. Try again.");
+                              toast.success("Forgot the memory");
+                            } catch (err) {
+                              toast.error(err instanceof Error ? err.message : "Couldn't forget this memory. Try again.");
+                            } finally {
+                              mutateMemories();
+                            }
                           }}
-                          title="Remove memory"
+                          title="Forget this memory"
+                          aria-label="Forget this memory"
                         >
-                          <HugeiconsIcon icon={Delete01Icon} size={16} />
+                          <HugeiconsIcon icon={Delete01Icon} size={16} aria-hidden="true" />
                         </button>
                       </div>
                     ))}

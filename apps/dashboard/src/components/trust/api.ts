@@ -139,3 +139,84 @@ export function useNowAtDeadline(deadline: string, active: boolean): number {
   }, [deadline, active, now]);
   return now;
 }
+
+// ── MCP server address ───────────────────────────────────────────────────────
+
+function isLoopbackHost(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+    return host === "localhost" || host.endsWith(".localhost") || host === "::1" || /^127\./.test(host);
+  } catch {
+    return false;
+  }
+}
+
+function isAbsoluteHttpUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The address agents on other machines use for Talome's MCP server. It is
+ * this page's own origin, which forwards /api to core: that keeps the scheme
+ * and host the person actually reached Talome on (HTTPS behind a proxy, a
+ * custom domain, Tailscale, a LAN address). A configured core URL
+ * (NEXT_PUBLIC_CORE_URL) wins only when another machine could use it: the
+ * documented default http://localhost:4000 is skipped when the page was
+ * reached on a real host. A trailing /api on it is dropped, so a proxy base
+ * such as https://talome.example.com/api doesn't become /api/api/mcp.
+ */
+export function mcpServerUrl(
+  origin: string | undefined = typeof window !== "undefined" ? window.location.origin : undefined,
+  configuredCoreUrl: string | undefined = process.env.NEXT_PUBLIC_CORE_URL,
+): string {
+  const configured = configuredCoreUrl?.trim().replace(/\/+$/, "").replace(/\/api$/, "");
+  const useConfigured =
+    !!configured &&
+    isAbsoluteHttpUrl(configured) &&
+    (!origin || !isLoopbackHost(configured) || isLoopbackHost(origin));
+  const base = (useConfigured ? configured : origin || "http://localhost:3000").replace(/\/+$/, "");
+  return `${base}/api/mcp`;
+}
+
+/** Shorten a secret for display: the first and last 4 characters around dots. */
+export function maskSecret(secret: string): string {
+  if (secret.length <= 12) return "•".repeat(Math.max(secret.length, 8));
+  return `${secret.slice(0, 4)}${"•".repeat(12)}${secret.slice(-4)}`;
+}
+
+export type McpClient = "claude-code" | "claude-desktop" | "cursor";
+
+/**
+ * Connection snippets, per client, with the token embedded (or a placeholder).
+ * Claude Code (.mcp.json) and Cursor (.cursor/mcp.json) speak HTTP with
+ * headers directly. Claude Desktop's claude_desktop_config.json only starts
+ * local (stdio) servers, so it reaches Talome through the mcp-remote bridge;
+ * the token travels in an env var so it never sits inside the command line.
+ */
+export function mcpClientConfig(client: McpClient, url: string, token: string): string {
+  const authorization = `Bearer ${token}`;
+  let server: Record<string, unknown>;
+  if (client === "claude-desktop") {
+    const args = ["-y", "mcp-remote", url, "--header", "Authorization:${TALOME_AUTH}"];
+    // mcp-remote refuses plain HTTP to anything but localhost unless told otherwise.
+    if (url.startsWith("http:") && !isLoopbackHost(url)) args.push("--allow-http");
+    server = { command: "npx", args, env: { TALOME_AUTH: authorization } };
+  } else if (client === "claude-code") {
+    server = { type: "http", url, headers: { Authorization: authorization } };
+  } else {
+    server = { url, headers: { Authorization: authorization } };
+  }
+  return JSON.stringify({ mcpServers: { talome: server } }, null, 2);
+}
+
+/** Where each client's snippet goes, for labels. */
+export const MCP_CLIENT_FILES: Record<McpClient, { name: string; file: string }> = {
+  "claude-code": { name: "Claude Code", file: ".mcp.json" },
+  "claude-desktop": { name: "Claude Desktop", file: "claude_desktop_config.json" },
+  cursor: { name: "Cursor", file: ".cursor/mcp.json" },
+};

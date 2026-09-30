@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +15,7 @@ import type { IconSvgElement } from "@/components/icons";
 import { InlineMarkdown } from "@/components/ui/inline-markdown";
 import { CORE_URL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { PermissionPromptsNote } from "@/components/settings/autonomy";
 
 function getSuggestionOrigin(s: Suggestion): { icon: IconSvgElement; color: string } {
   if (s.source === "bug_hunt") {
@@ -45,6 +46,11 @@ export interface Suggestion {
 
 interface SuggestionCardProps {
   suggestion: Suggestion;
+  /**
+   * `auto` only narrows: `false` keeps Claude Code's permission prompts,
+   * `true` defers to the owner's "Improve Talome without permission prompts"
+   * setting. The card never turns prompts off itself.
+   */
   onExecute: (suggestion: Suggestion, auto?: boolean) => void;
   onDismiss: (id: string, reason?: string) => void;
   /** Opens the existing session inline (embedded terminal). */
@@ -70,13 +76,7 @@ export function SuggestionRow({ suggestion, onExecute, onDismiss, onView, onView
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [dismissing, setDismissing] = useState(false);
   const [dismissReason, setDismissReason] = useState("");
-  const [autoMode, setAutoMode] = useState(false);
   const screenshots = suggestion.screenshots ?? [];
-
-  // Sync auto mode from localStorage after hydration
-  useEffect(() => {
-    setAutoMode(localStorage.getItem("talome-auto-mode") === "true");
-  }, []);
 
   return (
     <>
@@ -229,97 +229,29 @@ export function SuggestionRow({ suggestion, onExecute, onDismiss, onView, onView
                           </Button>
                         ) : null}
                         {onReinject && (
-                          <div className={cn(
-                            "flex items-center h-7 rounded-md transition-colors",
-                            autoMode ? "bg-status-warning/10 ring-1 ring-status-warning/20" : "bg-muted/30 ring-1 ring-border/50"
-                          )}>
-                            <button
-                              type="button"
-                              className="flex items-center gap-1.5 h-7 px-2 rounded-l-md transition-colors hover:bg-muted/20"
-                              onClick={() => setAutoMode((v) => {
-                                const next = !v;
-                                localStorage.setItem("talome-auto-mode", String(next));
-                                return next;
-                              })}
-                            >
-                              <span className={cn(
-                                "relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors",
-                                autoMode ? "bg-status-warning" : "bg-input"
-                              )}>
-                                <span className={cn(
-                                  "inline-block size-2.5 rounded-full bg-white transition-transform",
-                                  autoMode ? "translate-x-3" : "translate-x-0.5"
-                                )} />
-                              </span>
-                              <span className={cn(
-                                "text-xs font-medium transition-colors",
-                                autoMode ? "text-status-warning" : "text-muted-foreground"
-                              )}>
-                                Auto
-                              </span>
-                            </button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className={cn(
-                                "h-7 text-xs gap-1.5 rounded-l-none",
-                                autoMode
-                                  ? "text-status-warning/80 hover:text-status-warning hover:bg-status-warning/10"
-                                  : "text-muted-foreground hover:text-foreground"
-                              )}
-                              onClick={() => onReinject(suggestion.runId!, autoMode)}
-                            >
-                              <HugeiconsIcon icon={RepeatIcon} size={12} />
-                              Retry
-                            </Button>
-                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                            // `true` defers to the owner's server setting; it can't turn prompts off by itself.
+                            onClick={() => onReinject(suggestion.runId!, true)}
+                          >
+                            <HugeiconsIcon icon={RepeatIcon} size={12} aria-hidden="true" />
+                            Retry
+                          </Button>
                         )}
                       </>
                     ) : (
-                      <div className={cn(
-                        "flex items-center h-7 rounded-md transition-colors",
-                        autoMode ? "bg-status-warning/10 ring-1 ring-status-warning/20" : "bg-muted/30 ring-1 ring-border/50"
-                      )}>
-                        <button
-                          type="button"
-                          className="flex items-center gap-1.5 h-7 px-2 rounded-l-md transition-colors hover:bg-muted/20"
-                          onClick={() => setAutoMode((v) => {
-                            const next = !v;
-                            localStorage.setItem("talome-auto-mode", String(next));
-                            return next;
-                          })}
-                        >
-                          <span className={cn(
-                            "relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors",
-                            autoMode ? "bg-status-warning" : "bg-input"
-                          )}>
-                            <span className={cn(
-                              "inline-block size-2.5 rounded-full bg-white transition-transform",
-                              autoMode ? "translate-x-3" : "translate-x-0.5"
-                            )} />
-                          </span>
-                          <span className={cn(
-                            "text-xs font-medium transition-colors",
-                            autoMode ? "text-status-warning" : "text-muted-foreground"
-                          )}>
-                            Auto
-                          </span>
-                        </button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className={cn(
-                            "h-7 text-xs gap-1.5 rounded-l-none",
-                            autoMode
-                              ? "text-status-warning/80 hover:text-status-warning hover:bg-status-warning/10"
-                              : "text-muted-foreground hover:text-foreground"
-                          )}
-                          onClick={() => onExecute(suggestion, autoMode)}
-                        >
-                          <HugeiconsIcon icon={ComputerTerminal01Icon} size={12} />
-                          Execute
-                        </Button>
-                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                        // `true` defers to the owner's server setting; it can't turn prompts off by itself.
+                        onClick={() => onExecute(suggestion, true)}
+                      >
+                        <HugeiconsIcon icon={ComputerTerminal01Icon} size={12} aria-hidden="true" />
+                        Run
+                      </Button>
                     )}
                     {onMarkDone && (
                       <Button
@@ -342,6 +274,9 @@ export function SuggestionRow({ suggestion, onExecute, onDismiss, onView, onView
                     </Button>
                   </div>
                 )}
+                {!dismissing && (suggestion.status !== "in_progress" || onReinject) ? (
+                  <PermissionPromptsNote kind="evolution" className="pt-1" />
+                ) : null}
               </div>
             </div>
           </div>

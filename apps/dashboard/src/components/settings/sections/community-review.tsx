@@ -69,7 +69,7 @@ export function CommunityReviewSection() {
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Pending Review</p>
+          <p className="text-sm font-medium text-foreground">Pending review</p>
           {submissions.length > 0 && (
             <Badge variant="secondary" className="ml-auto text-xs px-1.5 py-0 tabular-nums">
               {submissions.length}

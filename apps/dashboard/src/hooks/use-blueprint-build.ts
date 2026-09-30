@@ -25,7 +25,11 @@ async function responseBody(response: Response, fallback: string) {
 }
 
 /** Preparing is private; a refused execution can retry the same workspace without generating again. */
-export function useBlueprintBuild(blueprint: BlueprintState, auto: boolean, onSession: (session: BlueprintBuildSession) => void, conversationId: string | null = null) {
+/**
+ * Whether Claude Code skips its permission prompts is the owner's server
+ * setting ("Build apps without permission prompts"), not a flag sent from here.
+ */
+export function useBlueprintBuild(blueprint: BlueprintState, onSession: (session: BlueprintBuildSession) => void, conversationId: string | null = null) {
   const [buildingFor, setBuildingFor] = useState<{ blueprint: BlueprintState; conversationId: string | null } | null>(null);
   const [error, setError] = useState<{ blueprint: BlueprintState; conversationId: string | null; message: string } | null>(null);
   const prepared = useRef<PreparedBuild | null>(null);
@@ -71,7 +75,7 @@ export function useBlueprintBuild(blueprint: BlueprintState, auto: boolean, onSe
       if (!isCurrent()) return;
       const response = await fetch(`${CORE_URL}/api/apps/create/execute`, {
         signal: controller.signal, method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspaceRoot: draft.workspaceRoot, taskPrompt: draft.taskPrompt, appId: draft.appId, auto }),
+        body: JSON.stringify({ workspaceRoot: draft.workspaceRoot, taskPrompt: draft.taskPrompt, appId: draft.appId }),
       });
       const execution = await responseBody(response, "Unable to start build");
       if (!isCurrent()) return;
@@ -87,7 +91,7 @@ export function useBlueprintBuild(blueprint: BlueprintState, auto: boolean, onSe
         setBuildingFor(null);
       }
     }
-  }, [auto, blueprint, conversationId, onSession]);
+  }, [blueprint, conversationId, onSession]);
   return {
     build,
     building: buildingFor?.blueprint === blueprint && buildingFor.conversationId === conversationId,
