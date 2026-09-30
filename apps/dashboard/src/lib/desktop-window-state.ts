@@ -162,6 +162,85 @@ export function maximizedDesktopBounds(area: DesktopArea): DesktopBounds {
   };
 }
 
+export type DesktopResizeEdge = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+/**
+ * Resize from any edge or corner. The opposite edge stays put, sizes respect the
+ * window minimum, and the window stays inside the desktop area.
+ */
+export function resizeDesktopBounds(
+  origin: DesktopBounds,
+  edge: DesktopResizeEdge,
+  delta: { x: number; y: number },
+  area: DesktopArea,
+  minimum: Pick<DesktopBounds, "width" | "height">,
+): DesktopBounds {
+  let { x, y, width, height } = origin;
+  const right = origin.x + origin.width;
+  const bottom = origin.y + origin.height;
+
+  if (edge.includes("e")) {
+    width = Math.min(Math.max(origin.width + delta.x, minimum.width), area.width - origin.x);
+  }
+  if (edge.includes("s")) {
+    height = Math.min(Math.max(origin.height + delta.y, minimum.height), area.height - origin.y);
+  }
+  if (edge.includes("w")) {
+    x = Math.min(Math.max(origin.x + delta.x, 0), right - minimum.width);
+    width = right - x;
+  }
+  if (edge.includes("n")) {
+    y = Math.min(Math.max(origin.y + delta.y, 0), bottom - minimum.height);
+    height = bottom - y;
+  }
+  return { x, y, width, height };
+}
+
+export type DesktopSnapZone = "maximize" | "left" | "right";
+
+/** Distance from the desktop edge (px) at which a dragged window offers to snap. */
+export const DESKTOP_SNAP_THRESHOLD = 8;
+
+/** Where a window dragged with the pointer at `point` (desktop coordinates) would snap. */
+export function desktopSnapZoneAt(point: { x: number; y: number }, area: DesktopArea): DesktopSnapZone | null {
+  if (point.y <= DESKTOP_SNAP_THRESHOLD) return "maximize";
+  if (point.x <= DESKTOP_SNAP_THRESHOLD) return "left";
+  if (point.x >= area.width - DESKTOP_SNAP_THRESHOLD) return "right";
+  return null;
+}
+
+/** Bounds a window takes when snapped to half of the desktop. */
+export function snappedDesktopBounds(zone: Exclude<DesktopSnapZone, "maximize">, area: DesktopArea): DesktopBounds {
+  const half = Math.round(area.width / 2);
+  return zone === "left"
+    ? { x: 0, y: 0, width: half, height: area.height }
+    : { x: half, y: 0, width: area.width - half, height: area.height };
+}
+
+/**
+ * Dragging a maximized or snapped window gives it back its previous size, keeping
+ * the pointer at the same relative spot of the title bar (like macOS).
+ */
+export function unsnapDesktopBounds(
+  current: DesktopBounds,
+  restore: DesktopBounds,
+  pointer: { x: number; y: number },
+  area: DesktopArea,
+  minimum: Pick<DesktopBounds, "width" | "height">,
+): DesktopBounds {
+  const ratio = current.width > 0 ? (pointer.x - current.x) / current.width : 0.5;
+  return clampDesktopBounds(
+    {
+      x: pointer.x - restore.width * ratio,
+      y: current.y,
+      width: restore.width,
+      height: restore.height,
+    },
+    area,
+    minimum,
+  );
+}
+
 export function isPersistedDesktopLayout(value: unknown): value is {
   version: number;
   windows: unknown[];

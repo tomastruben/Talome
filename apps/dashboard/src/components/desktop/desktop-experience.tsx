@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -15,7 +17,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
 import { animate } from "motion";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import {
+  AnimatePresence,
+  motion,
+  useMotionValue,
+  useReducedMotion,
+  useSpring,
+  useTransform,
+  type MotionValue,
+} from "motion/react";
 import {
   closestCenter,
   DndContext,
@@ -189,6 +199,11 @@ const DESKTOP_WINDOW_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const DESKTOP_DOCK_MOTION_SECONDS = 0.16;
 const DESKTOP_DOCK_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const DESKTOP_DOCK_POINTER_CONSTRAINT = { distance: 6 } as const;
+/** Dock magnification: icons within this distance (px) of the pointer grow, peaking at 1 + amount */
+const DOCK_MAGNIFY_RADIUS = 110;
+const DOCK_MAGNIFY_AMOUNT = 0.3;
+/** Pointer x over the Dock (Infinity when elsewhere) — drives magnification */
+const DockPointerContext = createContext<MotionValue<number> | null>(null);
 const DESKTOP_FROSTED_MATERIAL_CLASS =
   "border-border bg-card/90 shadow-lg shadow-black/15 backdrop-blur-md";
 const CONTROL_CENTER_PAGE_TRANSITION = {
@@ -629,6 +644,10 @@ export function DesktopExperience() {
   const dockButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const desktopWidgetDoneButtonRef = useRef<HTMLButtonElement>(null);
   const minimizingWindowIdsRef = useRef(new Set<string>());
+  const dockPointerX = useMotionValue(Number.POSITIVE_INFINITY);
+  const [loadedWindowIds, setLoadedWindowIds] = useState<ReadonlySet<string>>(() => new Set());
+  /** Windows opened in this session (not restored from a previous one) animate in */
+  const openingWindowIdsRef = useRef(new Set<string>());
   const restoringWindowIdsRef = useRef(new Set<string>());
   const zIndexRef = useRef(4);
   const [area, setArea] = useState<DesktopArea>(DEFAULT_AREA);
@@ -1108,6 +1127,7 @@ export function DesktopExperience() {
     }
     const zIndex = zIndexRef.current++;
     const next = createWindow(app, area, zIndex);
+    openingWindowIdsRef.current.add(next.id);
     setWindows((current) => [...current, next]);
     setActiveWindowId(next.id);
   }, [area, canUseApp, focusWindow, restoreWindow, windows]);
@@ -1187,7 +1207,7 @@ export function DesktopExperience() {
     setDockOrder(arrayMove(reorderableDockAppIds, sourceIndex, targetIndex));
   }, [finishDockDrag, reorderableDockAppIds]);
 
-  const closeWindow = useCallback((id: string) => {
+  const removeWindow = useCallback((id: string) => {
     appFrameRefs.current.delete(id);
     setDesktopAudiobookPlayback((current) => current?.windowId === id ? undefined : current);
     setAppChromeByWindow((current) => {
@@ -1202,6 +1222,33 @@ export function DesktopExperience() {
       return remaining;
     });
   }, []);
+
+  // Closing: a short fade-and-settle, then the window is removed
+  const closingWindowIdsRef = useRef(new Set<string>());
+  const closeWindow = useCallback((id: string) => {
+    if (closingWindowIdsRef.current.has(id)) return;
+    const element = desktopWindowRefs.current.get(id);
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!element || reduceMotion) {
+      removeWindow(id);
+      return;
+    }
+    closingWindowIdsRef.current.add(id);
+    element.style.pointerEvents = "none";
+    const animation = element.animate(
+      [
+        { opacity: 1, transform: "scale(1)" },
+        { opacity: 0, transform: "scale(0.97)" },
+      ],
+      { duration: 140, easing: "ease-out", fill: "forwards" },
+    );
+    void animation.finished
+      .catch(() => undefined)
+      .finally(() => {
+        closingWindowIdsRef.current.delete(id);
+        removeWindow(id);
+      });
+  }, [removeWindow]);
 
   const finishMinimizingWindow = useCallback((id: string) => {
     setWindows((current) => {
@@ -1382,6 +1429,7 @@ export function DesktopExperience() {
     setAppChromeByWindow((current) => {
       return removeWindowChrome(current, windowId);
     });
+    setLoadedWindowIds((current) => (current.has(windowId) ? current : new Set(current).add(windowId)));
     try {
       const pathname = event.currentTarget.contentWindow?.location.pathname;
       if (pathname === "/login") {
@@ -1874,6 +1922,13 @@ export function DesktopExperience() {
                 ...current,
                 bounds,
               }))}
+              animateIn={openingWindowIdsRef.current.has(windowModel.id)}
+              onTile={(bounds, restoreBounds) => updateWindow(windowModel.id, (current) => ({
+                ...current,
+                maximized: false,
+                bounds,
+                restoreBounds,
+              }))}
               onMaximizeChange={(maximized, restoreBounds) => updateWindow(windowModel.id, (current) => ({
                 ...current,
                 maximized,
@@ -1916,7 +1971,13 @@ export function DesktopExperience() {
               draggingDockAppId && "border-foreground/20 bg-card/95 shadow-xl shadow-black/25",
             )}
             data-dock-dragging={draggingDockAppId || undefined}
+            onPointerMove={(event) => {
+              if (event.pointerType !== "mouse" || draggingDockAppId) return;
+              dockPointerX.set(event.clientX);
+            }}
+            onPointerLeave={() => dockPointerX.set(Number.POSITIVE_INFINITY)}
           >
+            <DockPointerContext.Provider value={draggingDockAppId ? null : dockPointerX}>
             <ContextMenu>
               <ContextMenuTrigger asChild>
                 <span className="flex">
@@ -1962,6 +2023,7 @@ export function DesktopExperience() {
                         && !windowModel.minimized
                       }
                       running={!!windowModel}
+                      loading={!!windowModel && !loadedWindowIds.has(windowModel.id)}
                       minimized={windowModel?.minimized}
                       dragHandle={dragHandle}
                       buttonRef={(button) => {
@@ -2017,6 +2079,7 @@ export function DesktopExperience() {
                 })}
               </SortableContext>
             </DndContext>
+            </DockPointerContext.Provider>
           </nav>
         ) : null}
       </div>
@@ -2183,6 +2246,8 @@ interface DockButtonProps {
   iconUrl?: string;
   active: boolean;
   running: boolean;
+  /** The app's window is still loading */
+  loading?: boolean;
   minimized?: boolean;
   dragHandle?: DockDragHandle;
   buttonRef?: (button: HTMLButtonElement | null) => void;
@@ -2196,6 +2261,7 @@ function DockButton({
   iconUrl,
   active,
   running,
+  loading = false,
   minimized,
   dragHandle,
   buttonRef,
@@ -2206,9 +2272,26 @@ function DockButton({
     duration: reduceMotion ? 0 : DESKTOP_DOCK_MOTION_SECONDS,
     ease: DESKTOP_DOCK_MOTION_EASE,
   };
+
+  // Magnification: grow with closeness to the pointer (cosine falloff), lifting
+  // from the bottom edge. Overdamped spring — smooth, never overshoots.
+  const dockPointer = useContext(DockPointerContext);
+  const idlePointer = useMotionValue(Number.POSITIVE_INFINITY);
+  const localButton = useRef<HTMLButtonElement | null>(null);
+  const magnification = useTransform(dockPointer ?? idlePointer, (pointerX) => {
+    const rect = localButton.current?.getBoundingClientRect();
+    if (reduceMotion || !rect || !Number.isFinite(pointerX)) return 1;
+    const distance = pointerX - (rect.left + rect.width / 2);
+    if (Math.abs(distance) >= DOCK_MAGNIFY_RADIUS) return 1;
+    return 1 + DOCK_MAGNIFY_AMOUNT * (Math.cos((Math.PI * distance) / DOCK_MAGNIFY_RADIUS) + 1) / 2;
+  });
+  const scale = useSpring(magnification, { stiffness: 520, damping: 48, mass: 0.4 });
+  const lift = useTransform(scale, (value) => -(value - 1) * 22);
+
   const button = (
     <motion.button
       ref={(button) => {
+        localButton.current = button;
         dragHandle?.setActivatorNodeRef(button);
         buttonRef?.(button);
       }}
@@ -2219,11 +2302,7 @@ function DockButton({
       aria-pressed={active}
       aria-grabbed={dragHandle?.dragging}
       data-dock-drag-handle={dragHandle ? "" : undefined}
-      initial={false}
-      animate={reduceMotion ? undefined : { y: active ? -2 : 0 }}
-      whileHover={reduceMotion ? undefined : { y: -7, scale: 1.12 }}
-      whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-      transition={motionTransition}
+      style={{ scale, y: lift }}
       className={cn(
         "relative isolate flex size-12 origin-bottom transform-gpu items-center justify-center rounded-xl border border-transparent bg-transparent transition-[background-color,border-color,opacity] duration-150 ease-out will-change-transform hover:border-border hover:bg-muted/40",
         dragHandle && "cursor-grab touch-none active:cursor-grabbing",
@@ -2242,21 +2321,25 @@ function DockButton({
           />
         ) : null}
       </AnimatePresence>
-      <span className="relative z-10 flex">
+      <motion.span
+        className="relative z-10 flex"
+        whileTap={reduceMotion ? undefined : { scale: 0.92 }}
+        transition={motionTransition}
+      >
         <DockAppIcon
           label={label}
           icon={icon}
           iconText={iconText}
           iconUrl={iconUrl}
         />
-      </span>
+      </motion.span>
       <AnimatePresence initial={false}>
         {running ? (
           <motion.span
             key="running"
             data-dock-running-indicator
             initial={reduceMotion ? false : { opacity: 0, scale: 0.5 }}
-            animate={{ opacity: 1, scale: 1 }}
+            animate={{ opacity: loading ? 0.35 : 1, scale: 1 }}
             exit={reduceMotion ? undefined : { opacity: 0, scale: 0.5 }}
             transition={motionTransition}
             className="absolute -bottom-1 z-10 size-1 rounded-full bg-foreground/80"
@@ -2269,7 +2352,7 @@ function DockButton({
   return (
     <Tooltip>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent side="top" sideOffset={8}>{label}</TooltipContent>
+      <TooltipContent side="top" sideOffset={14}>{label}</TooltipContent>
     </Tooltip>
   );
 }

@@ -4,6 +4,7 @@ import {
   Fragment,
   memo,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -40,9 +41,15 @@ import {
 import { cn } from "@/lib/utils";
 import {
   clampDesktopBounds,
+  desktopSnapZoneAt,
   maximizedDesktopBounds,
+  resizeDesktopBounds,
+  snappedDesktopBounds,
+  unsnapDesktopBounds,
   type DesktopArea,
   type DesktopBounds,
+  type DesktopResizeEdge,
+  type DesktopSnapZone,
 } from "@/lib/desktop-window-state";
 
 interface DesktopWindowProps {
@@ -63,8 +70,12 @@ interface DesktopWindowProps {
   onMinimize: () => void;
   onBoundsChange: (bounds: DesktopBounds) => void;
   onMaximizeChange: (maximized: boolean, restoreBounds?: DesktopBounds) => void;
+  /** Snap to half of the desktop (or leave a snapped state): new bounds plus the size to restore later */
+  onTile?: (bounds: DesktopBounds, restoreBounds?: DesktopBounds) => void;
   onAction?: (actionId: string) => void;
   windowRef?: (element: HTMLElement | null) => void;
+  /** Play the opening animation when first shown */
+  animateIn?: boolean;
 }
 
 interface PointerOrigin {
@@ -72,6 +83,30 @@ interface PointerOrigin {
   pointerY: number;
   bounds: DesktopBounds;
 }
+
+interface DragState extends PointerOrigin {
+  /** Desktop area's viewport offset, to turn pointer positions into desktop coordinates */
+  areaLeft: number;
+  areaTop: number;
+  /** Bounds before the drag started (restored when snapping) */
+  startBounds: DesktopBounds;
+  /** A maximized or snapped window gets its previous size back once the drag really starts */
+  pendingUnsnap?: DesktopBounds;
+}
+
+const RESIZE_HANDLES: { edge: DesktopResizeEdge; className: string }[] = [
+  { edge: "n", className: "top-0 inset-x-3 h-1.5 cursor-ns-resize" },
+  { edge: "s", className: "bottom-0 inset-x-3 h-1.5 cursor-ns-resize" },
+  { edge: "e", className: "right-0 inset-y-3 w-1.5 cursor-ew-resize" },
+  { edge: "w", className: "left-0 inset-y-3 w-1.5 cursor-ew-resize" },
+  { edge: "nw", className: "top-0 left-0 size-3 cursor-nwse-resize" },
+  { edge: "se", className: "bottom-0 right-0 size-3 cursor-nwse-resize" },
+  { edge: "ne", className: "top-0 right-0 size-3 cursor-nesw-resize" },
+  { edge: "sw", className: "bottom-0 left-0 size-3 cursor-nesw-resize" },
+];
+
+/** Pointer travel before a press on the title bar counts as a drag. */
+const DRAG_START_DISTANCE = 4;
 
 const desktopActionIcons: Record<DesktopAppActionIcon, IconSvgElement> = {
   add: Add01Icon,
@@ -101,36 +136,70 @@ export const DesktopWindow = memo(function DesktopWindow({
   onMinimize,
   onBoundsChange,
   onMaximizeChange,
+  onTile,
   onAction,
   windowRef,
+  animateIn = false,
 }: DesktopWindowProps) {
-  const dragOrigin = useRef<PointerOrigin | null>(null);
-  const resizeOrigin = useRef<PointerOrigin | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const dragOrigin = useRef<DragState | null>(null);
+  const resizeOrigin = useRef<(PointerOrigin & { edge: DesktopResizeEdge }) | null>(null);
+  const snapZoneRef = useRef<DesktopSnapZone | null>(null);
   const [isManipulating, setIsManipulating] = useState(false);
+  const [snapZone, setSnapZone] = useState<DesktopSnapZone | null>(null);
+
+  // Opening: a quick scale-and-fade in, skipped for reduced motion
+  useLayoutEffect(() => {
+    const element = sectionRef.current;
+    if (!animateIn || !element) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    element.animate(
+      [
+        { opacity: 0, transform: "scale(0.96)" },
+        { opacity: 1, transform: "scale(1)" },
+      ],
+      { duration: 160, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+    );
+    // Only on first mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!isManipulating) return;
 
     const handlePointerMove = (event: globalThis.PointerEvent) => {
-      if (dragOrigin.current) {
+      const drag = dragOrigin.current;
+      if (drag) {
+        const dx = event.clientX - drag.pointerX;
+        const dy = event.clientY - drag.pointerY;
+        const pointer = { x: event.clientX - drag.areaLeft, y: event.clientY - drag.areaTop };
+
+        if (drag.pendingUnsnap) {
+          if (Math.hypot(dx, dy) < DRAG_START_DISTANCE) return;
+          const restored = unsnapDesktopBounds(drag.startBounds, drag.pendingUnsnap, pointer, area, minimum);
+          onTile?.(restored, undefined);
+          dragOrigin.current = { ...drag, pointerX: event.clientX, pointerY: event.clientY, bounds: restored, pendingUnsnap: undefined };
+          return;
+        }
+
         onBoundsChange(clampDesktopBounds(
-          {
-            ...dragOrigin.current.bounds,
-            x: dragOrigin.current.bounds.x + event.clientX - dragOrigin.current.pointerX,
-            y: dragOrigin.current.bounds.y + event.clientY - dragOrigin.current.pointerY,
-          },
+          { ...drag.bounds, x: drag.bounds.x + dx, y: drag.bounds.y + dy },
           area,
           minimum,
         ));
+        const zone = onTile ? desktopSnapZoneAt(pointer, area) : null;
+        if (zone !== snapZoneRef.current) {
+          snapZoneRef.current = zone;
+          setSnapZone(zone);
+        }
       }
 
-      if (resizeOrigin.current) {
-        onBoundsChange(clampDesktopBounds(
-          {
-            ...resizeOrigin.current.bounds,
-            width: resizeOrigin.current.bounds.width + event.clientX - resizeOrigin.current.pointerX,
-            height: resizeOrigin.current.bounds.height + event.clientY - resizeOrigin.current.pointerY,
-          },
+      const resize = resizeOrigin.current;
+      if (resize) {
+        onBoundsChange(resizeDesktopBounds(
+          resize.bounds,
+          resize.edge,
+          { x: event.clientX - resize.pointerX, y: event.clientY - resize.pointerY },
           area,
           minimum,
         ));
@@ -138,8 +207,20 @@ export const DesktopWindow = memo(function DesktopWindow({
     };
 
     const handlePointerUp = () => {
+      const drag = dragOrigin.current;
+      const zone = snapZoneRef.current;
+      if (drag && zone) {
+        if (zone === "maximize") {
+          onMaximizeChange(true, drag.startBounds);
+          onBoundsChange(maximizedDesktopBounds(area));
+        } else {
+          onTile?.(snappedDesktopBounds(zone, area), drag.startBounds);
+        }
+      }
       dragOrigin.current = null;
       resizeOrigin.current = null;
+      snapZoneRef.current = null;
+      setSnapZone(null);
       setIsManipulating(false);
     };
 
@@ -151,20 +232,28 @@ export const DesktopWindow = memo(function DesktopWindow({
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
     };
-  }, [area, isManipulating, minimum, onBoundsChange]);
+  }, [area, isManipulating, minimum, onBoundsChange, onMaximizeChange, onTile]);
 
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (maximized || event.button !== 0) return;
+    if (event.button !== 0) return;
     onFocus();
+    const areaRect = (sectionRef.current?.offsetParent as HTMLElement | null)?.getBoundingClientRect();
+    // Maximized or snapped windows return to their previous size when dragged away
+    const canUnsnap = Boolean(onTile && restoreBounds);
+    if (maximized && !canUnsnap) return;
     dragOrigin.current = {
       pointerX: event.clientX,
       pointerY: event.clientY,
       bounds,
+      startBounds: bounds,
+      areaLeft: areaRect?.left ?? 0,
+      areaTop: areaRect?.top ?? 0,
+      pendingUnsnap: canUnsnap ? restoreBounds : undefined,
     };
     setIsManipulating(true);
   };
 
-  const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const startResize = (edge: DesktopResizeEdge) => (event: ReactPointerEvent<HTMLElement>) => {
     if (maximized || event.button !== 0) return;
     event.stopPropagation();
     onFocus();
@@ -172,9 +261,16 @@ export const DesktopWindow = memo(function DesktopWindow({
       pointerX: event.clientX,
       pointerY: event.clientY,
       bounds,
+      edge,
     };
     setIsManipulating(true);
   };
+
+  const snapPreview = snapZone
+    ? snapZone === "maximize"
+      ? maximizedDesktopBounds(area)
+      : snappedDesktopBounds(snapZone, area)
+    : null;
 
   const toggleMaximize = () => {
     if (maximized) {
@@ -399,8 +495,25 @@ export const DesktopWindow = memo(function DesktopWindow({
   };
 
   return (
+    <>
+    {snapPreview && (
+      <div
+        aria-hidden
+        className="pointer-events-none absolute rounded-xl border border-foreground/20 bg-foreground/[0.08] backdrop-blur-sm transition-[left,top,width,height] duration-150 ease-out"
+        style={{
+          left: snapPreview.x + 6,
+          top: snapPreview.y + 6,
+          width: snapPreview.width - 12,
+          height: snapPreview.height - 12,
+          zIndex,
+        }}
+      />
+    )}
     <section
-      ref={windowRef}
+      ref={(element) => {
+        sectionRef.current = element;
+        windowRef?.(element);
+      }}
       data-desktop-window={id}
       aria-label={`${title} window`}
       aria-hidden={disabled || undefined}
@@ -411,7 +524,10 @@ export const DesktopWindow = memo(function DesktopWindow({
         maximized
           ? "rounded-none border-0"
           : "rounded-xl border",
-        !maximized && (active ? "border-foreground/30" : "border-border opacity-95"),
+        // Depth tells which window is in front; the active one sits higher
+        !maximized && (active
+          ? "border-foreground/25 shadow-2xl shadow-black/50"
+          : "border-border shadow-xl shadow-black/30"),
         disabled && "pointer-events-none",
       )}
       style={{
@@ -498,7 +614,10 @@ export const DesktopWindow = memo(function DesktopWindow({
           )}
           <span
             data-title-placement="leading"
-            className="pointer-events-none min-w-0 truncate text-sm font-medium"
+            className={cn(
+              "pointer-events-none min-w-0 truncate text-sm font-medium transition-colors duration-150",
+              !active && "text-muted-foreground",
+            )}
           >
             {title}
           </span>
@@ -517,17 +636,17 @@ export const DesktopWindow = memo(function DesktopWindow({
         <div className={cn("size-full", isManipulating && "pointer-events-none")}>
           {children}
         </div>
-        {!maximized && (
-          <button
-            type="button"
-            aria-label={`Resize ${title}`}
-            className="absolute right-0 bottom-0 size-4 cursor-nwse-resize touch-none"
-            onPointerDown={startResize}
-          >
-            <span className="absolute right-1 bottom-1 size-2 border-r border-b border-muted-foreground/50" />
-          </button>
-        )}
       </div>
+      {!maximized && RESIZE_HANDLES.map(({ edge, className }) => (
+        <div
+          key={edge}
+          aria-hidden
+          data-resize-edge={edge}
+          className={cn("absolute z-20 touch-none", className)}
+          onPointerDown={startResize(edge)}
+        />
+      ))}
     </section>
+    </>
   );
 });
