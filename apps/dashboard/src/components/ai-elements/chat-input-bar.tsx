@@ -13,6 +13,8 @@ import {
 } from "@/components/icons";
 import {
   PromptInput,
+  PromptInputButton,
+  PromptInputProvider,
   PromptInputTextarea,
   PromptInputFooter,
   PromptInputTools,
@@ -23,6 +25,8 @@ import {
   PromptInputActionAddAttachments,
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input";
+import { VoiceDictationButton } from "@/components/assistant/voice-dictation-button";
+import { AudioWave01Icon } from "@/components/icons";
 
 // ── Attachment preview ──────────────────────────────────────────────────────
 
@@ -94,6 +98,8 @@ export interface ChatInputBarProps {
   placeholder?: string;
   extraTools?: ReactNode;
   maxWidth?: string;
+  /** Show the voice-conversation button; called when it's pressed */
+  onVoiceMode?: () => void;
 }
 
 export function ChatInputBar({
@@ -103,6 +109,7 @@ export function ChatInputBar({
   placeholder = "Ask Talome anything...",
   extraTools,
   maxWidth = "max-w-2xl",
+  onVoiceMode,
 }: ChatInputBarProps) {
   const isActive = status === "streaming" || status === "submitted";
 
@@ -116,6 +123,8 @@ export function ChatInputBar({
       className="relative shrink-0 pb-3 pt-2"
     >
       <div className={`${maxWidth} mx-auto w-full px-4 sm:px-6`}>
+        {/* Provider lifts the text so dictation can write into the composer */}
+        <PromptInputProvider>
         <PromptInput
           className="prompt-input"
           maxFileSize={5 * 1024 * 1024}
@@ -136,13 +145,22 @@ export function ChatInputBar({
               </PromptInputActionMenu>
               {extraTools}
             </PromptInputTools>
-            <PromptInputSubmit
-              status={status}
-              onStop={onStop}
-              disabled={isActive && status !== "streaming"}
-            />
+            <div className="flex items-center gap-1">
+              <VoiceDictationButton />
+              {onVoiceMode && (
+                <PromptInputButton tooltip="Voice conversation" aria-label="Start voice conversation" onClick={onVoiceMode}>
+                  <HugeiconsIcon icon={AudioWave01Icon} size={16} />
+                </PromptInputButton>
+              )}
+              <PromptInputSubmit
+                status={status}
+                onStop={onStop}
+                disabled={isActive && status !== "streaming"}
+              />
+            </div>
           </PromptInputFooter>
         </PromptInput>
+        </PromptInputProvider>
       </div>
     </div>
   );

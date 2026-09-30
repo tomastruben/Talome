@@ -5,6 +5,8 @@ export {
   Home01Icon,
   FileUploadIcon,
   FolderUploadIcon,
+  Mic01Icon,
+  AudioWave01Icon,
   Package01Icon,
   Package02Icon,
   DownloadSquare01Icon,

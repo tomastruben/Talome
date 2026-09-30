@@ -26,6 +26,7 @@ import {
   MessageContent,
 } from "@/components/ai-elements/message";
 import { ChatInputBar } from "@/components/ai-elements/chat-input-bar";
+import { VoiceMode } from "@/components/assistant/voice-mode";
 import { ChatMessage } from "@/components/chat/chat-message";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { AssistantChatError } from "@/components/assistant/chat-error";
@@ -655,6 +656,22 @@ export default function AssistantPage() {
     return groups;
   }, [conversations]);
 
+  // Voice conversation: speaks the latest assistant reply when it finishes
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const lastAssistant = useMemo(() => {
+    const message = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!message) return null;
+    const text = message.parts
+      .map((part) => (part.type === "text" ? part.text : ""))
+      .join("")
+      .trim();
+    return { id: message.id, text };
+  }, [messages]);
+  const sendVoiceMessage = useCallback((text: string) => {
+    setDismissed(false);
+    handleSubmit(text, `Current page: ${pathname}. The user is speaking in voice mode — answer briefly and conversationally, without tables or code unless asked.`);
+  }, [handleSubmit, pathname]);
+
   const onSubmit = useCallback(
     ({ text, files }: { text: string; files: FileUIPart[] }) => {
       setDismissed(false);
@@ -803,6 +820,7 @@ export default function AssistantPage() {
       status={status as ChatStatus}
       onSubmit={onSubmit}
       onStop={stop}
+      onVoiceMode={() => setVoiceOpen(true)}
       placeholder="Ask Talome anything..."
       extraTools={
         <>
@@ -859,6 +877,13 @@ export default function AssistantPage() {
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden overscroll-none">
       <ConfirmDialog />
+      <VoiceMode
+        open={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        onSend={sendVoiceMessage}
+        status={status as ChatStatus}
+        lastAssistant={lastAssistant}
+      />
       {!embeddedFrame && (
         <AssistantHeader showingChat={showingChat} onBack={handleBack} onNew={handleNew} />
       )}
