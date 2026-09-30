@@ -451,11 +451,15 @@ function AppsPageContent() {
       ) : tab === "all" && apps.length === 0 ? (
         <EmptyState
           icon={Package01Icon}
-          title="No app stores yet"
-          description="Add an app source to browse and install apps."
+          title={stores.length === 0 ? "No app sources yet" : "No apps listed yet"}
+          description={
+            stores.length === 0
+              ? "Add an app source to browse and install apps."
+              : "Your app sources haven't listed any apps yet. Sync them to fetch their catalogs."
+          }
           action={
             <Link href="/dashboard/settings/app-sources" className="text-sm font-medium underline underline-offset-4">
-              Add an app source
+              {stores.length === 0 ? "Add an app source" : "Open app sources"}
             </Link>
           }
         />
