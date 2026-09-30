@@ -3,6 +3,8 @@ export type { IconSvgElement } from "@hugeicons/react";
 
 export {
   Home01Icon,
+  FileUploadIcon,
+  FolderUploadIcon,
   Package01Icon,
   Package02Icon,
   DownloadSquare01Icon,

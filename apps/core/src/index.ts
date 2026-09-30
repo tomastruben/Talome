@@ -336,6 +336,8 @@ app.use("*", async (c, next) => {
 
 // ── Request body size limit (5 MB for JSON APIs) ─────────────────────────────
 app.use("/api/*", async (c, next) => {
+  // Streaming file uploads write straight to disk and are bounded by free space instead
+  if (c.req.path === "/api/files/upload-stream") return next();
   const contentLength = parseInt(c.req.header("content-length") || "0", 10);
   if (contentLength > 5 * 1024 * 1024) {
     return c.json({ error: "Request body too large" }, 413);

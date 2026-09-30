@@ -24,6 +24,8 @@ import {
   Add01Icon,
   CloudUploadIcon,
   FolderAddIcon,
+  FileUploadIcon,
+  FolderUploadIcon,
   ExternalDriveIcon,
   HardDriveIcon,
   Cancel01Icon,
@@ -35,6 +37,8 @@ import {
   ArrowRight02Icon,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
+import { UploadPanel } from "@/components/files/upload-panel";
+import { useUploadQueue, filesFromDrop, filesFromInput, type PendingFile } from "@/components/files/use-upload-queue";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -367,18 +371,31 @@ function RootsList({ roots, onSelect }: { roots: string[]; onSelect: (root: stri
 
 // ── Header actions (rendered via pageActionAtom) ────────────────────────
 
-function FileActions({ onNewFolder, onUpload }: { onNewFolder: () => void; onUpload: () => void }) {
+function FileActions({ onNewFolder, onUpload, onUploadFolder }: { onNewFolder: () => void; onUpload: () => void; onUploadFolder: () => void }) {
   return (
     <div className="ml-auto flex items-center gap-1 shrink-0">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-        onClick={onUpload}
-      >
-        <HugeiconsIcon icon={CloudUploadIcon} size={14} />
-        Upload
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <HugeiconsIcon icon={CloudUploadIcon} size={14} />
+            Upload
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem onSelect={onUpload}>
+            <HugeiconsIcon icon={FileUploadIcon} size={14} />
+            Files…
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onUploadFolder}>
+            <HugeiconsIcon icon={FolderUploadIcon} size={14} />
+            Folder…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <Button
         variant="ghost"
         size="sm"
@@ -791,6 +808,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   const scrollPositions = useRef<Map<string, number>>(new Map());
   const contentRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const lastSelectedIdx = useRef<number | null>(null);
   const setPageAction = useSetAtom(pageActionAtom);
@@ -905,28 +923,22 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     }
   }, [currentPath, mutate]);
 
-  const handleUpload = useCallback(async (files: FileList | File[]) => {
-    if (!currentPath || files.length === 0) return;
-
-    const formData = new FormData();
-    formData.append("path", currentPath);
-    for (const file of Array.from(files)) {
-      formData.append("files", file);
-    }
-
-    const res = await fetch(`${CORE_URL}/api/files/upload`, {
-      method: "POST",
-      body: formData,
-    });
-    const result = await res.json();
-    if (result.ok && result.uploaded?.length > 0) {
-      toast(`Uploaded ${result.uploaded.length} file${result.uploaded.length > 1 ? "s" : ""}`);
+  // Refresh the listing as uploads land, at most twice a second
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshAfterUpload = useCallback(() => {
+    if (refreshTimer.current) return;
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
       void mutate();
-    }
-    if (result.errors?.length > 0) {
-      toast.error(result.errors[0]);
-    }
-  }, [currentPath, mutate]);
+    }, 500);
+  }, [mutate]);
+  const uploads = useUploadQueue(refreshAfterUpload);
+
+  const addUploads = uploads.add;
+  const handleUpload = useCallback((files: PendingFile[]) => {
+    if (!currentPath || files.length === 0) return;
+    addUploads(files, currentPath);
+  }, [currentPath, addUploads]);
 
   const handleRowClick = useCallback((item: FileItem) => {
     if (item.isDirectory) {
@@ -1047,8 +1059,9 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     e.preventDefault();
     dragCounter.current = 0;
     setIsDragging(false);
-    if (e.dataTransfer.files.length > 0) {
-      void handleUpload(e.dataTransfer.files);
+    if (e.dataTransfer.items.length > 0 || e.dataTransfer.files.length > 0) {
+      // Folders dropped here upload with their structure intact
+      void filesFromDrop(e.dataTransfer).then(handleUpload);
     }
   }, [handleUpload]);
 
@@ -1098,6 +1111,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         <FileActions
           onNewFolder={() => void handleNewFolder()}
           onUpload={() => fileInputRef.current?.click()}
+          onUploadFolder={() => folderInputRef.current?.click()}
         />,
       );
       setDesktopAppActions([
@@ -1173,9 +1187,28 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         multiple
         className="hidden"
         onChange={(e) => {
-          if (e.target.files) void handleUpload(e.target.files);
+          if (e.target.files) handleUpload(filesFromInput(e.target.files));
           e.target.value = "";
         }}
+      />
+      {/* Hidden folder picker — keeps the folder structure */}
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        {...{ webkitdirectory: "", directory: "" }}
+        onChange={(e) => {
+          if (e.target.files) handleUpload(filesFromInput(e.target.files));
+          e.target.value = "";
+        }}
+      />
+      <UploadPanel
+        items={uploads.items}
+        onCancel={uploads.cancel}
+        onCancelAll={uploads.cancelAll}
+        onRetry={uploads.retry}
+        onClear={uploads.clearFinished}
       />
 
       <div
