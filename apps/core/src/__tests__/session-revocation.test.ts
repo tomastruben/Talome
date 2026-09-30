@@ -275,3 +275,62 @@ describe("users routes end sessions; deleting a user revokes their MCP tokens", 
     expect((await app.request("/api/users", { headers: { cookie: ownerCookie } })).status).toBe(200);
   });
 });
+
+describe("no request can leave Talome without an admin", () => {
+  async function putRole(app: Hono, cookie: string, id: string, role: "admin" | "member") {
+    return app.request(`/api/users/${id}`, {
+      method: "PUT",
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ role }),
+    });
+  }
+
+  it("an admin cannot demote themselves over the API (the UI hides the switch)", async () => {
+    const app = buildApp();
+    const kim = insertUser("admin");
+    insertUser("admin"); // another admin exists: self-demotion is refused anyway
+    const cookie = await cookieFor(kim, "admin");
+    const res = await putRole(app, cookie, kim.id, "member");
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain("your own admin role");
+    expect(db.select().from(schema.users).where(eq(schema.users.id, kim.id)).get()?.role).toBe("admin");
+    // Still signed in (no session-version bump).
+    expect((await app.request("/api/users", { headers: { cookie } })).status).toBe(200);
+  });
+
+  it("the last admin can be neither demoted nor deleted", async () => {
+    // Isolate: make every existing admin a member, then add exactly one.
+    db.update(schema.users).set({ role: "member" }).run();
+    const app = buildApp();
+    const lone = insertUser("admin");
+    const other = insertUser("member");
+    // A session for a user who is not an admin in the DB cannot reach the
+    // route at all, so drive the guard through the handler with a fake
+    // admin session user that is not the target.
+    const guardApp = new Hono();
+    guardApp.use("*", async (c, next) => {
+      c.set("sessionUser" as never, other.id as never);
+      c.set("sessionUsername" as never, other.username as never);
+      await next();
+    });
+    guardApp.route("/api/users", users);
+
+    const put = await guardApp.request(`/api/users/${lone.id}`, {
+      method: "PUT",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ role: "member" }),
+    });
+    expect(put.status).toBe(400);
+    expect(((await put.json()) as { error: string }).error).toContain("last admin");
+
+    const del = await guardApp.request(`/api/users/${lone.id}`, { method: "DELETE" });
+    expect(del.status).toBe(400);
+    expect(((await del.json()) as { error: string }).error).toContain("last admin");
+    expect(db.select().from(schema.users).where(eq(schema.users.id, lone.id)).get()?.role).toBe("admin");
+
+    // With a second admin, demoting one of them works.
+    const second = insertUser("admin");
+    const cookie = await cookieFor(second, "admin");
+    expect((await putRole(app, cookie, lone.id, "member")).status).toBe(200);
+  });
+});

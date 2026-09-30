@@ -81,6 +81,16 @@ function revokeMcpTokensCreatedBy(userId: string): { names: string[]; affectedAu
   return { names: rows.map((r) => r.name), affectedAutomations: Number(affected?.n ?? 0) };
 }
 
+/** Admin accounts other than `userId`. */
+function countOtherAdmins(userId: string): number {
+  const row = db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.users)
+    .where(and(eq(schema.users.role, "admin"), sql`${schema.users.id} <> ${userId}`))
+    .get();
+  return Number(row?.n ?? 0);
+}
+
 const users = new Hono();
 
 /** GET / — list all users (admin only) */
@@ -269,6 +279,18 @@ users.put("/:id", async (c) => {
     return c.json({ error: "User not found" }, 404);
   }
 
+  // Removing admin from yourself or from the last admin would leave nobody
+  // able to administer Talome: the session ends at once and
+  // /api/auth/recover resets only the password, not the role.
+  if (body.role === "member" && user.role === "admin") {
+    if (userId === c.get("sessionUser" as never)) {
+      return c.json({ error: "You cannot remove your own admin role. Ask another admin to do it." }, 400);
+    }
+    if (countOtherAdmins(userId) === 0) {
+      return c.json({ error: "Cannot remove the last admin. Make another user an admin first." }, 400);
+    }
+  }
+
   const updates: Record<string, string | null> = {};
   if (body.email !== undefined) updates.email = body.email;
   if (body.role !== undefined) updates.role = body.role;
@@ -340,6 +362,9 @@ users.delete("/:id", (c) => {
   const user = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
   if (!user) {
     return c.json({ error: "User not found" }, 404);
+  }
+  if (user.role === "admin" && countOtherAdmins(userId) === 0) {
+    return c.json({ error: "Cannot delete the last admin. Make another user an admin first." }, 400);
   }
 
   // Deleting the row ends the user's sessions (requireSession re-reads it).
