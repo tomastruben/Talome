@@ -17,14 +17,9 @@ import {
 } from "@/components/ui/command";
 import {
   HugeiconsIcon,
-  Home01Icon,
-  DashboardSquare02Icon,
   Film01Icon,
   Tv01Icon,
   DownloadSquare01Icon,
-  HardDriveIcon,
-  Settings01Icon,
-  Activity01Icon,
   Package01Icon,
   Message01Icon,
   FlashIcon,
@@ -37,8 +32,9 @@ import {
   AudioBook01Icon,
   Download01Icon,
   Tick01Icon,
+  StopIcon,
+  ArrowUp01Icon,
 } from "@/components/icons";
-import type { IconSvgElement } from "@/components/icons";
 const loadToPng = () => import("html-to-image").then((m) => m.toPng);
 import { useBugHunt } from "@/components/bug-hunt/bug-hunt-context";
 import { useBugContext } from "@/hooks/use-bug-context";
@@ -57,7 +53,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { usePathname } from "next/navigation";
 import type {
   Container,
-  FeaturePermission,
   ServiceStack,
   SearchResult,
 } from "@talome/types";
@@ -67,37 +62,17 @@ import type { MediaSearchResult } from "@talome/types";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { useUser } from "@/hooks/use-user";
+import { paletteNavCommands } from "@/components/layout/nav-config";
+import { SHORTCUTS } from "@/lib/keymap";
+import { OPEN_PALETTE_EVENT, paletteRequestFromEvent } from "@/lib/palette";
 import {
   resolveApplicationIcon,
   resolveApplicationIconUrl,
 } from "@/components/native-app/native-app-icons";
 
-// ── Nav commands ──────────────────────────────────────────────────────────────
-
-interface NavCommand {
-  label: string;
-  path: string;
-  icon: IconSvgElement;
-  shortcut?: string;
-  permission?: FeaturePermission;
-}
-
-const NAV_COMMANDS: NavCommand[] = [
-  { label: "Home",        path: "/dashboard",            icon: Home01Icon,          shortcut: "⌘1", permission: "dashboard" },
-  { label: "Media",       path: "/dashboard/media",      icon: Film01Icon,          shortcut: "⌘2", permission: "media" },
-  { label: "Services",    path: "/dashboard/containers", icon: Package01Icon,       shortcut: "⌘3", permission: "apps" },
-  { label: "App Store",   path: "/dashboard/apps",       icon: DownloadSquare01Icon,shortcut: "⌘4", permission: "apps" },
-  { label: "Files",       path: "/dashboard/files",      icon: HardDriveIcon,       shortcut: "⌘5", permission: "files" },
-  { label: "Automations", path: "/dashboard/automations",icon: FlashIcon,           shortcut: "⌘6", permission: "automations" },
-  { label: "Intelligence", path: "/dashboard/intelligence", icon: Activity01Icon,     shortcut: "⌘7", permission: "intelligence" },
-  { label: "Settings",    path: "/dashboard/settings",   icon: Settings01Icon,      shortcut: "⌘," },
-];
-
-const DESKTOP_NAV_COMMANDS: NavCommand[] = NAV_COMMANDS.map((command) =>
-  command.path === "/dashboard"
-    ? { ...command, label: "Widgets", icon: DashboardSquare02Icon }
-    : command,
-);
+// Nav commands come from nav-config (paletteNavCommands), so the palette shows
+// the sidebar's names, icons and visibility rules. Shortcut hints come only
+// from lib/keymap.ts: every hint has a handler.
 
 // ── Service icon (small, for command items) ──────────────────────────────────
 
@@ -235,7 +210,7 @@ function ChatInput({
       <textarea
         ref={textareaRef}
         rows={1}
-        placeholder="Ask Talome anything..."
+        placeholder="Ask Talome anything…"
         disabled={disabled}
         onKeyDown={handleKeyDown}
         onChange={handleInput}
@@ -244,6 +219,7 @@ function ChatInput({
       <button
         type="button"
         onClick={handleButtonClick}
+        aria-label={isStreaming ? "Stop" : "Send"}
         disabled={!isStreaming && disabled}
         className={cn(
           "flex size-7 shrink-0 items-center justify-center rounded-full transition-colors mb-px",
@@ -253,15 +229,11 @@ function ChatInput({
         )}
       >
         {isStreaming ? (
-          <svg viewBox="0 0 12 12" className="size-3" fill="currentColor">
-            <rect x="2" y="2" width="8" height="8" rx="1" />
-          </svg>
+          <HugeiconsIcon icon={StopIcon} size={12} aria-hidden="true" />
         ) : disabled ? (
           <Spinner className="size-3.5" />
         ) : (
-          <svg viewBox="0 0 14 14" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M7 11V3M3 7l4-4 4 4" />
-          </svg>
+          <HugeiconsIcon icon={ArrowUp01Icon} size={14} strokeWidth={2} aria-hidden="true" />
         )}
       </button>
     </div>
@@ -310,12 +282,10 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
   const router = useRouter();
   const pathname = usePathname();
   const embeddedFrame = useIsEmbeddedFrame();
-  const { hasPermission } = useUser();
-  const availableNavCommands = pathname === "/dashboard/desktop" || embeddedFrame
-    ? DESKTOP_NAV_COMMANDS
-    : NAV_COMMANDS;
-  const navCommands = availableNavCommands.filter((command) =>
-    !command.permission || hasPermission(command.permission),
+  const { isAdmin, hasPermission } = useUser();
+  const navCommands = paletteNavCommands(
+    { isAdmin, hasPermission },
+    pathname === "/dashboard/desktop" || embeddedFrame,
   );
   const bugHunt = useBugHunt();
   const { captureContext } = useBugContext();
@@ -415,10 +385,23 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
     }
   }, []);
 
+  // openPalette() from the sidebar, mobile nav, menu bar or a banner: always opens.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const request = paletteRequestFromEvent(event);
+      if (!request) return;
+      if (request.mode === "chat") setChatPrefill(request.prefill);
+      setMode(request.mode);
+      setOpen(true);
+    };
+    document.addEventListener(OPEN_PALETTE_EVENT, handler);
+    return () => document.removeEventListener(OPEN_PALETTE_EVENT, handler);
+  }, []);
+
   // Cmd+K / Ctrl+K to toggle — always opens in search mode
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if (SHORTCUTS.palette.matches(e)) {
         e.preventDefault();
         setOpen((v) => {
           if (!v) {
@@ -437,7 +420,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (e.key === "/" && !e.metaKey && !e.ctrlKey) {
+      if (SHORTCUTS.chat.matches(e)) {
         e.preventDefault();
         setMode("chat");
         setOpen(true);
@@ -763,7 +746,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
           // ── Search mode ────────────────────────────────────────────────────
           <>
             <CommandInput
-              placeholder="Search or ask Talome..."
+              placeholder="Search or ask Talome…"
               value={query}
               onValueChange={setQuery}
               onKeyDown={handleSearchKeyDown}
@@ -806,7 +789,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
                       )}
                     </span>
                   )}
-                  <CommandShortcut>/</CommandShortcut>
+                  <CommandShortcut>{SHORTCUTS.chat.hint}</CommandShortcut>
                 </CommandItem>
               </CommandGroup>
 
@@ -1038,9 +1021,6 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
                       className="shrink-0 text-dim-foreground"
                     />
                     {cmd.label}
-                    {cmd.shortcut && (
-                      <CommandShortcut>{cmd.shortcut}</CommandShortcut>
-                    )}
                   </CommandItem>
                 ))}
               </CommandGroup>
@@ -1098,15 +1078,17 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
               {/* Actions */}
               <CommandSeparator />
               <CommandGroup heading="Actions">
-                <CommandItem value="open terminal" onSelect={openTerminal}>
-                  <HugeiconsIcon
-                    icon={ComputerTerminal01Icon}
-                    size={15}
-                    className="shrink-0 text-dim-foreground"
-                  />
-                  Open Terminal
-                  <CommandShortcut>⌘T</CommandShortcut>
-                </CommandItem>
+                {isAdmin && (
+                  <CommandItem value="open terminal" onSelect={openTerminal}>
+                    <HugeiconsIcon
+                      icon={ComputerTerminal01Icon}
+                      size={15}
+                      className="shrink-0 text-dim-foreground"
+                    />
+                    Open Terminal
+                  </CommandItem>
+                )}
+                {hasPermission("automations") && (
                 <CommandItem
                   value="new automation"
                   onSelect={() => navigate("/dashboard/automations")}
@@ -1116,8 +1098,9 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
                     size={15}
                     className="shrink-0 text-dim-foreground"
                   />
-                  New Automation
+                  New automation
                 </CommandItem>
+                )}
                 <CommandItem
                   value="new conversation"
                   onSelect={() => { newConversation(); }}
@@ -1127,8 +1110,9 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
                     size={15}
                     className="shrink-0 text-dim-foreground"
                   />
-                  New Conversation
+                  New conversation
                 </CommandItem>
+                {isAdmin && (
                 <CommandItem
                   value="bug hunt report bug"
                   onSelect={async () => {
@@ -1150,8 +1134,9 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
                     className="shrink-0 text-dim-foreground"
                   />
                   Bug Hunt
-                  <CommandShortcut>⇧⌘X</CommandShortcut>
+                  <CommandShortcut>{SHORTCUTS.bugHunt.hint}</CommandShortcut>
                 </CommandItem>
+                )}
               </CommandGroup>
             </CommandList>
           </>

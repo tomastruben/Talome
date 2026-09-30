@@ -16,7 +16,9 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
+import { toast } from "sonner";
 import { HugeiconsIcon, Cancel01Icon, Add01Icon } from "@/components/icons";
+import { UNDO_WINDOW_MS } from "@/lib/motion";
 import { DraggableWrapper } from "@/components/draggable-dashboard";
 import { useWidgetLayout } from "@/hooks/use-widget-layout";
 import {
@@ -584,7 +586,17 @@ export function ControlledWidgetGrid({
             maxWidgetCols={maxWidgetCols}
             maxWidgetRows={maxWidgetRows}
             isNew={w.instanceId === newWidgetId}
-            onRemove={() => toggleWidget(w.instanceId)}
+            onRemove={() => {
+              toggleWidget(w.instanceId);
+              const label = w.widgetType.startsWith("widget:")
+                ? w.widgetType.slice("widget:".length)
+                : WIDGET_LABELS[w.widgetType as BuiltinWidgetType] ?? "widget";
+              // Removing only hides it: Undo brings it back where it was.
+              toast(`Removed ${label}`, {
+                duration: UNDO_WINDOW_MS,
+                action: { label: "Undo", onClick: () => toggleWidget(w.instanceId) },
+              });
+            }}
             onResize={(s) => resizeWidget(w.instanceId, s)}
           />
         );

@@ -18,7 +18,7 @@ import {
   SourceCodeCircleIcon,
   BubbleChatDownload02Icon,
   Share04Icon,
-  Wifi01Icon,
+  RemoteControlIcon,
 } from "@/components/icons";
 import { useAtom, useAtomValue } from "jotai";
 import { useAssistant } from "@/components/assistant/assistant-context";
@@ -38,23 +38,9 @@ import { toast } from "sonner";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { useContainerLookup } from "@/hooks/use-containers";
-
-const pathLabels: Record<string, string> = {
-  dashboard: "Home",
-  media: "Media",
-  containers: "Services",
-  apps: "App Store",
-  storage: "Storage",
-  assistant: "Assistant",
-  settings: "Settings",
-  terminal: "Terminal",
-  files: "Files",
-  audiobooks: "Audiobooks",
-  automations: "Automations",
-  intelligence: "Intelligence",
-  "bug-hunt": "Bug Hunt",
-  share: "Share",
-};
+import { Switch } from "@/components/ui/switch";
+import { DURATION, EASE_ENTER, EASE_EXIT } from "@/lib/motion";
+import { humanizeSlug, navTitleForPath } from "./nav-config";
 
 interface DrilldownRoute {
   rootPrefix: string;
@@ -113,20 +99,26 @@ const DRILLDOWN_ROUTES: DrilldownRoute[] = [
   },
 ];
 
+/** Header title (P1-3): 12px travel, 160ms in on the enter curve, 120ms out. */
+const TITLE_TRAVEL = 12;
 const titleSlideVariants = {
   enter: (dir: number) => ({
     opacity: 0,
-    x: dir === 0 ? 0 : dir > 0 ? 20 : -20,
+    x: dir === 0 ? 0 : dir > 0 ? TITLE_TRAVEL : -TITLE_TRAVEL,
   }),
   center: {
     opacity: 1,
     x: 0,
+    transition: { duration: 0.16, ease: EASE_ENTER, opacity: { duration: 0.1, ease: EASE_ENTER } },
   },
   exit: (dir: number) => ({
     opacity: 0,
-    x: dir === 0 ? 0 : dir > 0 ? -20 : 20,
+    x: dir === 0 ? 0 : dir > 0 ? -TITLE_TRAVEL : TITLE_TRAVEL,
+    transition: { duration: DURATION.exitFast, ease: EASE_EXIT },
   }),
 };
+/** Back button width change: 140ms. */
+const BACK_BUTTON_TRANSITION = { duration: DURATION.exit, ease: EASE_ENTER } as const;
 
 function AutomationsHeaderAction() {
   const { openCreate } = useAutomation();
@@ -224,31 +216,24 @@ function TerminalHeaderAction() {
       )}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
-              type="button"
-              className="flex items-center gap-1.5 h-7 px-2 rounded-l-md transition-colors hover:bg-white/5"
-              onClick={() => {
-                const next = !autoMode;
-                setAutoMode(next);
-                localStorage.setItem("talome-auto-mode", String(next));
-              }}
-            >
-              <span className={cn(
-                "relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors",
-                autoMode ? "bg-status-warning" : "bg-input"
-              )}>
-                <span className={cn(
-                  "inline-block size-2.5 rounded-full bg-white transition-transform",
-                  autoMode ? "translate-x-3" : "translate-x-0.5"
-                )} />
-              </span>
+            <label className="flex items-center gap-1.5 h-7 px-2 rounded-l-md cursor-pointer">
+              <Switch
+                size="sm"
+                checked={autoMode}
+                aria-label="Auto: skip permission prompts in the terminal"
+                className="data-[state=checked]:bg-status-warning"
+                onCheckedChange={(next) => {
+                  setAutoMode(next);
+                  localStorage.setItem("talome-auto-mode", String(next));
+                }}
+              />
               <span className={cn(
                 "text-xs font-medium transition-colors",
                 autoMode ? "text-status-warning" : "text-muted-foreground"
               )}>
                 Auto
               </span>
-            </button>
+            </label>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-xs">
             {autoMode ? "Skip permission prompts" : "Require permission prompts"}
@@ -259,18 +244,20 @@ function TerminalHeaderAction() {
             <button
               type="button"
               className={cn(
-                "relative flex items-center justify-center size-7 transition-colors hover:bg-white/5",
+                "relative flex items-center justify-center size-7 transition-colors hover:bg-muted/40",
                 remote
                   ? autoMode ? "text-status-warning" : "text-foreground"
                   : "text-muted-foreground/50"
               )}
+              aria-label={remoteActive ? "Remote session active" : remote ? "Remote control on for the next launch" : "Enable remote control"}
+              aria-pressed={remote}
               onClick={() => {
                 const next = !remote;
                 setRemote(next);
                 localStorage.setItem("talome-remote-mode", String(next));
               }}
             >
-              <HugeiconsIcon icon={Wifi01Icon} size={13} />
+              <HugeiconsIcon icon={RemoteControlIcon} size={13} />
               {remoteActive && (
                 <span className="absolute top-1 right-1 size-1.5 rounded-full bg-status-healthy" />
               )}
@@ -385,7 +372,8 @@ export function SiteHeader() {
 
   const segments = pathname.split("/").filter(Boolean);
   const currentPage = segments[segments.length - 1] || "dashboard";
-  const label = pathLabels[currentPage] ?? currentPage;
+  // Titles come from nav-config, so the header never shows a raw slug.
+  const label = navTitleForPath(pathname);
   const isAssistant = currentPage === "assistant";
   const isHome = currentPage === "dashboard";
   const isAutomations = currentPage === "automations";
@@ -481,7 +469,7 @@ export function SiteHeader() {
               marginLeft: isDrilldownSub ? -4 : 0,
               marginRight: isDrilldownSub ? 6 : 0,
             }}
-            transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
+            transition={BACK_BUTTON_TRANSITION}
             className="overflow-hidden shrink-0"
           >
             {activeDrilldown.useHistoryBack ? (
@@ -518,13 +506,12 @@ export function SiteHeader() {
                 initial="enter"
                 animate="center"
                 exit="exit"
-                transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
                 className={`text-sm font-medium truncate ${isDrilldownSub ? "text-muted-foreground" : ""}`}
               >
                 {isDrilldownSub
                   ? (activeDrilldown.titles?.[drilldownSlug!]
                       ?? dynamicTitle
-                      ?? drilldownSlug!.split("-").map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(" "))
+                      ?? humanizeSlug(drilldownSlug!))
                   : activeDrilldown.rootTitle}
               </motion.span>
             </AnimatePresence>
@@ -540,7 +527,7 @@ export function SiteHeader() {
               marginLeft: -4,
               marginRight: 6,
             }}
-            transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
+            transition={BACK_BUTTON_TRANSITION}
             className="overflow-hidden shrink-0"
           >
             <Button
@@ -562,7 +549,6 @@ export function SiteHeader() {
                 initial="enter"
                 animate="center"
                 exit="exit"
-                transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
                 className="text-sm font-medium truncate text-muted-foreground"
               >
                 {dynamicTitle ?? label}

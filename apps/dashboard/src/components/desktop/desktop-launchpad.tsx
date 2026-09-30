@@ -28,18 +28,33 @@ interface DesktopLaunchpadProps {
   onLaunchService: (app: LaunchableApp) => void;
 }
 
-function AppTile({ name, subtitle, icon, onLaunch, editing, hidden }: { name: string; subtitle?: string; icon: ReactNode; onLaunch: () => void; editing: boolean; hidden: boolean }) {
+/**
+ * Enter launches the best match across both sections: exact name, then
+ * prefix, then contains (not "services first", which opened Jellyseerr for
+ * "Jellyfin" when the service was listed before the Talome app).
+ */
+export function launchpadMatchRank(name: string, search: string): number {
+  const value = name.toLocaleLowerCase();
+  if (!search) return 3;
+  if (value === search) return 0;
+  if (value.startsWith(search)) return 1;
+  if (value.includes(search)) return 2;
+  return 4;
+}
+
+function AppTile({ name, subtitle, icon, onLaunch, editing, hidden, stopped = false }: { name: string; subtitle?: string; icon: ReactNode; onLaunch: () => void; editing: boolean; hidden: boolean; stopped?: boolean }) {
   return (
     <Button
       variant="ghost"
       data-launchpad-tile="true"
+      data-launchpad-stopped={stopped || undefined}
       className={cn("group h-auto min-h-36 min-w-0 flex-col justify-start gap-3 rounded-2xl whitespace-normal px-2 py-4 hover:bg-foreground/5 motion-reduce:transition-none", hidden && "opacity-45")}
       aria-label={editing ? `${hidden ? "Show" : "Hide"} ${name}${subtitle ? ` — ${subtitle}` : ""}` : subtitle ? `${name} — ${subtitle}` : name}
       aria-pressed={editing ? !hidden : undefined}
       title={subtitle ? `${name} — ${subtitle}` : name}
       onClick={onLaunch}
     >
-      <span aria-hidden="true" className="relative flex size-16 shrink-0 items-center justify-center sm:size-[4.5rem]">
+      <span aria-hidden="true" className={cn("relative flex size-16 shrink-0 items-center justify-center sm:size-18", stopped && !hidden && "opacity-50")}>
         {icon}
         {editing && <span className={cn("absolute -right-1 -top-1 flex size-6 items-center justify-center rounded-full border-2 border-card", hidden ? "bg-muted" : "bg-primary text-primary-foreground")}>
           {!hidden && <HugeiconsIcon icon={Tick01Icon} className="size-3.5" />}
@@ -71,7 +86,8 @@ export function DesktopLaunchpad({
   const [retrying, setRetrying] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  const launchableApps = useMemo(() => extractLaunchableApps(stacks).sort((a, b) => a.name.localeCompare(b.name) || (a.collection ?? "").localeCompare(b.collection ?? "")), [stacks]);
+  // Stopped apps stay listed (dimmed, "Stopped") so nobody mistakes them for uninstalled.
+  const launchableApps = useMemo(() => extractLaunchableApps(stacks, { includeStopped: true }).sort((a, b) => a.name.localeCompare(b.name) || (a.collection ?? "").localeCompare(b.collection ?? "")), [stacks]);
   const duplicateNames = useMemo(() => {
     const counts = new Map<string, number>();
     for (const app of launchableApps) counts.set(app.name, (counts.get(app.name) ?? 0) + 1);
@@ -106,11 +122,11 @@ export function DesktopLaunchpad({
         {/* Keep the desktop's dynamic window layer while delegating focus,
             outside interaction and Escape to the shared Dialog primitive. */}
         <DialogOverlay
-          className="flex items-center justify-center bg-black/50 px-3 pt-12 pb-20 backdrop-blur-xl motion-reduce:animate-none sm:px-8"
+          className="flex items-center justify-center bg-scrim px-3 pt-12 pb-20 motion-reduce:animate-none sm:px-8"
           style={{ zIndex }}
         >
           <DialogPrimitive.Content
-            className="flex max-h-full w-full max-w-[1000px] flex-col overflow-hidden rounded-3xl border border-border/70 bg-card/95 shadow-2xl outline-none"
+            className="flex max-h-full w-full max-w-[1000px] flex-col overflow-hidden rounded-2xl border border-border bg-surface-modal shadow-lg outline-none"
             onOpenAutoFocus={(event) => {
               event.preventDefault();
               returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -126,7 +142,7 @@ export function DesktopLaunchpad({
             <div className="flex shrink-0 flex-col gap-5 px-5 pt-6 pb-5 sm:px-8 sm:pt-7">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex flex-col gap-2">
-                  <DialogTitle className="text-2xl font-semibold tracking-tight">Launchpad</DialogTitle>
+                  <DialogTitle className="text-2xl font-medium tracking-tight">Launchpad</DialogTitle>
                   <DialogDescription>{editing ? "Choose which apps appear here." : "Search or choose an app."}</DialogDescription>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
@@ -149,8 +165,14 @@ export function DesktopLaunchpad({
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (editing || event.key !== "Enter" || event.nativeEvent.isComposing) return;
-                  if (services[0]) onLaunchService(services[0]);
-                  else if (apps[0]) onLaunch(apps[0]);
+                  const best = [
+                    ...services.map((app) => ({
+                      rank: Math.min(launchpadMatchRank(app.name, search), launchpadMatchRank(app.collection ?? "", search)),
+                      launch: () => onLaunchService(app),
+                    })),
+                    ...apps.map((item) => ({ rank: launchpadMatchRank(item.title, search), launch: () => onLaunch(item) })),
+                  ].sort((a, b) => a.rank - b.rank)[0];
+                  best?.launch();
                 }}
               />
               <p role="status" className="sr-only">
@@ -172,7 +194,7 @@ export function DesktopLaunchpad({
 
               {services.length > 0 || isLoading || error || (!search && !launchableApps.length) ? (
                 <section aria-label="Installed applications" className="flex flex-col gap-3">
-                  <h2 className="text-base font-semibold tracking-tight">Your apps</h2>
+                  <h2 className="text-base font-medium tracking-tight">Your apps</h2>
                   {error ? (
                     <Alert>
                       <AlertTitle>Installed apps couldn’t be loaded</AlertTitle>
@@ -186,16 +208,20 @@ export function DesktopLaunchpad({
                     <div role="status" aria-label="Loading installed apps" className={APP_GRID}>
                       {Array.from({ length: 6 }, (_, index) => (
                         <div key={index} aria-hidden="true" className="flex min-h-36 flex-col items-center gap-3 py-4">
-                          <Skeleton className="size-16 rounded-2xl sm:size-[4.5rem]" /><Skeleton className="h-4 w-20" />
+                          <Skeleton className="size-16 rounded-2xl sm:size-18" /><Skeleton className="h-4 w-20" />
                         </div>
                       ))}
                     </div>
                   ) : services.length > 0 ? (
                     <div className={APP_GRID}>
                       {services.map((app) => <AppTile key={app.id} name={app.name}
-                        subtitle={(duplicateNames.get(app.name) ?? 0) > 1 ? app.collection ?? app.container.name : undefined}
+                        stopped={app.running === false}
+                        subtitle={[
+                          (duplicateNames.get(app.name) ?? 0) > 1 ? app.collection ?? app.container.name : undefined,
+                          app.running === false ? "Stopped" : undefined,
+                        ].filter(Boolean).join(" · ") || undefined}
                         editing={editing} hidden={visibility.hidden.has(`service:${app.id}`)}
-                        icon={<LaunchableAppIcon app={app} className="!size-16 !rounded-2xl shadow-sm sm:!size-[4.5rem] sm:!rounded-[1.25rem]" iconClassName="!size-9" />}
+                        icon={<LaunchableAppIcon app={app} className="!size-16 !rounded-2xl shadow-sm sm:!size-18" iconClassName="!size-9" />}
                         onLaunch={() => editing ? toggle(`service:${app.id}`) : onLaunchService(app)} />)}
                     </div>
                   ) : !error && !search ? (
@@ -210,14 +236,14 @@ export function DesktopLaunchpad({
               ) : null}
               {apps.length > 0 ? (
                 <section aria-label="Talome applications" className="flex flex-col gap-3">
-                  <h2 className="text-base font-semibold tracking-tight">Talome</h2>
+                  <h2 className="text-base font-medium tracking-tight">Talome</h2>
                   <div className={APP_GRID}>
                     {apps.map((item) => (
                       <AppTile
                         key={item.url}
                         name={item.title}
                         editing={editing} hidden={visibility.hidden.has(`builtin:${item.url}`)}
-                        icon={<span className="flex size-16 items-center justify-center rounded-2xl border border-border/60 bg-background/65 shadow-sm sm:size-[4.5rem] sm:rounded-[1.25rem]"><HugeiconsIcon icon={item.icon} className="size-8 sm:size-9" strokeWidth={1.4} /></span>}
+                        icon={<span className="flex size-16 items-center justify-center rounded-2xl border border-border bg-background shadow-sm sm:size-18"><HugeiconsIcon icon={item.icon} className="size-8 sm:size-9" strokeWidth={1.4} /></span>}
                         onLaunch={() => editing ? toggle(`builtin:${item.url}`) : onLaunch(item)}
                       />
                     ))}

@@ -29,9 +29,6 @@ import {
   Shield01Icon,
   AlertCircleIcon,
   SystemUpdate01Icon,
-  CpuIcon,
-  LayoutGridIcon,
-  ComputerTerminal01Icon,
   SecurityCheckIcon,
   Activity01Icon,
   Database01Icon,
@@ -43,6 +40,7 @@ import { Badge } from "@/components/ui/badge";
 import { usePendingApprovals } from "@/components/trust/api";
 import type { IconSvgElement } from "@/components/icons";
 import { Spinner } from "@/components/ui/spinner";
+import { ServicesSection } from "@/components/system/services-section";
 
 interface SettingsLink {
   slug: string;
@@ -264,83 +262,6 @@ function GeneralInline() {
   );
 }
 
-function ServicesSection() {
-  const { data: state, mutate } = useSWR<{
-    processes: Record<string, { pid: number | null; status: string }>;
-  }>(`${CORE_URL}/api/supervisor/status`, fetcher, { refreshInterval: 10000, revalidateOnFocus: false });
-
-  const [restarting, setRestarting] = useState<string | null>(null);
-
-  const restart = async (service?: string) => {
-    const key = service ?? "all";
-    setRestarting(key);
-    try {
-      await fetch(`${CORE_URL}/api/supervisor/restart`, {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ service }),
-      });
-      // Wait for restart, then refresh
-      setTimeout(() => { setRestarting(null); void mutate(); }, service === "core" ? 8000 : 3000);
-    } catch {
-      setRestarting(null);
-    }
-  };
-
-  const services: Array<{ key: string; label: string; desc: string; icon: IconSvgElement }> = [
-    { key: "core", label: "Core", desc: "API, AI agent, Docker, media", icon: CpuIcon },
-    { key: "dashboard", label: "Dashboard", desc: "Web interface", icon: LayoutGridIcon },
-    { key: "terminal_daemon", label: "Terminal", desc: "Shell sessions, Claude Code", icon: ComputerTerminal01Icon },
-  ];
-
-  if (!state?.processes) return null;
-
-  return (
-    <section>
-      <CategoryLabel>Services</CategoryLabel>
-      <div className="rounded-xl border border-border bg-card divide-y divide-border overflow-hidden">
-        {services.map((s) => {
-          const proc = state.processes[s.key];
-          // Dashboard always shows as "up" since we're rendering this page on it
-          const isUp = s.key === "dashboard" || proc?.status === "healthy" || proc?.status === "starting";
-          const isRestarting = restarting === s.key || restarting === "all";
-          return (
-            <div key={s.key} className="px-4 py-3.5 flex items-center gap-3">
-              <div className={`size-8 rounded-lg flex items-center justify-center shrink-0 ${isUp ? "bg-status-healthy/10" : "bg-status-critical/10"}`}>
-                <HugeiconsIcon
-                  icon={s.icon}
-                  size={16}
-                  className={isRestarting ? "text-status-warning motion-safe:animate-pulse" : isUp ? "text-status-healthy" : "text-status-critical"}
-                />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium">{s.label}</p>
-                <p className="text-xs text-muted-foreground">{s.desc}</p>
-              </div>
-              <button
-                disabled={isRestarting}
-                onClick={() => void restart(s.key)}
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-              >
-                {isRestarting ? "Restarting…" : "Restart"}
-              </button>
-            </div>
-          );
-        })}
-        <div className="px-4 py-2.5 flex justify-end">
-          <button
-            disabled={restarting !== null}
-            onClick={() => void restart()}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-          >
-            {restarting === "all" ? "Restarting all…" : "Restart all services"}
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function LogoutButton() {
   const router = useRouter();
 
@@ -376,7 +297,7 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto w-full max-w-2xl min-w-0 grid gap-8 pb-12">
       <GeneralInline />
-      <ServicesSection />
+      <ServicesSection heading={<CategoryLabel>Services</CategoryLabel>} />
       <SettingsCategory label="Access" items={GENERAL_ITEMS} isAdmin={isAdmin} />
       <SettingsCategory label="AI" items={AI_ITEMS} isAdmin={isAdmin} badges={{ approvals: pendingApprovals }} />
       <SettingsCategory label="Infrastructure" items={INFRASTRUCTURE_ITEMS} isAdmin={isAdmin} />

@@ -206,8 +206,9 @@ export function DesktopControlCenter({
         <h2 className="text-base font-medium">Control Center</h2>
         {(state.isPlaying || isActivelyDownloading) ? (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="size-1.5 rounded-full bg-status-healthy" />
-            Active
+            {/* Work in flight is the breathing info dot; green means healthy, not busy. */}
+            <span aria-hidden="true" className="size-1.5 rounded-full bg-status-info motion-safe:animate-breathe" />
+            {state.isPlaying && isActivelyDownloading ? "Playing and downloading" : state.isPlaying ? "Playing" : "Downloading"}
           </span>
         ) : null}
       </div>
@@ -330,7 +331,7 @@ export function DesktopControlCenter({
             <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
               <HugeiconsIcon icon={Download01Icon} size={18} />
               {isActivelyDownloading ? (
-                <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-status-healthy" />
+                <span aria-hidden="true" className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-status-info motion-safe:animate-breathe" />
               ) : null}
             </span>
             <span className="min-w-0 flex-1">

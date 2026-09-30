@@ -43,8 +43,9 @@ describe("DesktopWallpaperDialog", () => {
     const titlebar = dialog.querySelector<HTMLElement>("[data-wallpaper-drag-handle]");
     expect(titlebar).not.toBeNull();
     expect(screen.getByRole("button", { name: "Close Desktop Wallpaper" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Minimize Desktop Wallpaper" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Maximize Desktop Wallpaper" })).toBeDisabled();
+    // A dialog has only the close light: no disabled minimize/zoom dots posing as controls (D-P1-11).
+    expect(screen.queryByRole("button", { name: "Minimize Desktop Wallpaper" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Maximize Desktop Wallpaper" })).not.toBeInTheDocument();
 
     vi.spyOn(dialog, "getBoundingClientRect").mockReturnValue({
       bottom: 740,
@@ -167,5 +168,33 @@ describe("DesktopWallpaperDialog", () => {
       "/wallpapers/generated/talome-65.jpg",
       undefined,
     );
+  });
+});
+
+describe("DesktopWallpaperDialog account save (D-P0-6)", () => {
+  it("says the wallpaper was saved on this browser only when the account save failed, with Retry", () => {
+    const retry = vi.fn();
+    const { rerender } = render(
+      <DesktopWallpaperDialog
+        open
+        wallpaperUrl="/wallpapers/dune.jpg"
+        onOpenChange={vi.fn()}
+        onWallpaperChange={() => true}
+        accountSave={{ status: "idle" }}
+      />,
+    );
+    expect(screen.queryByText(/Saved on this browser only/)).not.toBeInTheDocument();
+    rerender(
+      <DesktopWallpaperDialog
+        open
+        wallpaperUrl="/wallpapers/dune.jpg"
+        onOpenChange={vi.fn()}
+        onWallpaperChange={() => true}
+        accountSave={{ status: "failed", retry }}
+      />,
+    );
+    expect(screen.getByText(/Saved on this browser only/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 });

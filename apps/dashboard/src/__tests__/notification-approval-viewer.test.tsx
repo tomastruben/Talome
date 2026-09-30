@@ -10,7 +10,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 vi.mock("sonner", () => ({ toast: { warning: toastWarning, error: vi.fn(), success: vi.fn() } }));
 
 type ListItem = AppNotification & { fullBody: string };
-const notificationsState: { notifications: ListItem[]; isMuted: boolean } = { notifications: [], isMuted: false };
+const notificationsState: { notifications: ListItem[]; isMuted: boolean; isLoaded: boolean } = { notifications: [], isMuted: false, isLoaded: true };
 vi.mock("@/hooks/use-notifications", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/hooks/use-notifications")>()),
   useNotifications: () => notificationsState,

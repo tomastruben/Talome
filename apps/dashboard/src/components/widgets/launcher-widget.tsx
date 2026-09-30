@@ -27,17 +27,28 @@ export interface LaunchableApp {
   container: Container;
   /** Identifies distinct instances of an app without exposing Docker service names. */
   collection?: string;
+  /** False for a stopped app listed by `includeStopped` (Launchpad shows it dimmed, never drops it). */
+  running?: boolean;
+}
+
+export interface ExtractLaunchableOptions {
+  /**
+   * Also list apps that are not running but whose browser interface is known
+   * (a native app, or a configured web UI). Launchpad uses this so a stopped
+   * app stays visible as "Stopped" instead of vanishing as if uninstalled.
+   */
+  includeStopped?: boolean;
 }
 
 /** Native contracts and discovered/declared browser interfaces only, never arbitrary TCP ports. */
-export function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
+export function extractLaunchableApps(stacks: ServiceStack[], { includeStopped = false }: ExtractLaunchableOptions = {}): LaunchableApp[] {
   const apps: LaunchableApp[] = [];
 
   for (const stack of stacks) {
     const nativePrimary = stack.nativeSurface && stack.storeId && stack.appId
       ? stack.primaryContainer
       : null;
-    if (nativePrimary?.status === "running") {
+    if (nativePrimary && (nativePrimary.status === "running" || includeStopped)) {
       const primaryIcon = stack.containerIcons?.[nativePrimary.id];
       apps.push({
         id: nativePrimary.name,
@@ -46,6 +57,7 @@ export function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
         icon: stack.icon ?? primaryIcon?.icon,
         iconUrl: stack.iconUrl ?? primaryIcon?.iconUrl,
         container: nativePrimary,
+        running: nativePrimary.status === "running",
       });
       // A native AppSpec represents the whole stack. Its internal API/database
       // containers are implementation details, not separate Launchpad apps.
@@ -53,7 +65,7 @@ export function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
     }
 
     for (const container of stack.containers) {
-      if (container.status !== "running") continue;
+      if (container.status !== "running" && !includeStopped) continue;
       const ui = container.webUi;
       if (!ui) continue;
 
@@ -79,6 +91,7 @@ export function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
         icon: uiOwnerIcon?.icon ?? icon,
         iconUrl: uiOwnerIcon?.iconUrl ?? iconUrl,
         container,
+        running: container.status === "running",
         collection: project ? project.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase()).replace(/\bOs\b/g, "OS") : undefined,
       });
     }
