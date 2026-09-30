@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // deleteUserApp removes ~/.talome/user-apps/apps/<id>/ — but never data the
@@ -82,6 +82,32 @@ describe("deleteUserApp", () => {
     makeApp("var-dir", "services:\n  web:\n    image: nginx:1.27-alpine\n    volumes:\n      - ${DATA:-./data}:/data\n", { "data/x": "1" });
     expect((await deleteUserApp("var-dir")).success).toBe(true);
     expect(existsSync(join(appDir("var-dir"), "data/x"))).toBe(true);
+  });
+
+  it("keeps data the compose bind-mounts from inside the app directory by an absolute or ~ path", async () => {
+    // The absolute form as written, and with symlinks resolved (TMPDIR is often a symlink)
+    mkdirSync(appDir("abs-app"), { recursive: true });
+    const real = realpathSync(appDir("abs-app"));
+    const compose =
+      "services:\n  db:\n    image: postgres:16-alpine\n    volumes:\n" +
+      `      - ${appDir("abs-app")}/pgdata:/var/lib/postgresql/data\n` +
+      `      - ${real}/uploads:/uploads\n` +
+      "      - ~/.talome/user-apps/apps/abs-app/config:/config\n";
+    makeApp("abs-app", compose, { "pgdata/PG_VERSION": "16", "uploads/a.jpg": "img", "config/c.json": "{}", "app/page.tsx": "export {}" });
+    const r = await deleteUserApp("abs-app");
+    expect(r.success).toBe(true);
+    expect(readFileSync(join(appDir("abs-app"), "pgdata/PG_VERSION"), "utf-8")).toBe("16");
+    expect(existsSync(join(appDir("abs-app"), "uploads/a.jpg"))).toBe(true);
+    expect(existsSync(join(appDir("abs-app"), "config/c.json"))).toBe(true);
+    expect(existsSync(join(appDir("abs-app"), "app"))).toBe(false);
+    expect(existsSync(join(appDir("abs-app"), "manifest.json"))).toBe(false);
+  });
+
+  it("keeps the whole directory when the compose mounts a folder above it", async () => {
+    makeApp("parent-mount", `services:\n  web:\n    image: nginx:1.27-alpine\n    volumes:\n      - ${join(USER_APPS, "apps")}:/apps\n`, { "data/x": "1" });
+    expect((await deleteUserApp("parent-mount")).success).toBe(true);
+    expect(existsSync(join(appDir("parent-mount"), "manifest.json"))).toBe(true);
+    expect(existsSync(join(appDir("parent-mount"), "data/x"))).toBe(true);
   });
 
   it("never removes anything for an app id that is not a slug", async () => {

@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { atomicWriteFileSync } from "../utils/filesystem.js";
 import { join, relative, resolve, isAbsolute } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { homedir } from "node:os";
 import { db, schema } from "../db/index.js";
 import { eq, and } from "drizzle-orm";
@@ -122,16 +122,53 @@ export interface CreateAppInput {
  * in a volume name).
  */
 export function isNamedVolumeSource(hostPath: string): boolean {
-  return !/^[./~]/.test(hostPath) && !hostPath.includes("/");
+  return !/^[./~$]/.test(hostPath) && !hostPath.includes("/");
 }
 
 /** Characters Docker accepts in a volume name. */
 const VOLUME_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
 
-function validateCreateAppInput(input: CreateAppInput): string | null {
+/** Characters compose accepts in a service name (it is also the container name). */
+const SERVICE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+
+/** Control characters (newlines included) — never part of a name, image or path. */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+/**
+ * `${APP_DATA_DIR}` (or `$APP_DATA_DIR`), optionally followed by a path: the
+ * app's data directory, which Talome sets when it runs compose. It is the
+ * only variable a volume source may use — any other one (HOME, or a value
+ * from the app's own .env) can make it an arbitrary host path.
+ */
+const APP_DATA_DIR_SOURCE = /^\$(\{APP_DATA_DIR\}|APP_DATA_DIR)(\/|$)/;
+
+function hasParentSegment(path: string): boolean {
+  return path.split("/").includes("..");
+}
+
+/**
+ * `generatesCompose`: the compose file is generated from these services. When
+ * a validated Creator workspace supplies its own compose file, the service
+ * list only describes it, so the checks on how compose reads a source are
+ * skipped (the path safety checks are not).
+ */
+function validateCreateAppInput(input: CreateAppInput, generatesCompose = true): string | null {
   for (const svc of input.services) {
+    if (generatesCompose && (typeof svc.name !== "string" || !SERVICE_NAME.test(svc.name))) {
+      return `Service name "${String(svc.name).replace(/[\u0000-\u001f\u007f]+/g, " ")}" may contain only letters, numbers, "_", "." and "-".`;
+    }
     if (!svc.image || typeof svc.image !== "string") {
       return `Service "${svc.name}" is missing an image tag.`;
+    }
+    if (/\s/.test(svc.image) || CONTROL_CHARS.test(svc.image)) {
+      return `Service "${svc.name}" has an invalid image reference "${svc.image.replace(/[\s\u0000-\u001f\u007f]+/g, " ")}".`;
+    }
+    if (generatesCompose) {
+      for (const key of Object.keys(svc.environment ?? {})) {
+        if (!key || /[\s=]/.test(key) || CONTROL_CHARS.test(key)) {
+          return `Service "${svc.name}" has an invalid environment variable name "${key.replace(/[\u0000-\u001f\u007f]+/g, " ")}".`;
+        }
+      }
     }
 
     // Strip any digest suffix before checking the tag (images can legitimately
@@ -152,15 +189,30 @@ function validateCreateAppInput(input: CreateAppInput): string | null {
       if (!vol.hostPath || typeof vol.hostPath !== "string") {
         return `Service "${svc.name}" has a volume with no hostPath.`;
       }
-      // Named volumes (no slash) and relative paths starting with ./ are
+      if (typeof vol.containerPath !== "string" || !vol.containerPath || CONTROL_CHARS.test(vol.containerPath)) {
+        return `Service "${svc.name}" has a volume with an invalid container path.`;
+      }
+      if (CONTROL_CHARS.test(vol.hostPath)) {
+        return `Service "${svc.name}" mounts a host path containing control characters.`;
+      }
+      // Named volumes (no slash), paths inside the app directory ("./data")
+      // and inside its data directory ("${APP_DATA_DIR}/config") are
       // acceptable. Anything else (including "/var/run/docker.sock",
-      // "/etc/passwd", "~/foo") is rejected.
+      // "/etc/passwd", "~/foo", "../../etc", "${HOME}") is rejected.
+      if (hasParentSegment(vol.hostPath)) {
+        return `Service "${svc.name}" mounts "${vol.hostPath}", which leaves the app directory. Use a path inside it (e.g. "./data") or a named volume.`;
+      }
+      if (vol.hostPath.startsWith("$") ? !APP_DATA_DIR_SOURCE.test(vol.hostPath) || vol.hostPath.indexOf("$", 1) !== -1 : vol.hostPath.includes("$")) {
+        return `Service "${svc.name}" mounts "${vol.hostPath}". A volume source may use only \${APP_DATA_DIR} (e.g. "\${APP_DATA_DIR}/config"), no other variable.`;
+      }
+      if (APP_DATA_DIR_SOURCE.test(vol.hostPath)) continue;
       if (vol.hostPath.startsWith("/")) {
         return `Service "${svc.name}" mounts absolute host path "${vol.hostPath}". Use a named volume or a path relative to the app directory (e.g. "./data").`;
       }
       if (vol.hostPath.startsWith("~")) {
         return `Service "${svc.name}" mounts tilde path "${vol.hostPath}". Use a named volume or a relative path.`;
       }
+      if (!generatesCompose) continue;
       if (isNamedVolumeSource(vol.hostPath)) {
         if (!VOLUME_NAME.test(vol.hostPath)) {
           return `Service "${svc.name}" uses the volume name "${vol.hostPath}". Volume names may contain only letters, numbers, "_", "." and "-".`;
@@ -193,7 +245,7 @@ export function createUserApp(input: CreateAppInput, options: { validatedScaffol
   if (input.creator) {
     input = { ...input, creator: { ...input.creator, validations: publicationValidationClaims(input.creator.validations, Boolean(options.validatedScaffoldPath)) } };
   }
-  const validationError = validateCreateAppInput(input);
+  const validationError = validateCreateAppInput(input, !(options.validatedScaffoldPath && workspaceComposePath(options.validatedScaffoldPath)));
   if (validationError) {
     return { success: false, appId: input.id, storeId: "", error: validationError };
   }
@@ -245,13 +297,7 @@ export function createUserApp(input: CreateAppInput, options: { validatedScaffol
     // Prefer the docker-compose.yml generated by Claude Code in the workspace
     // (it may contain build:, command:, Dockerfile references, etc. that the
     // minimal generator cannot express). Fall back to generating from manifest.
-    const workspaceComposeCandidates = options.validatedScaffoldPath
-      ? [
-          join(options.validatedScaffoldPath, "docker-compose.yml"),
-          join(options.validatedScaffoldPath, "docker-compose.yaml"),
-        ]
-      : [];
-    const workspaceCompose = workspaceComposeCandidates.find((p) => existsSync(p));
+    const workspaceCompose = options.validatedScaffoldPath ? workspaceComposePath(options.validatedScaffoldPath) : undefined;
 
     if (workspaceCompose) {
       // Copy the entire scaffold directory to the app directory.
@@ -344,6 +390,11 @@ export function createUserApp(input: CreateAppInput, options: { validatedScaffol
   }
 }
 
+/** The compose file a validated Creator workspace supplies, if any. */
+function workspaceComposePath(scaffoldPath: string): string | undefined {
+  return [join(scaffoldPath, "docker-compose.yml"), join(scaffoldPath, "docker-compose.yaml")].find((p) => existsSync(p));
+}
+
 /**
  * The compose file for a user app built from its service list. Named volumes
  * (a source without a path, e.g. "pgdata") are declared at the top level —
@@ -404,69 +455,43 @@ export function buildUserAppComposeYaml(services: CreateAppInput["services"]): s
   return generateComposeYaml(composeServices, namedVolumes);
 }
 
+/**
+ * Serialize the compose document. Every value goes through the YAML
+ * serializer — never string concatenation — so a blueprint value cannot add
+ * keys (a newline in an image or path), and names YAML would read as another
+ * type ("1", "true", "null") stay strings.
+ */
 function generateComposeYaml(services: Record<string, any>, namedVolumes: string[] = []): string {
-  const lines: string[] = ["services:"];
-
+  const doc: Record<string, unknown> = {};
+  const out: Record<string, Record<string, unknown>> = {};
   for (const [name, svc] of Object.entries(services)) {
-    lines.push(`  ${name}:`);
-    lines.push(`    image: ${svc.image}`);
-
-    if (svc.container_name) {
-      lines.push(`    container_name: ${svc.container_name}`);
-    }
-    lines.push(`    restart: ${svc.restart || "unless-stopped"}`);
-
-    if (svc.ports?.length > 0) {
-      lines.push("    ports:");
-      for (const p of svc.ports) {
-        lines.push(`      - "${p}"`);
-      }
-    }
-
-    if (svc.volumes?.length > 0) {
-      lines.push("    volumes:");
-      for (const v of svc.volumes) {
-        lines.push(`      - ${v}`);
-      }
-    }
-
+    const def: Record<string, unknown> = { image: String(svc.image) };
+    if (svc.container_name) def.container_name = String(svc.container_name);
+    def.restart = svc.restart || "unless-stopped";
+    if (svc.ports?.length > 0) def.ports = svc.ports.map((p: unknown) => String(p));
+    if (svc.volumes?.length > 0) def.volumes = svc.volumes.map((v: unknown) => String(v));
     if (svc.environment && Object.keys(svc.environment).length > 0) {
-      lines.push("    environment:");
-      for (const [key, val] of Object.entries(svc.environment)) {
-        lines.push(`      - ${key}=${val}`);
-      }
+      def.environment = Object.entries(svc.environment).map(([key, val]) => `${key}=${val}`);
     }
-
     if (svc.healthcheck) {
-      lines.push("    healthcheck:");
-      lines.push("      test:");
-      for (const part of svc.healthcheck.test) {
-        lines.push(`        - ${JSON.stringify(part)}`);
-      }
-      lines.push(`      interval: ${svc.healthcheck.interval || "30s"}`);
-      lines.push(`      timeout: ${svc.healthcheck.timeout || "10s"}`);
-      lines.push(`      retries: ${svc.healthcheck.retries || 3}`);
+      def.healthcheck = {
+        test: (svc.healthcheck.test ?? []).map((part: unknown) => String(part)),
+        interval: String(svc.healthcheck.interval || "30s"),
+        timeout: String(svc.healthcheck.timeout || "10s"),
+        retries: Number(svc.healthcheck.retries) || 3,
+      };
     }
-
     if (svc.deploy?.resources?.limits) {
-      lines.push("    deploy:");
-      lines.push("      resources:");
-      lines.push("        limits:");
-      if (svc.deploy.resources.limits.memory) {
-        lines.push(`          memory: ${svc.deploy.resources.limits.memory}`);
-      }
-      if (svc.deploy.resources.limits.cpus) {
-        lines.push(`          cpus: ${svc.deploy.resources.limits.cpus}`);
-      }
+      const limits: Record<string, string> = {};
+      if (svc.deploy.resources.limits.memory) limits.memory = String(svc.deploy.resources.limits.memory);
+      if (svc.deploy.resources.limits.cpus) limits.cpus = String(svc.deploy.resources.limits.cpus);
+      def.deploy = { resources: { limits } };
     }
+    out[name] = def;
   }
-
-  if (namedVolumes.length > 0) {
-    lines.push("volumes:");
-    for (const name of namedVolumes) lines.push(`  ${name}: {}`);
-  }
-
-  return lines.join("\n") + "\n";
+  doc.services = out;
+  if (namedVolumes.length > 0) doc.volumes = Object.fromEntries(namedVolumes.map((name) => [name, {}]));
+  return stringifyYaml(doc, { lineWidth: 0 });
 }
 
 export function listUserApps() {
@@ -544,6 +569,15 @@ function boundPathsInAppDir(appDir: string): string[] | null {
   } catch {
     return null;
   }
+  // The directory as written and with symlinks resolved: an absolute source
+  // may name either form
+  const roots = [appDir];
+  try {
+    const real = realpathSync(appDir);
+    if (real !== appDir) roots.push(real);
+  } catch {
+    // keep the path as written
+  }
   const out: string[] = [];
   for (const svc of Object.values(doc?.services ?? {})) {
     for (const vol of (Array.isArray(svc?.volumes) ? svc.volumes : []) as unknown[]) {
@@ -558,9 +592,21 @@ function boundPathsInAppDir(appDir: string): string[] | null {
       if (!source) continue;
       if (source.includes("$")) return null;
       if (isNamedVolumeSource(source)) continue;
-      if (source.startsWith("/") || source.startsWith("~")) continue;
-      const abs = resolve(appDir, source);
-      if (isInside(appDir, abs)) out.push(abs);
+      const expanded = source === "~" || source.startsWith("~/") ? join(homedir(), source.slice(1)) : source;
+      if (expanded.startsWith("~")) continue; // ~otheruser: never inside this directory
+      const candidates = [resolve(appDir, expanded)];
+      try {
+        candidates.push(realpathSync(candidates[0]));
+      } catch {
+        // does not exist (yet) — the path as written
+      }
+      for (const abs of candidates) {
+        const root = roots.find((r) => isInside(r, abs) || isInside(abs, r));
+        if (!root) continue;
+        // A mount of the directory itself or of a folder above it: keep everything
+        out.push(isInside(abs, root) ? appDir : join(appDir, relative(root, abs)));
+        break;
+      }
     }
   }
   return out;
