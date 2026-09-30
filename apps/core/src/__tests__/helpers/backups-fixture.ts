@@ -54,6 +54,12 @@ export interface FakeContainer {
   crashOnStart?: boolean;
   /** One-shot container: exits with this code right after being started */
   oneShotExitCode?: number;
+  /**
+   * With crashOnStart/oneShotExitCode: the number of lifecycle starts that
+   * keep that behaviour (e.g. 1 = broken only by the restored data); later
+   * starts run normally. Unset = broken on every start.
+   */
+  brokenStarts?: number;
 }
 
 export const dockerState = {
@@ -74,6 +80,8 @@ export const dockerState = {
   /** Output of `id -u` / `id -g` inside containers (empty = command fails) */
   execUid: "",
   execGid: "",
+  /** Errors returned by the next lifecycle starts (startAppViaLifecycle), one per start */
+  lifecycleStartErrors: [] as string[],
 };
 
 export function resetDocker(containers: Array<Omit<FakeContainer, "status"> & { status?: string }>): void {
@@ -89,6 +97,7 @@ export function resetDocker(containers: Array<Omit<FakeContainer, "status"> & { 
   dockerState.putArchives = [];
   dockerState.execUid = "";
   dockerState.execGid = "";
+  dockerState.lifecycleStartErrors = [];
 }
 
 function find(id: string): FakeContainer | undefined {
@@ -169,7 +178,18 @@ export function dockerOpsMock() {
     }),
     startAppViaLifecycle: vi.fn(async () => {
       dockerState.events.push("startApp");
-      for (const c of dockerState.containers) c.status = c.oneShotExitCode !== undefined ? "exited" : "running";
+      const error = dockerState.lifecycleStartErrors.shift();
+      if (error !== undefined) return { success: false, error };
+      for (const c of dockerState.containers) {
+        if (c.brokenStarts !== undefined) {
+          if (c.brokenStarts > 0) c.brokenStarts--;
+          else {
+            c.crashOnStart = false;
+            c.oneShotExitCode = undefined;
+          }
+        }
+        c.status = c.oneShotExitCode !== undefined ? "exited" : "running";
+      }
       return { success: true };
     }),
   };

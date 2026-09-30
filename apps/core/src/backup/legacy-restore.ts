@@ -25,9 +25,8 @@ import { writeNotification } from "../db/notifications.js";
 import { createLogger } from "../utils/logger.js";
 import { bindVolumes, resolveAppContext } from "./compose.js";
 import { listAppContainers, startAppViaLifecycle, type AppContainer } from "./docker-ops.js";
-import { restartContainers } from "./engine.js";
 import { errorMessage, getBackupRoot, isWithin } from "./fs-utils.js";
-import { containerKey, resolveHealthUrl, restoreSafetyBackup, stopAll, takeSafetyBackup, waitForHealthy } from "./restore.js";
+import { containerKey, resolveHealthUrl, restartAfterRollback, restoreSafetyBackup, stopAll, takeSafetyBackup, waitForHealthy } from "./restore.js";
 import { acquireAppOperation, releaseAppMaintenance } from "./state.js";
 import { clearRecoveryRecord, finishRestore, insertRestore, saveRecoveryRecord, updateRestoreStage } from "./store.js";
 import { readTarGz } from "./tar.js";
@@ -318,8 +317,19 @@ export async function restoreLegacyArchive(appId: string, archivePath: string, o
           problems.push("there is no safety backup to put the previous data back");
         }
         if (wasRunning) {
-          const started = await startAppViaLifecycle(appId);
-          if (!started.success && stoppedBySafety.length > 0) await restartContainers(appId, stoppedBySafety);
+          // The previous state is back only once the app runs (and is healthy) again
+          const restartProblem = await restartAfterRollback({
+            appId,
+            ctx,
+            stoppedBySafety,
+            requiredRunning,
+            healthTimeoutMs: opts.healthTimeoutMs ?? 120_000,
+            pollMs,
+          });
+          if (restartProblem) {
+            problems.push(restartProblem);
+            rolledBack = false;
+          }
         }
       } catch (rollbackErr) {
         problems.push(`rollback failed: ${errorMessage(rollbackErr)}`);

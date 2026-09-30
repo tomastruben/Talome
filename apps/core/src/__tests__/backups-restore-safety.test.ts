@@ -100,6 +100,7 @@ describe("restore — health check", () => {
     const backup = await createAppBackup("stillbad");
     if (!backup.success) throw new Error(backup.error);
     dockerState.containers[0].oneShotExitCode = 1;
+    dockerState.containers[0].brokenStarts = 1; // exits on the restored data only
     const r = await restoreAppBackup(backup.backupId, FAST);
     expect(r.success).toBe(false);
     if (!r.success) expect(r.rolledBack).toBe(true);

@@ -76,6 +76,7 @@ describe("restoreAppBackup", () => {
   it("rolls back to the pre-restore state when the app is unhealthy afterwards", async () => {
     const { appDir, backup } = await prepare("restorebad");
     dockerState.containers[0].crashOnStart = true;
+    dockerState.containers[0].brokenStarts = 1; // the restored data breaks the app; the previous data does not
 
     const r = await restoreAppBackup(backup.backupId, FAST);
     expect(r.success).toBe(false);

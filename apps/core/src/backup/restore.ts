@@ -864,11 +864,12 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
           }
         }
       }
-      rolledBack = problems.length === 0;
       if (wasRunning) {
-        const started = await startAppViaLifecycle(appId);
-        if (!started.success && stoppedBySafety.length > 0) await restartContainers(appId, stoppedBySafety);
+        // The previous state is back only once the app runs (and is healthy) again
+        const restartProblem = await restartAfterRollback({ appId, ctx, stoppedBySafety, requiredRunning, healthTimeoutMs: healthTimeout, pollMs });
+        if (restartProblem) problems.push(restartProblem);
       }
+      rolledBack = problems.length === 0;
     } catch (rollbackErr) {
       log.error(`${appId}: rollback failed`, rollbackErr);
       problems.push(`rollback failed: ${errorMessage(rollbackErr)}`);
@@ -878,6 +879,38 @@ async function performRestore(p: PerformRestoreParams): Promise<RestoreAppBackup
     const error = problems.length > 0 ? `${message}. The previous state could not be fully restored: ${problems.join("; ")}` : message;
     return failResult(backupId, appId, error, { rolledBack, safetyBackupId, health: failedHealth });
   }
+}
+
+/**
+ * Start an app again after its data was put back and wait until it is
+ * healthy. Returns what went wrong, or null when the app is running and
+ * healthy — only then may a rollback be reported as done.
+ */
+export async function restartAfterRollback(p: {
+  appId: string;
+  ctx: AppContext;
+  /** Containers the safety backup stopped (started directly when the lifecycle start fails) */
+  stoppedBySafety: AppContainer[];
+  /** Containers that were running before (compose service, else name) */
+  requiredRunning: ReadonlySet<string>;
+  healthTimeoutMs: number;
+  pollMs: number;
+}): Promise<string | null> {
+  const { appId, ctx } = p;
+  const started = await startAppViaLifecycle(appId).catch((err: unknown) => ({ success: false, error: errorMessage(err) }));
+  if (!started.success) {
+    const startError = started.error ?? "unknown error";
+    // Best effort: start the stopped containers that still exist (a recreated
+    // container has a new id — starting the old one only reports a 404)
+    const current = await listAppContainers({ appId, composePath: ctx.composePath, projectName: ctx.compose.projectName }).catch(
+      () => [] as AppContainer[],
+    );
+    const existing = p.stoppedBySafety.filter((c) => current.some((x) => x.id === c.id));
+    if (existing.length > 0) await restartContainers(appId, existing).catch(() => {});
+    return `the app could not be started again: ${startError}`;
+  }
+  const health = await waitForHealthy(ctx, resolveHealthUrl(appId), p.healthTimeoutMs, p.pollMs, p.requiredRunning);
+  return health.healthy ? null : `the app is not healthy after the rollback: ${health.detail}`;
 }
 
 /**

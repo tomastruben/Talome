@@ -126,6 +126,7 @@ describe("restore_app — legacy archives", () => {
       { path: join(config, "from-backup.txt"), content: "old file" },
     ]);
     dockerState.containers[0].crashOnStart = true;
+    dockerState.containers[0].brokenStarts = 1; // the restored data breaks the app; the previous data does not
     const r = await restoreLegacyArchive("legacybad", archive, FAST);
     expect(r.success).toBe(false);
     if (r.success) return;
@@ -136,6 +137,23 @@ describe("restore_app — legacy archives", () => {
     const restores = (await import("../backup/store.js")).listRestores("legacybad");
     expect(restores[0]?.status).toBe("rolled_back");
     expect(getRestoreRow(restores[0].id)?.status).toBe("rolled_back");
+  });
+
+  it("does not claim the previous state is back when the app stays unhealthy after the rollback", async () => {
+    const { config } = await app("legacystillbad");
+    const archive = await legacyArchive("legacystillbad", [
+      { path: config, dir: true },
+      { path: join(config, "app.conf"), content: "version=1" },
+    ]);
+    dockerState.containers[0].crashOnStart = true; // broken on every start
+    const r = await restoreLegacyArchive("legacystillbad", archive, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(readFileSync(join(config, "app.conf"), "utf-8")).toBe("version=2");
+    expect(r.rolledBack).toBe(false);
+    expect(r.error).toMatch(/not healthy after the rollback/);
+    const restores = (await import("../backup/store.js")).listRestores("legacystillbad");
+    expect(restores[0]?.status).toBe("failed");
   });
 });
 
