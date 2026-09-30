@@ -32,6 +32,14 @@ export interface Actor {
   scopes?: TokenScopes;
 }
 
+/** How audit rows name each execution source (`MCP: delete_file`, ...). */
+export const EXECUTION_SOURCE_LABELS: Record<ExecutionSource, string> = {
+  chat: "AI",
+  mcp: "MCP",
+  automation: "Automation",
+  agent_loop: "Agent loop",
+};
+
 export interface ExecutionContext {
   actor: Actor;
   source: ExecutionSource;
