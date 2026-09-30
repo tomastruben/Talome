@@ -85,7 +85,7 @@ export const PillIndicator = ({
     {pulse && (
       <span
         className={cn(
-          "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
+          "absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full opacity-75",
           variant === "success" && "bg-status-healthy",
           variant === "error" && "bg-status-critical",
           variant === "warning" && "bg-status-warning",

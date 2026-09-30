@@ -9,6 +9,7 @@ import { CORE_URL } from "@/lib/constants";
 import { useKeyboardMode } from "@/hooks/use-keyboard-mode";
 import { TerminalSessionToolbar } from "./terminal-session-toolbar";
 import { useTerminalSessions } from "./use-terminal-sessions";
+import { Spinner } from "@/components/ui/spinner";
 
 const TerminalInner = dynamic(
   () => import("./terminal-inner").then((m) => ({ default: m.TerminalInner })),
@@ -136,7 +137,9 @@ export function TerminalSheet({ open, onOpenChange, initialCommand }: TerminalSh
       {/* Panel — slides in from right, sits below assistant dock z-level so both are usable */}
       <div
         className={cn(
-          "fixed inset-y-0 right-0 z-[46] w-[720px] max-w-full flex flex-col border-l shadow-lg transition-transform duration-300 ease-in-out",
+          // `dark`: the terminal stays dark in both themes, so the status and
+          // text tokens inside use the dark values.
+          "dark fixed inset-y-0 right-0 z-[46] w-[720px] max-w-full flex flex-col border-l shadow-lg transition-transform duration-300 ease-in-out",
           open ? "translate-x-0" : "translate-x-full pointer-events-none"
         )}
         style={{ background: "#0d1117" }}
@@ -204,8 +207,8 @@ export function TerminalSheet({ open, onOpenChange, initialCommand }: TerminalSh
             />
           ) : (
             <div className="flex items-center justify-center h-full">
-              <div className="flex items-center gap-2 text-[#8b949e] text-sm">
-                <div className="size-3 rounded-full border-2 border-[#8b949e]/40 border-t-[#8b949e] animate-spin" />
+              <div className="flex items-center gap-2 text-terminal-foreground/70 text-sm">
+                <Spinner decorative className="size-3.5" />
                 Connecting…
               </div>
             </div>

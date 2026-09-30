@@ -41,7 +41,7 @@ function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStrea
         isActivelyDownloading ? (
           <span className="ml-auto flex items-center">
             <span className="relative flex size-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />
+              <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-primary/60 opacity-75" />
               <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
             </span>
           </span>
@@ -54,7 +54,7 @@ function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStrea
       {item.title === "Assistant" && isStreaming && (
         <span className="ml-auto flex items-center">
           <span className="relative flex size-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />
+            <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-primary/60 opacity-75" />
             <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
           </span>
         </span>
@@ -70,7 +70,7 @@ function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStrea
       {item.title === "Intelligence" && isIntelligenceActive && (
         <span className="ml-auto flex items-center">
           <span className="relative flex size-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-status-warning/60 opacity-75" />
+            <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-status-warning/60 opacity-75" />
             <span className="relative inline-flex size-1.5 rounded-full bg-status-warning" />
           </span>
         </span>

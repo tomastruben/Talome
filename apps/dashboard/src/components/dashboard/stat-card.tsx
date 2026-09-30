@@ -1,11 +1,12 @@
 "use client";
 
-import { motion, useSpring, useTransform } from "framer-motion";
+import { animate, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import { useEffect, useId, useRef, useCallback, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { HugeiconsIcon } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import type { MetricSample } from "@/hooks/use-system-stats";
+import { DURATION, progress, tween } from "@/lib/motion";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -23,22 +24,43 @@ export const COLORS = {
 };
 
 // ── Animated number ──────────────────────────────────────────────────────────
+// Snaps to the first value on mount (no count-up from 0) and tweens for
+// 150ms only when the value changes. Instant under reduced motion.
+
+export function formatStatValue(value: number, suffix = ""): string {
+  return suffix === "%" ? `${value.toFixed(1)}${suffix}` : `${Math.round(value)}${suffix}`;
+}
 
 function AnimatedNumber({ value, suffix = "" }: { value: number; suffix?: string }) {
-  const spring = useSpring(0, { stiffness: 60, damping: 20 });
-  const display = useTransform(spring, (v) =>
-    suffix === "%" ? `${v.toFixed(1)}${suffix}` : `${Math.round(v)}${suffix}`
-  );
-  useEffect(() => { spring.set(value); }, [spring, value]);
-  return <motion.span>{display}</motion.span>;
+  const current = useMotionValue(value);
+  const reduceMotion = useReducedMotion();
+  const display = useTransform(current, (v) => formatStatValue(v, suffix));
+  useEffect(() => {
+    if (reduceMotion || current.get() === value) {
+      current.set(value);
+      return;
+    }
+    const controls = animate(current, value, tween(DURATION.fast));
+    return () => controls.stop();
+  }, [current, reduceMotion, value]);
+  return <motion.span className="tabular-nums">{display}</motion.span>;
 }
 
 // ── Animated bar ─────────────────────────────────────────────────────────────
+// Tracks real data: linear, at most 250ms per update; jumps under reduced motion.
 
 function AnimatedBar({ value }: { value: number }) {
-  const spring = useSpring(0, { stiffness: 40, damping: 20 });
-  const width = useTransform(spring, (v) => `${Math.min(v, 100)}%`);
-  useEffect(() => { spring.set(value); }, [spring, value]);
+  const current = useMotionValue(value);
+  const reduceMotion = useReducedMotion();
+  const width = useTransform(current, (v) => `${Math.max(0, Math.min(v, 100))}%`);
+  useEffect(() => {
+    if (reduceMotion || current.get() === value) {
+      current.set(value);
+      return;
+    }
+    const controls = animate(current, value, progress);
+    return () => controls.stop();
+  }, [current, reduceMotion, value]);
   const barColor = value >= 90 ? "bg-status-critical/70" : value >= 70 ? "bg-status-warning/60" : "bg-foreground/20";
   return (
     <div className="h-px w-full overflow-hidden rounded-full bg-border mt-4">

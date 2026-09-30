@@ -2,7 +2,8 @@
 
 import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion } from "motion/react";
+import { enter } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -42,6 +43,7 @@ function LoginContent() {
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setError("");
     setLoading(true);
 
@@ -77,6 +79,7 @@ function LoginContent() {
 
   async function handleRecover(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setError("");
     setLoading(true);
 
@@ -122,7 +125,7 @@ function LoginContent() {
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
+            transition={enter()}
             className="w-full max-w-xs"
           >
             {/* Brand mark */}
@@ -171,8 +174,14 @@ function LoginContent() {
                   className={inputClass}
                 />
                 <ErrorMessage error={error} />
-                <Button type="submit" className="w-full h-10" disabled={loading || !password || (isFirstTime && password.length < 8)}>
-                  {loading ? "..." : isFirstTime ? "Create account" : "Sign in"}
+                <Button
+                  type="submit"
+                  className="w-full h-10"
+                  busy={loading}
+                  busyLabel={isFirstTime ? "Creating account…" : "Signing in…"}
+                  disabled={!password || (isFirstTime && password.length < 8)}
+                >
+                  {isFirstTime ? "Create account" : "Sign in"}
                 </Button>
               </form>
             )}
@@ -207,8 +216,14 @@ function LoginContent() {
                   className={inputClass}
                 />
                 <ErrorMessage error={error} />
-                <Button type="submit" className="w-full h-10" disabled={loading || !username || !recoveryCode || newPassword.length < 8}>
-                  {loading ? "..." : "Reset password"}
+                <Button
+                  type="submit"
+                  className="w-full h-10"
+                  busy={loading}
+                  busyLabel="Resetting password…"
+                  disabled={!username || !recoveryCode || newPassword.length < 8}
+                >
+                  Reset password
                 </Button>
               </form>
             )}

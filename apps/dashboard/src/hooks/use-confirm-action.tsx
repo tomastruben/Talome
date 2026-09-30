@@ -1,88 +1,80 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { useCallback, useMemo, useState } from "react";
+import { ConfirmQueue, createConfirmStore, type ConfirmTier } from "@/components/ui/confirm-dialog";
 
 export interface ConfirmActionOptions {
   title: string;
+  /** What will happen. Rendered as the consequence line. */
   description: string;
+  /** What is kept and how to undo. Recommended for every new caller. */
+  recovery?: string;
+  /** Set when nothing is kept, so the recovery line warns instead of reassuring. */
+  irreversible?: boolean;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** `destructive` = data loss, irreversible, or widened privilege. Maps to the `destructive` tier. */
   variant?: "default" | "destructive";
+  /** Explicit tier; wins over `variant`. */
+  tier?: ConfirmTier;
 }
 
-interface PendingAction {
-  options: ConfirmActionOptions;
-  resolve: (confirmed: boolean) => void;
+export function confirmTierOf(options: Pick<ConfirmActionOptions, "tier" | "variant">): ConfirmTier {
+  if (options.tier) return options.tier;
+  return options.variant === "destructive" ? "destructive" : "soft";
 }
 
 /**
- * Hook for confirming destructive actions.
+ * Whether Auto mode may skip this confirmation. Only the `soft` tier can be
+ * skipped; data loss, irreversible changes and widened privilege are always
+ * confirmed by a person (P0-2).
+ */
+export function canAutoConfirm(autoMode: boolean, options: Pick<ConfirmActionOptions, "tier" | "variant">): boolean {
+  return autoMode && confirmTierOf(options) === "soft";
+}
+
+/**
+ * Confirms an action before it runs.
  *
- * When `autoMode` is true, actions are confirmed automatically without dialog.
- * Returns a `confirmAction` function and a `ConfirmDialog` component to render.
+ * When `autoMode` is true, `soft` confirmations resolve immediately; a
+ * `destructive` one still opens the dialog. Returns `confirmAction` and a
+ * `ConfirmDialog` element-component to render.
+ *
+ * New code should prefer `useConfirm()` from `@/components/ui/confirm-dialog`,
+ * which takes explicit consequence and recovery lines.
  */
 export function useConfirmAction(autoMode: boolean) {
-  const [pending, setPending] = useState<PendingAction | null>(null);
+  // Each caller keeps its own queue, rendered by its own <ConfirmDialog />.
+  // A decided dialog stays mounted (closed) for its exit animation.
+  const [store] = useState(() => createConfirmStore({ requireHost: false }));
 
   const confirmAction = useCallback(
     (options: ConfirmActionOptions): Promise<boolean> => {
-      if (autoMode) return Promise.resolve(true);
+      if (canAutoConfirm(autoMode, options)) return Promise.resolve(true);
 
-      return new Promise<boolean>((resolve) => {
-        setPending({ options, resolve });
-      });
+      return store
+        .request({
+          tier: confirmTierOf(options),
+          title: options.title,
+          consequence: options.description,
+          recovery: options.recovery ?? "",
+          irreversible: options.irreversible,
+          confirmLabel: options.confirmLabel ?? "Confirm",
+          cancelLabel: options.cancelLabel,
+        })
+        .then((result) => result.confirmed);
     },
-    [autoMode],
+    [autoMode, store],
   );
 
-  const handleConfirm = useCallback(() => {
-    pending?.resolve(true);
-    setPending(null);
-  }, [pending]);
-
-  const handleCancel = useCallback(() => {
-    pending?.resolve(false);
-    setPending(null);
-  }, [pending]);
-
-  function ConfirmDialog() {
-    if (!pending) return null;
-
-    const { options } = pending;
-    const isDestructive = options.variant === "destructive";
-
-    return (
-      <Dialog open onOpenChange={(open) => { if (!open) handleCancel(); }}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-base">{options.title}</DialogTitle>
-            <DialogDescription>{options.description}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={handleCancel}>
-              {options.cancelLabel ?? "Cancel"}
-            </Button>
-            <Button
-              variant={isDestructive ? "destructive" : "default"}
-              size="sm"
-              onClick={handleConfirm}
-            >
-              {options.confirmLabel ?? "Confirm"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    );
-  }
+  // Stable identity: the element-component never remounts, so the dialog
+  // keeps its state and plays its exit instead of vanishing.
+  const ConfirmDialog = useMemo(() => {
+    function PendingConfirmDialog() {
+      return <ConfirmQueue store={store} />;
+    }
+    return PendingConfirmDialog;
+  }, [store]);
 
   return { confirmAction, ConfirmDialog };
 }

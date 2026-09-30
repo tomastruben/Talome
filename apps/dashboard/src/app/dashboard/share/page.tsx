@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useCallback, useState, useMemo } from "react";
 import { toast } from "sonner";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion } from "motion/react";
 import {
   HugeiconsIcon,
   Copy01Icon,

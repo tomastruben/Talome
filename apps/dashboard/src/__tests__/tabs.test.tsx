@@ -68,13 +68,17 @@ describe("TabsDot", () => {
     expect(container.querySelector(".bg-status-warning")).toBeInTheDocument();
   });
 
-  it("renders pulse animation span when pulse=true", () => {
+  it("breathes (motion-safe only) when pulse=true, and never pings", () => {
     const { container } = render(<TabsDot color="emerald" pulse />);
-    expect(container.querySelector(".animate-ping")).toBeInTheDocument();
+    const dot = container.querySelector('[data-pulse="true"]');
+    expect(dot).toBeInTheDocument();
+    expect(dot?.className).toContain("motion-safe:animate-breathe");
+    expect(container.innerHTML).not.toContain("animate-ping");
   });
 
-  it("does not render pulse animation span when pulse=false", () => {
+  it("is a static dot when pulse=false", () => {
     const { container } = render(<TabsDot color="emerald" pulse={false} />);
-    expect(container.querySelector(".animate-ping")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-pulse]")).not.toBeInTheDocument();
+    expect(container.innerHTML).not.toContain("animate-");
   });
 });

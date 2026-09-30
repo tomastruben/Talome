@@ -92,7 +92,7 @@ function QuickLookContent({ container }: { container: Container }) {
         {/* Status + name */}
         <span className="relative flex size-1.5 shrink-0">
           {isRunning && (
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-status-healthy/60 opacity-75" />
+            <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-status-healthy/60 opacity-75" />
           )}
           <span
             className={cn(

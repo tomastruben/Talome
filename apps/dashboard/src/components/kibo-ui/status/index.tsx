@@ -23,7 +23,7 @@ export const StatusIndicator = ({
   <span className="relative flex h-2 w-2" {...props}>
     <span
       className={cn(
-        "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
+        "absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full opacity-75",
         "group-[.online]:bg-status-healthy",
         "group-[.offline]:bg-status-critical",
         "group-[.maintenance]:bg-status-info",

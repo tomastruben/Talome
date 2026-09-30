@@ -536,6 +536,9 @@ export const DesktopWindow = memo(function DesktopWindow({
         onDoubleClick={toggleMaximize}
       >
         <div className="flex min-w-0 items-center gap-2">
+          {/* Traffic lights use the --window-* chrome tokens at full colour, never
+              the status tokens (spec §2.4, §7): the light status values are
+              darkened for text and turn the controls muddy. */}
           <div
             className="-ml-1.5 flex shrink-0 items-center gap-0 [&:focus-within_[data-window-control-glyph]]:opacity-100 [&:hover_[data-window-control-glyph]]:opacity-100"
             aria-label="Window controls"
@@ -547,8 +550,8 @@ export const DesktopWindow = memo(function DesktopWindow({
               className={cn(
                 "relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:transition-colors before:duration-150 focus-visible:ring-2 focus-visible:ring-ring",
                 active
-                  ? "before:bg-status-critical/70 hover:before:bg-status-critical"
-                  : "before:bg-muted-foreground/25 hover:before:bg-status-critical/70",
+                  ? "before:bg-window-close before:ring-1 before:ring-inset before:ring-window-control-edge"
+                  : "before:bg-muted-foreground/25 hover:before:bg-window-close hover:before:ring-1 hover:before:ring-inset hover:before:ring-window-control-edge",
               )}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={onClose}
@@ -562,8 +565,8 @@ export const DesktopWindow = memo(function DesktopWindow({
               className={cn(
                 "relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:transition-colors before:duration-150 focus-visible:ring-2 focus-visible:ring-ring",
                 active
-                  ? "before:bg-status-warning/70 hover:before:bg-status-warning"
-                  : "before:bg-muted-foreground/25 hover:before:bg-status-warning/70",
+                  ? "before:bg-window-minimize before:ring-1 before:ring-inset before:ring-window-control-edge"
+                  : "before:bg-muted-foreground/25 hover:before:bg-window-minimize hover:before:ring-1 hover:before:ring-inset hover:before:ring-window-control-edge",
               )}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={onMinimize}
@@ -577,8 +580,8 @@ export const DesktopWindow = memo(function DesktopWindow({
               className={cn(
                 "relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:transition-colors before:duration-150 focus-visible:ring-2 focus-visible:ring-ring",
                 active
-                  ? "before:bg-status-healthy/70 hover:before:bg-status-healthy"
-                  : "before:bg-muted-foreground/25 hover:before:bg-status-healthy/70",
+                  ? "before:bg-window-zoom before:ring-1 before:ring-inset before:ring-window-control-edge"
+                  : "before:bg-muted-foreground/25 hover:before:bg-window-zoom hover:before:ring-1 hover:before:ring-inset hover:before:ring-window-control-edge",
               )}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={toggleMaximize}

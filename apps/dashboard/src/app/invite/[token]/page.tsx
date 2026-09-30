@@ -88,7 +88,7 @@ export default function AcceptInvitationPage() {
         </div>
 
         {loading ? (
-          <div className="h-36 rounded-2xl bg-muted/30 animate-pulse" />
+          <div className="h-36 rounded-2xl bg-muted/30 motion-safe:animate-pulse" />
         ) : recoveryCode ? (
           <div className="space-y-4">
             <div className="rounded-xl border border-border bg-muted/30 p-4">

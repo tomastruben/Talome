@@ -8,8 +8,9 @@ import Link from "next/link";
 import { useAtom } from "jotai";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { toast } from "sonner";
+import { toastWarning } from "@/lib/toast";
 import useSWR, { mutate as globalMutate } from "swr";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import { HugeiconsIcon, Cancel01Icon, AiChat02Icon, CloudUploadIcon, Edit02Icon, Share04Icon, SystemUpdate01Icon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -229,7 +230,7 @@ type LifecycleAction = "install" | "update" | "uninstall" | "start" | "stop" | "
 function showOutcomeToast(outcome: LifecycleOutcome) {
   const options = outcome.description ? { description: outcome.description } : undefined;
   if (outcome.kind === "success") toast.success(outcome.title, options);
-  else if (outcome.kind === "warning") toast.warning(outcome.title, options);
+  else if (outcome.kind === "warning") toastWarning(outcome.title, options);
   else toast.error(outcome.title, options);
 }
 

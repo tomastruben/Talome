@@ -54,7 +54,7 @@ function HistoryRow({ op }: { op: OperationRecord }) {
   return (
     <div className="px-4 py-3 grid gap-0.5">
       <div className="flex items-center gap-2.5">
-        <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[tone], active && "animate-pulse")} aria-hidden />
+        <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[tone], active && "motion-safe:animate-pulse")} aria-hidden />
         <p className="flex-1 min-w-0 text-sm truncate">{OPERATION_KIND_LABELS[op.kind]}</p>
         <span className={cn("shrink-0 text-xs", TONE_TEXT[tone])}>
           {active ? `${operationStepLabel(op.step)} · ${op.progress}%` : OPERATION_STATUS_LABELS[op.status]}

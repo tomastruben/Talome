@@ -12,6 +12,7 @@ import {
   Refresh01Icon,
 } from "@/components/icons";
 import { toast } from "sonner";
+import { toastWarning } from "@/lib/toast";
 import { SettingsGroup, ToggleRow } from "@/components/settings/settings-primitives";
 import { useAvailableUpdates, type AppUpdateInfo } from "@/hooks/use-available-updates";
 import { describeUpdateResponse, updateOutcomeFromOperation, type UpdateOutcome } from "@/lib/app-operations";
@@ -66,7 +67,7 @@ function UpdateRow({ app, onUpdated }: { app: AppUpdateInfo; onUpdated: () => vo
       });
       const options = outcome.description ? { description: outcome.description } : undefined;
       if (outcome.kind === "success") toast.success(outcome.title, options);
-      else if (outcome.kind === "warning") toast.warning(outcome.title, options);
+      else if (outcome.kind === "warning") toastWarning(outcome.title, options);
       else toast.error(outcome.title, options);
       onUpdated();
     } catch (err) {
@@ -187,7 +188,7 @@ export function UpdatesSection() {
       const parts = [`Updated ${succeeded}`];
       if (rolledBack.length > 0) parts.push(`rolled back ${rolledBack.length}`);
       if (failed > 0) parts.push(`failed ${failed}`);
-      toast.warning(parts.join(", "), {
+      toastWarning(parts.join(", "), {
         description: rolledBack.length > 0 ? `Kept the previous version of ${rolledBack.join(", ")}.` : undefined,
       });
     }
@@ -211,7 +212,7 @@ export function UpdatesSection() {
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="ghost" onClick={handleRefresh} disabled={isLoading} className="size-8 p-0">
-            <HugeiconsIcon icon={Refresh01Icon} size={14} className={isLoading ? "animate-spin" : ""} />
+            <HugeiconsIcon icon={Refresh01Icon} size={14} className={isLoading ? "motion-safe:animate-spin" : ""} />
           </Button>
           {appsWithUpdates.length > 0 && (
             <Button size="sm" onClick={handleUpdateAll} disabled={updatingAll}>

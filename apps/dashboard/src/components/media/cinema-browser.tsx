@@ -1326,10 +1326,10 @@ export function CinemaBrowserOverlay() {
           <div className="grid gap-x-5 gap-y-8 px-14 pt-10 pb-10" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
             {Array.from({ length: 18 }).map((_, i) => (
               <div key={i} className="rounded-xl overflow-hidden">
-                <div className="aspect-[2/3] bg-white/5 animate-pulse rounded-xl" />
+                <div className="aspect-[2/3] bg-white/5 motion-safe:animate-pulse rounded-xl" />
                 <div className="px-1.5 py-2 space-y-1.5">
-                  <div className="h-3.5 bg-white/5 rounded w-3/4 animate-pulse" />
-                  <div className="h-2.5 bg-white/5 rounded w-1/2 animate-pulse" />
+                  <div className="h-3.5 bg-white/5 rounded w-3/4 motion-safe:animate-pulse" />
+                  <div className="h-2.5 bg-white/5 rounded w-1/2 motion-safe:animate-pulse" />
                 </div>
               </div>
             ))}

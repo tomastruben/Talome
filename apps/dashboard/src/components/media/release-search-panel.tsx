@@ -146,7 +146,7 @@ export function ReleaseSearchPanel({
 
       {loading && (
         <div className="flex items-center gap-2">
-          <span className="inline-flex h-1.5 w-1.5 rounded-full bg-primary/70 animate-pulse" />
+          <span className="inline-flex h-1.5 w-1.5 rounded-full bg-primary/70 motion-safe:animate-pulse" />
           <Shimmer as="p" className="text-xs">
             Searching indexers...
           </Shimmer>

@@ -5,7 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import useSWR from "swr";
 import dynamic from "next/dynamic";
 import { useSetAtom } from "jotai";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion } from "motion/react";
+import { enter } from "@/lib/motion";
 import {
   HugeiconsIcon,
   Folder01Icon,
@@ -1435,7 +1436,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 8 }}
-              transition={{ duration: 0.18, ease: [0.25, 0.1, 0.25, 1] }}
+              transition={enter()}
               className="absolute bottom-14 inset-x-0 z-20 flex justify-center pointer-events-none"
             >
               <div className="flex items-center gap-1 rounded-full bg-foreground text-background px-4 py-2 shadow-lg pointer-events-auto">

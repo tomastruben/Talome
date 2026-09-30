@@ -121,7 +121,7 @@ export function SuggestionRow({ suggestion, onExecute, onDismiss, onView, onView
 
         {/* Expandable detail — animated with CSS grid */}
         <div
-          className="grid transition-[grid-template-rows] duration-200 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
+          className="grid transition-[grid-template-rows] duration-150 ease-enter"
           style={{ gridTemplateRows: expanded ? "1fr" : "0fr" }}
         >
           <div className="overflow-hidden">

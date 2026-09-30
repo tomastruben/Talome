@@ -166,7 +166,7 @@ function LiveToolOutput({ isRunning }: { isRunning: boolean }) {
         className="max-h-64 overflow-y-auto bg-[#0d0d0d] px-4 py-3 font-mono text-sm leading-relaxed whitespace-pre-wrap break-all"
       >
         {lines.length === 0 ? (
-          <span className="text-white/30 animate-pulse">
+          <span className="text-white/30 motion-safe:animate-pulse">
             {connected ? "Waiting for output…" : "Connecting…"}
           </span>
         ) : (
@@ -410,7 +410,7 @@ export function ChatMessage({
             if (p.state === "input-available" || p.state === "input-streaming") {
               return (
                 <div key={p.toolCallId} className="flex items-center gap-2 py-1 my-1">
-                  <HugeiconsIcon icon={PackageOpenIcon} size={12} className="text-status-warning/60 animate-pulse shrink-0" />
+                  <HugeiconsIcon icon={PackageOpenIcon} size={12} className="text-status-warning/60 motion-safe:animate-pulse shrink-0" />
                   <span className="text-xs text-muted-foreground">Updating blueprint...</span>
                 </div>
               );

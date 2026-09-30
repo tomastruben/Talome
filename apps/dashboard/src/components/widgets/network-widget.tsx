@@ -163,7 +163,7 @@ export function NetworkWidget({ mode = "full" }: { mode?: "compact" | "split" | 
         actions={
           stats && (
             <div className="flex items-center gap-1.5">
-              <div className="size-1.5 rounded-full bg-status-healthy/70 animate-pulse" />
+              <div className="size-1.5 rounded-full bg-status-healthy/70 motion-safe:animate-pulse" />
               <span className="text-xs text-muted-foreground tabular-nums">Live</span>
             </div>
           )

@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { toastWarning } from "@/lib/toast";
 import {
   getNotificationAction,
   useNotifications,
@@ -94,7 +95,7 @@ function showToast(
       break;
 
     case "warning":
-      toast.warning(n.title, {
+      toastWarning(n.title, {
         description: body,
         duration: 8000,
         action,

@@ -55,7 +55,8 @@ import {
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion } from "motion/react";
+import { DURATION, enter, tween } from "@/lib/motion";
 import {
   type MediaItem,
   type LookupItem,
@@ -297,7 +298,7 @@ function DownloadQueueRow({
                   <span
                     className={`text-xs mt-px cursor-help ${
                       retryState === "running"
-                        ? "text-primary animate-pulse"
+                        ? "text-primary motion-safe:animate-pulse"
                         : retryState === "done"
                           ? "text-status-healthy"
                           : retryState === "error"
@@ -323,7 +324,7 @@ function DownloadQueueRow({
               <span
                 className={`text-xs mt-px ${
                   retryState === "running"
-                    ? "text-primary animate-pulse"
+                    ? "text-primary motion-safe:animate-pulse"
                     : retryState === "done"
                       ? "text-status-healthy"
                       : retryState === "error"
@@ -350,7 +351,7 @@ function DownloadQueueRow({
                     disabled={retryingId === item.id}
                     aria-label={retryingId === item.id ? "Retrying download" : "Retry download"}
                   >
-                    <HugeiconsIcon icon={Refresh01Icon} size={14} className={retryingId === item.id ? "animate-spin" : ""} />
+                    <HugeiconsIcon icon={Refresh01Icon} size={14} className={retryingId === item.id ? "motion-safe:animate-spin" : ""} />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="left">
@@ -674,7 +675,7 @@ function MediaCard({ item, onClick, onNavigate, watchStatus, selected, selection
         )}
         {optStatus?.status === "queued" && (
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/30 overflow-hidden rounded-b">
-            <div className="h-full w-full bg-muted-foreground/30 animate-pulse" />
+            <div className="h-full w-full bg-muted-foreground/30 motion-safe:animate-pulse" />
           </div>
         )}
       </div>
@@ -1948,7 +1949,7 @@ function MediaPageInner({
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: "auto", opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
-                            transition={{ height: { duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }, opacity: { duration: 0.15 } }}
+                            transition={{ height: tween(DURATION.fast), opacity: { duration: DURATION.fast } }}
                             className="overflow-hidden"
                           >
                             <div className="pt-1">
@@ -1994,7 +1995,7 @@ function MediaPageInner({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: 0.18, ease: [0.25, 0.1, 0.25, 1] }}
+            transition={enter()}
             className="fixed bottom-6 inset-x-0 z-50 flex justify-center pointer-events-none pb-[env(safe-area-inset-bottom)]"
           >
             <div className="flex items-center gap-1 rounded-full bg-foreground text-background px-4 py-2 shadow-lg pointer-events-auto">

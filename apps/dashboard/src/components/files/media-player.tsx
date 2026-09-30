@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { getDirectCoreUrl } from "@/lib/constants";
 import { useAssistant } from "@/components/assistant/assistant-context";
@@ -1551,7 +1552,7 @@ export function VideoPlayer({
                 style={{ transition: "stroke-dashoffset 1s ease-out" }} />
             </svg>
           ) : (
-            <svg viewBox="0 0 48 48" className="size-12 animate-spin" style={{ animationDuration: "1.2s" }}>
+            <svg viewBox="0 0 48 48" className="size-12 motion-safe:animate-spin" style={{ animationDuration: "1.2s" }}>
               <circle cx="24" cy="24" r={radius} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="2" />
               <circle cx="24" cy="24" r={radius} fill="none" stroke="rgba(255,255,255,0.4)"
                 strokeWidth="2" strokeLinecap="round"
@@ -1747,10 +1748,7 @@ export function VideoPlayer({
             "rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center",
             isFullscreen ? "size-20" : "size-10",
           )}>
-            <div className={cn(
-              "rounded-full border-2 border-white/20 border-t-white/60 animate-spin",
-              isFullscreen ? "size-10" : "size-5",
-            )} />
+            <Spinner decorative className={cn("text-white/70", isFullscreen ? "size-10" : "size-5")} />
           </div>
         </div>
       )}
@@ -2043,10 +2041,7 @@ export function VideoPlayer({
               className={cn("flex items-center justify-center text-white/90 hover:text-white transition-colors", btnSize)}
             >
               {buffering ? (
-                <div className={cn(
-                  "rounded-full border-2 border-white/20 border-t-white/70 animate-spin",
-                  isFullscreen ? "size-7" : "size-4",
-                )} />
+                <Spinner decorative className={cn("text-white/70", isFullscreen ? "size-7" : "size-4")} />
               ) : (
                 <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} size={iconMd} />
               )}

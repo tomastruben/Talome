@@ -195,11 +195,13 @@ export function ClaudeTerminal({
   const statusDotClass = connectionStatus === "disconnected"
     ? "bg-status-critical"
     : connectionStatus === "reconnecting"
-      ? "bg-status-warning animate-pulse"
-      : "bg-status-healthy animate-pulse";
+      ? "bg-status-warning motion-safe:animate-pulse"
+      : "bg-status-healthy motion-safe:animate-pulse";
 
   return (
-    <div className="flex flex-col h-full">
+    // `dark`: the terminal (header included) stays dark in both themes, so
+    // the status and text tokens inside use the dark values.
+    <div className="dark flex flex-col h-full">
       {/* Window header */}
       <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-2.5 border-b border-white/[0.06] bg-[#161b22]">
         {/* Left: status + title */}
