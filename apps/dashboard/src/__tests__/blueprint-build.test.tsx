@@ -12,7 +12,7 @@ describe("blueprint build handoff", () => {
   it("prepares privately, preserves the blueprint on execution refusal, and retries the same workspace", async () => {
     const fetch = vi.fn().mockResolvedValueOnce(json(draft)).mockResolvedValueOnce(json({ error: "Claude CLI is unavailable" }, 503)).mockResolvedValueOnce(json(session));
     vi.stubGlobal("fetch", fetch); const onSession = vi.fn();
-    const { result } = renderHook(() => useBlueprintBuild(blueprint, false, onSession));
+    const { result } = renderHook(() => useBlueprintBuild(blueprint, onSession));
     await act(() => result.current.build());
     expect(result.current.error).toBe("Claude CLI is unavailable");
     expect(result.current.building).toBe(false); expect(onSession).not.toHaveBeenCalled();
@@ -24,13 +24,13 @@ describe("blueprint build handoff", () => {
   });
   it("surfaces preparation failure without trying execution or any assistant request", async () => {
     const fetch = vi.fn().mockResolvedValue(json({ error: "Blueprint needs research" }, 422));vi.stubGlobal("fetch", fetch);
-    const { result } = renderHook(() => useBlueprintBuild(blueprint, false, vi.fn()));
+    const { result } = renderHook(() => useBlueprintBuild(blueprint, vi.fn()));
     await act(() => result.current.build());
     expect(result.current.error).toBe("Blueprint needs research");expect(fetch).toHaveBeenCalledTimes(1);
   });
   it("rejects a missing workspace and prepares anew after the blueprint changes", async () => {
     const fetch = vi.fn().mockResolvedValueOnce(json({ ok: true })).mockResolvedValueOnce(json(draft)).mockResolvedValueOnce(json(session));vi.stubGlobal("fetch", fetch);
-    const { result, rerender } = renderHook(({ current }) => useBlueprintBuild(current, true, vi.fn()), { initialProps: { current: blueprint } });
+    const { result, rerender } = renderHook(({ current }) => useBlueprintBuild(current, vi.fn()), { initialProps: { current: blueprint } });
     await act(() => result.current.build());expect(result.current.error).toMatch(/workspace/);
     rerender({ current: { identity: { name: "Updated Studio" } } });expect(result.current.error).toBeNull();
     await act(() => result.current.build());expect(JSON.parse(fetch.mock.calls[1][1].body).preBuiltBlueprint.identity.name).toBe("Updated Studio");
@@ -48,7 +48,7 @@ describe("blueprint build conversation lifecycle", () => {
     const pending = deferred<Response>();
     const fetch = vi.fn().mockReturnValueOnce(pending.promise);
     vi.stubGlobal("fetch", fetch); const onSession = vi.fn();
-    const { result, rerender } = renderHook(({ conversationId }) => useBlueprintBuild(blueprint, false, onSession, conversationId), { initialProps: { conversationId: "first" } });
+    const { result, rerender } = renderHook(({ conversationId }) => useBlueprintBuild(blueprint, onSession, conversationId), { initialProps: { conversationId: "first" } });
     let build!: Promise<void>;
     act(() => { build = result.current.build(); });
     rerender({ conversationId: "second" });
@@ -64,7 +64,7 @@ describe("blueprint build conversation lifecycle", () => {
     const fetch = vi.fn().mockResolvedValueOnce(json(draft)).mockReturnValueOnce(pending.promise)
       .mockResolvedValueOnce(json(draft)).mockResolvedValueOnce(json(session));
     vi.stubGlobal("fetch", fetch); const onSession = vi.fn();
-    const { result, rerender } = renderHook(({ conversationId }) => useBlueprintBuild(blueprint, false, onSession, conversationId), { initialProps: { conversationId: "first" } });
+    const { result, rerender } = renderHook(({ conversationId }) => useBlueprintBuild(blueprint, onSession, conversationId), { initialProps: { conversationId: "first" } });
     let build!: Promise<void>;
     await act(async () => { build = result.current.build(); });
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -80,7 +80,7 @@ describe("blueprint build conversation lifecycle", () => {
   it("discards preparation after unmount without starting a server execution", async () => {
     const pending = deferred<Response>(); const fetch = vi.fn().mockReturnValue(pending.promise);
     vi.stubGlobal("fetch", fetch); const onSession = vi.fn();
-    const { result, unmount } = renderHook(() => useBlueprintBuild(blueprint, false, onSession));
+    const { result, unmount } = renderHook(() => useBlueprintBuild(blueprint, onSession));
     let build!: Promise<void>;act(() => { build = result.current.build(); });unmount();
     await act(async () => { pending.resolve(json(draft)); await build; });
     expect(fetch).toHaveBeenCalledTimes(1); expect(onSession).not.toHaveBeenCalled();

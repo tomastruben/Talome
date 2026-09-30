@@ -239,6 +239,9 @@ const PROTECTED_SETTING_KEYS = new Set([
   "evolution_auto_execute",
   "evolution_auto_execute_enabled_at",
   "evolution_execution_mode",
+  // Whether Claude Code terminal launches skip their permission prompts (ai/autonomy.ts).
+  "creator_skip_permission_prompts",
+  "evolution_skip_permission_prompts",
   "telegram_bot_token",
   "discord_bot_token",
   "proxy_auth_enabled",

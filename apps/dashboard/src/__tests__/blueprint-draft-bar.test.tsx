@@ -84,8 +84,6 @@ describe("blueprint expanded detail", () => {
         blueprint={completeBlueprint()}
         onBuild={vi.fn()}
         onDismiss={vi.fn()}
-        auto={false}
-        onAutoChange={vi.fn()}
       />,
     );
 

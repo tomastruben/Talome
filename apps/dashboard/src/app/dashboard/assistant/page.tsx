@@ -49,7 +49,8 @@ import type { BlueprintState } from "@/components/creator/blueprint-draft-bar";
 import { BlueprintDraftBar } from "@/components/creator/blueprint-draft-bar";
 import { ClaudeTerminal } from "@/components/terminal/claude-terminal";
 import { Switch } from "@/components/ui/switch";
-import { useConfirmAction } from "@/hooks/use-confirm-action";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useUndoableDelete } from "@/components/chat/use-undoable-delete";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import useSWR from "swr";
@@ -198,7 +199,7 @@ function AssistantHeader({
 }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
-  const { conversations, activeId, autoMode, setAutoMode } = useAssistant();
+  const { conversations, activeId, chatAutoApprove, setChatAutoApprove } = useAssistant();
 
   const title = activeId ? conversations.find((c) => c.id === activeId)?.title : undefined;
 
@@ -243,23 +244,26 @@ function AssistantHeader({
       </span>
 
       <div className="ml-auto shrink-0 flex items-center gap-2">
-        {/* Auto mode toggle */}
+        {/* Chat auto-approve: this tab's session only */}
         <Tooltip>
           <TooltipTrigger asChild>
             <label className="flex items-center gap-1.5 cursor-pointer select-none">
-              <span className={`text-xs font-medium ${autoMode ? "text-status-warning" : "text-muted-foreground"}`}>
-                Auto
+              <span className={`text-xs font-medium ${chatAutoApprove ? "text-status-warning" : "text-muted-foreground"}`}>
+                Auto-approve
               </span>
               <Switch
                 size="sm"
-                checked={autoMode}
-                onCheckedChange={setAutoMode}
-                aria-label="Auto mode"
+                checked={chatAutoApprove}
+                onCheckedChange={setChatAutoApprove}
+                aria-label="Auto-approve tool requests in this chat session"
+                className="data-[state=checked]:bg-status-warning"
               />
             </label>
           </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-xs">
-            {autoMode ? "Skip permission prompts" : "Require permission prompts"}
+          <TooltipContent side="bottom" className="max-w-64 text-xs">
+            {chatAutoApprove
+              ? "On until you close this tab. Tool requests in chat are approved without asking. Cautious-mode approvals and confirmations still ask."
+              : "Off. The Assistant asks before running tools that need your OK."}
           </TooltipContent>
         </Tooltip>
 
@@ -351,11 +355,13 @@ export default function AssistantPage() {
     messages, status, error, clearError, stop,
     conversations, activeId, setActiveId, deleteConversation,
     handleSubmit, addToolApprovalResponse, regenerate,
-    model, setModel, modelOptions, activeProvider, modelReady, startNew, autoMode, setAutoMode,
+    model, setModel, modelOptions, activeProvider, modelReady, startNew, chatAutoApprove, setChatAutoApprove,
   } = useAssistant();
   const embeddedFrame = useIsEmbeddedFrame();
   const keyboard = useKeyboardMode();
-  const { confirmAction, ConfirmDialog } = useConfirmAction(autoMode);
+  // Confirmations never depend on chat auto-approve.
+  const confirm = useConfirm();
+  const { pending: pendingDeletes, request: requestDelete } = useUndoableDelete(deleteConversation);
   const suggestions = useSuggestions();
 
   const [blueprint, setBlueprint] = useAtom(blueprintAtom);
@@ -363,12 +369,6 @@ export default function AssistantPage() {
   const setPageBack = useSetAtom(pageBackAtom);
   const setPageTitle = useSetAtom(pageTitleAtom);
   const setHideShellHeader = useSetAtom(hideShellHeaderAtom);
-  const [autoExec, setAutoExec] = useState(false);
-
-  // Sync auto mode from localStorage after hydration to avoid SSR mismatch
-  useEffect(() => {
-    setAutoExec(localStorage.getItem("talome-auto-mode") === "true");
-  }, []);
   const [buildSession, setBuildSession] = useState<{
     sessionName: string;
     command: string;
@@ -421,17 +421,18 @@ export default function AssistantPage() {
   const handleNew = useCallback(async () => {
     // If streaming, confirm before discarding the active conversation
     if (status === "streaming" || status === "submitted") {
-      const ok = await confirmAction({
-        title: "Start new conversation?",
-        description: "The current response will be stopped. Your conversation history is saved.",
-        confirmLabel: "New conversation",
-        variant: "default",
+      const { confirmed } = await confirm({
+        tier: "soft",
+        title: "Start a new conversation?",
+        consequence: "The Assistant stops the response it's writing now.",
+        recovery: "This conversation is saved, so you can open it again from the list.",
+        confirmLabel: "Start new conversation",
       });
-      if (!ok) return;
+      if (!confirmed) return;
     }
     startNew();
     setDismissed(false);
-  }, [startNew, status, confirmAction]);
+  }, [startNew, status, confirm]);
 
   useEffect(() => {
     if (!embeddedFrame) return;
@@ -443,11 +444,11 @@ export default function AssistantPage() {
     else setPageBack(null);
     setDesktopAppActions([
       {
-        id: "auto-mode",
-        label: "Auto",
+        id: "chat-auto-approve",
+        label: "Auto-approve",
         kind: "toggle",
-        active: autoMode,
-        onSelect: () => setAutoMode(!autoMode),
+        active: chatAutoApprove,
+        onSelect: () => setChatAutoApprove(!chatAutoApprove),
       },
       ...(showingChat ? [{
         id: "new-conversation",
@@ -464,11 +465,11 @@ export default function AssistantPage() {
     };
   }, [
     activeConversationTitle,
-    autoMode,
+    chatAutoApprove,
     embeddedFrame,
     handleBack,
     handleNew,
-    setAutoMode,
+    setChatAutoApprove,
     setDesktopAppActions,
     setPageBack,
     setPageTitle,
@@ -584,7 +585,7 @@ export default function AssistantPage() {
     [setBlueprint],
   );
 
-  const { build: startBlueprintBuild, building, error: buildError } = useBlueprintBuild(blueprint, autoExec, setBuildSession, activeId);
+  const { build: startBlueprintBuild, building, error: buildError } = useBlueprintBuild(blueprint, setBuildSession, activeId);
   const handleBlueprintBuild = useCallback(async () => {
     if (
       !blueprint.identity?.name ||
@@ -740,52 +741,43 @@ export default function AssistantPage() {
 
                 return (
                   <div key={group} className="pb-1.5">
-                    <div className="px-1 pb-1.5 pt-3 first:pt-0 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    <div className="px-1 pb-1.5 pt-3 first:pt-0 text-xs font-medium text-muted-foreground">
                       {group}
                     </div>
-                    {visibleConvs.map((conv) => (
-                      <button
+                    {visibleConvs.filter((conv) => !pendingDeletes.has(conv.id)).map((conv) => (
+                      <div
                         key={conv.id}
-                        onClick={() => { setActiveId(conv.id); setDismissed(false); }}
-                        className="flex items-center w-full rounded-lg px-3 py-3 sm:py-2.5 text-left text-sm text-muted-foreground transition-colors duration-100 group/item active:bg-accent/40 hover:text-foreground hover:bg-accent/30"
+                        className="group/item flex items-center rounded-lg text-sm text-muted-foreground transition-colors duration-150 hover:bg-accent/30 hover:text-foreground focus-within:bg-accent/30"
                       >
-                        <span className="flex-1 truncate">{conv.title}</span>
-                        {conv.platform === "telegram" && (
-                          <span title="Telegram" className="shrink-0 mr-1.5 opacity-40 text-xs font-medium tracking-wide">TG</span>
-                        )}
-                        {conv.platform === "discord" && (
-                          <span title="Discord" className="shrink-0 mr-1.5 opacity-40 text-xs font-medium tracking-wide">DC</span>
-                        )}
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            const ok = await confirmAction({
-                              title: "Delete conversation?",
-                              description: "This conversation and all its messages will be permanently deleted.",
-                              confirmLabel: "Delete",
-                              variant: "destructive",
-                            });
-                            if (ok) deleteConversation(conv.id);
-                          }}
-                          onKeyDown={async (e) => {
-                            if (e.key === "Enter") {
-                              e.stopPropagation();
-                              const ok = await confirmAction({
-                                title: "Delete conversation?",
-                                description: "This conversation and all its messages will be permanently deleted.",
-                                confirmLabel: "Delete",
-                                variant: "destructive",
-                              });
-                              if (ok) deleteConversation(conv.id);
-                            }
-                          }}
-                          className="opacity-40 sm:opacity-0 sm:group-hover/item:opacity-40 hover:!opacity-100 shrink-0 text-muted-foreground hover:text-destructive transition-opacity duration-100 ml-2"
+                        <button
+                          type="button"
+                          onClick={() => { setActiveId(conv.id); setDismissed(false); }}
+                          className="flex min-w-0 flex-1 items-center rounded-lg px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:bg-accent/40 sm:py-2.5"
                         >
-                          <HugeiconsIcon icon={Delete01Icon} size={12} />
-                        </span>
-                      </button>
+                          <span className="flex-1 truncate">{conv.title}</span>
+                          {conv.platform === "telegram" && (
+                            <span className="ml-2 shrink-0 text-xs text-muted-foreground">Telegram</span>
+                          )}
+                          {conv.platform === "discord" && (
+                            <span className="ml-2 shrink-0 text-xs text-muted-foreground">Discord</span>
+                          )}
+                        </button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Delete "${conv.title}"`}
+                              onClick={() => requestDelete(conv.id, conv.title || "Untitled conversation")}
+                              className="mr-1 shrink-0 text-muted-foreground hover:text-status-critical sm:opacity-0 sm:group-hover/item:opacity-100 sm:focus-visible:opacity-100 pointer-coarse:size-11 pointer-coarse:opacity-100"
+                            >
+                              <HugeiconsIcon icon={Delete01Icon} size={14} strokeWidth={1.5} aria-hidden="true" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left" className="text-xs">Delete</TooltipContent>
+                        </Tooltip>
+                      </div>
                     ))}
                     {convs.length > MAX_VISIBLE_HISTORY_PER_GROUP && (
                       <button
@@ -845,7 +837,6 @@ export default function AssistantPage() {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden overscroll-none">
-      <ConfirmDialog />
       {!embeddedFrame && (
         <AssistantHeader showingChat={showingChat} onBack={handleBack} onNew={handleNew} />
       )}
@@ -886,11 +877,6 @@ export default function AssistantPage() {
                 onBuild={handleBlueprintBuild}
                 building={building}
                 onDismiss={handleDismissBlueprint}
-                auto={autoExec}
-                onAutoChange={(v) => {
-                  setAutoExec(v);
-                  localStorage.setItem("talome-auto-mode", String(v));
-                }}
               />
             </div>
           )}

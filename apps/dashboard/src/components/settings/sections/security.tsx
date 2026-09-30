@@ -11,52 +11,47 @@ import {
   Activity01Icon,
   Plug02Icon,
   ArrowRight01Icon,
+  AlertCircleIcon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
-import { SettingsGroup, SettingsRow, SaveRow } from "@/components/settings/settings-primitives";
+import { SettingsGroup, SettingsRow, SaveRow, settingsRequest } from "@/components/settings/settings-primitives";
+import { ClaudeCodePromptsGroup, useSecurityProfile, type SecurityMode } from "@/components/settings/autonomy";
+import { RadioCardGroup, type RadioCardOption } from "@/components/ui/radio-card-group";
+import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CORE_URL } from "@/lib/constants";
-import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { usePendingApprovals } from "@/components/trust/api";
 
-type SecurityMode = "cautious" | "permissive" | "locked";
+const MODE_RANK: Record<SecurityMode, number> = { locked: 0, cautious: 1, permissive: 2 };
 
-const MODES: { value: SecurityMode; label: string; description: string; icon: IconSvgElement }[] = [
+const MODES: RadioCardOption<SecurityMode>[] = [
   {
     value: "permissive",
-    label: "Permissive",
-    description:
-      "AI has full access. Shell commands use a blocklist. Best for advanced users.",
+    title: "Permissive",
+    description: "Agents can change anything without asking. Shell commands are checked against a blocklist only.",
     icon: SquareUnlock02Icon,
   },
   {
     value: "cautious",
-    label: "Cautious",
-    description:
-      "AI can read freely. Destructive actions wait for your approval. Shell commands restricted to safe defaults.",
+    title: "Cautious",
+    description: "Agents read freely and make everyday changes. Destructive actions wait for your approval, and the shell only runs the commands listed below.",
     icon: SecurityCheckIcon,
+    badge: "Recommended",
   },
   {
     value: "locked",
-    label: "Locked",
-    description:
-      "AI can only read. No modifications, no shell, no container exec.",
+    title: "Locked",
+    description: "Agents can only look. No changes, no shell, no commands inside containers.",
     icon: LockedIcon,
   },
 ];
 
-const SHELL_ALLOWLIST = [
-  "ls", "cat", "head", "tail", "df", "du", "free", "uptime", "whoami",
-  "date", "uname", "pwd", "wc", "sort", "grep", "awk", "sed", "stat",
-  "file", "which", "top", "ps", "env", "echo", "test", "id", "hostname",
-  "mkdir", "touch", "cp", "mv", "tar", "gzip", "gunzip", "zip", "unzip",
-  "ping", "curl", "dig", "nslookup", "ss", "ifconfig", "ip", "docker",
-  "find", "locate", "rg",
-];
+const MODE_LABEL: Record<SecurityMode, string> = { permissive: "Permissive", cautious: "Cautious", locked: "Locked" };
 
 const TRUST_LINKS: { href: string; label: string; hint: string; icon: IconSvgElement; badge?: "approvals" }[] = [
   {
@@ -68,13 +63,13 @@ const TRUST_LINKS: { href: string; label: string; hint: string; icon: IconSvgEle
   },
   {
     href: "/dashboard/settings/mcp",
-    label: "AI Agents",
-    hint: "Per-client tokens and what each one may do",
+    label: "AI agents",
+    hint: "Connected agents and what each one may do",
     icon: Plug02Icon,
   },
   {
     href: "/dashboard/settings/audit",
-    label: "Audit Log",
+    label: "Audit log",
     hint: "Who did what, from where, and how it went",
     icon: Activity01Icon,
   },
@@ -85,8 +80,8 @@ function TrustLinks() {
   return (
     <SettingsGroup>
       {TRUST_LINKS.map((link) => (
-        <Link key={link.href} href={link.href} className="block">
-          <SettingsRow className="hover:bg-muted/30 transition-colors">
+        <Link key={link.href} href={link.href} className="block outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+          <SettingsRow className="hover:bg-muted/30 transition-colors duration-150">
             <div className="size-8 rounded-lg bg-muted/50 flex items-center justify-center shrink-0">
               <HugeiconsIcon icon={link.icon} size={16} className="text-muted-foreground" />
             </div>
@@ -95,9 +90,9 @@ function TrustLinks() {
               <p className="text-xs text-muted-foreground mt-0.5">{link.hint}</p>
             </div>
             {link.badge === "approvals" && count > 0 && (
-              <Badge className="bg-status-warning text-background tabular-nums">{count}</Badge>
+              <Badge variant="count" aria-label={`${count} waiting`}>{count}</Badge>
             )}
-            <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="text-dim-foreground shrink-0" />
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="text-muted-foreground shrink-0" aria-hidden="true" />
           </SettingsRow>
         </Link>
       ))}
@@ -113,19 +108,32 @@ const MIN_BACKUP_PASSWORD_LENGTH = 8;
  */
 function BackupTerminalPassword() {
   const [hasPassword, setHasPassword] = useState<boolean | null>(null);
+  const [statusError, setStatusError] = useState(false);
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    fetch(`${CORE_URL}/api/terminal/backup-auth/status`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { hasPassword?: boolean } | null) => setHasPassword(data?.hasPassword ?? null))
-      .catch(() => setHasPassword(null));
-  }, []);
+    let cancelled = false;
+    fetch(`${CORE_URL}/api/terminal/backup-auth/status`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data: { hasPassword?: boolean }) => {
+        if (cancelled) return;
+        if (typeof data?.hasPassword !== "boolean") throw new Error("bad response");
+        setHasPassword(data.hasPassword);
+        setStatusError(false);
+      })
+      .catch(() => {
+        if (!cancelled) setStatusError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
 
   const save = async () => {
     if (password.length < MIN_BACKUP_PASSWORD_LENGTH) {
-      toast.error(`Use at least ${MIN_BACKUP_PASSWORD_LENGTH} characters`);
+      toast.error(`Use at least ${MIN_BACKUP_PASSWORD_LENGTH} characters.`);
       return;
     }
     setSaving(true);
@@ -133,18 +141,19 @@ function BackupTerminalPassword() {
       const res = await fetch(`${CORE_URL}/api/terminal/backup-auth/setup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ password }),
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (res.ok && data.ok) {
         setHasPassword(true);
         setPassword("");
-        toast("Backup terminal password saved");
+        toast.success("Saved the backup terminal password");
       } else {
-        toast.error(data.error || "Failed to save");
+        toast.error(data.error || "Couldn't save the password. Try again.");
       }
     } catch {
-      toast.error("Terminal daemon unreachable");
+      toast.error("Couldn't reach the terminal daemon. Check that it's running, then try again.");
     } finally {
       setSaving(false);
     }
@@ -155,8 +164,8 @@ function BackupTerminalPassword() {
       <SettingsRow className="py-2.5">
         <div className="flex items-center gap-2">
           <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} className="text-muted-foreground" />
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Backup Terminal
+          <p className="text-sm font-medium text-foreground">
+            Backup terminal
           </p>
         </div>
       </SettingsRow>
@@ -167,8 +176,17 @@ function BackupTerminalPassword() {
           </Label>
           <p className="text-xs text-muted-foreground mt-0.5">
             Logs in to the terminal daemon directly when the dashboard is down.
-            {hasPassword === false && " Not set yet — the backup terminal stays closed until you set one."}
+            {hasPassword === false && " Not set yet, so the backup terminal stays closed until you set one."}
           </p>
+          {statusError && (
+            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+              <HugeiconsIcon icon={AlertCircleIcon} size={12} strokeWidth={1.5} className="text-status-critical shrink-0" aria-hidden="true" />
+              Couldn&apos;t check whether a password is set.
+              <button type="button" className="rounded-sm underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setAttempt((n) => n + 1)}>
+                Retry
+              </button>
+            </p>
+          )}
         </div>
         <Input
           id="backup-terminal-password"
@@ -186,134 +204,100 @@ function BackupTerminalPassword() {
 }
 
 export function SecuritySection() {
-  const [mode, setMode] = useState<SecurityMode>("cautious");
-  const [savedMode, setSavedMode] = useState<SecurityMode>("cautious");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const { data: profile, error, isLoading, mutate } = useSecurityProfile(true);
+  const confirm = useConfirm();
+  const [saving, setSaving] = useState<SecurityMode | null>(null);
 
-  useEffect(() => {
-    fetch(`${CORE_URL}/api/settings`)
-      .then((r) => r.json())
-      .then((data: Record<string, string>) => {
-        const stored = data.security_mode as SecurityMode | undefined;
-        if (stored && MODES.some((m) => m.value === stored)) {
-          setMode(stored);
-          setSavedMode(stored);
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  const saveMode = (next: SecurityMode) =>
+    settingsRequest(`${CORE_URL}/api/settings`, { method: "POST", body: { security_mode: next } }, "Couldn't change the security mode. Try again.");
 
-  const dirty = mode !== savedMode;
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch(`${CORE_URL}/api/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ security_mode: mode }),
+  const choose = async (next: SecurityMode) => {
+    const current = profile?.mode;
+    if (!current || next === current || saving) return;
+    if (MODE_RANK[next] > MODE_RANK[current]) {
+      // Widening what agents may do always asks first.
+      const { confirmed } = await confirm({
+        tier: "destructive",
+        title: `Switch to ${MODE_LABEL[next]} mode?`,
+        consequence: next === "permissive"
+          ? "Agents could uninstall apps, delete files and run shell commands without asking you first."
+          : "Agents can make everyday changes. Destructive actions still wait for your approval.",
+        recovery: "You can switch back at any time. Past actions stay in the audit log.",
+        confirmLabel: `Switch to ${MODE_LABEL[next]}`,
+        busyLabel: "Switching mode…",
+        run: () => saveMode(next),
+        receipt: `Security mode is now ${MODE_LABEL[next]}`,
       });
-      const data = await res.json();
-      if (data.ok) {
-        setSavedMode(mode);
-        toast("Security mode updated");
-      } else {
-        toast.error(data.error || "Failed to save");
-      }
-    } catch {
-      toast.error("Failed to save");
+      if (confirmed) await mutate();
+      return;
+    }
+    setSaving(next);
+    try {
+      await saveMode(next);
+      await mutate();
+      toast.success(`Security mode is now ${MODE_LABEL[next]}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't change the security mode. Try again.");
     } finally {
-      setSaving(false);
+      setSaving(null);
     }
   };
 
   return (
     <div className="grid gap-6">
       <p className="text-sm text-muted-foreground leading-relaxed">
-        Control what the AI assistant is allowed to do on your server.
+        Choose what agents, including the Assistant, may do on your server without asking you.
       </p>
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Security Mode
+          <p id="security-mode-label" className="text-sm font-medium text-foreground">
+            Security mode
           </p>
         </SettingsRow>
 
-        {loading ? (
+        {error && !profile ? (
           <SettingsRow>
-            <div className="w-full grid gap-3">
+            <HugeiconsIcon icon={AlertCircleIcon} size={14} strokeWidth={1.5} className="shrink-0 text-status-critical" aria-hidden="true" />
+            <div className="flex-1 min-w-0" role="alert">
+              <p className="text-sm font-medium">Couldn&apos;t load the security mode</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {error instanceof Error ? error.message : "Check that the Talome server is reachable."} Agents keep using the mode that is saved.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void mutate()}>
+              Retry
+            </Button>
+          </SettingsRow>
+        ) : isLoading || !profile ? (
+          <SettingsRow>
+            <div className="w-full grid gap-2" aria-hidden="true">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="flex items-start gap-3 rounded-lg bg-muted/40 px-4 py-3">
-                  <Skeleton className="size-8 rounded-lg shrink-0" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-24" />
-                    <Skeleton className="h-3 w-full max-w-xs" />
-                  </div>
-                </div>
+                <Skeleton key={i} className="h-20 w-full rounded-xl" />
               ))}
             </div>
           </SettingsRow>
         ) : (
-          <>
-            <SettingsRow>
-              <div className="w-full grid gap-3">
-                {MODES.map(({ value, label, description, icon }) => {
-                  const active = mode === value;
-                  return (
-                    <button
-                      key={value}
-                      onClick={() => setMode(value)}
-                      className={cn(
-                        "flex items-start gap-3 rounded-lg px-4 py-3 text-left transition-colors",
-                        active
-                          ? "bg-foreground/10 ring-1 ring-foreground/20"
-                          : "bg-muted/40 hover:bg-muted/60",
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          "size-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5",
-                          active
-                            ? "bg-foreground/10 text-foreground"
-                            : "bg-muted/50 text-muted-foreground",
-                        )}
-                      >
-                        <HugeiconsIcon icon={icon} size={16} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p
-                          className={cn(
-                            "text-sm font-medium",
-                            active ? "text-foreground" : "text-muted-foreground",
-                          )}
-                        >
-                          {label}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {description}
-                        </p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </SettingsRow>
-
-            {dirty && <SaveRow onSave={() => void save()} saving={saving} />}
-          </>
+          <SettingsRow>
+            <RadioCardGroup
+              className="w-full"
+              aria-labelledby="security-mode-label"
+              value={saving ?? profile.mode}
+              disabled={saving !== null}
+              onValueChange={(next) => void choose(next)}
+              options={MODES}
+            />
+          </SettingsRow>
         )}
       </SettingsGroup>
 
-      {mode === "cautious" && (
+      {profile?.mode === "cautious" && (
         <SettingsGroup>
           <SettingsRow className="py-2.5">
             <div className="flex items-center gap-2">
-              <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} className="text-muted-foreground" />
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Shell Allowlist
+              <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} className="text-muted-foreground" aria-hidden="true" />
+              <p className="text-sm font-medium text-foreground">
+                Shell allowlist
               </p>
             </div>
           </SettingsRow>
@@ -321,30 +305,31 @@ export function SecuritySection() {
           <SettingsRow>
             <div className="w-full">
               <p className="text-xs text-muted-foreground mb-3">
-                In cautious mode, only these commands are permitted in the shell tool.
+                In Cautious mode, the shell tool runs only these commands. Anything else is refused.
               </p>
-              <div className="flex flex-wrap gap-1.5">
-                {SHELL_ALLOWLIST.map((cmd) => (
-                  <span
+              <ul className="flex flex-wrap gap-1.5" aria-label="Allowed shell commands">
+                {profile.shellAllowlist.map((cmd) => (
+                  <li
                     key={cmd}
-                    className="inline-block rounded-md bg-muted/50 px-2 py-1 text-xs font-mono text-muted-foreground"
+                    className="inline-block rounded-md bg-muted px-2 py-1 text-xs font-mono text-muted-foreground"
                   >
                     {cmd}
-                  </span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
           </SettingsRow>
         </SettingsGroup>
       )}
+
+      <ClaudeCodePromptsGroup />
 
       <TrustLinks />
 
       <BackupTerminalPassword />
 
       <p className="text-xs text-muted-foreground px-1">
-        Security mode changes take effect immediately for new AI interactions.
-        Active conversations will use the updated mode on their next tool call.
+        A new mode applies from the next tool call, including in conversations that are already open.
       </p>
     </div>
   );

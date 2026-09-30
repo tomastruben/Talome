@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDefaultAppSpec } from "../app-specs/schema.js";
@@ -7,6 +7,15 @@ import { validateGeneratedApp } from "../creator/completion-validation.js";
 import { completeWorkspace } from "../creator/workspace-executor.js";
 import { AppBlueprintSchema } from "../creator/contracts.js";
 import { validateNativeAppInBrowser } from "../creator/browser-validation.js";
+
+// Workspaces must live in <home>/.talome/generated-apps/<appId>: point home at a temp dir.
+const { fakeHome } = vi.hoisted(() => ({
+  fakeHome: `${(process.env.TMPDIR ?? "/tmp").replace(/\/$/, "")}/talome-creator-home-${process.pid}-${Date.now()}`,
+}));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => fakeHome };
+});
 
 const { publish, runCommand, cliReadiness } = vi.hoisted(() => ({
   cliReadiness: vi.fn(async () => ({ ready: true })),
@@ -41,7 +50,9 @@ import { generateCreatorDraft, publishCreatorDraft } from "../creator/orchestrat
 
 const roots: string[] = [];
 async function workspace() {
-  const root = await mkdtemp(join(tmpdir(), "talome-completion-"));
+  const root = join(fakeHome, ".talome", "generated-apps", "test-app");
+  await rm(root, { recursive: true, force: true });
+  await mkdir(root, { recursive: true });
   roots.push(root);
   await mkdir(join(root, "generated-app"));
   return root;
@@ -58,6 +69,7 @@ async function complete(root: string) {
 }
 beforeEach(() => { vi.clearAllMocks(); runCommand.mockResolvedValue(undefined); vi.mocked(generateCreatorDraft).mockResolvedValue({ blueprint: { scaffold: { enabled: false } } } as never); });
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
+afterAll(async () => { await rm(fakeHome, { recursive: true, force: true }); });
 
 describe("generated app completion", () => {
   it("defers saveImmediately for a scaffold-enabled draft instead of publishing a prepared shell", async () => {

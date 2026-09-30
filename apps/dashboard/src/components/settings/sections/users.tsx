@@ -220,7 +220,7 @@ function UserCard({
     const { confirmed } = await confirm({
       tier: "destructive",
       title: `Delete ${u.username}'s account?`,
-      consequence: `${u.username} is signed out and can't sign in again. Their preferences and chat history on this server are removed.`,
+      consequence: `${u.username}'s account and preferences are removed, and they can't sign in again.`,
       recovery: "This can't be undone. Apps and files they used stay on the server.",
       irreversible: true,
       confirmLabel: "Delete account",

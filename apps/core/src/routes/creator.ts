@@ -1,6 +1,7 @@
 import { homedir, tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -19,12 +20,53 @@ import { validateGeneratedApp } from "../creator/completion-validation.js";
 import { searchDesignPatterns } from "../creator/design-patterns.js";
 import { checkCreatorCliReadiness } from "../creator/cli-readiness.js";
 import { buildCreatorTerminalCommand } from "../creator/terminal-command.js";
+import { creatorSkipsPermissionPrompts } from "../ai/autonomy.js";
 import { snapshotGeneratedWorkspace } from "../creator/workspace-snapshot.js";
 import { preparePublicationContract } from "../creator/publication-contract.js";
 import { writeAuditEntry } from "../db/audit.js";
 import { captureRouteError, serverError } from "../middleware/request-logger.js";
 
 const creator = new Hono();
+
+/** Where generated app workspaces live (read at call time, so HOME can change in tests). */
+export function creatorWorkspacesRoot(): string {
+  return resolve(homedir(), ".talome", "generated-apps");
+}
+
+const APP_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,99}$/i;
+
+/**
+ * The workspace for an app is always ~/.talome/generated-apps/<appId>. A
+ * request may name it explicitly (older clients send it back), but anything
+ * else is refused: this path becomes the working directory of a Claude Code
+ * session, and the source of files that are published as an app.
+ */
+export function resolveCreatorWorkspace(
+  appId: string,
+  requested?: string,
+): { ok: true; path: string } | { ok: false; error: string } {
+  if (!APP_ID_PATTERN.test(appId) || appId.includes("..")) {
+    return { ok: false, error: "Invalid app id." };
+  }
+  const root = creatorWorkspacesRoot();
+  const expected = join(root, appId);
+  if (requested !== undefined && requested !== "" && resolve(requested) !== expected) {
+    return { ok: false, error: "The workspace must be this app's folder in ~/.talome/generated-apps." };
+  }
+  // A symlinked workspace must still land inside the workspaces root.
+  if (existsSync(expected)) {
+    try {
+      const realRoot = existsSync(root) ? realpathSync(root) : root;
+      const real = realpathSync(expected);
+      if (real !== realRoot && !real.startsWith(`${realRoot}${sep}`)) {
+        return { ok: false, error: "The app workspace points outside ~/.talome/generated-apps." };
+      }
+    } catch {
+      return { ok: false, error: "Couldn't read the app workspace." };
+    }
+  }
+  return { ok: true, path: expected };
+}
 
 creator.get("/design-patterns", (c) => c.json(searchDesignPatterns(c.req.query("intent") ?? "")));
 
@@ -81,8 +123,9 @@ creator.post("/create/execute", async (c) => {
     workspaceRoot: z.string().optional(),
     taskPrompt: z.string().min(1),
     appId: z.string().min(1),
-    auto: z.boolean().default(false),
-    yolo: z.boolean().default(false), // legacy alias
+    // Narrow-only: the owner's server setting decides whether prompts are skipped.
+    auto: z.boolean().optional(),
+    yolo: z.boolean().optional(), // legacy alias
   });
 
   let body: unknown;
@@ -100,9 +143,11 @@ creator.post("/create/execute", async (c) => {
   const readiness = await checkCreatorCliReadiness();
   if (!readiness.ready) return c.json({ error: readiness.error, stage: "scaffold", generated: false }, 503);
 
-  const workspaceRoot = parsed.data.workspaceRoot || join(homedir(), ".talome", "generated-apps", parsed.data.appId);
+  const workspace = resolveCreatorWorkspace(parsed.data.appId, parsed.data.workspaceRoot);
+  if (!workspace.ok) return c.json({ error: workspace.error }, 400);
+  const workspaceRoot = workspace.path;
   const { taskPrompt, appId } = parsed.data;
-  const autoMode = parsed.data.auto || parsed.data.yolo;
+  const autoMode = creatorSkipsPermissionPrompts(parsed.data.auto ?? parsed.data.yolo);
   const sessionName = `creator-${appId}`;
 
   // Create terminal session via daemon
@@ -152,7 +197,10 @@ creator.post("/create/complete", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const { appId, workspaceRoot } = parsed.data;
+  const workspace = resolveCreatorWorkspace(parsed.data.appId, parsed.data.workspaceRoot);
+  if (!workspace.ok) return c.json({ error: workspace.error }, 400);
+  const { appId } = parsed.data;
+  const workspaceRoot = workspace.path;
   const scaffoldPath = join(workspaceRoot, "generated-app");
   const startTime = Date.now();
 

@@ -10,6 +10,11 @@ import { listContainers, execInContainer } from "../docker/client.js";
 import { getUsageSummary, getTodayCostUsd, getDailyCapUsd, getBudgetZone } from "../agent-loop/budget.js";
 import { isClaudeCodeAvailable, getClaudeCodeVersion } from "../ai/claude-process.js";
 import { serverError } from "../middleware/request-logger.js";
+import { getSecurityMode } from "../ai/execution.js";
+import { SHELL_ALLOWLIST } from "../ai/tools/shell-tool.js";
+import { APPROVAL_TTL_MS, UNATTENDED_APPROVAL_TTL_MS } from "../approval/approvals.js";
+import { CREATOR_SKIP_PROMPTS_KEY, EVOLUTION_SKIP_PROMPTS_KEY } from "../ai/autonomy.js";
+import { getSetting } from "../utils/settings.js";
 
 const settings = new Hono();
 
@@ -50,8 +55,10 @@ settings.get("/", (c) => {
       result[row.key] = isSecretSettingKey(row.key) ? "(configured)" : row.value;
     }
     return c.json(result);
-  } catch {
-    return c.json({});
+  } catch (err) {
+    // Never answer with an empty object: callers would render defaults
+    // (for example "Cautious") as if they were the stored settings.
+    return serverError(c, err, { message: "Couldn't read settings." });
   }
 });
 
@@ -75,6 +82,32 @@ settings.post("/", async (c) => {
     return c.json({ ok: true });
   } catch (err) {
     return serverError(c, err, { message: "Failed to update settings" });
+  }
+});
+
+/**
+ * GET /api/settings/security-profile — what the trust settings actually
+ * enforce, read from the code that enforces it: the security mode as core
+ * resolves it, the cautious-mode shell allowlist, approval lifetimes, and the
+ * Claude Code permission-prompt choices. The dashboard renders this instead of
+ * keeping its own (drifting) copies.
+ */
+settings.get("/security-profile", (c) => {
+  try {
+    return c.json({
+      mode: getSecurityMode(),
+      shellAllowlist: [...SHELL_ALLOWLIST].sort(),
+      approvalTtlMinutes: {
+        interactive: Math.round(APPROVAL_TTL_MS / 60_000),
+        unattended: Math.round(UNATTENDED_APPROVAL_TTL_MS / 60_000),
+      },
+      claudeCode: {
+        buildsSkipPrompts: getSetting(CREATOR_SKIP_PROMPTS_KEY) === "true",
+        evolutionSkipsPrompts: getSetting(EVOLUTION_SKIP_PROMPTS_KEY) === "true",
+      },
+    });
+  } catch (err) {
+    return serverError(c, err, { message: "Couldn't read the security settings." });
   }
 });
 

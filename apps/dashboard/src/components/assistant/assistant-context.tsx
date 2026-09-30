@@ -54,7 +54,8 @@ export interface AssistantContextValue {
   conversations: ConversationItem[];
   activeId: string | null;
   setActiveId: (id: string | null) => void;
-  deleteConversation: (id: string) => Promise<void>;
+  /** Deletes on the server. Resolves false (and restores the list) when it failed. */
+  deleteConversation: (id: string) => Promise<boolean>;
 
   // Chat state
   messages: UIMessage[];
@@ -82,9 +83,15 @@ export interface AssistantContextValue {
   ) => Promise<void>;
   startNew: () => void;
 
-  // Auto mode — skip confirmation dialogs for destructive actions
-  autoMode: boolean;
-  setAutoMode: (enabled: boolean) => void;
+  /**
+   * Chat auto-approve: tool requests the Assistant asks this browser to
+   * confirm are approved automatically. It lasts for this tab's session only
+   * (sessionStorage) and never skips a confirmation dialog or a server-issued
+   * approval (Cautious mode). App builds and evolution runs have their own
+   * server-side settings (Settings › Security).
+   */
+  chatAutoApprove: boolean;
+  setChatAutoApprove: (enabled: boolean) => void;
 
   // Submission state — true while a send is in progress (prevents double-sends)
   isSubmitting: boolean;
@@ -193,40 +200,43 @@ function buildModelOptions(config: AiModelsResponse): ModelOption[] {
   return allOptions;
 }
 
-// ── Auto mode (persisted in localStorage, shared with other surfaces) ────────
+// ── Chat auto-approve (this tab's session only) ─────────────────────────────
 
-const AUTO_MODE_KEY = "talome-auto-mode";
-const autoModeListeners = new Set<() => void>();
-let autoModeFallback = false;
+/**
+ * sessionStorage, not localStorage: the choice ends when the tab closes and
+ * never reaches other tabs, the terminal, builds or evolution (the old shared
+ * "talome-auto-mode" key did all of those at once).
+ */
+export const CHAT_AUTO_APPROVE_KEY = "talome-chat-auto-approve";
+const chatAutoApproveListeners = new Set<() => void>();
+let chatAutoApproveFallback = false;
 
-function readAutoMode(): boolean {
+export function readChatAutoApprove(): boolean {
   try {
-    return localStorage.getItem(AUTO_MODE_KEY) === "true";
+    return sessionStorage.getItem(CHAT_AUTO_APPROVE_KEY) === "true";
   } catch {
-    return autoModeFallback;
+    return chatAutoApproveFallback;
   }
 }
 
-function writeAutoMode(enabled: boolean): void {
-  autoModeFallback = enabled;
-  try { localStorage.setItem(AUTO_MODE_KEY, String(enabled)); } catch { /* noop */ }
-  for (const listener of autoModeListeners) listener();
+export function writeChatAutoApprove(enabled: boolean): void {
+  chatAutoApproveFallback = enabled;
+  try {
+    if (enabled) sessionStorage.setItem(CHAT_AUTO_APPROVE_KEY, "true");
+    else sessionStorage.removeItem(CHAT_AUTO_APPROVE_KEY);
+  } catch { /* noop */ }
+  for (const listener of chatAutoApproveListeners) listener();
 }
 
-function subscribeAutoMode(listener: () => void): () => void {
-  autoModeListeners.add(listener);
-  const onStorage = (event: StorageEvent) => {
-    if (event.key === AUTO_MODE_KEY) listener();
-  };
-  window.addEventListener("storage", onStorage);
+function subscribeChatAutoApprove(listener: () => void): () => void {
+  chatAutoApproveListeners.add(listener);
   return () => {
-    autoModeListeners.delete(listener);
-    window.removeEventListener("storage", onStorage);
+    chatAutoApproveListeners.delete(listener);
   };
 }
 
-// Server render and hydration see `false`; the stored value applies right after.
-const getAutoModeServerSnapshot = () => false;
+// Server render and hydration see `false`; the session value applies right after.
+const getChatAutoApproveServerSnapshot = () => false;
 
 interface ChatRequestBody {
   model: ChatModel;
@@ -272,10 +282,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     createChatRequest({ model: "", provider: "anthropic" })
   );
 
-  // Auto mode: skip confirmation dialogs
-  const autoMode = useSyncExternalStore(subscribeAutoMode, readAutoMode, getAutoModeServerSnapshot);
-  const setAutoMode = useCallback((enabled: boolean) => {
-    writeAutoMode(enabled);
+  // Chat auto-approve (this tab's session only)
+  const chatAutoApprove = useSyncExternalStore(
+    subscribeChatAutoApprove,
+    readChatAutoApprove,
+    getChatAutoApproveServerSnapshot,
+  );
+  const setChatAutoApprove = useCallback((enabled: boolean) => {
+    writeChatAutoApprove(enabled);
   }, []);
 
   // Submission mutex — prevents double-sends during network latency
@@ -420,11 +434,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  // Auto-approve tool calls when autoMode is enabled.
+  // Auto-approve client-side tool approval requests while chat auto-approve is on.
   // Scans the last assistant message for pending approvals and approves them.
   const autoApprovedRef = useRef(new Set<string>());
   useEffect(() => {
-    if (!autoMode) return;
+    if (!chatAutoApprove) return;
     const lastMsg = messages.at(-1);
     if (!lastMsg || lastMsg.role !== "assistant") return;
     for (const part of lastMsg.parts) {
@@ -444,7 +458,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         }
       }
     }
-  }, [autoMode, messages, addToolApprovalResponse]);
+  }, [chatAutoApprove, messages, addToolApprovalResponse]);
 
   // Auto-retry on network error (e.g. server restarted mid-stream while a
   // tool was running). Wait for the server to come back up, then regenerate.
@@ -574,7 +588,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   }, [stop, clearError, setActiveId, setMessages]);
 
   const deleteConversation = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       // Optimistic removal from conversation list
       mutate(
         `${CORE_URL}/api/conversations`,
@@ -592,12 +606,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         if (!res.ok) {
           // Rollback: revalidate from server
           mutate(`${CORE_URL}/api/conversations`);
-          return;
+          return false;
         }
       } catch {
         // Rollback on network error
         mutate(`${CORE_URL}/api/conversations`);
-        return;
+        return false;
       }
 
       // Revalidate to get authoritative state
@@ -607,6 +621,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         setActiveId(null);
         setMessages([]);
       }
+      return true;
     },
     [setActiveId, setMessages]
   );
@@ -637,8 +652,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       modelReady,
       handleSubmit,
       startNew,
-      autoMode,
-      setAutoMode,
+      chatAutoApprove,
+      setChatAutoApprove,
       isSubmitting,
       openPaletteInChatMode,
       registerOpenPalette,
@@ -649,7 +664,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       addToolApprovalResponse, regenerate, model, setModel,
       modelOptions, activeProvider, modelReady,
       handleSubmit, startNew,
-      autoMode, setAutoMode, isSubmitting,
+      chatAutoApprove, setChatAutoApprove, isSubmitting,
       openPaletteInChatMode, registerOpenPalette,
     ]
   );
