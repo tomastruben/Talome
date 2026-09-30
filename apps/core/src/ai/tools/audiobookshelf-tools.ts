@@ -90,9 +90,53 @@ export const audiobookshelfGetLibraryItemsTool = tool({
     page: z.number().optional().default(0).describe("Page number (0-indexed)"),
     sort: z.string().optional().default("media.metadata.title").describe("Sort field (e.g. media.metadata.title, addedAt, media.duration)"),
     desc: z.boolean().optional().default(false).describe("Sort descending"),
-    filter: z.string().optional().describe("Filter string (e.g. 'progress' for in-progress, 'finished' for completed)"),
+    filter: z.string().optional().describe("Use 'progress' for in-progress items, 'finished' for completed items, or an Audiobookshelf filter expression"),
   }),
   execute: async ({ libraryId, limit, page, sort, desc, filter }) => {
+    if (filter === "progress") {
+      const [itemsResult, userResult] = await Promise.all([
+        absFetch("/api/me/items-in-progress?limit=10000"),
+        absFetch("/api/me"),
+      ]);
+      if (!itemsResult.success) return itemsResult;
+      if (!userResult.success) return userResult;
+
+      const raw = itemsResult.data as { libraryItems?: Array<Record<string, unknown>> };
+      const user = userResult.data as { mediaProgress?: Array<Record<string, unknown>> };
+      const progressByItem = new Map(
+        (user.mediaProgress ?? []).map((progress) => [String(progress.libraryItemId), progress]),
+      );
+      const matching = (raw.libraryItems ?? []).filter((item) => item.libraryId === libraryId);
+      const start = page * limit;
+      const items = matching.slice(start, start + limit).map((item) => summarizeLibraryItem(item, progressByItem.get(String(item.id))));
+      return { success: true, items, total: matching.length, page, limit };
+    }
+
+    if (filter === "finished") {
+      const userResult = await absFetch("/api/me");
+      if (!userResult.success) return userResult;
+      const user = userResult.data as { mediaProgress?: Array<Record<string, unknown>> };
+      const finishedProgress = (user.mediaProgress ?? []).filter(
+        (progress) => progress.isFinished === true && !progress.episodeId,
+      );
+      const progressByItem = new Map(
+        finishedProgress.map((progress) => [String(progress.libraryItemId), progress]),
+      );
+      const itemIds = [...progressByItem.keys()];
+      if (itemIds.length === 0) return { success: true, items: [], total: 0, page, limit };
+
+      const itemsResult = await absFetch("/api/items/batch/get", {
+        method: "POST",
+        body: JSON.stringify({ libraryItemIds: itemIds }),
+      });
+      if (!itemsResult.success) return itemsResult;
+      const raw = itemsResult.data as { libraryItems?: Array<Record<string, unknown>> };
+      const matching = (raw.libraryItems ?? []).filter((item) => item.libraryId === libraryId);
+      const start = page * limit;
+      const items = matching.slice(start, start + limit).map((item) => summarizeLibraryItem(item, progressByItem.get(String(item.id))));
+      return { success: true, items, total: matching.length, page, limit };
+    }
+
     const params = new URLSearchParams({
       limit: String(limit),
       page: String(page),
@@ -103,24 +147,39 @@ export const audiobookshelfGetLibraryItemsTool = tool({
     const result = await absFetch(`/api/libraries/${libraryId}/items?${params}`);
     if (!result.success) return result;
     const raw = result.data as { results: Array<Record<string, unknown>>; total: number };
-    const items = (raw.results ?? []).map((item) => {
-      const media = item.media as Record<string, unknown> | undefined;
-      const metadata = (media?.metadata ?? {}) as Record<string, unknown>;
-      return {
-        id: item.id,
-        title: metadata.title,
-        author: metadata.authorName,
-        narrator: metadata.narratorName,
-        series: metadata.seriesName,
-        duration: media?.duration,
-        numChapters: media?.numChapters,
-        publishedYear: metadata.publishedYear,
-        addedAt: item.addedAt,
-      };
-    });
+    const items = (raw.results ?? []).map((item) => summarizeLibraryItem(item));
     return { success: true, items, total: raw.total, page, limit };
   },
 });
+
+function summarizeLibraryItem(item: Record<string, unknown>, userProgress?: Record<string, unknown>) {
+  const media = item.media as Record<string, unknown> | undefined;
+  const metadata = (media?.metadata ?? {}) as Record<string, unknown>;
+  return {
+    id: item.id,
+    title: metadata.title,
+    author: metadata.authorName,
+    narrator: metadata.narratorName,
+    series: metadata.seriesName,
+    duration: media?.duration,
+    numChapters: media?.numChapters,
+    publishedYear: metadata.publishedYear,
+    addedAt: item.addedAt,
+    ...(userProgress ? { userProgress: summarizeMediaProgress(userProgress) } : {}),
+  };
+}
+
+function summarizeMediaProgress(progress?: Record<string, unknown>) {
+  return {
+    currentTime: progress?.currentTime ?? 0,
+    progress: progress?.progress ?? 0,
+    isFinished: progress?.isFinished ?? false,
+    lastUpdate: progress?.lastUpdate ?? null,
+    startedAt: progress?.startedAt ?? null,
+    finishedAt: progress?.finishedAt ?? null,
+    duration: progress?.duration ?? 0,
+  };
+}
 
 // ── audiobookshelf_search ─────────────────────────────────────────────────────
 
@@ -249,25 +308,22 @@ export const audiobookshelfScanLibraryTool = tool({
 // ── audiobookshelf_get_progress ───────────────────────────────────────────────
 
 export const audiobookshelfGetProgressTool = tool({
-  description: "Get listening progress for an audiobook or podcast episode.",
+  description: "Get listening progress for an audiobook. A valid item that has not been started returns hasProgress=false with zero progress.",
   inputSchema: z.object({
     itemId: z.string().describe("Library item ID"),
   }),
   execute: async ({ itemId }) => {
-    const result = await absFetch(`/api/me/progress/${itemId}`);
+    // Audiobookshelf returns 404 from /api/me/progress/:id both when the item
+    // is invalid and when a valid item simply has no progress. Including
+    // progress on the item endpoint preserves that distinction.
+    const result = await absFetch(`/api/items/${itemId}?expanded=1&include=progress`);
     if (!result.success) return result;
-    const progress = result.data as Record<string, unknown>;
+    const item = result.data as { userMediaProgress?: Record<string, unknown> };
+    const progress = item.userMediaProgress;
     return {
       success: true,
-      progress: {
-        currentTime: progress.currentTime,
-        progress: progress.progress,
-        isFinished: progress.isFinished,
-        lastUpdate: progress.lastUpdate,
-        startedAt: progress.startedAt,
-        finishedAt: progress.finishedAt,
-        duration: progress.duration,
-      },
+      hasProgress: Boolean(progress),
+      progress: summarizeMediaProgress(progress),
     };
   },
 });

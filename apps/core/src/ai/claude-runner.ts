@@ -171,9 +171,10 @@ export async function runClaudeCode(opts: ClaudeRunOptions): Promise<ClaudeRunRe
 
   const { code, stdout, stderr } = await spawnClaudeStreaming(task, cwd, onOutput);
 
-  if (code !== 0 && !stdout) {
+  if (code !== 0) {
     return {
       success: false,
+      output: stdout,
       error: stderr || `Claude Code exited with code ${code}`,
       durationMs: Date.now() - start,
     };

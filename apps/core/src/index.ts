@@ -390,6 +390,8 @@ app.use("/api/users/*", requireRole("admin"));
 app.use("/api/settings/*", requireRole("admin"));
 app.use("/api/evolution/*", requireRole("admin"));
 app.use("/api/stores/*", requireRole("admin"));
+// Drive allow-list changes affect every Files user and can expose whole volumes.
+app.use("/api/files/drives", requireRole("admin"));
 
 // ── Feature-level permission guards ─────────────────────────────────────────
 app.use("/api/media/*", requirePermission("media"));

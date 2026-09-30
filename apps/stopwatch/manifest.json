@@ -1,0 +1,41 @@
+{
+  "id": "stopwatch",
+  "name": "Stopwatch",
+  "tagline": "Start, pause, lap, and reset an accurate elapsed-time session",
+  "description": "A focused stopwatch for starting, pausing, resetting, and recording elapsed-time laps. Elapsed time is measured with a monotonic clock, so a system clock change cannot alter a running session, and the session survives a browser refresh or a container restart. Every lap records its ordinal, its split, and the cumulative total. Talome's native surface and the app's own interface control the same session.",
+  "icon": "⏱️",
+  "category": "productivity",
+  "version": "1.0.0",
+  "author": "Talome",
+  "website": "",
+  "image": "stopwatch:local",
+  "ports": [
+    {
+      "host": 5012,
+      "container": 8000
+    }
+  ],
+  "volumes": [
+    {
+      "name": "stopwatch-data",
+      "containerPath": "/data",
+      "description": "Current session, lap history, and the restart-recovery anchor"
+    }
+  ],
+  "env": [
+    {
+      "key": "TZ",
+      "label": "Time zone",
+      "required": false,
+      "default": "America/New_York",
+      "secret": false
+    }
+  ],
+  "minResources": {
+    "cpuCores": 0.25,
+    "memoryMb": 256,
+    "diskMb": 64
+  },
+  "arm64": true,
+  "installNotes": "For Talome's native Stopwatch surface to read and control the session, the setting `stopwatch_url` must point at the service — `http://127.0.0.1:5012` on this host. This matches the existing `budget-compass_url` and `strategy-intelligence_url` settings. Without it, the native blocks report that app data is unavailable; the app's own interface at http://localhost:5012 works either way."
+}

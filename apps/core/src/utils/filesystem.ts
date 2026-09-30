@@ -1,9 +1,16 @@
-import { join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir, platform } from "node:os";
-import { existsSync, readdirSync, statSync, writeFileSync, renameSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync, renameSync, realpathSync } from "node:fs";
 import { getSetting } from "./settings.js";
 
 export const TALOME_HOME = join(homedir(), ".talome");
+/**
+ * The only Talome-managed directory exposed by the file manager.
+ *
+ * Keeping this separate from TALOME_HOME prevents users with Files access from
+ * browsing secrets, databases, backups, app data, and other operational state.
+ */
+export const TALOME_FILES_HOME = join(TALOME_HOME, "files");
 
 // ── Legacy migration: ~/.talon → ~/.talome ─────────────────────────────────
 // One-time rename so existing installs keep their data after the rebrand.
@@ -17,9 +24,27 @@ if (existsSync(legacyHome) && !existsSync(TALOME_HOME)) {
   }
 }
 
-// Sandboxed root directories the file manager can access
-// Core roots are always available; external drives require explicit opt-in via settings
-export const CORE_ROOTS = [TALOME_HOME];
+try {
+  mkdirSync(TALOME_FILES_HOME, { recursive: true });
+} catch (err) {
+  // A disconnected external drive may leave ~/.talome as a dangling symlink.
+  // Do not fall back to the internal disk; the file manager will fail closed.
+  console.error(`[files] Could not initialize ${TALOME_FILES_HOME}:`, err);
+}
+
+// Sandboxed root directories the file manager can access.
+// External drives require explicit opt-in via settings.
+export const CORE_ROOTS = [TALOME_FILES_HOME];
+
+export interface FileManagerRoot {
+  id: string;
+  path: string;
+  label: string;
+  kind: "talome-files" | "external";
+  isEmpty?: boolean;
+  hostMount?: string;
+  hostLabel?: string;
+}
 
 let cachedExternalDrives: string[] | null = null;
 let cacheTimestamp = 0;
@@ -107,24 +132,108 @@ export function getAllowedRoots(): string[] {
   }
 }
 
-export function isAllowed(absPath: string): boolean {
-  // Resolve symlinks to prevent path traversal via symlinked directories
-  let resolved: string;
+function isPathWithin(candidate: string, root: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * Empty user storage is useful as a secure upload sandbox, but it should not
+ * occupy prime UI space. If the directory cannot be inspected, fail visible
+ * instead of hiding a potentially populated or unavailable location.
+ */
+function isDirectoryEmpty(directory: string): boolean {
   try {
-    resolved = realpathSync(resolve(absPath));
+    return readdirSync(directory).length === 0;
   } catch {
-    // Path doesn't exist yet (e.g., creating a new file) — use logical resolution
-    resolved = resolve(absPath);
+    return false;
   }
-  return getAllowedRoots().some((root) => {
-    let realRoot: string;
+}
+
+/**
+ * Canonicalize an existing path, or resolve its closest existing ancestor when
+ * the final path does not exist yet. The latter is required for safe uploads,
+ * mkdir, and rename operations beneath symlinked roots.
+ */
+export function canonicalizePath(inputPath: string): string | null {
+  if (!inputPath || inputPath.includes("\0")) return null;
+
+  let cursor = resolve(inputPath);
+  const missingSegments: string[] = [];
+
+  while (true) {
     try {
-      realRoot = realpathSync(root);
+      const realAncestor = realpathSync(cursor);
+      return resolve(realAncestor, ...missingSegments.reverse());
     } catch {
-      realRoot = root;
+      const parent = dirname(cursor);
+      if (parent === cursor) return null;
+      missingSegments.push(basename(cursor));
+      cursor = parent;
     }
-    return resolved === realRoot || resolved.startsWith(realRoot + "/");
+  }
+}
+
+/** Talome runtime state is never exposed through an enabled parent drive. */
+function isProtectedTalomeRuntimePath(canonicalPath: string): boolean {
+  const canonicalTalomeHome = canonicalizePath(TALOME_HOME);
+  const canonicalFilesHome = canonicalizePath(TALOME_FILES_HOME);
+  if (!canonicalTalomeHome || !isPathWithin(canonicalPath, canonicalTalomeHome)) return false;
+  return !canonicalFilesHome || !isPathWithin(canonicalPath, canonicalFilesHome);
+}
+
+export function isAllowed(absPath: string): boolean {
+  const canonicalPath = canonicalizePath(absPath);
+  if (!canonicalPath || isProtectedTalomeRuntimePath(canonicalPath)) return false;
+
+  return getAllowedRoots().some((root) => {
+    const canonicalRoot = canonicalizePath(root);
+    return canonicalRoot ? isPathWithin(canonicalPath, canonicalRoot) : false;
   });
+}
+
+/** Exact, canonical root comparison for destructive-operation guards. */
+export function isAllowedRoot(absPath: string): boolean {
+  const canonicalPath = canonicalizePath(absPath);
+  if (!canonicalPath) return false;
+  return getAllowedRoots().some((root) => canonicalizePath(root) === canonicalPath);
+}
+
+/** Root metadata used by the Files UI without exposing canonical host paths. */
+export function getAllowedRootInfos(): FileManagerRoot[] {
+  return getAllowedRoots()
+    .filter((root) => existsSync(root))
+    .map((root) => {
+      if (resolve(root) === resolve(TALOME_FILES_HOME)) {
+        const canonicalRoot = canonicalizePath(root);
+        const hostDrive = canonicalRoot
+          ? getDetectedDrives()
+            .map((drive) => ({ drive, canonical: canonicalizePath(drive) }))
+            .filter((entry): entry is { drive: string; canonical: string } => !!entry.canonical)
+            .filter((entry) => isPathWithin(canonicalRoot, entry.canonical))
+            .sort((a, b) => b.canonical.length - a.canonical.length)[0]
+          : undefined;
+
+        return {
+          id: "talome-files",
+          path: root,
+          label: "Talome Files",
+          kind: "talome-files" as const,
+          isEmpty: isDirectoryEmpty(root),
+          hostMount: hostDrive?.drive,
+          hostLabel: hostDrive ? basename(hostDrive.drive) : undefined,
+        };
+      }
+
+      return {
+        id: `external:${root}`,
+        path: root,
+        label: basename(root) || root,
+        kind: "external" as const,
+        hostMount: root,
+        hostLabel: basename(root) || root,
+      };
+    });
 }
 
 /** Clear the drive detection cache so the next call re-detects. */

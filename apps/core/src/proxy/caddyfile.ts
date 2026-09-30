@@ -47,7 +47,17 @@ export function generateCaddyfile(
     lines.push("");
   }
 
-  const enabledRoutes = routes.filter((r) => r.enabled);
+  // Dedup by domain — Caddy refuses to adapt a Caddyfile that defines the same
+  // site address twice ("ambiguous site definition"), which crashloops the
+  // container. Keep the first enabled route per domain as a final safety net,
+  // independent of any DB-level uniqueness guarantees.
+  const seenDomains = new Set<string>();
+  const enabledRoutes = routes.filter((r) => {
+    if (!r.enabled) return false;
+    if (seenDomains.has(r.domain)) return false;
+    seenDomains.add(r.domain);
+    return true;
+  });
 
   for (const route of enabledRoutes) {
     const scheme = route.tlsMode === "off" ? "http://" : "";

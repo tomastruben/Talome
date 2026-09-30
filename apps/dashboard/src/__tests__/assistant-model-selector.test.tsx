@@ -4,7 +4,12 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { AssistantModelSelector } from "@/components/assistant/assistant-model-selector";
 
 const models = [
-  { id: "gpt-5.6-luna", name: "OpenAI GPT-5.6-luna", provider: "openai" },
+  {
+    id: "gpt-5.6-luna",
+    name: "OpenAI GPT-5.6 Luna",
+    provider: "openai",
+    description: "Fastest · lowest cost",
+  },
   { id: "claude-sonnet-4", name: "Anthropic Claude Sonnet 4", provider: "anthropic" },
 ];
 
@@ -30,15 +35,16 @@ describe("AssistantModelSelector", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /current model: openai gpt-5\.6-luna/i }));
+    fireEvent.click(screen.getByRole("button", { name: /current model: openai gpt-5\.6 luna/i }));
 
     const search = screen.getByPlaceholderText("Search models…");
     expect(search).toBeVisible();
     expect(screen.getByText("OpenAI", { selector: "[cmdk-group-heading]" })).toBeVisible();
     expect(screen.getByText("Anthropic", { selector: "[cmdk-group-heading]" })).toBeVisible();
+    expect(screen.getByText("Fastest · lowest cost")).toBeVisible();
 
     fireEvent.change(search, { target: { value: "Claude" } });
-    expect(screen.queryByRole("option", { name: "Use OpenAI GPT-5.6-luna" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Use OpenAI GPT-5.6 Luna" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("option", { name: "Use Anthropic Claude Sonnet 4" }));
     expect(onModelChange).toHaveBeenCalledWith("claude-sonnet-4");

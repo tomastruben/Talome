@@ -8,11 +8,11 @@ import {
   mkdir,
   readFile,
   readdir,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import { statSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
+import { validateGeneratedApp } from "./completion-validation.js";
+import { snapshotGeneratedWorkspace } from "./workspace-snapshot.js";
 import type {
   AppBlueprint,
   GeneratedApp,
@@ -21,6 +21,7 @@ import type {
   WorkspaceSummary,
 } from "./contracts.js";
 import type { InstructionPack, ReferenceSnapshot } from "./instructions.js";
+import { checkCreatorCliReadiness } from "./cli-readiness.js";
 import { runClaudeCode } from "../ai/claude-runner.js";
 import { TalomeAppSpecSchema } from "../app-specs/schema.js";
 
@@ -39,6 +40,8 @@ interface ExecuteWorkspaceOptions {
   instructionPack: InstructionPack;
   talomeReferences: ReferenceSnapshot[];
   userDescription?: string;
+  /** Internal caller override for isolated workspaces; never accepted from the public creation request. */
+  workspaceRoot?: string;
 }
 
 export interface FileSnapshot {
@@ -383,7 +386,9 @@ export function buildClaudeTask(app: GeneratedApp, blueprint: AppBlueprint, user
     sourceHint,
     "Prefer coherent shadcn-based flows and reuse the same interaction grammar as Talome.",
     "Do not modify files outside this workspace.",
-    "When the app is ready, use the Talome MCP tools (install_app, start_app, check_service_health) to install and start it so the user can see it running immediately.",
+    "Build and test locally using disposable test data; clean up any temporary test services before finishing.",
+    "Finish the session with implementation and test evidence so Talome can independently validate and publish the app. Do not install or start the app during generation: its catalog entry may not exist yet.",
+    "After successful publication, installation and startup happen through the app details configure flow. Report local test results and remaining limits; do not claim the published service is running.",
     "When finished, the workspace should be ready for follow-up tweaks with minimal churn.",
   ].filter(Boolean).join(" ");
 }
@@ -496,176 +501,35 @@ export async function validateWorkspace(
   app: GeneratedApp,
   blueprint: AppBlueprint,
   sourceSnapshots: string[],
-): Promise<{ validations: ValidationCheck[]; entryFiles: string[]; fileCount: number }> {
-  const validations: ValidationCheck[] = [];
-  let files = await listWorkspaceFiles(workspaceRoot);
-  files = files.filter((file) => !file.path.startsWith(`${INTERNAL_DIR}/`));
-
-  const scaffoldFiles = files
-    .map((file) => file.path)
-    .filter((file) => file.startsWith(`${SCAFFOLD_DIR}/`));
-
-  const packageJsonPath = join(scaffoldPath, "package.json");
-  const tsconfigPath = join(scaffoldPath, "tsconfig.json");
-  const appEntryCandidates = [
-    join(scaffoldPath, "app", "page.tsx"),
-    join(scaffoldPath, "src", "app", "page.tsx"),
-    join(scaffoldPath, "src", "index.ts"),
-    join(scaffoldPath, "index.ts"),
+): Promise<{ validations: ValidationCheck[]; entryFiles: string[]; fileCount: number; appSpec?: AppBlueprint["appSpec"] }> {
+  const snapshotPath = await snapshotGeneratedWorkspace(scaffoldPath);
+  const generated = await validateGeneratedApp(snapshotPath, app.id, blueprint);
+  const validations: ValidationCheck[] = [
+    ...generated.validations,
+    {
+      id: "scaffold-files",
+      label: "Scaffold files were generated",
+      status: blueprint.scaffold.enabled ? (generated.files.length > 0 ? "passed" : "failed") : "skipped",
+      details: `${generated.files.length} scaffold source file(s) detected`,
+    },
+    {
+      id: "source-provenance",
+      label: "Source provenance is recorded",
+      status: sourceSnapshots.length > 0 ? "passed" : "skipped",
+      details: sourceSnapshots.length > 0 ? `${sourceSnapshots.length} source snapshot artifact(s)` : "No source was reused",
+    },
+    ...await validateDesignArtifacts(workspaceRoot),
   ];
-
-  validations.push({
-    id: "compose-shape",
-    label: "Docker app definition is populated",
-    status: app.services.length > 0 ? "passed" : "failed",
-    details: `${app.services.length} service(s) in generated definition`,
-  });
-
-  const appSpecResult = blueprint.appSpec
-    ? TalomeAppSpecSchema.safeParse(blueprint.appSpec)
-    : null;
-  validations.push({
-    id: "app-spec",
-    label: "Native Talome AppSpec is valid",
-    status: appSpecResult?.success ? "passed" : "failed",
-    details: appSpecResult?.success
-      ? `${appSpecResult.data.surfaces.length} surface(s), ${appSpecResult.data.actions.length} action(s)`
-      : appSpecResult
-        ? appSpecResult.error.issues.slice(0, 3).map((issue) => issue.message).join("; ")
-        : "Blueprint has no AppSpec",
-  });
-
-  validations.push({
-    id: "scaffold-files",
-    label: "Scaffold files were generated",
-    status: blueprint.scaffold.enabled
-      ? scaffoldFiles.length > 0
-        ? "passed"
-        : "failed"
-      : "skipped",
-    details: blueprint.scaffold.enabled
-      ? `${scaffoldFiles.length} scaffold file(s) detected`
-      : "Scaffold generation disabled for this request",
-  });
-
-  const presentEntryFiles: string[] = [];
-  for (const candidate of appEntryCandidates) {
-    try {
-      await stat(candidate);
-      presentEntryFiles.push(candidate.replace(`${workspaceRoot}/`, ""));
-    } catch {
-      // ignore
-    }
-  }
-
-  validations.push({
-    id: "entry-file",
-    label: "Scaffold has an entry file",
-    status: blueprint.scaffold.enabled
-      ? presentEntryFiles.length > 0
-        ? "passed"
-        : "failed"
-      : "skipped",
-    details:
-      presentEntryFiles[0] ||
-      (blueprint.scaffold.enabled ? "No common entry file detected in generated-app" : "Scaffold not required"),
-  });
-
-  validations.push({
-    id: "source-provenance",
-    label: "Source provenance is recorded",
-    status: sourceSnapshots.length > 0 ? "passed" : "skipped",
-    details: sourceSnapshots.length > 0 ? `${sourceSnapshots.length} source snapshot artifact(s)` : "No source was reused",
-  });
-  validations.push(...await validateDesignArtifacts(workspaceRoot));
-
-  try {
-    parseYaml(
-      ["services:", ...app.services.map((service) => `  ${service.name}: { image: ${JSON.stringify(service.image)} }`)].join("\n"),
-    );
-    validations.push({
-      id: "compose-parse",
-      label: "Generated compose data is parseable",
-      status: "passed",
-      details: "Compose-like YAML rendered successfully",
-    });
-  } catch (error) {
-    validations.push({
-      id: "compose-parse",
-      label: "Generated compose data is parseable",
-      status: "failed",
-      details: error instanceof Error ? error.message : "Compose parse failed",
-    });
-  }
-
-  if (blueprint.designAlignment.referencePaths.length === 0) {
-    validations.push({
-      id: "talome-design",
-      label: "Talome design references are present",
-      status: "failed",
-      details: "Blueprint did not carry Talome design references",
-    });
-  } else if (scaffoldFiles.length === 0) {
-    validations.push({
-      id: "talome-design",
-      label: "Talome design references are present",
-      status: "skipped",
-      details: "No scaffold files were produced to inspect",
-    });
-  } else {
-    const tsxFiles = scaffoldFiles.filter((file) => file.endsWith(".tsx")).slice(0, 10);
-    let foundSignal = false;
-    for (const file of tsxFiles) {
-      const content = await readFile(join(workspaceRoot, file), "utf-8");
-      if (content.includes("@/components/ui/") || content.includes("HugeiconsIcon")) {
-        foundSignal = true;
-        break;
-      }
-    }
-    validations.push({
-      id: "talome-design",
-      label: "Scaffold shows Talome-style component usage",
-      status: foundSignal ? "passed" : "skipped",
-      details: foundSignal
-        ? "Detected Talome-aligned component imports in scaffold"
-        : "No direct Talome component signal detected; blueprint references still included",
-    });
-  }
-
-  let typecheckStatus: ValidationCheck = {
-    id: "typescript",
-    label: "TypeScript validation",
-    status: "skipped",
-    details: "Typecheck skipped because no installable TypeScript project was detected",
-  };
-
-  try {
-    await stat(packageJsonPath);
-    await stat(tsconfigPath);
-    const typecheck = await runCommand("pnpm", ["exec", "tsc", "--noEmit"], scaffoldPath);
-    typecheckStatus =
-      typecheck.code === 0
-        ? {
-            id: "typescript",
-            label: "TypeScript validation",
-            status: "passed",
-            details: "tsc --noEmit succeeded",
-          }
-        : {
-            id: "typescript",
-            label: "TypeScript validation",
-            status: "failed",
-            details: (typecheck.stderr || typecheck.stdout || "Typecheck failed").slice(0, 400),
-          };
-  } catch {
-    // keep skipped status
-  }
-  validations.push(typecheckStatus);
-
+  // A Compose service can legitimately start Python, static assets, or a nested UI package.
+  // Keep declared entry paths as metadata; do not reject valid apps for lacking app/page.tsx.
+  const declaredEntries = blueprint.scaffold.entryFiles.map((file) =>
+    file.startsWith(`${SCAFFOLD_DIR}/`) ? file.slice(SCAFFOLD_DIR.length + 1) : file,
+  );
   return {
     validations,
-    entryFiles: presentEntryFiles,
-    fileCount: files.length,
+    entryFiles: declaredEntries.filter((file) => generated.files.includes(file)).map((file) => `${SCAFFOLD_DIR}/${file}`),
+    fileCount: generated.files.length,
+    appSpec: generated.appSpec,
   };
 }
 
@@ -681,7 +545,7 @@ export interface PreparedWorkspace {
 export async function prepareWorkspace(
   options: ExecuteWorkspaceOptions,
 ): Promise<PreparedWorkspace> {
-  const workspaceRoot = join(WORKSPACES_ROOT, options.app.id);
+  const workspaceRoot = options.workspaceRoot ?? join(WORKSPACES_ROOT, options.app.id);
   const scaffoldPath = join(workspaceRoot, SCAFFOLD_DIR);
   const internalRoot = join(workspaceRoot, INTERNAL_DIR);
 
@@ -747,13 +611,13 @@ export async function prepareWorkspace(
     "",
     "## After building",
     "",
-    "Once the app's docker-compose.yml and manifest are ready, use the Talome MCP tools to install and start it:",
+    "Build and test locally using disposable test data. Clean up temporary test services before finishing; preserve existing installed services and user data.",
     "",
-    `1. \`install_app\` with appId \`${options.app.id}\` and storeId \`user-apps\` to install the app`,
-    `2. \`start_app\` with appId \`${options.app.id}\` to start the containers`,
-    `3. \`check_service_health\` to verify the app is running correctly`,
+    "1. Finish the implementation and validation report with actual local test results and any remaining limits.",
+    "2. Finish the session so Talome can independently validate and publish the app. A prepared workspace is not a published catalog entry.",
+    "3. After successful publication, installation and startup happen through the app details configure flow.",
     "",
-    "If anything fails, use `get_container_logs` and `diagnose_app` to troubleshoot.",
+    "Do not install or start the app during generation. Do not claim the published service is running based on local tests or a successful build.",
     "",
     "## Interaction",
     "",
@@ -762,7 +626,7 @@ export async function prepareWorkspace(
   ].filter(Boolean).join("\n");
   await writeFile(join(workspaceRoot, "CLAUDE.md"), claudeMd);
 
-  // Write .mcp.json so Claude Code can access Talome MCP tools (install_app, etc.)
+  // Write .mcp.json so Claude Code can access Talome context and diagnostic tools.
   const talomeRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
   // Detect Docker socket — honour DOCKER_SOCKET / DOCKER_HOST, then try common paths
   const dockerSocket = process.env.DOCKER_SOCKET
@@ -781,7 +645,7 @@ export async function prepareWorkspace(
         command: join(talomeRoot, "apps/core/node_modules/.bin/tsx"),
         args: [join(talomeRoot, "apps/core/src/mcp-stdio.ts")],
         env: {
-          DATABASE_PATH: join(talomeRoot, "apps/core/data/talome.db"),
+          DATABASE_PATH: process.env.DATABASE_PATH ? resolve(process.env.DATABASE_PATH) : join(talomeRoot, "apps/core/data/talome.db"),
           DOCKER_SOCKET: dockerSocket,
           NODE_ENV: "production",
         },
@@ -843,7 +707,7 @@ export async function completeWorkspace(
   prepared: PreparedWorkspace,
   app: GeneratedApp,
   blueprint: AppBlueprint,
-): Promise<{ workspace: WorkspaceSummary; validations: ValidationCheck[] }> {
+): Promise<{ workspace: WorkspaceSummary; validations: ValidationCheck[]; blueprint: AppBlueprint }> {
   const { workspaceRoot, scaffoldPath, sourceSnapshots, designArtifacts, beforeSnapshot } = prepared;
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const runLogPath = join(workspaceRoot, INTERNAL_DIR, "runs", `${runId}.json`);
@@ -884,12 +748,19 @@ export async function completeWorkspace(
     runLogPath,
   };
 
-  return { workspace, validations: validation.validations };
+  return {
+    workspace,
+    validations: validation.validations,
+    blueprint: { ...blueprint, appSpec: validation.appSpec ?? blueprint.appSpec },
+  };
 }
 
 export async function executeWorkspaceGeneration(
   options: ExecuteWorkspaceOptions,
-): Promise<{ workspace: WorkspaceSummary; validations: ValidationCheck[] }> {
+): Promise<{ workspace: WorkspaceSummary; validations: ValidationCheck[]; blueprint: AppBlueprint }> {
+  const readiness = await checkCreatorCliReadiness();
+  if (!readiness.ready) throw new Error(readiness.error);
+
   const prepared = await prepareWorkspace(options);
 
   const claudeResult = await runClaudeCode({
@@ -897,11 +768,12 @@ export async function executeWorkspaceGeneration(
     cwd: prepared.workspaceRoot,
     mode: "headless",
   });
-  const claudeExitOk = claudeResult.success || Boolean(claudeResult.output);
+  const claudeExitOk = claudeResult.success;
 
   const result = await completeWorkspace(prepared, options.app, options.blueprint);
 
   return {
+    blueprint: result.blueprint,
     workspace: {
       ...result.workspace,
       generatedWithClaudeCode: claudeExitOk,

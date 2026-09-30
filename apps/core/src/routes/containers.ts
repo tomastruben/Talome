@@ -19,6 +19,7 @@ import { eq } from "drizzle-orm";
 import { getLastErrorWithVariables, getStartupFailures } from "../services/docker.js";
 import { serverError } from "../middleware/request-logger.js";
 import { createLogger } from "../utils/logger.js";
+import { discoverContainerWebUis } from "../docker/web-ui.js";
 
 const log = createLogger("containers");
 import type { Container, ServiceStack, TalomeNativeSurfaceDescriptor } from "@talome/types";
@@ -344,7 +345,7 @@ containers.get("/", async (c) => {
     );
 
     if (c.req.query("grouped") === "true") {
-      return c.json(buildStacks(withStats));
+      return c.json(buildStacks(await discoverContainerWebUis(withStats)));
     }
 
     return c.json(withStats);

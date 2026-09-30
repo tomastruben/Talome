@@ -6,13 +6,35 @@ import {
   desktopAppActionsAtom,
 } from "@/atoms/desktop-app-actions";
 import { DesktopAppActionBridge } from "@/components/desktop/desktop-app-action-bridge";
+import { DESKTOP_ROUTE_STATE_MESSAGE } from "@/lib/desktop-navigation";
 import { pageTitleAtom } from "@/atoms/page-title";
 
+vi.mock("next/navigation", () => ({
+  usePathname: () => window.location.pathname,
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
+
 afterEach(() => {
+  window.history.replaceState({}, "", "/");
   vi.restoreAllMocks();
 });
 
 describe("DesktopAppActionBridge", () => {
+  it("reports client-side route changes without asking the desktop to reload the app", async () => {
+    window.history.replaceState({}, "", "/dashboard/settings");
+    const postMessage = vi.spyOn(window, "postMessage");
+    const view = render(<DesktopAppActionBridge />);
+    postMessage.mockClear();
+
+    window.history.replaceState({}, "", "/dashboard/settings/security?tab=sessions#active");
+    view.rerender(<DesktopAppActionBridge />);
+
+    await waitFor(() => expect(postMessage).toHaveBeenCalledWith({
+      type: DESKTOP_ROUTE_STATE_MESSAGE,
+      url: "/dashboard/settings/security?tab=sessions#active",
+    }, window.location.origin));
+  });
+
   it("republishes the current title actions when the desktop requests them", async () => {
     const store = createStore();
     store.set(pageTitleAtom, "Assistant");

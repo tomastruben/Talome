@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import type {
   TalomeActivityListBlock,
   TalomeActionsBlock,
@@ -15,7 +14,6 @@ import type {
   TalomeTableBlock,
   TalomeTimeSeriesBlock,
 } from "@talome/types";
-import { CartesianGrid, Line, LineChart, XAxis } from "recharts";
 import { HugeiconsIcon } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,12 +26,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -48,19 +40,14 @@ import { InlineMarkdown } from "@/components/ui/inline-markdown";
 import { cn } from "@/lib/utils";
 import { asRows, formatNativeValue, getValueAtPath } from "./native-app-values";
 import { resolveNativeAppIcon } from "./native-app-icons";
-import { EvilAreaChart } from "@/components/evilcharts/charts/area-chart";
+import { NativeDataChart } from "./native-data-chart";
+import { nativeChartRows } from "./native-chart-data";
 import {
   ActivityListBlock,
   ComparisonBarsBlock,
   type NativeAppActionHandler,
 } from "./native-app-premium-blocks";
 import { BudgetOverviewBlock } from "./budget-overview-block";
-
-const CHART_COLORS = [
-  "var(--foreground)",
-  "var(--muted-foreground)",
-  "var(--primary)",
-];
 
 function blockData(
   data: Record<string, unknown>,
@@ -226,57 +213,19 @@ function ProgressBlock({ block, data }: { block: TalomeProgressBlock; data: Reco
 
 function TimeSeriesBlock({ block, data }: { block: TalomeTimeSeriesBlock; data: Record<string, unknown> }) {
   const source = blockData(data, block);
-  const chartData = asRows(block.rowsPath ? getValueAtPath(source, block.rowsPath) : source)
-    .slice(-(block.limit ?? 100))
-    .map((row) => Object.fromEntries([
-      ["x", formatNativeValue(getValueAtPath(row, block.xPath))],
-      ...block.series.map((series) => [series.id, Number(getValueAtPath(row, series.valuePath)) || 0]),
-    ]));
-  const config = useMemo<ChartConfig>(() => Object.fromEntries(
-    block.series.map((series, index) => [series.id, {
-      label: series.label,
-      color: CHART_COLORS[index % CHART_COLORS.length],
-    }]),
-  ), [block.series]);
+  const allRows = asRows(block.rowsPath ? getValueAtPath(source, block.rowsPath) : source);
+  const rows = allRows.slice(-(block.limit ?? 100));
   return (
-    <Card className="h-full rounded-lg">
+    <Card className="h-full min-w-0 rounded-lg">
       <CardHeader>
         <CardTitle>{block.title}</CardTitle>
         {block.description ? <CardDescription>{block.description}</CardDescription> : null}
       </CardHeader>
-      <CardContent>
-        {chartData.length ? (
-          block.variant === "area" ? (
-            <EvilAreaChart
-              data={chartData}
-              series={block.series}
-              label={block.title}
-              valueFormat={block.valueFormat}
-              currency={block.currency}
-            />
-          ) : <ChartContainer config={config} className="min-h-52 w-full">
-            <LineChart
-              accessibilityLayer
-              aria-label={`${block.title} chart`}
-              data={chartData}
-              margin={{ left: 8, right: 8 }}
-            >
-              <CartesianGrid vertical={false} />
-              <XAxis dataKey="x" tickLine={false} axisLine={false} minTickGap={24} />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              {block.series.map((series) => (
-                <Line
-                  key={series.id}
-                  dataKey={series.id}
-                  type="monotone"
-                  stroke={`var(--color-${series.id})`}
-                  strokeWidth={2}
-                  dot={false}
-                />
-              ))}
-            </LineChart>
-          </ChartContainer>
-        ) : <p className="text-sm text-muted-foreground">No history yet.</p>}
+      <CardContent className="min-w-0">
+        <NativeDataChart data={nativeChartRows(rows, block.xPath, block.series)} series={block.series} label={block.title}
+          variant={block.variant} valueFormat={block.valueFormat} currency={block.currency}
+          unit={block.unit} xLabel={block.xLabel} valueLabel={block.valueLabel} />
+        {rows.length < allRows.length ? <p className="mt-3 text-xs text-muted-foreground">Showing the latest {rows.length} of {allRows.length} observations.</p> : null}
       </CardContent>
     </Card>
   );

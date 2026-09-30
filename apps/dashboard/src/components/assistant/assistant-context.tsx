@@ -44,6 +44,7 @@ export interface ModelOption {
   id: string;
   name: string;
   provider: string;
+  description?: string;
 }
 
 export interface AssistantContextValue {
@@ -219,7 +220,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         const name = activeFirst.filter((pp) => pp.configured && pp.models.length > 0).length > 1
           ? `${label} ${m.name}`
           : m.name;
-        allOptions.push({ id: m.id, name, provider: p.provider });
+        allOptions.push({
+          id: m.id,
+          name,
+          provider: p.provider,
+          description: m.description,
+        });
       }
     }
     setModelOptions(allOptions);

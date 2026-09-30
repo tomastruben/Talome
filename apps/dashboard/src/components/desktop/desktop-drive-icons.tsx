@@ -20,10 +20,12 @@ import {
 import { useSystemStats } from "@/hooks/use-system-stats";
 import { CORE_URL } from "@/lib/constants";
 import { formatBytes } from "@/lib/format";
+import { getVisibleFileRoots, type FileManagerRoot } from "@/lib/file-roots";
 import { cn } from "@/lib/utils";
 
 interface FileRootsResponse {
   allowedRoots?: string[];
+  roots?: FileManagerRoot[];
 }
 
 interface DesktopDrive {
@@ -86,20 +88,26 @@ export function DesktopDriveIcons({
   );
   const drives = useMemo(() => {
     const mounts = stats?.disk.mounts ?? [];
-    const roots = Array.from(new Set(data?.allowedRoots ?? []));
-    return roots.map((path): DesktopDrive => {
+    const rootInfos = data?.roots ?? Array.from(new Set(data?.allowedRoots ?? [])).map((path) => ({
+      id: path,
+      path,
+      label: rootLabel(path),
+      kind: path.includes(".talome/files") ? "talome-files" as const : "external" as const,
+    }));
+    return getVisibleFileRoots(rootInfos).map((root): DesktopDrive => {
+      const path = root.path;
       const mount = findMount(path, mounts);
       const freeBytes = mount ? Math.max(0, mount.totalBytes - mount.usedBytes) : undefined;
       return {
         path,
-        label: rootLabel(path),
+        label: root.kind === "talome-files" ? "Talome Files" : root.label,
         icon: driveIcon(path, mount),
         detail: freeBytes === undefined
           ? path
           : `${formatBytes(freeBytes)} available`,
       };
     });
-  }, [data?.allowedRoots, stats?.disk.mounts]);
+  }, [data?.allowedRoots, data?.roots, stats?.disk.mounts]);
 
   if (drives.length === 0) return null;
 

@@ -6,9 +6,10 @@ import { useSetAtom } from "jotai";
 import useSWR from "swr";
 import { toast } from "sonner";
 import type { TalomeAppAction, TalomeAppSpec, TalomeDataSource } from "@talome/types";
-import { Add01Icon, AiMagicIcon, HugeiconsIcon } from "@/components/icons";
+import { AiMagicIcon, HugeiconsIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import { ErrorState } from "@/components/ui/empty-state";
@@ -19,7 +20,7 @@ import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { useConfirmAction } from "@/hooks/use-confirm-action";
 import { NativeAppBlockRenderer } from "./native-app-blocks";
-import { resolveNativeAppIcon } from "./native-app-icons";
+import { resolveApplicationIcon } from "./native-app-icons";
 
 interface StoredAppSpecResponse {
   appId: string;
@@ -106,6 +107,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
   const {
     data: nativeData,
     isLoading: dataLoading,
+    isValidating: dataRefreshing,
     mutate: refreshData,
   } = useSWR(
     dataKey,
@@ -207,7 +209,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
 
   if (specLoading) {
     return (
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-6">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-4 w-96 max-w-full" />
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -219,7 +221,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
 
   if (specError || !spec) {
     return (
-      <div className="mx-auto w-full max-w-3xl p-6">
+      <div className="mx-auto w-full max-w-3xl">
         <ErrorState
           title="Native experience unavailable"
           description={specError instanceof Error ? specError.message : "This application does not have an approved AppSpec."}
@@ -233,14 +235,15 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
   const primaryAction = activeSurface.primaryActionId
     ? spec.actions.find((action) => action.id === activeSurface.primaryActionId)
     : undefined;
-  const appIcon = resolveNativeAppIcon(spec.icon);
+  const appIcon = resolveApplicationIcon(spec.icon, spec.name);
 
   const renderSurface = (surface: TalomeAppSpec["surfaces"][number]) => (
-    <div className="flex flex-col gap-6 pt-1">
+    <div data-native-surface={surface.id} className="flex flex-col gap-6 pt-1">
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
         {surface.blocks.map((block) => (
           <div
             key={block.id}
+            data-native-block={block.id}
             className={cn("min-w-0 md:col-span-2", SPAN_CLASSES[block.span ?? 2])}
           >
             <NativeAppBlockRenderer
@@ -257,21 +260,21 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
   );
 
   return (
-    <div className="mx-auto flex w-full max-w-screen-2xl flex-col gap-6 p-6 pb-16">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-center gap-4">
-          <div className="flex size-20 shrink-0 items-center justify-center rounded-2xl border bg-card shadow-sm">
-            <HugeiconsIcon icon={appIcon} size={50} className="text-foreground" aria-hidden />
+    <div data-native-app={spec.appId} className="mx-auto flex w-full max-w-screen-2xl flex-col gap-6 pb-8 @container/native">
+      <header className="flex flex-col gap-4 @3xl/native:flex-row @3xl/native:items-start @3xl/native:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-xl border bg-card shadow-sm">
+            <HugeiconsIcon icon={appIcon} size={30} className="text-foreground" aria-hidden />
           </div>
           <div className="min-w-0">
-            <h1 className="truncate text-3xl font-medium tracking-tight">{spec.name}</h1>
+            <h1 className="break-words text-2xl font-medium tracking-tight">{spec.name}</h1>
             <p className="mt-2 max-w-3xl whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{spec.description}</p>
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           {primaryAction ? (
             <Button disabled={Boolean(pendingActionId)} onClick={() => runAction(primaryAction)}>
-              <HugeiconsIcon icon={Add01Icon} size={16} data-icon="inline-start" />
+              {pendingActionId === primaryAction.id ? <Spinner data-icon="inline-start" /> : null}
               {pendingActionId === primaryAction.id ? "Working…" : primaryAction.label}
             </Button>
           ) : null}
@@ -291,6 +294,10 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
           <AlertDescription>
             {dataErrors.map(([sourceId, message]) => `${sourceId}: ${message}`).join(" · ")}
           </AlertDescription>
+          <Button variant="outline" size="sm" className="mt-3 w-fit" disabled={dataRefreshing} onClick={() => void refreshData()}>
+            {dataRefreshing ? <Spinner data-icon="inline-start" /> : null}
+            Retry app data
+          </Button>
         </Alert>
       ) : null}
 
@@ -300,11 +307,13 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
         </div>
       ) : spec.surfaces.length === 1 ? renderSurface(spec.surfaces[0]) : (
         <Tabs value={activeSurface.id} onValueChange={setSelectedSurfaceId}>
-          <TabsList variant="underline">
+          <div className="max-w-full overflow-x-auto pb-1">
+          <TabsList variant="underline" aria-label={`${spec.name} views`}>
             {spec.surfaces.map((surface) => (
               <TabsTab key={surface.id} value={surface.id}>{surface.title}</TabsTab>
             ))}
           </TabsList>
+          </div>
           {spec.surfaces.map((surface) => (
             <TabsPanel key={surface.id} value={surface.id}>{renderSurface(surface)}</TabsPanel>
           ))}

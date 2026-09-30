@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import {
+  BlueprintDraftBar,
   getReadiness,
   type BlueprintState,
 } from "@/components/creator/blueprint-draft-bar";
@@ -48,7 +50,10 @@ function completeBlueprint(): BlueprintState {
     services: [
       { name: "app", image: "example/app:1", ports: [], volumes: [], environment: {} },
     ],
-    appSpec: { surfaces: [{ id: "overview" }] } as BlueprintState["appSpec"],
+    appSpec: {
+      surfaces: [{ id: "overview", blocks: [] }],
+      assistant: { exposedActions: [] },
+    } as unknown as BlueprintState["appSpec"],
     criteria: ["Primary workflow succeeds"],
   };
 }
@@ -69,5 +74,25 @@ describe("blueprint design readiness", () => {
     const result = getReadiness(completeBlueprint());
     expect(result.ready).toBe(true);
     expect(result.checks).toHaveLength(6);
+  });
+});
+
+describe("blueprint expanded detail", () => {
+  it("renders the expanded detail inside a height-capped scroll container", () => {
+    render(
+      <BlueprintDraftBar
+        blueprint={completeBlueprint()}
+        onBuild={vi.fn()}
+        onDismiss={vi.fn()}
+        auto={false}
+        onAutoChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Expand blueprint"));
+
+    const scroller = screen.getByText("Research foundation").closest(".overflow-y-auto");
+    expect(scroller).not.toBeNull();
+    expect(scroller?.className).toContain("max-h-");
   });
 });

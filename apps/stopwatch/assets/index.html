@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Stopwatch</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%E2%8F%B1%EF%B8%8F</text></svg>"
+    />
+  </head>
+  <body>
+    <main class="shell" aria-labelledby="page-title">
+      <header class="masthead">
+        <h1 id="page-title">Stopwatch</h1>
+        <p class="state-line">
+          <span id="state-pill" class="pill pill--idle" aria-hidden="true"></span>
+          <span id="state-word">Connecting</span>
+        </p>
+      </header>
+
+      <section class="readout-block">
+        <!-- role="timer" is implicitly aria-live="off", so ticks are never
+             announced. Discrete state changes go to #announcer instead. -->
+        <div
+          id="readout"
+          class="readout is-idle"
+          role="timer"
+          aria-label="Elapsed time"
+        >
+          <span id="readout-main" class="readout__main">--:--</span
+          ><span id="readout-fraction" class="readout__fraction">.--</span>
+        </div>
+        <p id="split-line" class="split-line" hidden>
+          <span class="split-line__label">Current split</span>
+          <span id="split-value" class="split-line__value">00:00.00</span>
+        </p>
+      </section>
+
+      <section class="controls" aria-label="Session controls">
+        <button
+          type="button"
+          id="primary-button"
+          class="button button--primary button--hero"
+          disabled
+          aria-keyshortcuts="Space K"
+        >
+          Start
+        </button>
+        <div class="controls__row">
+          <button
+            type="button"
+            id="lap-button"
+            class="button button--outline"
+            disabled
+            aria-keyshortcuts="L"
+          >
+            Lap
+          </button>
+          <button
+            type="button"
+            id="reset-button"
+            class="button button--outline button--danger"
+            disabled
+            aria-keyshortcuts="R"
+          >
+            Reset
+          </button>
+        </div>
+        <p class="hint">
+          <kbd>Space</kbd> start or pause · <kbd>L</kbd> lap · <kbd>R</kbd> reset
+        </p>
+      </section>
+
+      <form id="session-label-form" class="session-label-form">
+        <label for="session-label">Session name</label>
+        <div class="session-label-row">
+          <input id="session-label" name="label" type="text" maxlength="120" placeholder="What are you timing?" autocomplete="off" disabled />
+          <button id="save-label" type="submit" class="button button--outline button--sm" disabled>Save name</button>
+        </div>
+        <p class="session-label-hint">Saved with this session. Renaming keeps the timer as it is.</p>
+      </form>
+
+      <div id="error-region" class="notice" role="alert" hidden>
+        <p id="error-message" class="notice__message"></p>
+        <button type="button" id="retry-button" class="button button--outline button--sm">
+          Retry
+        </button>
+      </div>
+
+      <section id="lap-region" class="laps" aria-labelledby="laps-title" hidden>
+        <div class="laps__head">
+          <h2 id="laps-title">Laps</h2>
+          <p id="lap-count" class="laps__count"></p>
+        </div>
+        <div class="laps__columns" aria-hidden="true">
+          <span>Lap</span><span>Split</span><span>Total</span>
+        </div>
+        <ol id="lap-list" class="lap-list"></ol>
+        <p id="lap-empty" class="laps__empty" hidden>
+          No laps yet. Press <kbd>L</kbd> or Lap to capture a split while the
+          stopwatch runs.
+        </p>
+      </section>
+
+      <p id="recovered-note" class="notice notice--muted" hidden>
+        Stopwatch restarted while this session was running, so it was paused at
+        the recovered elapsed time.
+      </p>
+    </main>
+
+    <dialog id="reset-dialog" class="dialog" aria-labelledby="reset-dialog-title">
+      <form method="dialog" class="dialog__body">
+        <h2 id="reset-dialog-title" class="dialog__title">Reset the stopwatch?</h2>
+        <p class="dialog__text">
+          This clears the elapsed time and
+          <span id="reset-dialog-count">all recorded laps</span>. It cannot be
+          undone.
+        </p>
+        <div class="dialog__actions">
+          <button
+            type="submit"
+            value="cancel"
+            id="reset-cancel"
+            class="button button--outline"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            value="confirm"
+            id="reset-confirm"
+            class="button button--destructive"
+          >
+            Reset
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Discrete state changes only; never the ticking value. -->
+    <p id="announcer" class="sr-only" role="status" aria-live="polite"></p>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

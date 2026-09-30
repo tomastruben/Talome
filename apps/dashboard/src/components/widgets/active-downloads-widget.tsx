@@ -4,6 +4,8 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { HugeiconsIcon, Film01Icon, Tv01Icon, ArrowDown01Icon, Download01Icon } from "@/components/icons";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
+import { getQueueProgress, getDownloadCompletionSnapshot, getNewlyCompletedDownloads } from "@/lib/download-status";
 import { formatBytes } from "@/lib/format";
 import { Widget, WidgetHeader } from "./widget";
 import { useDownloads } from "@/hooks/use-downloads";
@@ -31,7 +33,7 @@ function formatEta(seconds: number | null | undefined): string {
 }
 
 function QueueItemRow({ item }: { item: DownloadQueueItem }) {
-  const pct = Math.round((item.progress ?? 0) * 100);
+  const pct = Math.floor(getQueueProgress(item) * 100);
   const speed = formatSpeed(item.dlspeed ?? 0);
   const eta = formatEta(item.eta);
 
@@ -39,14 +41,14 @@ function QueueItemRow({ item }: { item: DownloadQueueItem }) {
     <div className="px-4 py-2.5 grid gap-1.5">
       <div className="flex items-center gap-2 min-w-0">
         <HugeiconsIcon icon={item.type === "tv" ? Tv01Icon : Film01Icon} size={13} className="text-dim-foreground shrink-0" />
-        <p className="text-sm font-medium truncate flex-1">{item.title}</p>
+        <p className="text-sm font-medium truncate flex-1" title={item.title}>{item.title}</p>
         <span className="text-xs tabular-nums font-medium text-muted-foreground shrink-0">{pct}%</span>
       </div>
       <Progress value={pct} className="h-1" />
       <div className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums min-w-0">
         {item.size > 0 && (
           <span className="truncate">
-            {formatBytes(item.size * (item.progress ?? 0))} of {formatBytes(item.size)}
+            {formatBytes(item.size * getQueueProgress(item))} of {formatBytes(item.size)}
           </span>
         )}
         {speed && (
@@ -62,7 +64,7 @@ function QueueItemRow({ item }: { item: DownloadQueueItem }) {
 }
 
 function TorrentRow({ torrent }: { torrent: DownloadTorrent }) {
-  const pct = Math.round(torrent.progress * 100);
+  const pct = Math.floor(Math.max(0, Math.min(1, torrent.progress)) * 100);
   const speed = formatSpeed(torrent.dlspeed);
   const eta = formatEta(torrent.eta);
 
@@ -70,7 +72,7 @@ function TorrentRow({ torrent }: { torrent: DownloadTorrent }) {
     <div className="px-4 py-2.5 grid gap-1.5">
       <div className="flex items-center gap-2 min-w-0">
         <HugeiconsIcon icon={Film01Icon} size={13} className="text-dim-foreground shrink-0" />
-        <p className="text-sm font-medium truncate flex-1">{torrent.name}</p>
+        <p className="text-sm font-medium truncate flex-1" title={torrent.name}>{torrent.name}</p>
         <span className="text-xs tabular-nums font-medium text-muted-foreground shrink-0">{pct}%</span>
       </div>
       <Progress value={pct} className="h-1" />
@@ -91,83 +93,48 @@ function TorrentRow({ torrent }: { torrent: DownloadTorrent }) {
 }
 
 export function ActiveDownloadsWidget() {
-  const { data, queue, torrents, isLoading, error } = useDownloads();
-  const activeTorrents = torrents.filter((t) => t.state === "downloading");
-  const activeCount = queue.length + activeTorrents.length;
-
-  // Track previous torrent hashes for completion detection
-  const prevTorrentHashesRef = useRef<Set<string> | null>(null);
-  // Track previous queue item IDs + status for queue completion detection
-  const prevQueueRef = useRef<Map<number, string> | null>(null);
+  const { data, queue, torrents, isLoading, error, activity, retry, isValidating } = useDownloads();
+  const { activeQueue: displayQueue, activeTorrents: displayTorrents, activeCount, secondary } = activity;
+  const previousRef = useRef<ReturnType<typeof getDownloadCompletionSnapshot> | null>(null);
 
   useEffect(() => {
-    if (!data) return;
-
-    // Torrent completion: hash disappears
-    const currentHashes = new Set(torrents.map((t) => t.hash));
-    if (prevTorrentHashesRef.current !== null) {
-      prevTorrentHashesRef.current.forEach((hash) => {
-        if (!currentHashes.has(hash)) {
-          toast.success("Download complete", {
-            action: {
-              label: "View",
-              onClick: openDownloads,
-            },
-          });
-        }
-      });
+    if (!data || error) return;
+    const current = getDownloadCompletionSnapshot(queue, torrents);
+    if (previousRef.current) {
+      for (const title of getNewlyCompletedDownloads(previousRef.current, current)) {
+        toast.success(`Downloaded: ${title}`, { action: { label: "View", onClick: openDownloads } });
+      }
     }
-    prevTorrentHashesRef.current = currentHashes;
-
-    // Queue completion: status transitions to completed or importPending
-    const currentQueueMap = new Map(queue.map((q) => [q.id, q.status]));
-    if (prevQueueRef.current !== null) {
-      prevQueueRef.current.forEach((prevStatus, id) => {
-        const newStatus = currentQueueMap.get(id);
-        if (
-          prevStatus === "downloading" &&
-          (newStatus === "completed" || newStatus === "importPending" || newStatus === "importing")
-        ) {
-          const item = queue.find((q) => q.id === id);
-          toast.success(`Downloaded: ${item?.title ?? "item"}`, {
-            action: {
-              label: "View",
-              onClick: openDownloads,
-            },
-          });
-        }
-      });
-    }
-    prevQueueRef.current = currentQueueMap;
-  }, [data, torrents, queue]);
-
-  const displayQueue = queue;
-  const displayTorrents = activeTorrents;
+    previousRef.current = current;
+  }, [data, error, torrents, queue]);
 
   return (
     <Widget>
       <WidgetHeader
         title="Active Downloads"
         href="/dashboard/media?tab=downloads"
-        hrefLabel={activeCount > 0 ? `${activeCount} active` : "View all"}
+        hrefLabel={!error && !isLoading && activeCount > 0 ? `${activeCount} active` : "View all"}
       />
       {isLoading ? (
         <WidgetListState icon={Download01Icon} message="Loading active downloads..." />
       ) : error ? (
-        <WidgetListState icon={Download01Icon} message="Download stats unavailable." />
+        <WidgetListState icon={Download01Icon} message="Download stats unavailable." action={<Button variant="outline" size="sm" onClick={() => { void retry(); }} disabled={isValidating}>Retry</Button>} />
       ) : displayQueue.length === 0 && displayTorrents.length === 0 ? (
         <WidgetListState icon={Download01Icon} message="No active downloads." />
       ) : (
         <WidgetList>
           <div className="divide-y divide-border/40">
             {displayQueue.map((item) => (
-              <QueueItemRow key={`q-${item.id}`} item={item} />
+              <QueueItemRow key={`q-${item.type}-${item.id}`} item={item} />
             ))}
             {displayTorrents.map((torrent) => (
               <TorrentRow key={torrent.hash} torrent={torrent} />
             ))}
           </div>
         </WidgetList>
+      )}
+      {!isLoading && !error && secondary && (
+        <p className="border-t border-border/60 px-4 py-2 text-xs text-muted-foreground">{secondary}. View all for details.</p>
       )}
     </Widget>
   );

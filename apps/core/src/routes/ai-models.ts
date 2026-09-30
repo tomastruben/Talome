@@ -42,12 +42,13 @@ const KIMI_MODELS: ModelInfo[] = [
 
 // ── Fetch OpenAI models from API ─────────────────────────────────────────────
 
-// Only show chat-capable models — exclude audio, realtime, transcribe, TTS,
-// search, dated snapshots (YYYY-MM-DD suffix), and deep-research variants.
+// Only consider chat-capable models — exclude audio, realtime, transcribe, TTS,
+// image, search, dated snapshots (YYYY-MM-DD suffix), and deep-research variants.
 const OPENAI_CHAT_PREFIXES = ["gpt-", "o1", "o3", "o4", "codex"];
 const OPENAI_EXCLUDE_PATTERNS = [
   /\d{4}-\d{2}-\d{2}/, // dated snapshot (e.g. gpt-4o-2024-08-06)
   /audio/,
+  /image/,
   /realtime/,
   /transcribe/,
   /tts/,
@@ -62,17 +63,97 @@ function isRelevantOpenAiModel(id: string): boolean {
   return true;
 }
 
+const OPENAI_TIER_PATTERN = /^gpt-(\d+(?:\.\d+)?)-(sol|terra|luna)$/;
+const OPENAI_TIER_ORDER = ["terra", "sol", "luna"] as const;
+const OPENAI_TIER_DESCRIPTIONS: Record<(typeof OPENAI_TIER_ORDER)[number], string> = {
+  terra: "Recommended · balanced for everyday work",
+  sol: "Most capable · for complex work",
+  luna: "Fastest · lowest cost",
+};
+
+interface OpenAiApiModel {
+  id: string;
+  created: number;
+}
+
+function compareModelGenerations(a: string, b: string): number {
+  const aParts = a.split(".").map(Number);
+  const bParts = b.split(".").map(Number);
+  const length = Math.max(aParts.length, bParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const difference = (aParts[index] ?? 0) - (bParts[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+
+  return 0;
+}
+
 function prettifyOpenAiName(id: string): string {
   return id
     .split("-")
     .map((part, i) => {
       if (i === 0 && part.startsWith("gpt")) return part.toUpperCase();
-      if (part === "mini" || part === "nano") return part.charAt(0).toUpperCase() + part.slice(1);
+      if (["mini", "nano", "sol", "terra", "luna"].includes(part)) {
+        return part.charAt(0).toUpperCase() + part.slice(1);
+      }
       return part;
     })
     .join("-")
     .replace(/-Mini/, " Mini")
-    .replace(/-Nano/, " Nano");
+    .replace(/-Nano/, " Nano")
+    .replace(/-(Sol|Terra|Luna)$/, " $1");
+}
+
+/**
+ * Keep the OpenAI picker focused on the latest current generation. The API
+ * returns every model an account can access, including legacy and specialist
+ * models that are not useful choices for Talome's general assistant.
+ */
+export function curateOpenAiModels(models: OpenAiApiModel[]): ModelInfo[] {
+  const relevant = models
+    .filter((model) => isRelevantOpenAiModel(model.id))
+    .sort((a, b) => b.created - a.created);
+  const tiered = relevant.flatMap((model) => {
+    const match = OPENAI_TIER_PATTERN.exec(model.id);
+    return match ? [{ model, generation: match[1], tier: match[2] }] : [];
+  });
+
+  const latestGeneration = tiered.reduce<string | undefined>((latest, candidate) => (
+    !latest || compareModelGenerations(candidate.generation, latest) > 0
+      ? candidate.generation
+      : latest
+  ), undefined);
+
+  if (latestGeneration) {
+    return tiered
+      .filter((candidate) => candidate.generation === latestGeneration)
+      .sort((a, b) => (
+        OPENAI_TIER_ORDER.indexOf(a.tier as (typeof OPENAI_TIER_ORDER)[number])
+        - OPENAI_TIER_ORDER.indexOf(b.tier as (typeof OPENAI_TIER_ORDER)[number])
+      ))
+      .map(({ model, tier }) => ({
+        id: model.id,
+        name: prettifyOpenAiName(model.id),
+        description: OPENAI_TIER_DESCRIPTIONS[tier as (typeof OPENAI_TIER_ORDER)[number]],
+      }));
+  }
+
+  // Older or partially provisioned accounts may not expose the tiered family.
+  // Keep one newest relevant chat model so model selection never becomes empty.
+  return relevant.slice(0, 1).map((model) => ({
+    id: model.id,
+    name: prettifyOpenAiName(model.id),
+    description: "Latest available chat model",
+  }));
+}
+
+export function resolveOpenAiActiveModel(activeModel: string, models: ModelInfo[]): string {
+  if (models.length === 0 || models.some((model) => model.id === activeModel)) {
+    return activeModel;
+  }
+
+  return models[0].id;
 }
 
 async function fetchOpenAiModels(apiKey: string): Promise<ModelInfo[]> {
@@ -83,14 +164,7 @@ async function fetchOpenAiModels(apiKey: string): Promise<ModelInfo[]> {
     });
     if (!res.ok) return [];
     const data = (await res.json()) as { data: Array<{ id: string; created: number }> };
-    return (data.data || [])
-      .filter((m) => isRelevantOpenAiModel(m.id))
-      .sort((a, b) => b.created - a.created)
-      .map((m) => ({
-        id: m.id,
-        name: prettifyOpenAiName(m.id),
-        description: "",
-      }));
+    return curateOpenAiModels(data.data || []);
   } catch {
     return [];
   }
@@ -131,7 +205,14 @@ aiModels.get("/models", async (c) => {
     { provider: "ollama", configured: ollamaReady, models: ollamaModels },
   ];
 
-  const response: AiModelsResponse = { activeProvider, activeModel, providers };
+  const visibleActiveModel = activeProvider === "openai"
+    ? resolveOpenAiActiveModel(activeModel, openaiModels)
+    : activeModel;
+  const response: AiModelsResponse = {
+    activeProvider,
+    activeModel: visibleActiveModel,
+    providers,
+  };
   return c.json(response);
 });
 

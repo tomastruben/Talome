@@ -6,6 +6,7 @@ Expected output set:
 - `.talome-creator/design/screen-spec.md` with research-resolved workflows and screens
 - `.talome-creator/validation/report.md` with rendered and functional evidence
 - `manifest.json`
+- `talome-app.json` with the actual native surfaces, declared data sources and actions, validated against the shipped AppSpec schema
 - `docker-compose.yml`
 - creator metadata describing blueprint, validations, and provenance
 - scaffold files when scaffold generation is enabled

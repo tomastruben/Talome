@@ -36,6 +36,8 @@ import { useKeyboardMode } from "@/hooks/use-keyboard-mode";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useBlueprintBuild } from "@/hooks/use-blueprint-build";
 import { blueprintAtom } from "@/atoms/artifact";
 import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { pageBackAtom } from "@/atoms/page-back";
@@ -360,7 +362,6 @@ export default function AssistantPage() {
   const setPageBack = useSetAtom(pageBackAtom);
   const setPageTitle = useSetAtom(pageTitleAtom);
   const setHideShellHeader = useSetAtom(hideShellHeaderAtom);
-  const [building, setBuilding] = useState(false);
   const [autoExec, setAutoExec] = useState(false);
 
   // Sync auto mode from localStorage after hydration to avoid SSR mismatch
@@ -581,7 +582,7 @@ export default function AssistantPage() {
     [setBlueprint],
   );
 
-  // Build flow: create draft → show inline Claude Code terminal
+  const { build: startBlueprintBuild, building, error: buildError } = useBlueprintBuild(blueprint, autoExec, setBuildSession, activeId);
   const handleBlueprintBuild = useCallback(async () => {
     if (
       !blueprint.identity?.name ||
@@ -593,72 +594,8 @@ export default function AssistantPage() {
       !blueprint.appSpec?.surfaces.length ||
       !blueprint.criteria?.length
     ) return;
-    if (building) return;
-
-    setBuilding(true);
-
-    try {
-      const description = blueprint.identity.description || blueprint.identity.name;
-
-      const res = await fetch(`${CORE_URL}/api/apps/create`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          description,
-          mode: "both",
-          saveImmediately: true,
-          source: { kind: "auto" },
-          preBuiltBlueprint: blueprint,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || "Failed to create app");
-      }
-
-      if (data.draft?.workspace?.rootPath) {
-        const taskPrompt = data.draft.taskPrompt
-          ?? `You are helping the user create "${blueprint.identity.name}". Read the blueprint and instructions in .talome-creator/ first.`;
-
-        const execRes = await fetch(`${CORE_URL}/api/apps/create/execute`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            workspaceRoot: data.draft.workspace.rootPath,
-            taskPrompt,
-            appId: data.draft.app.id,
-            auto: autoExec,
-          }),
-        });
-
-        if (execRes.ok) {
-          const execData = await execRes.json() as {
-            sessionName: string;
-            command: string;
-            taskPrompt: string;
-            workspaceRoot: string;
-          };
-          setBuildSession({
-            sessionName: execData.sessionName,
-            command: execData.command,
-            taskPrompt: execData.taskPrompt,
-            appId: data.draft.app.id,
-            workspaceRoot: execData.workspaceRoot,
-          });
-        }
-      } else {
-        const href = `/dashboard/apps/${data.storeId}/${data.appId}`;
-        if (!requestDesktopNavigation(href)) router.push(href);
-        setBlueprint({});
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Build failed";
-      handleSubmit(`Build failed: ${msg}. Can you help fix this?`);
-    } finally {
-      setBuilding(false);
-    }
-  }, [autoExec, blueprint, building, router, setBlueprint, handleSubmit]);
+    await startBlueprintBuild();
+  }, [blueprint, startBlueprintBuild]);
 
   const [completing, setCompleting] = useState(false);
 
@@ -677,7 +614,7 @@ export default function AssistantPage() {
       });
       const result = await res.json();
       setBuildResult(result);
-      return { ok: true as const };
+      return result.ok && res.ok ? { ok: true as const } : { ok: false as const };
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Verification failed";
       setBuildResult({
@@ -689,7 +626,7 @@ export default function AssistantPage() {
         error: msg,
         duration: 0,
       });
-      return { ok: false as const, typeErrors: msg };
+      return { ok: false as const };
     } finally {
       setBuildSession(null);
       setCompleting(false);
@@ -703,8 +640,8 @@ export default function AssistantPage() {
   const handleBuildResultDismiss = useCallback(() => {
     const appId = buildResult?.appId;
     setBuildResult(null);
-    setBlueprint({});
     if (appId && buildResult?.ok) {
+      setBlueprint({});
       const href = `/dashboard/apps/user-apps/${appId}`;
       if (!requestDesktopNavigation(href)) router.push(href);
     }
@@ -935,6 +872,13 @@ export default function AssistantPage() {
           <div className="pointer-events-none absolute inset-x-0 -top-12 h-12 bg-gradient-to-t from-background to-transparent" />
           {hasBlueprint && showingChat && (
             <div className="max-w-2xl mx-auto w-full px-4 sm:px-6 pb-2 pt-1">
+              {buildError && <Alert variant="destructive" className="mb-2">
+                <AlertTitle>Build could not start</AlertTitle>
+                <AlertDescription>
+                  <p>{buildError}</p>
+                  <p>Your blueprint is still available. Use Build to retry.</p>
+                </AlertDescription>
+              </Alert>}
               <BlueprintDraftBar
                 blueprint={blueprint}
                 onBuild={handleBlueprintBuild}

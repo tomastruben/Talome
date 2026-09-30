@@ -19,10 +19,12 @@ import {
   Sun01Icon,
 } from "@/components/icons";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { AudioPlayerBook, AudioPlayerState } from "@/atoms/audio-player";
 import { useDownloads } from "@/hooks/use-downloads";
 import { formatBytes } from "@/lib/format";
+import { getQueueProgress } from "@/lib/download-status";
 
 interface DesktopControlCenterProps {
   audiobookPlayer: DesktopAudiobookPlayerController;
@@ -182,19 +184,17 @@ export function DesktopControlCenter({
   const isDark = mounted && resolvedTheme === "dark";
   const { book, state, togglePlay, stop } = audiobookPlayer;
   const {
-    queue,
-    torrents,
+    activity,
     isLoading,
     error,
     isActivelyDownloading,
   } = useDownloads();
-  const activeTorrents = torrents.filter((torrent) => torrent.state === "downloading");
-  const activeCount = queue.length + activeTorrents.length;
-  const primaryQueueItem = queue[0];
+  const { activeQueue, activeTorrents, activeCount, secondary } = activity;
+  const primaryQueueItem = activeQueue[0];
   const primaryTorrent = activeTorrents[0];
   const downloadTitle = primaryQueueItem?.title ?? primaryTorrent?.name;
-  const downloadProgress = Math.round(
-    (primaryQueueItem?.progress ?? primaryTorrent?.progress ?? 0) * 100,
+  const downloadProgress = Math.floor(
+    (primaryQueueItem ? getQueueProgress(primaryQueueItem) : primaryTorrent?.progress ?? 0) * 100,
   );
   const audiobookProgress = book && book.totalDuration > 0
     ? Math.min(100, (state.currentTime / book.totalDuration) * 100)
@@ -342,7 +342,7 @@ export function DesktopControlCenter({
                     ? "Status unavailable"
                     : activeCount > 0
                       ? `${activeCount} active`
-                      : "No active downloads"}
+                      : secondary || "No active downloads"}
               </span>
             </span>
             <HugeiconsIcon
@@ -351,7 +351,7 @@ export function DesktopControlCenter({
               className="text-muted-foreground transition-transform duration-200 group-hover:translate-x-0.5 motion-reduce:transition-none"
             />
           </span>
-          {downloadTitle ? (
+          {!error && !isLoading && downloadTitle ? (
             <span className="grid gap-1">
               <span className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
                 <span className="truncate">{downloadTitle}</span>
@@ -459,13 +459,13 @@ export function DesktopDownloadsControlCenter({
   onBack: () => void;
   onOpenApp: () => void;
 }) {
-  const { queue, torrents, isLoading, error } = useDownloads();
-  const activeTorrents = torrents.filter((torrent) => torrent.state === "downloading");
+  const { activity, isLoading, error, retry, isValidating } = useDownloads();
+  const { activeQueue, activeTorrents, secondary } = activity;
   const downloads = [
-    ...queue.map((item) => ({
-      id: `queue-${item.id}`,
+    ...activeQueue.map((item) => ({
+      id: `queue-${item.type}-${item.id}`,
       title: item.title,
-      progress: item.progress ?? 0,
+      progress: getQueueProgress(item),
       speed: item.dlspeed ?? 0,
       size: item.size,
     })),
@@ -489,7 +489,10 @@ export function DesktopDownloadsControlCenter({
         {isLoading ? (
           <p className="py-12 text-center text-sm text-muted-foreground">Checking downloads…</p>
         ) : error ? (
-          <p className="py-12 text-center text-sm text-muted-foreground">Download status is unavailable.</p>
+          <div className="grid justify-items-center gap-3 py-10 text-center">
+            <p className="text-sm text-muted-foreground">Download status is unavailable.</p>
+            <Button variant="outline" size="sm" disabled={isValidating} onClick={() => { void retry(); }}>Retry</Button>
+          </div>
         ) : downloads.length === 0 ? (
           <div className="grid justify-items-center gap-3 py-10 text-center">
             <span className="flex size-16 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
@@ -503,7 +506,7 @@ export function DesktopDownloadsControlCenter({
         ) : (
           <div className="grid gap-2">
             {downloads.map((download) => {
-              const progress = Math.round(download.progress * 100);
+              const progress = Math.floor(download.progress * 100);
               const speed = formatDownloadSpeed(download.speed);
               return (
                 <div
@@ -528,6 +531,9 @@ export function DesktopDownloadsControlCenter({
               );
             })}
           </div>
+        )}
+        {!isLoading && !error && secondary && (
+          <p className="mt-3 text-center text-xs text-muted-foreground">{secondary}. Open Downloads for details.</p>
         )}
       </div>
     </div>

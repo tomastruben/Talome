@@ -187,6 +187,9 @@ describe("NativeAppRuntime", () => {
     expect(screen.getByText("unreachable: Service is offline")).toBeInTheDocument();
     expect(screen.getAllByText("$900.00").length).toBeGreaterThan(0);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Retry app data" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(screen.getAllByText("$900.00").length).toBeGreaterThan(0);
   });
 
   it("renders the visual budget workspace from live AppSpec data without a Wi-Fi metaphor", async () => {

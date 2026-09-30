@@ -11,7 +11,6 @@ import {
 } from "@/components/icons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getHostUrl } from "@/lib/constants";
-import { getContainerWebPort } from "@/lib/container-web-port";
 import { cn } from "@/lib/utils";
 import {
   resolveApplicationIcon,
@@ -26,9 +25,11 @@ export interface LaunchableApp {
   icon?: string;
   iconUrl?: string;
   container: Container;
+  /** Identifies distinct instances of an app without exposing Docker service names. */
+  collection?: string;
 }
 
-/** Extract individual launchable apps (running containers with web ports) from stacks. */
+/** Native contracts and discovered/declared browser interfaces only, never arbitrary TCP ports. */
 export function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
   const apps: LaunchableApp[] = [];
 
@@ -53,23 +54,32 @@ export function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
 
     for (const container of stack.containers) {
       if (container.status !== "running") continue;
-      const webPort = getContainerWebPort(container);
-      if (!webPort) continue;
+      const ui = container.webUi;
+      if (!ui) continue;
 
       // Resolve icon: per-container icon from stack, then stack-level icon
       const containerIcon = stack.containerIcons?.[container.id];
       const iconUrl = containerIcon?.iconUrl ?? stack.iconUrl;
       const icon = containerIcon?.icon ?? stack.icon;
-      const name = containerIcon?.name ?? (stack.containers.length === 1 ? stack.name : container.name);
+      const pageTitle = ui.title?.replace(/\s+(WebUI|Web UI)$/i, "").replace(/^(Sign in|Log in|Login)\s*[-|–:]\s*/i, "").trim();
+      const detectedName = /\/supabase\/studio:/.test(container.image) ? "Supabase Studio" : pageTitle;
+      const uiOwnerIcon = Object.values(stack.containerIcons ?? {}).find(metadata => metadata.name?.toLocaleLowerCase() === detectedName?.toLocaleLowerCase());
+      const catalogName = containerIcon?.name ?? (stack.containers.length === 1 && (stack.kind === "talome" || stack.icon || stack.iconUrl) ? stack.name : undefined);
+      const name = (ui.source === "configured" ? ui.title : undefined) || uiOwnerIcon?.name
+        || (/gluetun/i.test(container.image) ? detectedName : catalogName)
+        || (detectedName && !/^(Web app|Login|Sign in|Welcome|Home)$/i.test(detectedName) ? detectedName : container.name);
+      const project = container.labels?.["com.docker.compose.project"];
 
       apps.push({
         // Container names survive image upgrades/recreation, unlike Docker IDs.
         id: container.name,
         name,
-        url: getHostUrl(webPort),
-        icon,
-        iconUrl,
+        url: `${getHostUrl(ui.port).replace(/^http:/, `${ui.protocol}:`)}${ui.path}`,
+        // A VPN can publish another container's interface (e.g. qBittorrent).
+        icon: uiOwnerIcon?.icon ?? icon,
+        iconUrl: uiOwnerIcon?.iconUrl ?? iconUrl,
         container,
+        collection: project ? project.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase()).replace(/\bOs\b/g, "OS") : undefined,
       });
     }
   }
@@ -77,7 +87,7 @@ export function extractLaunchableApps(stacks: ServiceStack[]): LaunchableApp[] {
   return apps;
 }
 
-function AppIcon({ app }: { app: LaunchableApp }) {
+export function LaunchableAppIcon({ app, iconClassName, className }: { app: LaunchableApp; iconClassName?: string; className?: string }) {
   const realIconUrl = resolveApplicationIconUrl(app.iconUrl);
   const appIcon = resolveApplicationIcon(app.icon, app.name);
 
@@ -86,6 +96,7 @@ function AppIcon({ app }: { app: LaunchableApp }) {
       className={cn(
         "relative size-12 rounded-xl bg-muted/40 border border-border/30",
         "flex items-center justify-center overflow-hidden shrink-0",
+        className,
       )}
     >
       {realIconUrl ? (
@@ -103,11 +114,11 @@ function AppIcon({ app }: { app: LaunchableApp }) {
           <HugeiconsIcon
             icon={appIcon}
             size={26}
-            className="hidden text-foreground"
+            className={cn("hidden text-foreground", iconClassName)}
           />
         </>
       ) : (
-        <HugeiconsIcon icon={appIcon} size={26} className="text-foreground" />
+        <HugeiconsIcon icon={appIcon} size={26} className={cn("text-foreground", iconClassName)} />
       )}
     </div>
   );
@@ -167,7 +178,7 @@ export function LauncherWidget({ onLaunch }: LauncherWidgetProps = {}) {
               )}
               onClick={() => onLaunch ? onLaunch(app) : quickLook.open(app.container)}
             >
-              <AppIcon app={app} />
+              <LaunchableAppIcon app={app} />
               <span className="text-xs text-muted-foreground leading-tight text-center truncate w-full px-0.5">
                 {app.name}
               </span>

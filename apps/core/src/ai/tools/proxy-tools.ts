@@ -58,7 +58,7 @@ export const proxyAddRouteTool = tool({
 
     const id = randomUUID();
     const now = new Date().toISOString();
-    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId ?? null}, ${domain}, ${normalizedUpstream}, ${tlsMode}, ${now})`);
+    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId ?? null}, ${domain}, ${normalizedUpstream}, ${tlsMode}, ${now}) ON CONFLICT(domain) DO UPDATE SET app_id = COALESCE(excluded.app_id, app_id), upstream = excluded.upstream, tls_mode = excluded.tls_mode`);
 
     // Connect upstream container to proxy network if it looks like a container name
     if (!upstream.includes("localhost") && !upstream.includes("127.0.0.1")) {

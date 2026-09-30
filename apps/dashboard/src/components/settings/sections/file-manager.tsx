@@ -68,8 +68,8 @@ export function FileManagerSection() {
   return (
     <div className="grid gap-6">
       <p className="text-sm text-muted-foreground leading-relaxed">
-        Control which external drives are accessible in the file manager.
-        Only enabled drives will appear as browsable roots.
+        Choose which external drives appear in Files. Talome Files is a dedicated,
+        user-facing folder; Talome&apos;s operational data and the Mac&apos;s internal disk stay hidden.
       </p>
 
       <SettingsGroup>
@@ -114,8 +114,8 @@ export function FileManagerSection() {
       </SettingsGroup>
 
       <p className="text-xs text-muted-foreground px-1">
-        Talome&apos;s internal directories are always accessible. External drives must be
-        explicitly enabled for security.
+        Only Talome Files and explicitly enabled external drives are browsable.
+        Changing drive access requires an administrator.
       </p>
     </div>
   );

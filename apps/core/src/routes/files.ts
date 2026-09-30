@@ -11,9 +11,12 @@ import { db, schema } from "../db/index.js";
 import type { TranscodingConfig } from "@talome/types";
 import {
   TALOME_HOME,
+  TALOME_FILES_HOME,
   getAllowedRoots,
+  getAllowedRootInfos,
   getDetectedDrives,
   isAllowed,
+  isAllowedRoot,
   sanitizePath,
   invalidateDriveCache,
 } from "../utils/filesystem.js";
@@ -82,7 +85,13 @@ export async function buildStreamResponse(
 // ── List directory contents ─────────────────────────────────────────────
 
 files.get("/list", async (c) => {
-  const dirPath = c.req.query("path") || TALOME_HOME;
+  const requestedPath = c.req.query("path");
+  // Existing windows may have persisted the former ~/.talome root. Migrate
+  // only that exact path to the new safe user-files root; descendants remain
+  // denied so operational Talome data is never exposed.
+  const dirPath = !requestedPath || resolve(requestedPath) === resolve(TALOME_HOME)
+    ? TALOME_FILES_HOME
+    : requestedPath;
   const abs = sanitizePath(dirPath);
 
   if (!isAllowed(abs)) {
@@ -95,6 +104,7 @@ files.get("/list", async (c) => {
     const items = await Promise.all(
       entries
         .filter((e) => showHidden || !e.name.startsWith("."))
+        .filter((e) => isAllowed(join(abs, e.name)))
         .map(async (entry) => {
           const fullPath = join(abs, entry.name);
           try {
@@ -133,6 +143,7 @@ files.get("/list", async (c) => {
       parent: canGoUp ? parentDir : null,
       items,
       allowedRoots: getAllowedRoots().filter((r: string) => existsSync(r)),
+      roots: getAllowedRootInfos(),
     });
   } catch (err) {
     return serverError(c, err, { message: "Failed to list directory" });
@@ -1379,8 +1390,7 @@ files.delete("/", async (c) => {
   if (!isAllowed(abs)) return c.json({ error: "Access denied" }, 403);
 
   // Prevent deleting allowed root directories
-  const roots = getAllowedRoots();
-  if (roots.includes(abs)) return c.json({ error: "Cannot delete a root directory" }, 403);
+  if (isAllowedRoot(abs)) return c.json({ error: "Cannot delete a root directory" }, 403);
 
   try {
     const s = await stat(abs);
@@ -1404,6 +1414,7 @@ files.post("/rename", async (c) => {
 
   const absOld = sanitizePath(body.oldPath);
   if (!isAllowed(absOld)) return c.json({ error: "Access denied" }, 403);
+  if (isAllowedRoot(absOld)) return c.json({ error: "Cannot rename a root directory" }, 403);
 
   const absNew = join(dirname(absOld), body.newName);
   if (!isAllowed(absNew)) return c.json({ error: "Access denied" }, 403);
@@ -1443,6 +1454,10 @@ files.post("/move", async (c) => {
     const absSrc = sanitizePath(src);
     if (!isAllowed(absSrc)) {
       errors.push({ path: src, error: "Access denied" });
+      continue;
+    }
+    if (isAllowedRoot(absSrc)) {
+      errors.push({ path: src, error: "Cannot move a root directory" });
       continue;
     }
 

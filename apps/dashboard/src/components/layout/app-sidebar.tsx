@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/sidebar";
 import { NavMain } from "./nav-main";
 import { NavUser } from "./nav-user";
+import { SidebarDesktopMode } from "./sidebar-desktop-mode";
 import { SidebarNotifications } from "@/components/notifications/sidebar-notifications";
 import { SidebarAudioPlayer } from "@/components/audiobooks/sidebar-audio-player";
 import { SidebarOptimization } from "@/components/media/sidebar-optimization";
@@ -78,6 +79,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
         <SidebarMenu>
           <SidebarAudioPlayer />
           <SidebarOptimization />
+          <SidebarDesktopMode />
           <SidebarNotifications />
         </SidebarMenu>
         <NavUser />

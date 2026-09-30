@@ -12,6 +12,7 @@ import { useAutomation } from "@/components/automations/automation-context";
 import { useWidgetEdit } from "@/components/widgets/widget-edit-context";
 import { useWidgetLayout } from "@/hooks/use-widget-layout";
 import { useCheckServiceUpdates } from "@/hooks/use-check-service-updates";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { toast } from "sonner";
 
@@ -121,20 +122,34 @@ function ServicesShellActions() {
 
 function RouteBackShellAction({ home = false }: { home?: boolean }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const embeddedFrame = useIsEmbeddedFrame();
   const handleBack = useCallback(() => {
     if (!home) {
+      // An app can open directly on a detail page. Browser history belongs to
+      // the whole desktop tab and may otherwise take a different window back.
+      if (embeddedFrame) {
+        const destination = pathname.endsWith("/configure")
+          ? pathname.slice(0, -"/configure".length)
+          : pathname.startsWith("/dashboard/settings/")
+            ? "/dashboard/settings"
+            : "/dashboard/apps";
+        router.push(destination);
+        return;
+      }
       router.back();
       return;
     }
     if (!requestDesktopNavigation("/dashboard")) router.push("/dashboard");
-  }, [home, router]);
-  const actions = useMemo<DesktopAppAction[]>(() => [{
+  }, [embeddedFrame, home, pathname, router]);
+  // A root desktop window has no dashboard parent; Close returns to the desktop.
+  const actions = useMemo<DesktopAppAction[]>(() => home && embeddedFrame ? [] : [{
     id: "shell-route-back",
     label: "Back",
     icon: "back",
     placement: "leading",
     onSelect: handleBack,
-  }], [handleBack]);
+  }], [embeddedFrame, handleBack, home]);
 
   usePublishShellActions(actions);
   return null;

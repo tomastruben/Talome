@@ -35,7 +35,7 @@ import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { asRows, formatNativeValue, getValueAtPath } from "./native-app-values";
-import { resolveBudgetCategoryIcon } from "./native-app-icons";
+import { resolveBudgetCategoryIcon, resolveNativeAppIcon } from "./native-app-icons";
 
 export type NativeAppActionHandler = (
   action: TalomeAppAction,
@@ -197,6 +197,7 @@ export function ActivityListBlock({
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
+  const itemLabel = block.valueFormat === "currency" ? "transactions" : block.title.toLowerCase();
   const source = blockData(data, block.dataSource);
   const allRows = asRows(block.rowsPath ? getValueAtPath(source, block.rowsPath) : source);
   const rows = allRows.filter((row) => {
@@ -212,22 +213,22 @@ export function ActivityListBlock({
     : false;
 
   return (
-    <Card className="h-full overflow-hidden rounded-lg">
-      <CardHeader className={cn(!block.compact && "gap-4 md:grid-cols-[minmax(0,1fr)_auto]")}>
+    <Card className="h-full min-w-0 overflow-hidden rounded-lg @container/activity">
+      <CardHeader className={cn(!block.compact && "gap-4 @4xl/activity:grid-cols-[minmax(0,1fr)_auto]")}>
         <div className="min-w-0">
           <CardTitle>{block.title}</CardTitle>
           {block.description ? <CardDescription className="mt-2">{block.description}</CardDescription> : null}
         </div>
         {!block.compact && (block.searchPaths?.length || block.filters?.length) ? (
-          <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          <div className="flex flex-col gap-2 @4xl/activity:flex-row @4xl/activity:items-center">
             {block.searchPaths?.length ? (
               <SearchField
                 type="search"
-                aria-label="Search transactions"
-                placeholder="Search transactions"
+                aria-label={`Search ${itemLabel}`}
+                placeholder={`Search ${itemLabel}`}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                containerClassName="w-full md:w-72"
+                containerClassName="w-full @4xl/activity:w-72"
               />
             ) : null}
             {block.filters?.length ? (
@@ -237,7 +238,8 @@ export function ActivityListBlock({
                 size="sm"
                 value={filter}
                 onValueChange={(value) => setFilter(value || "all")}
-                aria-label="Filter transactions"
+                aria-label={`Filter ${itemLabel}`}
+                className="max-w-full overflow-x-auto"
               >
                 <ToggleGroupItem value="all">All</ToggleGroupItem>
                 {block.filters.map((item) => (
@@ -257,16 +259,18 @@ export function ActivityListBlock({
           const kind = block.kindPath ? formatNativeValue(getValueAtPath(row, block.kindPath)) : "";
           const value = getValueAtPath(row, block.valuePath);
           const actionValue = block.rowAction ? getValueAtPath(row, block.rowAction.valuePath) : undefined;
-          const categoryIcon = resolveBudgetCategoryIcon(kind.toLowerCase() === "income" ? "Income" : description);
+          const categoryIcon = block.valueFormat === "currency"
+            ? resolveBudgetCategoryIcon(kind.toLowerCase() === "income" ? "Income" : description)
+            : resolveNativeAppIcon(block.icon);
 
           return (
             <div key={`${title}-${date}-${index}`}>
               {index ? <Separator /> : null}
               <div className={cn(
                 "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 py-3",
-                !block.compact && "lg:grid-cols-[7rem_minmax(10rem,1.4fr)_minmax(7rem,1fr)_6rem_minmax(8rem,.9fr)]",
+                !block.compact && "@3xl/activity:grid-cols-[7rem_minmax(10rem,1.4fr)_minmax(7rem,1fr)_6rem_minmax(8rem,.9fr)]",
               )}>
-                {!block.compact ? <span className="hidden text-sm text-muted-foreground lg:block">{date}</span> : null}
+                {!block.compact ? <span className="hidden text-sm text-muted-foreground @3xl/activity:block">{date}</span> : null}
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border bg-background/60">
                     <HugeiconsIcon
@@ -277,13 +281,13 @@ export function ActivityListBlock({
                   </span>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{title}</p>
-                    <p className={cn("truncate text-sm text-muted-foreground", !block.compact && "lg:hidden")}>
+                    <p className={cn("truncate text-sm text-muted-foreground", !block.compact && "@3xl/activity:hidden")}>
                       {[date, description].filter(Boolean).join(" · ")}
                     </p>
                   </div>
                 </div>
-                {!block.compact ? <span className="hidden truncate text-sm text-muted-foreground lg:block">{description}</span> : null}
-                {!block.compact ? <span className="hidden text-sm text-muted-foreground lg:block">{kind}</span> : null}
+                {!block.compact ? <span className="hidden truncate text-sm text-muted-foreground @3xl/activity:block">{description}</span> : null}
+                {!block.compact ? <span className="hidden text-sm text-muted-foreground @3xl/activity:block">{kind}</span> : null}
                 <div className="flex items-center justify-end gap-2">
                   <span className="text-right text-sm font-medium tabular-nums">
                     {formatNativeValue(value, block.valueFormat, block.currency)}
@@ -314,7 +318,7 @@ export function ActivityListBlock({
           );
         }) : (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            {query || filter !== "all" ? "No transactions match these filters." : "No transactions yet."}
+            {query || filter !== "all" ? `No ${itemLabel} match these filters.` : `No ${itemLabel} yet.`}
           </p>
         )}
       </CardContent>

@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppBlueprintSchema } from "../creator/contracts.js";
-import { validateDesignArtifacts } from "../creator/workspace-executor.js";
+import { prepareWorkspace, validateDesignArtifacts } from "../creator/workspace-executor.js";
+import { loadInstructionPack } from "../creator/instructions.js";
 
 const temporaryRoots: string[] = [];
 
@@ -23,6 +24,45 @@ afterEach(async () => {
 });
 
 describe("creator design workflow", () => {
+  it("keeps new and resumed coding sessions local until Talome validates and publishes", async () => {
+    const root = await createWorkspace();
+    const blueprint = AppBlueprintSchema.parse({
+      id: "unpublished-fixture",
+      name: "Unpublished Fixture",
+      description: "A disposable lifecycle test",
+      prompt: "Build a local test service",
+      category: "other",
+      services: [{ name: "app", image: "example/app:1", ports: [], volumes: [], environment: {} }],
+      scaffold: { enabled: true },
+      ui: {},
+      successCriteria: [],
+      designAlignment: { summary: "Use Talome" },
+      instructionsVersion: "test",
+    });
+    const prepared = await prepareWorkspace({
+      app: blueprint,
+      blueprint,
+      sources: [],
+      instructionPack: await loadInstructionPack(),
+      talomeReferences: [],
+      workspaceRoot: root,
+    });
+    const instructions = [
+      prepared.taskPrompt,
+      await readFile(join(root, "CLAUDE.md"), "utf8"),
+      await readFile(join(root, ".talome-creator", "instructions", "workflow.md"), "utf8"),
+    ];
+    for (const text of instructions) {
+      expect(text).toMatch(/disposable test data/i);
+      expect(text).toMatch(/Talome can independently validate and publish/);
+      expect(text).toMatch(/do not install or start the app during generation/i);
+      expect(text).toMatch(/after successful publication, installation and startup happen through the app details configure flow/i);
+      expect(text).not.toMatch(/install_app|start_app|running immediately/);
+    }
+    expect(prepared.scaffoldPath).toBe(join(root, "generated-app"));
+    expect((await validateDesignArtifacts(root)).every((check) => check.status === "failed")).toBe(true);
+  });
+
   it("keeps legacy blueprints parseable with empty staged plans", () => {
     const blueprint = AppBlueprintSchema.parse({
       id: "legacy-app",

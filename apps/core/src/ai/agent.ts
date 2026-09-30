@@ -1,7 +1,7 @@
 import { streamText, generateText, convertToModelMessages, stepCountIs } from "ai";
-import type { UIMessage, SystemModelMessage, LanguageModel } from "ai";
-import { createAnthropic, anthropic as anthropicProvider } from "@ai-sdk/anthropic";
-import { createOpenAI } from "@ai-sdk/openai";
+import type { UIMessage, SystemModelMessage } from "ai";
+import { anthropic as anthropicProvider } from "@ai-sdk/anthropic";
+import { getActiveProvider, resolveModel, createModelInstance } from "./configured-model.js";
 import type { AiProvider } from "../routes/ai-models.js";
 import {
   listContainersTool,
@@ -318,10 +318,6 @@ import { gateToolExecution, getSecurityMode } from "./tool-gateway.js";
 import { getFeatureStackStatus } from "../stacks/feature-stacks.js";
 
 // getSetting imported from ../utils/settings.js
-
-function getAnthropicApiKey(): string | undefined {
-  return getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
-}
 
 // ── Domain registrations ────────────────────────────────────────────────────
 // Core tools — always available (no settingsKeys required)
@@ -1272,87 +1268,6 @@ function getActiveTools(message?: string) {
       .filter(([name]) => !disabledTools.has(name))
       .map(([name, t]) => [name, gateToolExecution(t, name, TOOL_TIERS[name] ?? "read", mode)])
   );
-}
-
-const ANTHROPIC_MODEL_MAP: Record<string, string> = {
-  haiku: "claude-haiku-4-5-20251001",
-  sonnet: "claude-sonnet-4-20250514",
-};
-
-const DEFAULT_MODELS: Record<AiProvider, string> = {
-  anthropic: "claude-haiku-4-5-20251001",
-  openai: "gpt-4o-mini",
-  kimi: "kimi-k3",
-  ollama: "",
-};
-
-function getActiveProvider(): AiProvider {
-  const stored = getSetting("ai_provider");
-  if (stored === "anthropic" || stored === "openai" || stored === "kimi" || stored === "ollama") return stored;
-  return "anthropic";
-}
-
-function getActiveModelId(provider: AiProvider): string {
-  return getSetting("ai_model") || DEFAULT_MODELS[provider] || DEFAULT_MODELS.anthropic;
-}
-
-function resolveModel(provider: AiProvider, hint?: string): string {
-  if (process.env.DEFAULT_MODEL) return process.env.DEFAULT_MODEL;
-  // Shorthand hints for Anthropic (backward compat with existing toggle)
-  if (provider === "anthropic" && hint && ANTHROPIC_MODEL_MAP[hint]) {
-    return ANTHROPIC_MODEL_MAP[hint];
-  }
-  // If hint is a full model ID, use it directly
-  if (hint && hint.includes("-")) return hint;
-  return getActiveModelId(provider);
-}
-
-function createModelInstance(provider: AiProvider, modelId: string): LanguageModel {
-  switch (provider) {
-    case "anthropic": {
-      const apiKey = getAnthropicApiKey();
-      if (!apiKey) {
-        throw new Error(
-          "AI_PROVIDER_NOT_CONFIGURED: No Anthropic API key configured. Add one in Settings → AI Provider."
-        );
-      }
-      return createAnthropic({ apiKey })(modelId);
-    }
-    case "openai": {
-      const apiKey = getSetting("openai_key") || process.env.OPENAI_API_KEY;
-      if (!apiKey) {
-        throw new Error(
-          "AI_PROVIDER_NOT_CONFIGURED: No OpenAI API key configured. Add one in Settings → AI Provider."
-        );
-      }
-      return createOpenAI({ apiKey })(modelId);
-    }
-    case "kimi": {
-      const apiKey = getSetting("kimi_key") || process.env.MOONSHOT_API_KEY;
-      if (!apiKey) {
-        throw new Error(
-          "AI_PROVIDER_NOT_CONFIGURED: No Kimi API key configured. Add one in Settings → AI Provider."
-        );
-      }
-      // Moonshot implements OpenAI Chat Completions, not the Responses API.
-      return createOpenAI({
-        name: "moonshotai",
-        baseURL: "https://api.moonshot.ai/v1",
-        apiKey,
-      }).chat(modelId);
-    }
-    case "ollama": {
-      const url = getSetting("ollama_url");
-      if (!url) {
-        throw new Error(
-          "AI_PROVIDER_NOT_CONFIGURED: No Ollama server configured. Add the URL in Settings → AI Provider."
-        );
-      }
-      return createOpenAI({ baseURL: `${url}/v1`, apiKey: "ollama" })(modelId);
-    }
-    default:
-      throw new Error(`Unknown AI provider: ${provider}`);
-  }
 }
 
 export async function createChatStream(messages: UIMessage[], pageContext?: string, modelHint?: string, abortSignal?: AbortSignal, providerHint?: string) {

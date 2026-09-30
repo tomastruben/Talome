@@ -1,6 +1,7 @@
 import { generateText, stepCountIs } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { spawn } from "node:child_process";
+import { resolveClaudeBinary } from "./ai/claude-binary.js";
 import { activeTools } from "./ai/agent.js";
 import { db, schema } from "./db/index.js";
 import { eq } from "drizzle-orm";
@@ -16,7 +17,7 @@ async function isClaudeCodeAvailable(): Promise<boolean> {
   if (_claudeAvailable !== null) return _claudeAvailable;
   try {
     _claudeAvailable = await new Promise<boolean>((resolve) => {
-      const proc = spawn("claude", ["--version"], { shell: false });
+      const proc = spawn(resolveClaudeBinary(), ["--version"], { shell: false });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
       const p = proc as any;
       p.on("close", (code: number | null) => resolve(code === 0));
@@ -30,7 +31,7 @@ async function generateViaClaudeCode(prompt: string, cwd: string): Promise<strin
   return new Promise((resolve) => {
     let stdout = "";
     const { ANTHROPIC_API_KEY: _s1, CLAUDECODE: _s2, ...cleanEnv } = process.env;
-    const proc = spawn("claude", ["--dangerously-skip-permissions", "--print", prompt], {
+    const proc = spawn(resolveClaudeBinary(), ["--dangerously-skip-permissions", "--print", prompt], {
       cwd, env: cleanEnv, shell: false,
     });
     const timeout = setTimeout(() => { proc.kill("SIGTERM"); resolve(null); }, 120_000);

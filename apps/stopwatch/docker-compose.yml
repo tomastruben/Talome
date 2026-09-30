@@ -1,0 +1,46 @@
+services:
+  stopwatch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stopwatch:local
+    container_name: stopwatch
+    restart: unless-stopped
+    init: true
+    ports:
+      - "5012:8000"
+    volumes:
+      - stopwatch-data:/data
+    environment:
+      PORT: "8000"
+      STOPWATCH_DATA_PATH: /data/session.json
+      TZ: America/New_York
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.25
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  stopwatch-data:
+    name: stopwatch-data

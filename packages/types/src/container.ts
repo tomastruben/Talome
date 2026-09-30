@@ -7,6 +7,9 @@ export interface Container {
   created: string;
   stats?: ContainerStats;
   labels: Record<string, string>;
+  networkMode?: string;
+  /** An explicitly configured or detected browser interface; null means none detected. */
+  webUi?: { port: number; protocol: "http" | "https"; path: string; title?: string; source: "detected" | "configured" } | null;
 }
 
 export interface ContainerStats {

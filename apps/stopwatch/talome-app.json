@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "revision": 2,
+  "appId": "stopwatch",
+  "name": "Stopwatch",
+  "description": "A shared stopwatch with durable elapsed time and lap splits.",
+  "icon": "timer",
+  "assistant": {
+    "context": "Stopwatch is a lightweight local timing app. It holds exactly one session at a time, stored by the app's own service, so this native surface and the Stopwatch interface at http://localhost:5012 always control the same session. Elapsed time comes from a monotonic clock and is unaffected by system clock changes. Help users start focused timing sessions, capture laps, and review or reset a completed session. Read the session data source before answering rather than guessing at state. Never reset a session without clearly confirming that elapsed time and laps will be cleared; the reset action itself also requires explicit confirmation and cannot run unconfirmed.",
+    "suggestions": [
+      {
+        "label": "Start a focus session",
+        "prompt": "Help me start a focused stopwatch session and suggest a useful session label."
+      },
+      {
+        "label": "Review laps",
+        "prompt": "Help me review the current stopwatch laps and identify the fastest and slowest split."
+      },
+      {
+        "label": "Reset safely",
+        "prompt": "Explain what resetting the stopwatch will clear, then ask for confirmation."
+      }
+    ],
+    "exposedActions": [
+      "start-session",
+      "record-lap",
+      "pause-session",
+      "reset-session",
+      "name-session",
+      "review-session"
+    ]
+  },
+  "dataSources": [
+    {
+      "id": "session",
+      "kind": "app-api",
+      "appId": "stopwatch",
+      "path": "/api/session",
+      "refreshMs": 2000
+    }
+  ],
+  "actions": [
+    {
+      "id": "start-session",
+      "label": "Start / resume",
+      "description": "Start a new stopwatch session or resume a paused one. Has no effect if it is already running.",
+      "kind": "app-api",
+      "appId": "stopwatch",
+      "method": "POST",
+      "path": "/api/session/start"
+    },
+    {
+      "id": "record-lap",
+      "label": "Record lap",
+      "description": "Record a lap split while the stopwatch is running. Fails clearly if it is not running.",
+      "kind": "app-api",
+      "appId": "stopwatch",
+      "method": "POST",
+      "path": "/api/session/lap"
+    },
+    {
+      "id": "pause-session",
+      "label": "Pause",
+      "description": "Pause the active stopwatch without clearing elapsed time or laps.",
+      "kind": "app-api",
+      "appId": "stopwatch",
+      "method": "POST",
+      "path": "/api/session/pause"
+    },
+    {
+      "id": "reset-session",
+      "label": "Reset",
+      "description": "Clear elapsed time and all recorded laps.",
+      "kind": "app-api",
+      "appId": "stopwatch",
+      "method": "POST",
+      "path": "/api/session/reset",
+      "confirmation": "Reset the stopwatch? This clears the elapsed time and every recorded lap. It cannot be undone.",
+      "destructive": true,
+      "bodyTemplate": {
+        "confirmed": true
+      }
+    },
+    {
+      "id": "name-session",
+      "label": "Name this session",
+      "description": "Name the session without changing whether the timer is running.",
+      "kind": "app-api",
+      "appId": "stopwatch",
+      "method": "POST",
+      "path": "/api/session/label",
+      "bodyTemplate": {
+        "label": "{{label}}"
+      },
+      "input": [
+        {
+          "id": "label",
+          "label": "Session label",
+          "type": "string",
+          "required": true,
+          "description": "Short name for what is being timed, for example \"Deep work\" or \"Interval set\"."
+        }
+      ]
+    },
+    {
+      "id": "review-session",
+      "label": "Review with Talome",
+      "description": "Ask the Assistant to review the current elapsed time and lap splits.",
+      "kind": "assistant",
+      "prompt": "Read the Stopwatch session data source. Report the current status and elapsed time, then review the recorded laps: how many there are, the fastest split and its lap number, the slowest split and its lap number, and whether the splits are trending faster or slower. Cite the actual split and total values. If there are no laps yet, say so plainly instead of inferring a trend. Do not reset anything."
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "dashboard",
+      "title": "Stopwatch",
+      "description": "Start a session, track elapsed time, and review laps.",
+      "layout": "dashboard",
+      "primaryActionId": "start-session",
+      "blocks": [
+        {
+          "id": "elapsed",
+          "title": "Elapsed time",
+          "description": "Shared session time, refreshed every two seconds.",
+          "icon": "timer",
+          "span": 2,
+          "component": "stat",
+          "dataSource": "session",
+          "valuePath": "elapsed",
+          "format": "text",
+          "detailPath": "statusLabel",
+          "emphasis": "hero"
+        },
+        {
+          "id": "controls",
+          "title": "Session controls",
+          "description": "These control the same session as the Stopwatch interface. Reset asks for confirmation.",
+          "span": 2,
+          "component": "actions",
+          "actionIds": [
+            "start-session",
+            "record-lap",
+            "pause-session",
+            "reset-session",
+            "name-session"
+          ]
+        },
+        {
+          "id": "session-name",
+          "title": "Session name",
+          "span": 4,
+          "component": "stat",
+          "dataSource": "session",
+          "valuePath": "label",
+          "format": "text",
+          "description": "Name the session using the session controls. Renaming does not start or resume it."
+        },
+        {
+          "id": "laps",
+          "title": "Lap history",
+          "description": "Newest first, with each lap's own split and the cumulative total.",
+          "span": 4,
+          "component": "table",
+          "dataSource": "session",
+          "rowsPath": "laps",
+          "columns": [
+            {
+              "id": "name",
+              "label": "Lap",
+              "path": "name"
+            },
+            {
+              "id": "split",
+              "label": "Split",
+              "path": "split"
+            },
+            {
+              "id": "total",
+              "label": "Total",
+              "path": "total"
+            },
+            {
+              "id": "recorded",
+              "label": "Recorded",
+              "path": "recordedAt",
+              "format": "relative-time"
+            }
+          ],
+          "limit": 50
+        },
+        {
+          "id": "summary",
+          "title": "Session summary",
+          "description": "Computed by the Stopwatch service from the current session.",
+          "span": 4,
+          "component": "markdown",
+          "dataSource": "session",
+          "contentPath": "summary"
+        }
+      ]
+    }
+  ]
+}

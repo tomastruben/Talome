@@ -17,8 +17,15 @@
  *   node scripts/supervisor.js
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  unlinkSync,
+  rmdirSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -69,9 +76,88 @@ const DASHBOARD_PORT = Number(process.env.DASHBOARD_PORT) || 3000;
 
 const EXIT_EVOLUTION_RESTART = 75;
 const LOG_BUFFER_SIZE = 200;
+const HLS_RAM_DISK_PATH = "/Volumes/TalomeHLS";
+const HLS_RAM_DISK_BLOCKS = "4194304"; // 2 GiB at 512 bytes per block
 
 const config: SupervisorConfig = { ...DEFAULT_SUPERVISOR_CONFIG };
 const startTime = Date.now();
+
+function waitSync(milliseconds: number): void {
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(signal, 0, 0, milliseconds);
+}
+
+function isHlsRamDiskMounted(): boolean {
+  try {
+    const info = execFileSync(
+      "/usr/sbin/diskutil",
+      ["info", HLS_RAM_DISK_PATH],
+      { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 5_000 },
+    );
+    return /^\s*Volume Name:\s+TalomeHLS\s*$/m.test(info)
+      && /^\s*Mounted:\s+Yes\s*$/m.test(info)
+      && /^\s*Mount Point:\s+\/Volumes\/TalomeHLS\s*$/m.test(info);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Attach and format the volatile volume used for HLS segments.
+ *
+ * hdiutil can return before the raw device is ready for diskutil. The old
+ * one-shot setup leaked that raw device whenever formatting lost that race,
+ * so every supervisor restart attached another unusable 2 GiB RAM disk.
+ */
+function ensureHlsRamDisk(): boolean {
+  if (isHlsRamDiskMounted()) return false;
+
+  // A failed or interrupted mount can leave an empty directory behind. It
+  // must be removed or macOS will mount the new volume as "TalomeHLS 1".
+  if (existsSync(HLS_RAM_DISK_PATH)) {
+    rmdirSync(HLS_RAM_DISK_PATH);
+  }
+
+  const attachOutput = execFileSync(
+    "/usr/bin/hdiutil",
+    ["attach", "-nomount", `ram://${HLS_RAM_DISK_BLOCKS}`],
+    { encoding: "utf-8", timeout: 10_000 },
+  );
+  const device = attachOutput.match(/\/dev\/disk\d+/)?.[0];
+  if (!device) {
+    throw new Error(`Could not identify RAM disk device from: ${attachOutput.trim()}`);
+  }
+
+  try {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        execFileSync(
+          "/usr/sbin/diskutil",
+          ["eraseVolume", "HFS+", "TalomeHLS", device],
+          { stdio: "ignore", timeout: 20_000 },
+        );
+        if (!isHlsRamDiskMounted()) {
+          throw new Error(`${HLS_RAM_DISK_PATH} was not mounted after formatting`);
+        }
+        return true;
+      } catch (err) {
+        lastError = err;
+        if (attempt < 3) waitSync(300 * attempt);
+      }
+    }
+    throw lastError;
+  } catch (err) {
+    // Do not leave an unformatted RAM device consuming memory and swap.
+    try {
+      execFileSync("/usr/bin/hdiutil", ["detach", "-force", device], {
+        stdio: "ignore",
+        timeout: 10_000,
+      });
+    } catch { /* best effort cleanup */ }
+    throw err;
+  }
+}
 
 // ── Kill process tree ────────────────────────────────────────────────────────
 // Next.js dev spawns a next-server grandchild that holds the port.
@@ -869,13 +955,10 @@ async function main(): Promise<void> {
   // Create RAM disk for HLS temp segments (survives reboots via supervisor)
   if (process.platform === "darwin" && !isDocker()) {
     try {
-      const { execSync } = await import("node:child_process");
-      if (!existsSync("/Volumes/TalomeHLS")) {
-        console.log("[supervisor] Creating 2GB RAM disk for HLS temp...");
-        const dev = execSync("hdiutil attach -nomount ram://4194304", { encoding: "utf-8" }).trim();
-        execSync(`diskutil erasevolume HFS+ TalomeHLS ${dev}`, { stdio: "ignore" });
-        console.log("[supervisor] RAM disk ready: /Volumes/TalomeHLS");
-      }
+      const created = ensureHlsRamDisk();
+      console.log(created
+        ? `[supervisor] RAM disk ready: ${HLS_RAM_DISK_PATH}`
+        : `[supervisor] Using mounted HLS RAM disk: ${HLS_RAM_DISK_PATH}`);
     } catch (err) {
       console.warn("[supervisor] RAM disk creation failed (non-fatal):", err instanceof Error ? err.message : err);
     }

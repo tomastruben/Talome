@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ComponentProps } from "react";
-import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+import { requestDesktopNavigation, shouldHandleDesktopLink } from "@/lib/desktop-navigation";
 
 type DesktopLinkProps = ComponentProps<typeof Link>;
 
@@ -12,13 +12,7 @@ export function DesktopLink({ onClick, ...props }: DesktopLinkProps) {
       {...props}
       onClick={(event) => {
         onClick?.(event);
-        if (
-          event.defaultPrevented
-          || event.metaKey
-          || event.ctrlKey
-          || event.shiftKey
-          || event.altKey
-        ) return;
+        if (!shouldHandleDesktopLink(event, event.currentTarget)) return;
 
         if (requestDesktopNavigation(event.currentTarget.href)) {
           event.preventDefault();

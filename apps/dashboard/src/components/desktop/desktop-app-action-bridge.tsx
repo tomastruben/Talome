@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useAtomValue } from "jotai";
 import {
   desktopAppActionsAtom,
@@ -13,7 +14,7 @@ import {
 } from "@/atoms/desktop-app-actions";
 import { pageBackAtom } from "@/atoms/page-back";
 import { pageTitleAtom } from "@/atoms/page-title";
-import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+import { DESKTOP_ROUTE_STATE_MESSAGE, requestDesktopNavigation, shouldHandleDesktopLink } from "@/lib/desktop-navigation";
 
 const BACK_ACTION_ID = "talome-page-back";
 
@@ -25,6 +26,19 @@ function publishActions(title: string | undefined, actions: DesktopAppActionDesc
 }
 
 export function DesktopAppActionBridge() {
+  const pathname = usePathname();
+  const search = useSearchParams().toString();
+
+  useEffect(() => {
+    const publishRoute = () => window.parent.postMessage(
+      { type: DESKTOP_ROUTE_STATE_MESSAGE, url: `${window.location.pathname}${window.location.search}${window.location.hash}` },
+      window.location.origin,
+    );
+    publishRoute();
+    window.addEventListener("hashchange", publishRoute);
+    return () => window.removeEventListener("hashchange", publishRoute);
+  }, [pathname, search]);
+
   const actions = useAtomValue(desktopAppActionsAtom);
   const shellActions = useAtomValue(desktopShellActionsAtom);
   const pageBack = useAtomValue(pageBackAtom);
@@ -74,21 +88,11 @@ export function DesktopAppActionBridge() {
       );
     };
     const handleDashboardLink = (event: MouseEvent) => {
-      if (
-        event.defaultPrevented
-        || event.button !== 0
-        || event.metaKey
-        || event.ctrlKey
-        || event.shiftKey
-        || event.altKey
-      ) return;
-
       const target = event.target;
       const anchor = target instanceof Element
         ? target.closest<HTMLAnchorElement>("a[href]")
         : null;
-      if (!anchor || anchor.dataset.desktopNavigation === "bypass") return;
-      if (anchor.download || (anchor.target && anchor.target !== "_self")) return;
+      if (!anchor || !shouldHandleDesktopLink(event, anchor)) return;
       if (requestDesktopNavigation(anchor.href)) event.preventDefault();
     };
     const handleMessage = (event: MessageEvent) => {

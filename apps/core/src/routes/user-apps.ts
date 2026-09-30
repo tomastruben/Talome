@@ -10,6 +10,7 @@ import { db, schema } from "../db/index.js";
 import { eq, and } from "drizzle-orm";
 import { writeAuditEntry } from "../db/audit.js";
 import { submitCommunityBundle } from "../stores/community-pipeline.js";
+import { configPatchSchema, patchComposeConfig } from "../stores/config-patch.js";
 
 const BACKUP_DIR = join(process.env.HOME || "/tmp", ".talome", "backups", "compose");
 
@@ -254,22 +255,11 @@ userApps.get("/:appId/config", async (c) => {
 userApps.patch("/:appId/config", async (c) => {
   const appId = c.req.param("appId");
 
-  interface ConfigPatch {
-    serviceName: string;
-    env?: Record<string, string>;
-    ports?: Record<string, number>; // { "containerPort": newHostPort }
+  const validation = configPatchSchema.safeParse(await c.req.json().catch(() => null));
+  if (!validation.success) {
+    return c.json({ error: validation.error.issues.map((issue) => issue.message).join("; ") }, 400);
   }
-
-  let body: ConfigPatch;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
-  }
-
-  if (!body.serviceName) {
-    return c.json({ error: "serviceName is required" }, 400);
-  }
+  const body = validation.data;
 
   try {
     const row = db
@@ -284,29 +274,11 @@ userApps.patch("/:appId/config", async (c) => {
 
     const composePath = row.overrideComposePath;
     const content = await readFile(composePath, "utf-8");
-    const parsed = parseYaml(content) as Record<string, unknown>;
-
-    const services = parsed.services as Record<string, Record<string, unknown>>;
-    const service = services?.[body.serviceName];
-    if (!service) {
-      return c.json({ error: `Service '${body.serviceName}' not found` }, 400);
-    }
-
-    // Apply env patches
-    if (body.env) {
-      if (!service.environment || typeof service.environment !== "object") {
-        service.environment = {};
-      }
-      Object.assign(service.environment as Record<string, string>, body.env);
-    }
-
-    // Apply port patches
-    if (body.ports && Array.isArray(service.ports)) {
-      service.ports = (service.ports as string[]).map((p: string) => {
-        const [, container] = p.split(":");
-        const newHost = body.ports![container];
-        return newHost !== undefined ? `${newHost}:${container}` : p;
-      });
+    let patched: Record<string, unknown>;
+    try {
+      patched = patchComposeConfig(parseYaml(content), body);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "Invalid configuration patch" }, 400);
     }
 
     // Backup original
@@ -315,8 +287,8 @@ userApps.patch("/:appId/config", async (c) => {
     await writeFile(join(BACKUP_DIR, `${appId}-${ts}.yml.bak`), content, "utf-8");
 
     // Write patched file
-    await writeFile(composePath, stringifyYaml(parsed), "utf-8");
-    writeAuditEntry(`config patch: ${appId}`, "modify", JSON.stringify(body));
+    await writeFile(composePath, stringifyYaml(patched), "utf-8");
+    writeAuditEntry(`config patch: ${appId}`, "modify", JSON.stringify({ serviceName: body.serviceName, environmentKeys: Object.keys(body.env ?? {}), portChanges: Object.keys(body.ports ?? {}).length + (body.portMappings?.length ?? 0) }));
 
     return c.json({ ok: true, appId, message: "Config updated. Recreate the container to apply changes." });
   } catch (err: unknown) {

@@ -39,6 +39,7 @@ import type { DownloadQueueItem, DownloadTorrent, MediaSearchResult } from "@tal
 import {
   getDownloadDisplayStatus,
   getDownloadHealthFacts,
+  getTorrentDisplayStatus,
 } from "@/lib/download-status";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -227,19 +228,6 @@ const QUEUE_STATUS_MAP: Record<string, { label: string; color: string }> = {
   queued:        { label: "Queued",       color: "text-muted-foreground" },
 };
 
-const TORRENT_STATE_MAP: Record<string, string> = {
-  downloading:  "Downloading",
-  stalledDL:    "Stalled",
-  pausedDL:     "Paused",
-  queuedDL:     "Queued",
-  uploading:    "Seeding",
-  stalledUP:    "Seeding (idle)",
-  pausedUP:     "Paused",
-  checkingDL:   "Checking",
-  checkingUP:   "Checking",
-  missingFiles: "Error",
-};
-
 // ── Download Row Components ───────────────────────────────────────────────────
 
 function DownloadQueueRow({
@@ -419,7 +407,13 @@ function DownloadQueueRow({
 function DownloadTorrentRow({ torrent }: { torrent: DownloadTorrent }) {
   const pct = Math.round(torrent.progress * 100);
   const downloaded = torrent.size * torrent.progress;
-  const stateLabel = TORRENT_STATE_MAP[torrent.state] ?? torrent.state;
+  const status = getTorrentDisplayStatus(torrent);
+  const statusColor = {
+    default: "text-muted-foreground",
+    healthy: "text-status-healthy",
+    warning: "text-status-warning",
+    critical: "text-status-critical",
+  }[status.tone];
   const eta = formatEta(torrent.eta);
   const resolved = resolvePosterUrl(torrent.poster, 120);
   const [imgFailed, setImgFailed] = useState(false);
@@ -446,10 +440,15 @@ function DownloadTorrentRow({ torrent }: { torrent: DownloadTorrent }) {
       <div className="flex-1 min-w-0 px-4 py-3 flex flex-col justify-between">
         <div className="flex items-start justify-between gap-3 mb-2">
           <p className="text-sm font-medium leading-snug line-clamp-2 flex-1 min-w-0">{torrent.name}</p>
-          <span className="text-xs shrink-0 mt-px text-muted-foreground">{stateLabel}</span>
+          <span className={`text-xs shrink-0 mt-px ${statusColor}`}>{status.label}</span>
         </div>
 
         <div className="space-y-1.5">
+          {status.detail && (
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {status.detail}
+            </p>
+          )}
           <Progress value={pct} className="h-0.5" />
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground tabular-nums">
@@ -900,7 +899,7 @@ function MediaPageInner({
     });
   }, [libraryLoading]);
 
-  const { data: downloads, torrents: activeTorrents, queue: downloadQueue } = useDownloads();
+  const { data: downloads, torrents: activeTorrents, queue: downloadQueue, totalCount: pendingDownloadCount } = useDownloads();
 
   const { data: calendar, mutate: mutateCalendar } = useSWR<CalendarData>(
     `${CORE_URL}/api/media/calendar`,
@@ -1068,8 +1067,7 @@ function MediaPageInner({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, tab, filteredLocal.length]);
 
-  const activeDownloads = activeTorrents.filter((t) => t?.state === "downloading").length;
-  const queueCount = downloadQueue.length + activeDownloads;
+  const queueCount = pendingDownloadCount;
 
   async function handleRetryQueueItem(item: DownloadQueueItem) {
     if (!item?.id) return;
@@ -1451,9 +1449,12 @@ function MediaPageInner({
                 key={t.id}
                 id={`media-tab-${t.id}`}
                 value={t.id}
+                aria-label={t.label}
+                title={t.label}
                 className="text-xs gap-1.5"
               >
                 <HugeiconsIcon icon={t.icon} size={14} />
+                <span className="hidden md:inline">{t.label}</span>
                 {t.count !== undefined && t.count > 0 && (
                   <TabsBadge>{t.count}</TabsBadge>
                 )}

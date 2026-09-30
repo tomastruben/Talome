@@ -1,6 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildCodexCommand, buildKimiCommand } from "@/components/terminal/terminal-page";
+import {
+  buildCodexCommand,
+  buildKimiCommand,
+  buildTmuxSessionRetentionCommand,
+} from "@/components/terminal/terminal-page";
+
+describe("buildTmuxSessionRetentionCommand", () => {
+  it("keeps the newest detached timestamped session and removes older ones", () => {
+    const command = buildTmuxSessionRetentionCommand("codex");
+
+    expect(command).toContain("/^talome-codex-[0-9]+$/");
+    expect(command).toContain("$3 == 0");
+    expect(command).toContain("sort -rn");
+    expect(command).toContain("NR > 1");
+    expect(command).toContain('tmux kill-session -t "$stale_session"');
+  });
+});
 
 describe("buildCodexCommand", () => {
   afterEach(() => {
@@ -13,6 +29,7 @@ describe("buildCodexCommand", () => {
     const command = buildCodexCommand("/Users/tomas/.talome/server", false);
 
     expect(command).toContain('codex_bin="$(command -v codex 2>/dev/null)"');
+    expect(command).toContain("/^talome-codex-[0-9]+$/");
     expect(command).toContain(
       'tmux new-session -s talome-codex-1234 "\\"$codex_bin\\""',
     );
@@ -42,6 +59,7 @@ describe("buildKimiCommand", () => {
     const command = buildKimiCommand("/Users/tomas/.talome/server", false);
 
     expect(command).toContain('kimi_bin="$(command -v kimi 2>/dev/null)"');
+    expect(command).toContain("/^talome-kimi-[0-9]+$/");
     expect(command).toContain('[ -x "$HOME/.kimi-code/bin/kimi" ]');
     expect(command).toContain(
       'tmux new-session -s talome-kimi-5678 "\\"$kimi_bin\\""',

@@ -46,6 +46,35 @@ describe("DesktopWindow", () => {
     });
   });
 
+  it("resizes with arrow keys and clamps accelerated keyboard resizing", () => {
+    const onBoundsChange = vi.fn();
+    render(<DesktopWindow {...defaultProps} onBoundsChange={onBoundsChange}>Content</DesktopWindow>);
+    const handle = screen.getByRole("button", { name: "Resize Files" });
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(onBoundsChange).toHaveBeenLastCalledWith({ ...defaultProps.bounds, width: 716 });
+    fireEvent.keyDown(handle, { key: "ArrowUp", shiftKey: true });
+    expect(onBoundsChange).toHaveBeenLastCalledWith({ ...defaultProps.bounds, height: 436 });
+    fireEvent.keyDown(handle, { key: "Enter" });
+    expect(onBoundsChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("activates a window when its controls receive keyboard focus", () => {
+    const onFocus = vi.fn();
+    render(<DesktopWindow {...defaultProps} active={false} onFocus={onFocus}>Content</DesktopWindow>);
+    fireEvent.focus(screen.getByRole("button", { name: "Close Files" }));
+    expect(onFocus).toHaveBeenCalledOnce();
+  });
+
+  it("keeps keyboard resizing within the available workspace", () => {
+    const onBoundsChange = vi.fn();
+    render(<DesktopWindow {...defaultProps} bounds={{ x: 80, y: 100, width: 1310, height: 330 }} onBoundsChange={onBoundsChange}>Content</DesktopWindow>);
+    const handle = screen.getByRole("button", { name: "Resize Files" });
+    fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
+    expect(onBoundsChange).toHaveBeenLastCalledWith({ x: 80, y: 100, width: 1320, height: 330 });
+    fireEvent.keyDown(handle, { key: "ArrowUp", shiftKey: true });
+    expect(onBoundsChange).toHaveBeenLastCalledWith({ x: 80, y: 100, width: 1310, height: 320 });
+  });
+
   it("captures resize gestures and keeps the handle inside the workspace", () => {
     const onBoundsChange = vi.fn();
     const setPointerCapture = vi.fn();
@@ -259,7 +288,7 @@ describe("DesktopWindow", () => {
     expect(onAction).toHaveBeenCalledWith("session-refresh");
   });
 
-  it("renders the classic terminal controls as one titlebar group", async () => {
+  it("separates terminal agent selection from session commands", async () => {
     const onAction = vi.fn();
 
     render(
@@ -277,7 +306,15 @@ describe("DesktopWindow", () => {
             items: [
               { id: "terminal-agent-claude", label: "Claude Code" },
               { id: "terminal-agent-codex", label: "Codex", active: true },
-              { id: "terminal-continue-agent", label: "Continue session", separatorBefore: true },
+            ],
+          },
+          {
+            id: "terminal-session",
+            label: "Session",
+            kind: "menu",
+            items: [
+              { id: "terminal-continue-agent", label: "Continue session" },
+              { id: "terminal-new-agent-session", label: "New session" },
             ],
           },
         ]}
@@ -291,11 +328,18 @@ describe("DesktopWindow", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Auto" }));
     fireEvent.click(screen.getByRole("button", { name: "Remote" }));
     fireEvent.pointerDown(screen.getByRole("button", { name: "Codex" }), { button: 0 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Continue session" }));
+    expect(await screen.findByRole("menuitem", { name: "Claude Code" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Continue session" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Claude Code" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Session", exact: true }), { button: 0 });
+    expect(await screen.findByRole("menuitem", { name: "New session" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Claude Code" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Continue session" }));
 
     expect(onAction.mock.calls).toEqual([
       ["terminal-auto"],
       ["terminal-remote"],
+      ["terminal-agent-claude"],
       ["terminal-continue-agent"],
     ]);
   });

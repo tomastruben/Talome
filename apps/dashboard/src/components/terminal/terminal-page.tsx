@@ -20,6 +20,20 @@ const TerminalInner = dynamic(
   { ssr: false },
 );
 
+type TmuxAgent = "claude" | "codex" | "kimi";
+
+/**
+ * Timestamped AI sessions are intentionally resumable, but each one also keeps
+ * the agent and its MCP helper processes alive. Keep the newest previous
+ * session for recovery and remove older detached sessions before launching or
+ * resuming an agent. This bounds background memory without touching the stable
+ * `talome-{agent}` session used by Continue.
+ */
+export function buildTmuxSessionRetentionCommand(agent: TmuxAgent): string {
+  const prefix = `talome-${agent}-`;
+  return `tmux list-sessions -F '#{session_name} #{session_activity} #{session_attached}' 2>/dev/null | awk '$3 == 0 && $1 ~ /^${prefix}[0-9]+$/ { print $2, $1 }' | sort -rn | awk 'NR > 1 { print $2 }' | while IFS= read -r stale_session; do [ -n "$stale_session" ] && tmux kill-session -t "$stale_session"; done;`;
+}
+
 function buildClaudeCodeCommand(projectRoot: string, opts?: { auto?: boolean; remote?: boolean; resume?: boolean }): string {
   const unset = "unset CLAUDECODE;";
   const flags = [
@@ -30,9 +44,10 @@ function buildClaudeCodeCommand(projectRoot: string, opts?: { auto?: boolean; re
   const flagStr = flags ? ` ${flags}` : "";
   const quoted = projectRoot.includes(" ") ? `"${projectRoot}"` : projectRoot;
   const sessionName = opts?.resume ? "talome-claude" : `talome-claude-${Date.now()}`;
+  const retainRecentSession = buildTmuxSessionRetentionCommand("claude");
   const tmuxCmd = opts?.resume
-    ? `cd ${quoted} && tmux new-session -A -s talome-claude "claude${flagStr}"`
-    : `cd ${quoted} && tmux new-session -s ${sessionName} "claude${flagStr}"`;
+    ? `${retainRecentSession} cd ${quoted} && tmux new-session -A -s talome-claude "claude${flagStr}"`
+    : `${retainRecentSession} cd ${quoted} && tmux new-session -s ${sessionName} "claude${flagStr}"`;
   const fallback = `cd ${quoted} && claude${flagStr}`;
   return `${unset} if command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
 }
@@ -41,14 +56,15 @@ export function buildCodexCommand(projectRoot: string, resume: boolean): string 
   const quoted = projectRoot.includes(" ") ? `"${projectRoot}"` : projectRoot;
   const args = resume ? " resume --last" : "";
   const sessionName = resume ? "talome-codex" : `talome-codex-${Date.now()}`;
+  const retainRecentSession = buildTmuxSessionRetentionCommand("codex");
   // Resolve Codex in the interactive shell before entering tmux. A long-lived
   // tmux server can have an older PATH than zsh (notably when Codex comes from
   // the ChatGPT app bundle), so passing the bare `codex` command can exit with
   // "command not found" even though the terminal header correctly detected it.
   const tmuxCommand = `\\"$codex_bin\\"${args}`;
   const tmuxCmd = resume
-    ? `cd ${quoted} && tmux new-session -A -s ${sessionName} "${tmuxCommand}"`
-    : `cd ${quoted} && tmux new-session -s ${sessionName} "${tmuxCommand}"`;
+    ? `${retainRecentSession} cd ${quoted} && tmux new-session -A -s ${sessionName} "${tmuxCommand}"`
+    : `${retainRecentSession} cd ${quoted} && tmux new-session -s ${sessionName} "${tmuxCommand}"`;
   const fallback = `cd ${quoted} && "$codex_bin"${args}`;
   const resolveCodex = `codex_bin="$(command -v codex 2>/dev/null)"; if [ -z "$codex_bin" ] && [ -x "/Applications/ChatGPT.app/Contents/Resources/codex" ]; then codex_bin="/Applications/ChatGPT.app/Contents/Resources/codex"; fi`;
   return `${resolveCodex}; if [ -z "$codex_bin" ]; then echo "Codex CLI not found"; elif command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
@@ -59,10 +75,11 @@ export function buildKimiCommand(projectRoot: string, resume: boolean, auto = fa
   const args = [resume ? "--continue" : "", auto ? "--auto" : ""].filter(Boolean).join(" ");
   const argString = args ? ` ${args}` : "";
   const sessionName = resume ? "talome-kimi" : `talome-kimi-${Date.now()}`;
+  const retainRecentSession = buildTmuxSessionRetentionCommand("kimi");
   const tmuxCommand = `\\"$kimi_bin\\"${argString}`;
   const tmuxCmd = resume
-    ? `cd ${quoted} && tmux new-session -A -s ${sessionName} "${tmuxCommand}"`
-    : `cd ${quoted} && tmux new-session -s ${sessionName} "${tmuxCommand}"`;
+    ? `${retainRecentSession} cd ${quoted} && tmux new-session -A -s ${sessionName} "${tmuxCommand}"`
+    : `${retainRecentSession} cd ${quoted} && tmux new-session -s ${sessionName} "${tmuxCommand}"`;
   const fallback = `cd ${quoted} && "$kimi_bin"${argString}`;
   const resolveKimi = `kimi_bin="$(command -v kimi 2>/dev/null)"; if [ -z "$kimi_bin" ] && [ -x "$HOME/.kimi-code/bin/kimi" ]; then kimi_bin="$HOME/.kimi-code/bin/kimi"; fi`;
   return `${resolveKimi}; if [ -z "$kimi_bin" ]; then echo "Kimi Code CLI not found. Install it from platform.kimi.ai/docs/guide/kimi-code-cli"; elif command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
@@ -254,14 +271,14 @@ export function TerminalPage() {
         label: terminalHeaderAction.label,
         icon: "source-code",
         kind: "menu",
+        items: terminalHeaderAction.agentItems,
+      },
+      {
+        id: "terminal-session",
+        label: "Session",
+        kind: "menu",
         disabled: terminalHeaderAction.disabled,
-        items: [
-          ...terminalHeaderAction.agentItems,
-          ...terminalHeaderAction.commandItems.map((item, index) => ({
-            ...item,
-            separatorBefore: index === 0,
-          })),
-        ],
+        items: terminalHeaderAction.commandItems,
       },
     ];
 

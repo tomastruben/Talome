@@ -911,6 +911,19 @@ export function runMigrations() {
     // Column already exists — ignore
   }
 
+  // ── Proxy routes: enforce one route per domain ─────────────────────────
+  // Two rows for the same domain generate two Caddy site blocks → "ambiguous
+  // site definition" → Caddy crashloop. Dedup existing rows (keep the earliest
+  // per domain), then add a UNIQUE index so future duplicates upsert instead.
+  try {
+    db.run(sql`DELETE FROM proxy_routes WHERE rowid NOT IN (
+      SELECT MIN(rowid) FROM proxy_routes GROUP BY domain
+    )`);
+    db.run(sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_proxy_routes_domain ON proxy_routes(domain)`);
+  } catch {
+    // Index already exists or table not yet created — ignore
+  }
+
   // ── Setup loop tables ──────────────────────────────────────────────────
   db.run(sql`
     CREATE TABLE IF NOT EXISTS setup_runs (

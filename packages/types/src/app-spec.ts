@@ -178,6 +178,7 @@ export interface TalomeProgressBlock extends TalomeBlockBase {
 }
 
 export interface TalomeTimeSeries {
+  /** Unique contract key; the renderer generates its own safe internal chart keys. */
   id: string;
   label: string;
   valuePath: string;
@@ -189,7 +190,13 @@ export interface TalomeTimeSeriesBlock extends TalomeBlockBase {
   rowsPath?: string;
   xPath: string;
   series: TalomeTimeSeries[];
-  variant?: "line" | "area";
+  /** Bar compares ordered categories; line/area show ordered observations. */
+  variant?: "line" | "area" | "bar";
+  xLabel?: string;
+  valueLabel?: string;
+  /** Optional display suffix for custom numeric units, e.g. ms; does not convert data. */
+  unit?: string;
+  /** For charts, percent values are fractions: 0.01 = 1%, 1 = 100%. */
   valueFormat?: TalomeValueFormat;
   currency?: string;
   limit?: number;

@@ -43,6 +43,5 @@ const NON_WEB_CONTAINER_PORTS = new Set([
 export function getContainerWebPort(container: Container): number | undefined {
   const tcpPorts = container.ports.filter((port) => port.protocol === "tcp" && port.host > 0);
   return tcpPorts.find((port) => COMMON_WEB_CONTAINER_PORTS.has(port.container))?.host
-    ?? tcpPorts.find((port) => !NON_WEB_CONTAINER_PORTS.has(port.container))?.host
-    ?? tcpPorts[0]?.host;
+    ?? tcpPorts.find((port) => !NON_WEB_CONTAINER_PORTS.has(port.container))?.host;
 }

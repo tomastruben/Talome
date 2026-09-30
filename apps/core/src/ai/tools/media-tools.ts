@@ -1,7 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { getSetting } from "../../utils/settings.js";
-import { truncateList } from "../../utils/tool-helpers.js";
 
 function getServiceUrl(service: string): string {
   const custom = getSetting(`${service}_url`);
@@ -52,6 +51,7 @@ import { type QualityTier, normalizeTier, matchProfile } from "@talome/types";
 // ── Minimal interfaces for *arr API responses ─────────────────────────────────
 
 interface SonarrSeries {
+  id: number;
   title: string;
   year: number;
   tvdbId: number;
@@ -63,6 +63,7 @@ interface SonarrSeries {
 }
 
 interface RadarrMovie {
+  id: number;
   title: string;
   year: number;
   tmdbId: number;
@@ -139,7 +140,7 @@ async function resolveQualityProfileId(
 
 export const getLibraryTool = tool({
   description:
-    "Get the user's existing media library — all TV shows and movies already in Sonarr/Radarr. Use this to answer questions like 'what movies do I have?', 'do I own season 2 of X?', 'what was recently added?', 'how many shows am I monitoring?'.",
+    "Get the user's existing media library — all TV shows and movies already in Sonarr/Radarr. Supports pagination for complete library exports. Use this to answer questions like 'what movies do I have?', 'do I own season 2 of X?', 'what was recently added?', 'how many shows am I monitoring?'.",
   inputSchema: z.object({
     type: z
       .enum(["all", "tv", "movies"])
@@ -149,8 +150,21 @@ export const getLibraryTool = tool({
       .string()
       .optional()
       .describe("Optional title filter applied client-side"),
+    page: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Zero-based result page. Defaults to 0."),
+    pageSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("Items per media type and page. Defaults to 50; maximum 100."),
   }),
-  execute: async ({ type = "all", search }) => {
+  execute: async ({ type = "all", search, page = 0, pageSize = 50 }) => {
     const [sonarr, radarr] = await Promise.allSettled([
       type !== "movies" ? arrGet("sonarr", "/series") : Promise.resolve([]),
       type !== "tv" ? arrGet("radarr", "/movie") : Promise.resolve([]),
@@ -159,6 +173,7 @@ export const getLibraryTool = tool({
     let tv =
       sonarr.status === "fulfilled"
         ? (sonarr.value as SonarrSeries[]).map((s) => ({
+            sonarrId: s.id,
             title: s.title,
             year: s.year,
             tvdbId: s.tvdbId,
@@ -173,6 +188,7 @@ export const getLibraryTool = tool({
     let movies =
       radarr.status === "fulfilled"
         ? (radarr.value as RadarrMovie[]).map((m) => ({
+            radarrId: m.id,
             title: m.title,
             year: m.year,
             tmdbId: m.tmdbId,
@@ -193,15 +209,23 @@ export const getLibraryTool = tool({
     const sortedTv = tv.sort((a, b) => (b.added ?? "").localeCompare(a.added ?? ""));
     const sortedMovies = movies.sort((a, b) => (b.added ?? "").localeCompare(a.added ?? ""));
 
-    const { items: tvList, totalCount: tvTotal, truncated: tvTruncated } = truncateList(sortedTv, 50);
-    const { items: movieList, totalCount: movieTotal, truncated: moviesTruncated } = truncateList(sortedMovies, 50);
+    const tvTotal = sortedTv.length;
+    const movieTotal = sortedMovies.length;
+    const start = page * pageSize;
+    const tvList = sortedTv.slice(start, start + pageSize);
+    const movieList = sortedMovies.slice(start, start + pageSize);
+    const tvTruncated = start + tvList.length < tvTotal;
+    const moviesTruncated = start + movieList.length < movieTotal;
 
     return {
       tv: tvList,
       movies: movieList,
       totals: { tvShows: tvTotal, movies: movieTotal },
+      pagination: { page, pageSize },
       truncated: tvTruncated || moviesTruncated,
-      ...(tvTruncated || moviesTruncated ? { hint: "Results truncated. Use the 'search' parameter to filter by title." } : {}),
+      ...(tvTruncated || moviesTruncated
+        ? { hint: `More results are available. Request page ${page + 1} with the same pageSize.` }
+        : {}),
     };
   },
 });

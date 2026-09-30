@@ -368,8 +368,12 @@ export function BlueprintDraftBar({
         </button>
       </div>
 
-      {/* Expanded detail */}
-      {expanded && <ExpandedDetail blueprint={blueprint} />}
+      {/* Expanded detail — capped height so it scrolls instead of pushing the chat up */}
+      {expanded && (
+        <div className="mb-3 max-h-[min(22rem,45dvh)] overflow-y-auto overscroll-contain">
+          <ExpandedDetail blueprint={blueprint} />
+        </div>
+      )}
 
       {/* Auto mode toggle + Build button */}
       <div className="px-4 pb-3 space-y-2">

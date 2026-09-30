@@ -169,7 +169,10 @@ const appBlockSchema = z.discriminatedUnion("component", [
       label: z.string().min(1).max(64),
       valuePath: valuePathSchema,
     })).min(1).max(6),
-    variant: z.enum(["line", "area"]).optional(),
+    variant: z.enum(["line", "area", "bar"]).optional(),
+    xLabel: z.string().min(1).max(64).optional(),
+    valueLabel: z.string().min(1).max(64).optional(),
+    unit: z.string().min(1).max(24).optional(),
     valueFormat: formatSchema.optional(),
     currency: z.string().length(3).optional(),
     limit: z.number().int().min(2).max(500).optional(),
@@ -280,10 +283,34 @@ export const TalomeAppSpecSchema = z.object({
       ctx.addIssue({ code: "custom", message: `Duplicate action: ${action.id}`, path: ["actions", index, "id"] });
     }
     actionIds.add(action.id);
+    const inputIds = new Set<string>();
+    for (const [inputIndex, input] of (action.input ?? []).entries()) {
+      if (inputIds.has(input.id)) {
+        ctx.addIssue({ code: "custom", message: `Duplicate action input: ${input.id}`, path: ["actions", index, "input", inputIndex, "id"] });
+      }
+      inputIds.add(input.id);
+    }
   }
 
+  const surfaceIds = new Set<string>();
   for (const [surfaceIndex, surface] of spec.surfaces.entries()) {
+    if (surfaceIds.has(surface.id)) {
+      ctx.addIssue({ code: "custom", message: `Duplicate surface: ${surface.id}`, path: ["surfaces", surfaceIndex, "id"] });
+    }
+    surfaceIds.add(surface.id);
+    const blockIds = new Set<string>();
     for (const [blockIndex, block] of surface.blocks.entries()) {
+      if (blockIds.has(block.id)) {
+        ctx.addIssue({ code: "custom", message: `Duplicate block: ${block.id}`, path: ["surfaces", surfaceIndex, "blocks", blockIndex, "id"] });
+      }
+      blockIds.add(block.id);
+      if (block.component === "time-series") {
+        const seriesIds = new Set<string>();
+        for (const [seriesIndex, series] of block.series.entries()) {
+          if (seriesIds.has(series.id)) ctx.addIssue({ code: "custom", message: `Duplicate chart series: ${series.id}`, path: ["surfaces", surfaceIndex, "blocks", blockIndex, "series", seriesIndex, "id"] });
+          seriesIds.add(series.id);
+        }
+      }
       if ("dataSource" in block && block.dataSource && !dataSourceIds.has(block.dataSource)) {
         ctx.addIssue({
           code: "custom",
@@ -317,6 +344,12 @@ export const TalomeAppSpecSchema = z.object({
         });
       }
       if (block.component === "activity-list") {
+        if (block.rowAction) {
+          const action = spec.actions.find((candidate) => candidate.id === block.rowAction?.actionId);
+          if (action && !action.input?.some((input) => input.id === block.rowAction?.inputId)) {
+            ctx.addIssue({ code: "custom", message: `Unknown action input: ${block.rowAction.inputId}`, path: ["surfaces", surfaceIndex, "blocks", blockIndex, "rowAction", "inputId"] });
+          }
+        }
         const referencedActions = [block.rowAction?.actionId, block.footerActionId].filter(Boolean) as string[];
         for (const actionId of referencedActions) {
           if (!actionIds.has(actionId)) {

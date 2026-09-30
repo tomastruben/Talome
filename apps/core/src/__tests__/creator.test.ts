@@ -1,11 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const mockGenerateObject = vi.hoisted(() => vi.fn());
 const mockDbGet = vi.hoisted(() => vi.fn());
 const mockDiscoverSources = vi.hoisted(() => vi.fn());
 const mockRenderSourceContext = vi.hoisted(() => vi.fn());
 const mockExecuteWorkspaceGeneration = vi.hoisted(() => vi.fn());
+const mockConfiguredModel = vi.hoisted(() => vi.fn(() => ({ provider: "openai", modelId: "gpt-user-choice", model: { modelId: "gpt-user-choice" } })));
+vi.mock("../ai/configured-model.js", () => ({ getConfiguredModel: mockConfiguredModel }));
+
+const mockValidateDesignArtifacts = vi.hoisted(() => vi.fn(async () => []));
 const mockCreateUserApp = vi.hoisted(() => vi.fn());
+const mockValidateGeneratedApp = vi.hoisted(() => vi.fn());
+vi.mock("../creator/completion-validation.js", () => ({ validateGeneratedApp: mockValidateGeneratedApp }));
+vi.mock("../creator/browser-validation.js", () => ({ validateNativeAppInBrowser: vi.fn(async () => [{ id: "native-browser", status: "passed", label: "Fresh native fixture evidence" }]) }));
+vi.mock("../creator/workspace-snapshot.js", () => ({ snapshotGeneratedWorkspace: vi.fn(async (source: string) => source), snapshotNativeContract: vi.fn(async () => "/tmp/native-contract-fixture") }));
+vi.mock("../creator/publication-contract.js", () => ({ preparePublicationContract: vi.fn((_path, _id, spec) => spec) }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, writeFileSync: vi.fn<typeof actual.writeFileSync>((file, data, options) => {
+    if (file === "/tmp/test-workspace/.talome-creator/creator-draft.json") return;
+    return actual.writeFileSync(file, data, options);
+  }) };
+});
 
 vi.mock("ai", async (importOriginal) => {
   const actual = await importOriginal<typeof import("ai")>();
@@ -67,6 +87,7 @@ vi.mock("../creator/source-discovery.js", () => ({
 
 vi.mock("../creator/workspace-executor.js", () => ({
   executeWorkspaceGeneration: mockExecuteWorkspaceGeneration,
+  validateDesignArtifacts: mockValidateDesignArtifacts,
   prepareWorkspace: vi.fn().mockReturnValue({
     taskPrompt: "test prompt",
     workspaceRoot: "/tmp/test-workspace",
@@ -179,6 +200,7 @@ const SAMPLE_BLUEPRINT = {
 describe("creator orchestration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockValidateGeneratedApp.mockReset();
     process.env.ANTHROPIC_API_KEY = "test-key";
     mockDbGet.mockReturnValue(null);
     mockDiscoverSources.mockReturnValue([
@@ -217,6 +239,16 @@ describe("creator orchestration", () => {
     });
   });
 
+  it("uses the selected provider model with a locally validated flexible OpenAI contract", async () => {
+    const { generateCreatorDraft } = await import("../creator/orchestrator.js");
+    await generateCreatorDraft({ description: "Analytics", mode: "both", saveImmediately: false, source: { kind: "scratch" } });
+    expect(mockGenerateObject).toHaveBeenCalledWith(expect.objectContaining({
+      model: { modelId: "gpt-user-choice" },
+      schema: expect.any(Object),
+      providerOptions: { openai: { strictJsonSchema: false } },
+    }));
+  });
+
   it("creates a draft with sources, validations, and workspace metadata", async () => {
     const { generateCreatorDraft } = await import("../creator/orchestrator.js");
     const draft = await generateCreatorDraft(
@@ -233,6 +265,105 @@ describe("creator orchestration", () => {
     expect(draft.sources).toHaveLength(1);
     expect(draft.workspace).toBeDefined();
     expect(draft.validations).toBeDefined();
+  });
+
+  it("reruns independent validation before publishing a completed draft", async () => {
+    const { generateCreatorDraft, publishCreatorDraft } = await import("../creator/orchestrator.js");
+    const draft = await generateCreatorDraft({ description: "Database", mode: "both", saveImmediately: false, source: { kind: "auto" } }, "test-key");
+    const root = await mkdtemp(join(tmpdir(), "talome-publish-completed-"));
+    try {
+      draft.workspace!.scaffoldPath = root;
+      draft.workspace!.generatedWithClaudeCode = true;
+      await writeFile(join(root, "server.py"), "print('application entry')\n");
+      mockValidateGeneratedApp.mockResolvedValueOnce({ validations: [{ id: "native-browser", status: "failed", label: "Native browser", details: "Fresh browser check failed" }] });
+      await expect(publishCreatorDraft(draft)).rejects.toThrow("Fresh browser check failed");
+      expect(mockValidateGeneratedApp).toHaveBeenCalledOnce();
+      expect(mockCreateUserApp).not.toHaveBeenCalled();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("does not let a false provenance flag bypass validation of an implemented workspace", async () => {
+    const { generateCreatorDraft, publishCreatorDraft } = await import("../creator/orchestrator.js");
+    const draft = await generateCreatorDraft({ description: "Database", mode: "both", saveImmediately: false, source: { kind: "auto" } }, "test-key");
+    const root = await mkdtemp(join(tmpdir(), "talome-publish-provenance-"));
+    try {
+      draft.workspace!.scaffoldPath = root;
+      draft.workspace!.generatedWithClaudeCode = false;
+      await writeFile(join(root, "docker-compose.yml"), "services: {}\n");
+      await writeFile(join(root, "server.py"), "print('application entry')\n");
+      mockValidateGeneratedApp.mockResolvedValueOnce({ validations: [{ id: "native-browser", status: "failed", label: "Native browser", details: "Current render failed" }] });
+      await expect(publishCreatorDraft(draft)).rejects.toThrow("Current render failed");
+      expect(mockValidateGeneratedApp).toHaveBeenCalledOnce();
+      expect(mockCreateUserApp).not.toHaveBeenCalled();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("does not let an omitted workspace bypass native browser validation", async () => {
+    const { generateCreatorDraft, publishCreatorDraft } = await import("../creator/orchestrator.js");
+    const { validateNativeAppInBrowser } = await import("../creator/browser-validation.js");
+    const draft = await generateCreatorDraft({ description: "Database", mode: "both", saveImmediately: false, source: { kind: "auto" } }, "test-key");
+    draft.workspace = undefined;
+    draft.blueprint.scaffold.enabled = false;
+    vi.mocked(validateNativeAppInBrowser).mockResolvedValueOnce([{ id: "native-browser", label: "Browser", status: "failed", details: "No browser executable" }]);
+    await expect(publishCreatorDraft(draft)).rejects.toThrow("No browser executable");
+    expect(mockCreateUserApp).not.toHaveBeenCalled();
+  });
+
+  it("rejects a prepared full-app draft even when caller claims generation succeeded", async () => {
+    const { generateCreatorDraft, publishCreatorDraft } = await import("../creator/orchestrator.js");
+    const draft = await generateCreatorDraft({ description: "Analytics", mode: "both", saveImmediately: false, source: { kind: "scratch" } });
+    const root = await mkdtemp(join(tmpdir(), "talome-pending-scaffold-"));
+    try {
+      draft.workspace!.scaffoldPath = root;
+      await writeFile(join(root, "talome-app.json"), JSON.stringify(draft.blueprint.appSpec));
+      for (const claimed of [false, true]) {
+        draft.workspace!.generatedWithClaudeCode = claimed;
+        await expect(publishCreatorDraft(draft)).rejects.toThrow("beyond deployment metadata");
+      }
+      await writeFile(join(root, "docker-compose.yml"), "services: {}\n");
+      await writeFile(join(root, "manifest.json"), "{}");
+      await expect(publishCreatorDraft(draft)).rejects.toThrow("beyond deployment metadata");
+      draft.workspace = undefined;
+      await expect(publishCreatorDraft(draft)).rejects.toThrow("completed generated workspace");
+      expect(mockCreateUserApp).not.toHaveBeenCalled();
+      expect(mockValidateGeneratedApp).not.toHaveBeenCalled();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("revalidates staged design artifacts for implemented full apps before publishing", async () => {
+    const { generateCreatorDraft, publishCreatorDraft } = await import("../creator/orchestrator.js");
+    const draft = await generateCreatorDraft({ description: "Analytics", mode: "both", saveImmediately: false, source: { kind: "scratch" } });
+    const root = await mkdtemp(join(tmpdir(), "talome-pending-design-"));
+    try {
+      draft.workspace!.scaffoldPath = root;
+      await writeFile(join(root, "server.py"), "print('application entry')\n");
+      mockValidateGeneratedApp.mockResolvedValueOnce({ validations: [{ id: "native-browser", label: "Browser", status: "passed" }] });
+      mockValidateDesignArtifacts.mockResolvedValueOnce([{ id: "screen-spec", label: "Screen spec", status: "failed", details: "Design artifacts remain pending" }] as never);
+      await expect(publishCreatorDraft(draft)).rejects.toThrow("Design artifacts remain pending");
+      expect(mockCreateUserApp).not.toHaveBeenCalled();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("publishes the generated contract even when a headless caller retains the initial blueprint", async () => {
+    const { generateCreatorDraft, publishCreatorDraft } = await import("../creator/orchestrator.js");
+    const draft = await generateCreatorDraft({ description: "Database", mode: "both", saveImmediately: false, source: { kind: "auto" } }, "test-key");
+    const root = await mkdtemp(join(tmpdir(), "talome-publish-contract-"));
+    try {
+      const spec = structuredClone(draft.blueprint.appSpec!);
+      spec.actions.push({ id: "new-action", kind: "assistant", label: "New action", description: "A newly implemented action.", prompt: "Run the new workflow." });
+      spec.assistant.exposedActions.push("new-action");
+      await writeFile(join(root, "talome-app.json"), JSON.stringify(spec));
+      draft.workspace!.scaffoldPath = root;
+      await writeFile(join(root, "server.py"), "print('application entry')\n");
+      mockValidateGeneratedApp.mockResolvedValueOnce({ appSpec: spec, validations: [{ id: "generated-compose", label: "Fresh validation", status: "passed" }] });
+      await publishCreatorDraft(draft);
+      expect(mockCreateUserApp).toHaveBeenCalledWith(expect.objectContaining({ creator: expect.objectContaining({ blueprint: expect.objectContaining({ appSpec: spec }) }) }), { validatedScaffoldPath: root });
+      // An invalid generated file must fail before publishing, not silently fall back.
+      mockCreateUserApp.mockClear();
+      await writeFile(join(root, "talome-app.json"), JSON.stringify({ ...spec, appId: "wrong-app" }));
+      await expect(publishCreatorDraft(draft)).rejects.toThrow("AppSpec appId must be my-postgres");
+      expect(mockCreateUserApp).not.toHaveBeenCalled();
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 
 });

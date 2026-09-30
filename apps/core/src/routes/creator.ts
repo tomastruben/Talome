@@ -1,37 +1,37 @@
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
   CreatorRequestSchema,
+  CreatorDraftSchema,
   PublishDraftRequestSchema,
 } from "../creator/contracts.js";
 import {
   generateCreatorDraft,
-  getAnthropicApiKey,
+  getCreatorModel,
   publishCreatorDraft,
 } from "../creator/orchestrator.js";
 import { validateDesignArtifacts } from "../creator/workspace-executor.js";
+import { validateGeneratedApp } from "../creator/completion-validation.js";
+import { searchDesignPatterns } from "../creator/design-patterns.js";
+import { checkCreatorCliReadiness } from "../creator/cli-readiness.js";
+import { buildCreatorTerminalCommand } from "../creator/terminal-command.js";
+import { snapshotGeneratedWorkspace } from "../creator/workspace-snapshot.js";
+import { preparePublicationContract } from "../creator/publication-contract.js";
 import { writeAuditEntry } from "../db/audit.js";
 import { captureRouteError, serverError } from "../middleware/request-logger.js";
 
 const creator = new Hono();
 
+creator.get("/design-patterns", (c) => c.json(searchDesignPatterns(c.req.query("intent") ?? "")));
+
 const TERMINAL_DAEMON_PORT = Number(process.env.TERMINAL_DAEMON_PORT) || 4001;
 
 // POST /api/apps/create — build a draft app blueprint and prepare workspace (no Claude Code yet)
 creator.post("/create", async (c) => {
-  const apiKey = getAnthropicApiKey();
-  if (!apiKey) {
-    return c.json(
-      {
-        error: "No Anthropic API key configured. Add one in Settings → AI Provider.",
-      },
-      503
-    );
-  }
-
   let body: unknown;
   try {
     body = await c.req.json();
@@ -44,12 +44,20 @@ creator.post("/create", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
+  const canUseBlueprint = Boolean(parsed.data.preBuiltBlueprint?.identity?.name && parsed.data.preBuiltBlueprint.services?.length);
+  if (!canUseBlueprint) {
+    try { getCreatorModel(); }
+    catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "AI provider is not configured." }, 503);
+    }
+  }
+
   try {
-    const draft = await generateCreatorDraft(parsed.data, apiKey);
+    const draft = await generateCreatorDraft(parsed.data);
 
     // Auto-publish: generate + publish in one call
-    if (parsed.data.saveImmediately) {
-      const result = publishCreatorDraft(draft);
+    if (parsed.data.saveImmediately && !draft.blueprint.scaffold.enabled) {
+      const result = await publishCreatorDraft(draft);
       if (!result.success) {
         return c.json({ error: result.error || "Failed to publish app" }, 500);
       }
@@ -61,7 +69,7 @@ creator.post("/create", async (c) => {
       });
     }
 
-    return c.json({ ok: true, draft });
+    return c.json({ ok: true, draft, pending: draft.blueprint.scaffold.enabled });
   } catch (err) {
     return serverError(c, err, { message: "App generation failed" });
   }
@@ -89,6 +97,9 @@ creator.post("/create/execute", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
+  const readiness = await checkCreatorCliReadiness();
+  if (!readiness.ready) return c.json({ error: readiness.error, stage: "scaffold", generated: false }, 503);
+
   const workspaceRoot = parsed.data.workspaceRoot || join(homedir(), ".talome", "generated-apps", parsed.data.appId);
   const { taskPrompt, appId } = parsed.data;
   const autoMode = parsed.data.auto || parsed.data.yolo;
@@ -108,12 +119,11 @@ creator.post("/create/execute", async (c) => {
   writeAuditEntry("AI: creator_execute", "destructive", `Scaffold generation for ${appId}`);
 
   // Write prompt to temp file for atomic CLI argument passing
-  const promptFile = `/tmp/talome-prompt-creator-${appId}.md`;
-  await writeFile(promptFile, taskPrompt, "utf-8");
+  const promptFile = join(tmpdir(), `talome-prompt-creator-${randomUUID()}.md`);
+  await writeFile(promptFile, taskPrompt, { encoding: "utf-8", mode: 0o600, flag: "wx" });
 
   // cd to workspace, use subscription auth (unset API key), interactive or auto mode
-  const skipPerms = autoMode ? " --dangerously-skip-permissions" : "";
-  const command = `cd ${workspaceRoot} && env -u ANTHROPIC_API_KEY claude${skipPerms} "$(cat ${promptFile})"`;
+  const command = buildCreatorTerminalCommand(workspaceRoot, promptFile, autoMode);
 
   return c.json({
     sessionName: `sess_${sessionName}`,
@@ -147,43 +157,24 @@ creator.post("/create/complete", async (c) => {
   const startTime = Date.now();
 
   try {
-    // List generated files
-    const { readdirSync, statSync, existsSync, readFileSync } = await import("node:fs");
-
-    function countFiles(dir: string): string[] {
-      const results: string[] = [];
-      if (!existsSync(dir)) return results;
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name === "node_modules" || entry.name === ".git") continue;
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          results.push(...countFiles(full));
-        } else {
-          results.push(full.replace(`${scaffoldPath}/`, ""));
-        }
-      }
-      return results;
-    }
-
-    const filesGenerated = countFiles(scaffoldPath);
-
-    // Check that docker-compose.yml exists
-    const composePath = [
-      join(scaffoldPath, "docker-compose.yml"),
-      join(scaffoldPath, "docker-compose.yaml"),
-    ].find((p) => existsSync(p));
-
-    const hasCompose = !!composePath;
-
-    // Check manifest exists
-    const manifestPath = join(scaffoldPath, "manifest.json");
-    const hasManifest = existsSync(manifestPath);
-
+    const { existsSync, readFileSync } = await import("node:fs");
+    const draftPath = join(workspaceRoot, ".talome-creator", "creator-draft.json");
+    const storedDraft = existsSync(draftPath) ? CreatorDraftSchema.parse(JSON.parse(readFileSync(draftPath, "utf-8"))) : undefined;
+    if (storedDraft && storedDraft.app.id !== appId) throw new Error("Prepared draft appId does not match completion request.");
     const creatorJsonPath = join(workspaceRoot, ".talome-creator", "blueprint.json");
     let blueprintData: Record<string, unknown> = {};
-    try {
+    if (existsSync(creatorJsonPath)) {
       blueprintData = JSON.parse(readFileSync(creatorJsonPath, "utf-8"));
-    } catch { /* best effort */ }
+    }
+    const validatedScaffoldPath = await snapshotGeneratedWorkspace(scaffoldPath);
+    const publicationSpec = preparePublicationContract(validatedScaffoldPath, appId, blueprintData.appSpec);
+    if (publicationSpec) blueprintData.appSpec = publicationSpec;
+    const manifestPath = join(validatedScaffoldPath, "manifest.json");
+    const hasManifest = existsSync(manifestPath);
+    const generated = await validateGeneratedApp(validatedScaffoldPath, appId, blueprintData);
+    const filesGenerated = generated.files;
+    const hasCompose = Boolean(generated.composeFile);
+    if (generated.appSpec) blueprintData.appSpec = generated.appSpec;
 
     const usesStagedDesignWorkflow = Boolean(
       blueprintData.research || blueprintData.experienceDesign,
@@ -191,9 +182,10 @@ creator.post("/create/complete", async (c) => {
     const designValidations = usesStagedDesignWorkflow
       ? await validateDesignArtifacts(workspaceRoot)
       : [];
-    const failedDesignValidations = designValidations.filter((check) => check.status === "failed");
-    const workflowError = failedDesignValidations.length > 0
-      ? failedDesignValidations.map((check) => check.details || check.label).join("; ")
+    const validations = [...generated.validations, ...designValidations];
+    const failedValidations = validations.filter((check) => check.status === "failed");
+    const workflowError = failedValidations.length > 0
+      ? failedValidations.map((check) => check.details || check.label).join("; ")
       : undefined;
 
     // Re-publish: copy scaffold files to user-apps install directory
@@ -202,7 +194,7 @@ creator.post("/create/complete", async (c) => {
     const { createUserApp } = await import("../stores/creator.js");
     let republishError: string | undefined;
 
-    if ((hasCompose || hasManifest) && !workflowError) {
+    if (hasCompose && !workflowError) {
       // Read manifest for metadata
       let manifest: Record<string, unknown> = {};
       if (hasManifest) {
@@ -211,19 +203,19 @@ creator.post("/create/complete", async (c) => {
         } catch { /* best effort */ }
       }
 
-      const appName = (manifest.name as string) || (blueprintData.name as string) || appId;
+      const appName = generated.appSpec?.name || (manifest.name as string) || (blueprintData.name as string) || appId;
       const result = createUserApp({
         id: appId,
         name: appName,
-        description: (manifest.description as string) || (blueprintData.description as string) || "",
+        description: generated.appSpec?.description || (manifest.description as string) || (blueprintData.description as string) || "",
         category: (manifest.category as string) || (blueprintData.category as string) || "other",
         services: [], // Services come from the compose file, not this input
-        env: [],
+        env: Array.isArray(blueprintData.env) ? blueprintData.env as any : storedDraft?.app.env ?? [],
         creator: {
           blueprint: blueprintData as any,
-          sources: [],
-          validations: [],
-          instructionPack: { version: "1.0.0", hash: "", files: [] },
+          sources: storedDraft?.sources ?? [],
+          validations,
+          instructionPack: storedDraft?.instructionPack ?? { version: typeof blueprintData.instructionsVersion === "string" ? blueprintData.instructionsVersion : "legacy", hash: "", files: [] },
           workspace: {
             appId,
             rootPath: workspaceRoot,
@@ -240,9 +232,9 @@ creator.post("/create/complete", async (c) => {
               : [],
             generatedWithClaudeCode: true,
           },
-          createdAt: new Date().toISOString(),
+          createdAt: storedDraft?.createdAt ?? new Date().toISOString(),
         },
-      });
+      }, { validatedScaffoldPath });
 
       if (!result.success) {
         republishError = result.error;
@@ -261,6 +253,7 @@ creator.post("/create/complete", async (c) => {
       hasCompose,
       hasManifest,
       designValidations,
+      validations,
       error: workflowError,
       republishError,
       duration,
@@ -294,7 +287,7 @@ creator.post("/create/publish", async (c) => {
   }
 
   try {
-    const result = publishCreatorDraft(parsed.data.draft, parsed.data.overrides);
+    const result = await publishCreatorDraft(parsed.data.draft, parsed.data.overrides);
     if (!result.success) {
       return c.json({ error: result.error || "Failed to publish app" }, 400);
     }

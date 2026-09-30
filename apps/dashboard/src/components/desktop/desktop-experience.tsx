@@ -104,8 +104,8 @@ import { allNav, type NavItem } from "@/components/layout/nav-config";
 import {
   isDesktopModeAvailableNow,
   persistDashboardModePreference,
-  useDesktopModeAvailable,
   writeDashboardModePreference,
+  useDesktopModeAvailable,
 } from "@/hooks/use-desktop-mode";
 import { useUser } from "@/hooks/use-user";
 import { useServiceStacks } from "@/hooks/use-service-stacks";
@@ -152,6 +152,11 @@ import {
   dashboardRouteFromHref,
   desktopRouteFromEvent,
   desktopRouteFromMessage,
+  desktopRouteStateFromMessage,
+  shouldHandleDesktopLink,
+  nativeDashboardAppKey,
+  findDesktopNativeService,
+  desktopRouteBelongsToWindow,
 } from "@/lib/desktop-navigation";
 import {
   INITIAL_AUDIO_PLAYER_STATE,
@@ -172,6 +177,8 @@ interface DesktopAppDefinition {
 }
 
 interface DesktopWindowModel {
+  /** Last rendered route; kept separate so recording navigation never reloads the iframe. */
+  currentUrl?: string;
   id: string;
   appId: string;
   title: string;
@@ -406,12 +413,27 @@ function routeTitle(pathname: string) {
     .join(" ");
 }
 
-function appDefinitionFromDashboardRoute(url: string): DesktopAppDefinition | undefined {
+function appDefinitionFromDashboardRoute(
+  url: string,
+  services: readonly PersistedDesktopServiceApp[] = [],
+): DesktopAppDefinition | undefined {
   const normalized = dashboardRouteFromHref(url);
   if (!normalized) return undefined;
 
   const parsed = new URL(normalized, "http://talome.local");
   if (parsed.pathname === "/dashboard") return undefined;
+
+  if (parsed.pathname === "/dashboard/native-apps" || parsed.pathname.startsWith("/dashboard/native-apps/")) {
+    const key = nativeDashboardAppKey(normalized);
+    if (!key) return undefined;
+    const service = findDesktopNativeService(normalized, services);
+    const app = serviceAppDefinition(service ?? {
+      id: `native:${key}`,
+      name: decodeURIComponent(key.split("/")[1]).replaceAll("-", " "),
+      url: normalized,
+    });
+    return { ...app, url: normalized };
+  }
 
   const fixedApp = DESKTOP_APPS
     .filter((app) => routeMatchesApp(parsed.pathname, app.url))
@@ -447,13 +469,16 @@ function serviceAppDefinition({
   icon,
   iconUrl,
 }: PersistedDesktopServiceApp): DesktopAppDefinition {
+  const persistedUrl = nativeDashboardAppKey(url)
+    ? new URL(url, typeof window === "undefined" ? "http://localhost:3000" : window.location.href).href
+    : url;
   return {
     id: `${SERVICE_APP_PREFIX}${id}`,
     title: name,
     url,
     icon: resolveApplicationIcon(icon, name),
     iconUrl,
-    serviceApp: { id, name, url, icon, iconUrl },
+    serviceApp: { id, name, url: persistedUrl, icon, iconUrl },
     minimum: { width: 520, height: 360 },
   };
 }
@@ -491,8 +516,20 @@ function resolveAppDefinition(appId: string, url: string, title?: string) {
     return playerAppDefinition(title, url);
   }
 
+  // Native service windows keep their container identity even when their
+  // recorded route is relative or includes an app screen/query.
+  if (appId.startsWith(SERVICE_APP_PREFIX) && title && nativeDashboardAppKey(url)) {
+    return serviceAppDefinition({
+      id: appId.slice(SERVICE_APP_PREFIX.length),
+      name: title,
+      url,
+    });
+  }
+
   const dashboardApp = appDefinitionFromDashboardRoute(url);
   if (dashboardApp?.id === appId) return dashboardApp;
+  // Migrate windows saved by the old generic native-apps route fallback.
+  if (appId === "native-apps" && nativeDashboardAppKey(url)) return dashboardApp;
 
   if (appId.startsWith(SERVICE_APP_PREFIX) && title) {
     try {
@@ -1118,7 +1155,13 @@ export function DesktopExperience() {
     if (!restored) return;
     localStorage.setItem(
       DESKTOP_WINDOW_STORAGE_KEY,
-      JSON.stringify({ version: DESKTOP_WINDOW_STORAGE_VERSION, windows }),
+      JSON.stringify({
+        version: DESKTOP_WINDOW_STORAGE_VERSION,
+        windows: windows.map(({ currentUrl, ...windowModel }) => ({
+          ...windowModel,
+          url: currentUrl ?? windowModel.url,
+        })),
+      }),
     );
   }, [restored, windows]);
 
@@ -1165,7 +1208,7 @@ export function DesktopExperience() {
   const restoreWindow = useCallback(async (
     id: string,
     appId: string,
-    app: DesktopAppDefinition,
+    app?: DesktopAppDefinition,
   ) => {
     if (restoringWindowIdsRef.current.has(id)) return;
     restoringWindowIdsRef.current.add(id);
@@ -1177,8 +1220,7 @@ export function DesktopExperience() {
         windowModel.id === id
           ? {
             ...windowModel,
-            title: app.title,
-            url: app.url,
+            ...(app ? { title: app.title, url: app.url, currentUrl: app.url } : {}),
             minimized: false,
             zIndex,
           }
@@ -1249,6 +1291,7 @@ export function DesktopExperience() {
                 ...windowModel,
                 title: app.title,
                 url: app.url,
+                currentUrl: app.url,
                 minimized: false,
                 zIndex,
               }
@@ -1309,18 +1352,42 @@ export function DesktopExperience() {
     )
     : 0;
 
-  const openApp = useCallback((app: DesktopAppDefinition) => {
+  const openApp = useCallback((app: DesktopAppDefinition, navigate = false) => {
     if (!canUseApp(app)) return;
-    const existing = windows.find((windowModel) => windowModel.appId === app.id);
+    const nativeKey = nativeDashboardAppKey(app.url);
+    const existing = windows.find((windowModel) => windowModel.appId === app.id
+      || (nativeKey !== null && nativeDashboardAppKey(windowModel.url) === nativeKey));
     if (existing) {
+      // A direct native link can open before stack metadata arrives. Adopt the
+      // installed container identity when Launchpad subsequently activates it.
+      if (existing.appId !== app.id && app.serviceApp && !app.serviceApp.id.startsWith("native:")) {
+        setWindows((current) => current.map((candidate) => candidate.id === existing.id
+          ? { ...candidate, appId: app.id, title: app.title }
+          : candidate));
+      }
+      // Client-side navigation can leave the iframe's src prop at an older
+      // route. An explicit link to that route must still navigate the frame.
+      if (navigate && existing.url === app.url) {
+        const frame = appFrameRefs.current.get(existing.id);
+        try {
+          if (frame?.contentWindow
+            && frame.contentWindow.location.href !== new URL(app.url, window.location.href).href) {
+            frame.src = app.url;
+          }
+        } catch {
+          // External service frames own their navigation and cannot be inspected.
+        }
+      }
       if (existing.minimized) {
-        void restoreWindow(existing.id, existing.appId, app);
+        void restoreWindow(existing.id, existing.appId, navigate ? app : undefined);
         return;
       }
       focusWindow(existing.id);
+      // Dock and Launchpad activate the existing app without resetting its route.
+      if (!navigate) return;
       setWindows((current) => current.map((windowModel) =>
         windowModel.id === existing.id
-          ? { ...windowModel, title: app.title, url: app.url }
+          ? { ...windowModel, title: app.title, url: app.url, currentUrl: app.url }
           : windowModel,
       ));
       return;
@@ -1344,9 +1411,17 @@ export function DesktopExperience() {
       return;
     }
 
-    const app = appDefinitionFromDashboardRoute(normalized);
-    if (app) openApp(app);
-  }, [hasPermission, openApp]);
+    const existingServices = windows.flatMap((windowModel) => {
+      const service = resolveAppDefinition(windowModel.appId, windowModel.url, windowModel.title)?.serviceApp;
+      return service ? [service] : [];
+    });
+    const app = appDefinitionFromDashboardRoute(normalized, [
+      ...launchableServiceApps,
+      ...pinnedServiceApps,
+      ...existingServices,
+    ]);
+    if (app) openApp(app, true);
+  }, [hasPermission, launchableServiceApps, openApp, pinnedServiceApps, windows]);
 
   useEffect(() => {
     const handleDesktopRouteRequest = (event: Event) => {
@@ -1364,12 +1439,24 @@ export function DesktopExperience() {
     const handleDesktopRouteMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       const route = desktopRouteFromMessage(event.data);
-      if (!route) return;
-      const isAppWindow = Array.from(appFrameRefs.current.values()).some(
-        (frame) => frame.contentWindow === event.source,
+      const currentUrl = desktopRouteStateFromMessage(event.data);
+      if (!route && !currentUrl) return;
+      const frameEntry = Array.from(appFrameRefs.current.entries()).find(
+        ([, frame]) => frame.contentWindow === event.source,
       );
-      if (!isAppWindow) return;
-      openDashboardRoute(route);
+      if (!frameEntry) return;
+      if (currentUrl) {
+        setWindows((current) => {
+          const source = current.find((candidate) => candidate.id === frameEntry[0]);
+          if (!source || !desktopRouteBelongsToWindow(currentUrl, source.url)
+            || source.currentUrl === currentUrl) return current;
+          return current.map((candidate) => candidate.id === source.id
+            ? { ...candidate, currentUrl }
+            : candidate);
+        });
+        return;
+      }
+      if (route) openDashboardRoute(route);
     };
 
     window.addEventListener("message", handleDesktopRouteMessage);
@@ -1378,21 +1465,11 @@ export function DesktopExperience() {
 
   useEffect(() => {
     const handleDesktopLink = (event: MouseEvent) => {
-      if (
-        event.defaultPrevented
-        || event.button !== 0
-        || event.metaKey
-        || event.ctrlKey
-        || event.shiftKey
-        || event.altKey
-      ) return;
-
       const target = event.target;
       const anchor = target instanceof Element
         ? target.closest<HTMLAnchorElement>("a[href]")
         : null;
-      if (!anchor || anchor.dataset.desktopNavigation === "bypass") return;
-      if (anchor.download || (anchor.target && anchor.target !== "_self")) return;
+      if (!anchor || !shouldHandleDesktopLink(event, anchor)) return;
 
       const route = dashboardRouteFromHref(anchor.href);
       if (!route) return;
@@ -1609,7 +1686,7 @@ export function DesktopExperience() {
     const app = fixedApp ?? (navItem ? appDefinitionFromNav(navItem) : undefined);
     if (!app) return;
     setControlCenterOpen(false);
-    openApp({ ...app, url });
+    openApp({ ...app, url }, true);
   }, [openApp]);
 
   const openNowPlayingAudiobook = useCallback(() => {
@@ -1619,7 +1696,7 @@ export function DesktopExperience() {
     );
     if (!app) return;
     setControlCenterOpen(false);
-    openApp(app);
+    openApp(app, true);
   }, [desktopAudiobookPlayer.book, openApp]);
 
   const showNowPlayingAudiobookControls = useCallback(() => {
@@ -1701,7 +1778,7 @@ export function DesktopExperience() {
     openApp({
       ...filesApp,
       url: `/dashboard/files?path=${encodeURIComponent(path)}`,
-    });
+    }, true);
   }, [openApp]);
 
   const logOut = async () => {

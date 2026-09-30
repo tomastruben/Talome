@@ -210,6 +210,8 @@ export const ValidationCheckSchema = z.object({
   label: z.string().min(1),
   status: z.enum(["passed", "failed", "skipped"]),
   details: z.string().optional(),
+  scope: z.enum(["configuration", "native-renderer-fixture", "app-runtime"]).optional(),
+  evidencePath: z.string().optional(),
 });
 
 export const InstructionPackSummarySchema = z.object({

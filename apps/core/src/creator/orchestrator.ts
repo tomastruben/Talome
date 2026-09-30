@@ -1,7 +1,8 @@
 import { generateObject } from "ai";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { eq } from "drizzle-orm";
-import { db, schema } from "../db/index.js";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { getSetting } from "../utils/settings.js";
+import { getConfiguredModel } from "../ai/configured-model.js";
 import { createUserApp } from "../stores/creator.js";
 import {
   AppBlueprintSchema,
@@ -14,24 +15,23 @@ import {
 import { createDefaultAppSpec, TalomeAppSpecSchema } from "../app-specs/schema.js";
 import { loadInstructionPack, loadTalomeReferenceSnapshots, renderInstructionPack } from "./instructions.js";
 import { discoverSources, renderSourceContext } from "./source-discovery.js";
-import { prepareWorkspace } from "./workspace-executor.js";
+import { repairCreatorBlueprint } from "./blueprint-normalization.js";
+import { prepareWorkspace, validateDesignArtifacts } from "./workspace-executor.js";
+import { validateGeneratedApp } from "./completion-validation.js";
+import { hasGeneratedImplementation, listGeneratedFiles } from "./workspace-files.js";
+import { validateNativeAppInBrowser } from "./browser-validation.js";
+import { snapshotGeneratedWorkspace, snapshotNativeContract } from "./workspace-snapshot.js";
+import { preparePublicationContract } from "./publication-contract.js";
 
 function summarizeReferenceContent(content: string): string {
   return content.split("\n").slice(0, 40).join("\n").slice(0, 1800);
 }
 
+/** Kept for existing internal callers; stored secrets must be decrypted. */
 export function getAnthropicApiKey(): string | undefined {
-  try {
-    const row = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, "anthropic_key"))
-      .get();
-    return row?.value || process.env.ANTHROPIC_API_KEY;
-  } catch {
-    return process.env.ANTHROPIC_API_KEY;
-  }
+  return getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
 }
+export const getCreatorModel = getConfiguredModel;
 
 function buildBlueprintPrompt(
   request: CreatorRequest,
@@ -202,13 +202,15 @@ function blueprintFromPreBuilt(
 
 export async function generateCreatorDraft(
   request: CreatorRequest,
-  apiKey: string,
+  apiKey?: string,
+  options: { workspaceRoot?: string; abortSignal?: AbortSignal; maxOutputTokens?: number; maxRetries?: number } = {},
 ): Promise<CreatorDraft> {
   const instructionPack = await loadInstructionPack();
   const talomeReferences = await loadTalomeReferenceSnapshots();
   const sources = discoverSources(request.description, request.source);
 
   let blueprint;
+  let blueprintOrigin = "Pre-built blueprint supplied by the caller";
 
   if (request.preBuiltBlueprint?.identity?.name && request.preBuiltBlueprint?.services?.length) {
     // Use the pre-built blueprint from the interactive chat — skip AI generation
@@ -222,10 +224,24 @@ export async function generateCreatorDraft(
     );
   } else {
     // Generate blueprint via AI
-    const anthropic = createAnthropic({ apiKey });
+    const configured = getCreatorModel(apiKey);
+    blueprintOrigin = `Model-generated with ${configured.provider}/${configured.modelId}`;
+    const normalizedPaths: string[] = [];
     const { object } = await generateObject({
-      model: anthropic("claude-sonnet-4-20250514"),
+      model: configured.model,
+      // The shared contract contains optional fields and open data payloads.
+      // OpenAI strict JSON schema rejects those; generateObject still validates
+      // the returned object against AppBlueprintSchema before any workspace write.
+      ...(configured.provider === "openai" ? { providerOptions: { openai: { strictJsonSchema: false } } } : {}),
+      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+      ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+      ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
       schema: AppBlueprintSchema,
+      experimental_repairText: async ({ text }) => {
+        const repaired = repairCreatorBlueprint(text);
+        if (repaired) normalizedPaths.push(...repaired.removedPaths);
+        return repaired?.text ?? null;
+      },
       prompt: buildBlueprintPrompt(
         request,
         renderInstructionPack(instructionPack),
@@ -233,6 +249,8 @@ export async function generateCreatorDraft(
         talomeReferences,
       ),
     });
+
+    if (normalizedPaths.length) blueprintOrigin += `; normalized unused empty currency metadata at ${normalizedPaths.join(", ")}`;
 
     const generatedSpec = object.appSpec
       ? TalomeAppSpecSchema.parse({
@@ -288,7 +306,7 @@ export async function generateCreatorDraft(
       id: "blueprint",
       label: "Blueprint generated",
       status: "passed",
-      details: `Instruction pack ${instructionPack.summary.version}`,
+      details: `${blueprintOrigin}; instruction pack ${instructionPack.summary.version}`,
     },
     {
       id: "source-selection",
@@ -326,6 +344,7 @@ export async function generateCreatorDraft(
       instructionPack,
       talomeReferences,
       userDescription: request.description,
+      workspaceRoot: options.workspaceRoot,
     });
     taskPrompt = prepared.taskPrompt;
     workspace = {
@@ -340,19 +359,18 @@ export async function generateCreatorDraft(
     };
   }
 
-  return {
-    app,
-    blueprint,
-    sources,
-    validations,
-    instructionPack: instructionPack.summary,
-    workspace,
-    taskPrompt,
+  const draft: CreatorDraft = {
+    app, blueprint, sources, validations,
+    instructionPack: instructionPack.summary, workspace, taskPrompt,
     createdAt: new Date().toISOString(),
   };
+  if (workspace) {
+    writeFileSync(join(workspace.rootPath, ".talome-creator", "creator-draft.json"), JSON.stringify(draft, null, 2), { mode: 0o600 });
+  }
+  return draft;
 }
 
-export function publishCreatorDraft(
+export async function publishCreatorDraft(
   draft: CreatorDraft,
   overrides?: {
     id?: string;
@@ -366,6 +384,71 @@ export function publishCreatorDraft(
     ...overrides,
   };
 
+  if (draft.blueprint.scaffold.enabled && !draft.workspace) {
+    throw new Error("Scaffold-enabled drafts require a completed generated workspace before publishing.");
+  }
+
+  // Both interactive and headless generation can refine the original contract.
+  // Resolve the artifact again at publication so a stale caller cannot erase new actions.
+  let appSpec = draft.blueprint.appSpec;
+  const specPath = draft.workspace?.scaffoldPath
+    ? join(draft.workspace.scaffoldPath, "talome-app.json")
+    : undefined;
+  if (specPath && existsSync(specPath)) {
+    const generatedSpec = TalomeAppSpecSchema.parse(JSON.parse(readFileSync(specPath, "utf-8")));
+    if (generatedSpec.appId !== draft.app.id) throw new Error(`AppSpec appId must be ${draft.app.id}.`);
+    appSpec = generatedSpec;
+  }
+
+  // Browser evidence is produced here, never accepted from caller-authored draft metadata.
+  let validations = draft.validations.filter((check) => !["native-browser", "app-runtime"].includes(check.id) && !check.evidencePath && !check.scope);
+  let validatedScaffoldPath: string | undefined;
+  if (draft.workspace) {
+    validatedScaffoldPath = await snapshotGeneratedWorkspace(draft.workspace.scaffoldPath);
+    const snapshotSpecPath = join(validatedScaffoldPath, "talome-app.json");
+    if (existsSync(snapshotSpecPath)) {
+      appSpec = TalomeAppSpecSchema.parse(JSON.parse(readFileSync(snapshotSpecPath, "utf-8")));
+      if (appSpec.appId !== draft.app.id) throw new Error(`AppSpec appId must be ${draft.app.id}.`);
+    }
+    if (appSpec) {
+      const retarget = <T extends { kind: string; appId?: string; path?: string }>(item: T): T => ({
+        ...item,
+        ...(item.kind === "app-api" && item.appId === draft.app.id ? { appId: app.id } : {}),
+        ...(item.kind === "talome-api" && item.path ? { path: item.path.replace(`/api/apps/user-apps/${encodeURIComponent(draft.app.id)}`, `/api/apps/user-apps/${encodeURIComponent(app.id)}`) } : {}),
+      });
+      appSpec = TalomeAppSpecSchema.parse({ ...appSpec, appId: app.id, name: app.name, description: app.description, actions: appSpec.actions.map(retarget), dataSources: appSpec.dataSources.map(retarget) });
+      writeFileSync(snapshotSpecPath, JSON.stringify(appSpec, null, 2));
+    }
+    const manifestPath = join(validatedScaffoldPath, "manifest.json");
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+      writeFileSync(manifestPath, JSON.stringify({ ...manifest, id: app.id, name: app.name, description: app.description, category: app.category }, null, 2));
+    }
+    appSpec = preparePublicationContract(validatedScaffoldPath, app.id, appSpec);
+    const files = await listGeneratedFiles(validatedScaffoldPath);
+    const hasImplementation = hasGeneratedImplementation(files);
+    if (draft.blueprint.scaffold.enabled && !hasImplementation) {
+      throw new Error("Scaffold-enabled drafts require generated application source or assets beyond deployment metadata before publishing.");
+    }
+    const current = hasImplementation || draft.workspace.generatedWithClaudeCode
+      ? await validateGeneratedApp(validatedScaffoldPath, app.id, { ...draft.blueprint, appSpec })
+      : { appSpec, validations: appSpec ? await validateNativeAppInBrowser(validatedScaffoldPath, appSpec) : [] };
+    if (draft.blueprint.scaffold.enabled) current.validations.push(...await validateDesignArtifacts(draft.workspace.rootPath));
+    const failures = current.validations.filter((check) => check.status === "failed");
+    if (failures.length) throw new Error(failures.map((check) => check.details || check.label).join("; "));
+    appSpec = current.appSpec ?? appSpec;
+    const currentIds = new Set(current.validations.map((check) => check.id));
+    validations = [...validations.filter((check) => !currentIds.has(check.id)), ...current.validations];
+  } else if (appSpec) {
+    appSpec = TalomeAppSpecSchema.parse({ ...appSpec, appId: app.id, name: app.name, description: app.description });
+    validatedScaffoldPath = await snapshotNativeContract(appSpec);
+    appSpec = preparePublicationContract(validatedScaffoldPath, app.id, appSpec)!;
+    const checks = await validateNativeAppInBrowser(validatedScaffoldPath, appSpec);
+    const failures = checks.filter((check) => check.status === "failed");
+    if (failures.length) throw new Error(failures.map((check) => check.details || check.label).join("; "));
+    validations.push(...checks);
+  }
+
   return createUserApp({
     id: app.id,
     name: app.name,
@@ -376,16 +459,17 @@ export function publishCreatorDraft(
     creator: {
       blueprint: {
         ...draft.blueprint,
+        appSpec,
         id: app.id,
         name: app.name,
         description: app.description,
         category: app.category,
       },
       sources: draft.sources,
-      validations: draft.validations,
+      validations,
       instructionPack: draft.instructionPack,
       workspace: draft.workspace,
       createdAt: draft.createdAt,
     },
-  });
+  }, validatedScaffoldPath ? { validatedScaffoldPath } : undefined);
 }

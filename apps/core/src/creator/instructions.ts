@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { renderDesignPatternGuide, searchDesignPatterns } from "./design-patterns.js";
+import { nativeChartGuide } from "./chart-guidance.js";
 import type { InstructionPackSummary } from "./contracts.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,9 +18,14 @@ const TALOME_REFERENCE_FILES = [
     path: resolve(REPO_ROOT, ".cursor", "rules"),
   },
   {
-    title: "Create App Page",
-    reason: "Current app creation page layout and tone",
-    path: resolve(REPO_ROOT, "apps", "dashboard", "src", "app", "dashboard", "apps", "create", "page.tsx"),
+    title: "Assistant Creation Flow",
+    reason: "Current intent-led app creation entry, planning conversation and assistant context",
+    path: resolve(REPO_ROOT, "apps", "dashboard", "src", "app", "dashboard", "assistant", "page.tsx"),
+  },
+  {
+    title: "Blueprint Draft Review",
+    reason: "Focused review and continuation of the app blueprint inside the creation flow",
+    path: resolve(REPO_ROOT, "apps", "dashboard", "src", "components", "creator", "blueprint-draft-bar.tsx"),
   },
   {
     title: "App Detail Page",
@@ -53,6 +60,14 @@ export async function loadInstructionPack(): Promise<InstructionPack> {
       }),
     ),
   );
+
+  // Human guidance and machine discovery share a catalog and participate in
+  // the instruction hash, so component/behavior changes invalidate stale packs.
+  documents["pattern-catalog.md"] = renderDesignPatternGuide();
+  documents["pattern-catalog.json"] = JSON.stringify(searchDesignPatterns(), null, 2);
+  documents["chart-contract.json"] = JSON.stringify(nativeChartGuide(), null, 2);
+  files.push("pattern-catalog.md", "pattern-catalog.json", "chart-contract.json");
+  files.sort();
 
   const combined = files.map((file) => `# ${file}\n${documents[file]}`).join("\n\n");
   const hash = createHash("sha256").update(combined).digest("hex").slice(0, 16);

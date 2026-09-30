@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 import { motion, useReducedMotion } from "motion/react";
@@ -33,6 +34,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -242,6 +244,25 @@ export const DesktopWindow = memo(function DesktopWindow({
     captureGesture(event.currentTarget, event);
   };
 
+  const resizeWithKeyboard = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const step = event.shiftKey ? 64 : 16;
+    const delta = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    }[event.key];
+    if (!delta) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onFocus();
+    onBoundsChange(resizeDesktopBounds({
+      ...bounds,
+      width: bounds.width + delta[0],
+      height: bounds.height + delta[1],
+    }, area, minimum));
+  };
+
   const toggleMaximize = () => {
     if (maximized) {
       onMaximizeChange(false, restoreBounds);
@@ -274,6 +295,7 @@ export const DesktopWindow = memo(function DesktopWindow({
               className={cn(
                 "flex h-7 min-w-0 max-w-44 shrink items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
                 action.active && "bg-muted/60 text-foreground",
+                action.id === "terminal-session" && "border border-border bg-background shadow-none",
               )}
               disabled={action.disabled}
               aria-label={action.label}
@@ -290,6 +312,7 @@ export const DesktopWindow = memo(function DesktopWindow({
             className="z-[1400] min-w-52"
             onPointerDown={(event) => event.stopPropagation()}
           >
+            <DropdownMenuGroup>
             {action.items?.map((item) => (
               <Fragment key={item.id}>
                 {item.separatorBefore && <DropdownMenuSeparator />}
@@ -304,6 +327,7 @@ export const DesktopWindow = memo(function DesktopWindow({
                 </DropdownMenuItem>
               </Fragment>
             ))}
+            </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       );
@@ -438,6 +462,7 @@ export const DesktopWindow = memo(function DesktopWindow({
               >
                 <HugeiconsIcon icon={SourceCodeCircleIcon} size={14} />
                 <span className="truncate">{agentAction.label}</span>
+                <HugeiconsIcon icon={ArrowDown01Icon} size={11} className="shrink-0" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -445,6 +470,7 @@ export const DesktopWindow = memo(function DesktopWindow({
               className="z-[1400] min-w-40"
               onPointerDown={(event) => event.stopPropagation()}
             >
+              <DropdownMenuGroup>
               {agentAction.items?.map((item) => (
                 <Fragment key={item.id}>
                   {item.separatorBefore && <DropdownMenuSeparator />}
@@ -457,6 +483,7 @@ export const DesktopWindow = memo(function DesktopWindow({
                   </DropdownMenuItem>
                 </Fragment>
               ))}
+              </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -497,6 +524,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         zIndex,
       }}
       onPointerDown={onFocus}
+      onFocusCapture={onFocus}
     >
       <div
         className={cn(
@@ -509,17 +537,18 @@ export const DesktopWindow = memo(function DesktopWindow({
       >
         <div className="flex min-w-0 items-center gap-2">
           <div
-            className="flex shrink-0 items-center gap-2 [&:focus-within_[data-window-control-glyph]]:opacity-100 [&:hover_[data-window-control-glyph]]:opacity-100"
+            className="-ml-1.5 flex shrink-0 items-center gap-0 [&:focus-within_[data-window-control-glyph]]:opacity-100 [&:hover_[data-window-control-glyph]]:opacity-100"
             aria-label="Window controls"
           >
             <button
               type="button"
               aria-label={`Close ${title}`}
+              title={`Close ${title}`}
               className={cn(
-                "relative flex size-3.5 items-center justify-center rounded-full transition-colors duration-150",
+                "relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:transition-colors before:duration-150 focus-visible:ring-2 focus-visible:ring-ring",
                 active
-                  ? "bg-status-critical/70 hover:bg-status-critical"
-                  : "bg-muted-foreground/25 hover:bg-status-critical/70",
+                  ? "before:bg-status-critical/70 hover:before:bg-status-critical"
+                  : "before:bg-muted-foreground/25 hover:before:bg-status-critical/70",
               )}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={onClose}
@@ -529,11 +558,12 @@ export const DesktopWindow = memo(function DesktopWindow({
             <button
               type="button"
               aria-label={`Minimize ${title}`}
+              title={`Minimize ${title}`}
               className={cn(
-                "relative flex size-3.5 items-center justify-center rounded-full transition-colors duration-150",
+                "relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:transition-colors before:duration-150 focus-visible:ring-2 focus-visible:ring-ring",
                 active
-                  ? "bg-status-warning/70 hover:bg-status-warning"
-                  : "bg-muted-foreground/25 hover:bg-status-warning/70",
+                  ? "before:bg-status-warning/70 hover:before:bg-status-warning"
+                  : "before:bg-muted-foreground/25 hover:before:bg-status-warning/70",
               )}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={onMinimize}
@@ -543,11 +573,12 @@ export const DesktopWindow = memo(function DesktopWindow({
             <button
               type="button"
               aria-label={maximized ? `Restore ${title}` : `Maximize ${title}`}
+              title={maximized ? `Restore ${title}` : `Maximize ${title}`}
               className={cn(
-                "relative flex size-3.5 items-center justify-center rounded-full transition-colors duration-150",
+                "relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:transition-colors before:duration-150 focus-visible:ring-2 focus-visible:ring-ring",
                 active
-                  ? "bg-status-healthy/70 hover:bg-status-healthy"
-                  : "bg-muted-foreground/25 hover:bg-status-healthy/70",
+                  ? "before:bg-status-healthy/70 hover:before:bg-status-healthy"
+                  : "before:bg-muted-foreground/25 hover:before:bg-status-healthy/70",
               )}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={toggleMaximize}
@@ -572,8 +603,8 @@ export const DesktopWindow = memo(function DesktopWindow({
           className="flex min-w-0 items-center justify-self-end gap-0.5"
           aria-label={`${title} actions`}
         >
-          {otherTrailingActions.map(renderAction)}
           {renderTerminalControls()}
+          {otherTrailingActions.map(renderAction)}
         </div>
       </div>
 
@@ -585,11 +616,15 @@ export const DesktopWindow = memo(function DesktopWindow({
           <button
             type="button"
             aria-label={`Resize ${title}`}
-            className="absolute right-0 bottom-0 size-4 cursor-nwse-resize touch-none"
+            title="Resize with arrow keys; hold Shift for larger steps"
+            aria-describedby={`desktop-resize-help-${id}`}
+            className="absolute right-0 bottom-0 size-7 cursor-nwse-resize touch-none rounded-tl-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            onKeyDown={resizeWithKeyboard}
             onPointerDown={startResize}
             onLostPointerCapture={finishPointerGesture}
           >
-            <span className="absolute right-1 bottom-1 size-2 border-r border-b border-muted-foreground/50" />
+            <span id={`desktop-resize-help-${id}`} className="sr-only">Use arrow keys to resize. Hold Shift for larger steps.</span>
+            <span className="absolute right-1.5 bottom-1.5 size-2 border-r border-b border-muted-foreground/50" />
           </button>
         )}
       </div>

@@ -407,7 +407,7 @@ export const metrics = sqliteTable("metrics", {
 export const proxyRoutes = sqliteTable("proxy_routes", {
   id: text("id").primaryKey(),
   appId: text("app_id"),
-  domain: text("domain").notNull(),
+  domain: text("domain").notNull().unique(),
   upstream: text("upstream").notNull(),
   tlsMode: text("tls_mode", { enum: ["auto", "selfsigned", "manual", "off"] }).notNull().default("auto"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),

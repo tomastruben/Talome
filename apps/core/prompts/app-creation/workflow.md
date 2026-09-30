@@ -36,3 +36,9 @@ For a bespoke visually led external UI, produce a complete visual concept before
 - do not report completion while a fixable mismatch or inert primary control remains
 
 Each gate leaves an artifact. Set its `Status` to `complete` only when its evidence is present.
+
+## Completion and publication
+
+Build and exercise the app locally with disposable test data, then clean up temporary test services. Finish the session with the implementation, validation evidence, and remaining limits so Talome can independently validate and publish the app. A prepared workspace is not a published catalog entry; do not install or start the app during generation or modify existing installed services or user data.
+
+After successful publication, installation and startup happen through the app details configure flow. A successful local build or test does not mean the published service is running.

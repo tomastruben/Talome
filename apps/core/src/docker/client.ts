@@ -1,6 +1,7 @@
 import Docker from "dockerode";
 import type { Container, ContainerStats, SystemStats } from "@talome/types";
 import os from "node:os";
+import { createCpuUsageSampler } from "../utils/cpu-usage.js";
 import { execSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { join } from "node:path";
@@ -153,6 +154,7 @@ export async function listContainers(): Promise<Container[]> {
       })),
     created: new Date(c.Created * 1000).toISOString(),
     labels: c.Labels ?? {},
+    networkMode: c.HostConfig?.NetworkMode,
   }));
 }
 
@@ -357,17 +359,9 @@ function getSystemStatsImpl(): SystemStats {
   };
 }
 
+const sampleCpuUsage = createCpuUsageSampler(os.cpus());
 function getCpuUsage(): number {
-  const cpus = os.cpus();
-  let totalIdle = 0;
-  let totalTick = 0;
-  for (const cpu of cpus) {
-    for (const type of Object.values(cpu.times)) {
-      totalTick += type;
-    }
-    totalIdle += cpu.times.idle;
-  }
-  return Math.round((1 - totalIdle / totalTick) * 1000) / 10;
+  return sampleCpuUsage(os.cpus());
 }
 
 let lastNetSample: { time: number; rx: number; tx: number } | null = null;

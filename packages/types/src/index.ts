@@ -10,3 +10,4 @@ export * from "./media.ts";
 export * from "./search.ts";
 export * from "./quality.ts";
 export * from "./app-spec.ts";
+export * from "./compose-config.ts";

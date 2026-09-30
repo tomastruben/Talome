@@ -6,6 +6,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { resolveClaudeBinary } from "./claude-binary.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -25,7 +26,7 @@ export async function isClaudeCodeAvailable(): Promise<boolean> {
   try {
     const result = await new Promise<{ code: number; stdout: string }>((resolve) => {
       let stdout = "";
-      const proc = spawn("claude", ["--version"], { shell: false });
+      const proc = spawn(resolveClaudeBinary(), ["--version"], { shell: false });
       proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
       const p = proc as any;
@@ -105,7 +106,7 @@ export function spawnClaudeStreaming(
     const { ANTHROPIC_API_KEY: _stripKey, CLAUDECODE: _stripClaude2, ...cleanEnv } = process.env;
 
     const proc = spawn(
-      "claude",
+      resolveClaudeBinary(),
       [
         "--dangerously-skip-permissions",
         "--print",

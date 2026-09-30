@@ -213,12 +213,19 @@ audiobooks.get("/search", async (c) => {
 audiobooks.get("/progress/:id", async (c) => {
   try {
     const id = c.req.param("id");
-    const res = await absFetch(`/api/me/progress/${id}`);
-    const data = await res.json();
-    return c.json(data);
-  } catch {
-    // 404 means no progress yet — return empty
-    return c.json({ currentTime: 0, progress: 0, isFinished: false });
+    const res = await absFetch(`/api/items/${id}?expanded=1&include=progress`);
+    const data = await res.json() as { userMediaProgress?: Record<string, unknown> };
+    return c.json(data.userMediaProgress ?? {
+      currentTime: 0,
+      progress: 0,
+      isFinished: false,
+      lastUpdate: null,
+      startedAt: null,
+      finishedAt: null,
+      duration: 0,
+    });
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to fetch audiobook progress", context: { itemId: c.req.param("id") } });
   }
 });
 

@@ -9,6 +9,9 @@ import {
   BulbIcon,
   ChartLineData01Icon,
   CompassIcon,
+  Clock01Icon,
+  CloudServerIcon,
+  Folder01Icon,
   Coins01Icon,
   Film01Icon,
   FlashIcon,
@@ -29,6 +32,9 @@ import {
 
 const NATIVE_APP_ICONS: Record<string, IconSvgElement> = {
   activity: Activity01Icon,
+  timer: Clock01Icon,
+  server: CloudServerIcon,
+  folder: Folder01Icon,
   assistant: AiMagicIcon,
   analytics: Analytics01Icon,
   "budget-bars": BarChartHorizontalIcon,
@@ -76,6 +82,7 @@ export function resolveApplicationIcon(icon?: string | null, name?: string | nul
   if (includesAny("weather", "forecast", "storm", "rain", "cloud", "⛈", "🌦")) {
     return AiCloudIcon;
   }
+  if (includesAny("stopwatch", "timer", "⏱")) return Clock01Icon;
   if (includesAny("movie", "media", "video", "cinema", "jellyfin", "🎬", "📺")) {
     return Film01Icon;
   }

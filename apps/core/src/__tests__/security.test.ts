@@ -331,28 +331,37 @@ describe("Filesystem isAllowed path validation", () => {
   // We use real temp directories to test realpathSync behavior.
   // The isAllowed function relies on realpathSync + getAllowedRoots.
 
-  // Since getAllowedRoots depends on CORE_ROOTS (which is ~/.talome) and
+  // Since getAllowedRoots depends on CORE_ROOTS (which is ~/.talome/files) and
   // getSetting (mocked to null), it returns only CORE_ROOTS.
   // We test the path resolution logic by importing the actual module.
 
   let isAllowed: (absPath: string) => boolean;
+  let isAllowedRoot: (absPath: string) => boolean;
   let TALOME_HOME: string;
+  let TALOME_FILES_HOME: string;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     // Dynamic import to get the real module with mocked dependencies
     const fs = await import("../utils/filesystem.js");
     isAllowed = fs.isAllowed;
+    isAllowedRoot = fs.isAllowedRoot;
     TALOME_HOME = fs.TALOME_HOME;
+    TALOME_FILES_HOME = fs.TALOME_FILES_HOME;
   });
 
-  it("allows paths within TALOME_HOME", () => {
-    // TALOME_HOME is ~/.talome — a path within it should be allowed
-    expect(isAllowed(`${TALOME_HOME}/custom-tools/my-tool.ts`)).toBe(true);
+  it("allows paths within TALOME_FILES_HOME", () => {
+    expect(isAllowed(`${TALOME_FILES_HOME}/documents/example.txt`)).toBe(true);
   });
 
-  it("allows TALOME_HOME itself", () => {
-    expect(isAllowed(TALOME_HOME)).toBe(true);
+  it("allows TALOME_FILES_HOME itself", () => {
+    expect(isAllowed(TALOME_FILES_HOME)).toBe(true);
+    expect(isAllowedRoot(TALOME_FILES_HOME)).toBe(true);
+  });
+
+  it("rejects Talome operational data", () => {
+    expect(isAllowed(`${TALOME_HOME}/custom-tools/my-tool.ts`)).toBe(false);
+    expect(isAllowed(`${TALOME_HOME}/data/talome.db`)).toBe(false);
   });
 
   it("rejects paths outside allowed roots", () => {
@@ -369,22 +378,25 @@ describe("Filesystem isAllowed path validation", () => {
 
   it("rejects path traversal with ../ that escapes the root", () => {
     // resolve() normalizes this to the parent, which would be outside the root
-    expect(isAllowed(`${TALOME_HOME}/../../../etc/passwd`)).toBe(false);
+    expect(isAllowed(`${TALOME_FILES_HOME}/../../../etc/passwd`)).toBe(false);
   });
 
   it("allows path with ../ that stays within root", () => {
-    // e.g., ~/.talome/sub/../other resolves to ~/.talome/other — still within root
-    expect(isAllowed(`${TALOME_HOME}/sub/../custom-tools`)).toBe(true);
+    expect(isAllowed(`${TALOME_FILES_HOME}/sub/../documents`)).toBe(true);
+  });
+
+  it("allows creating a missing child beneath the symlinked safe root", () => {
+    expect(isAllowed(`${TALOME_FILES_HOME}/new-folder-that-does-not-exist/file.txt`)).toBe(true);
   });
 
   it("rejects path that looks like the root but escapes it", () => {
     // ~/.talome-evil should NOT match ~/.talome
-    expect(isAllowed(`${TALOME_HOME}-evil/data`)).toBe(false);
+    expect(isAllowed(`${TALOME_FILES_HOME}-evil/data`)).toBe(false);
   });
 
   it("rejects paths with null bytes", () => {
     // resolve() handles null bytes — the result should not be within allowed roots
-    expect(isAllowed(`${TALOME_HOME}/\x00/../../etc/passwd`)).toBe(false);
+    expect(isAllowed(`${TALOME_FILES_HOME}/\x00/../../etc/passwd`)).toBe(false);
   });
 });
 

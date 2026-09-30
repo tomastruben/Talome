@@ -9,14 +9,22 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
+import { describeComposePort, normalizeComposeEnvironment } from "@talome/types";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+async function configFetcher(url: string): Promise<ConfigResponse> {
+  const response = await fetch(url);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Failed to load configuration");
+  return body;
+}
 
 interface ServiceConfig {
   image?: string;
-  ports?: string[];
+  ports?: unknown[];
   environment?: Record<string, string> | string[];
-  volumes?: string[];
+  volumes?: unknown[];
   deploy?: {
     resources?: {
       limits?: { memory?: string; cpus?: string };
@@ -34,93 +42,93 @@ interface ConfigResponse {
   config: ComposeConfig;
 }
 
-function PortEditor({ appId, ports, onSaved }: { appId: string; ports: string[]; onSaved: () => void }) {
+function PortEditor({ appId, serviceName, ports, onSaved }: { appId: string; serviceName: string; ports: unknown[]; onSaved: () => void }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const mappings = ports.map(describeComposePort);
 
   const startEditing = () => {
-    const d: Record<string, string> = {};
-    for (const p of ports) {
-      const [host, container] = p.split(":");
-      d[container] = host;
-    }
-    setDraft(d);
+    setDraft(Object.fromEntries(mappings.map((port, index) => [index, port?.published ?? ""])));
+    setSaveError(null);
     setEditing(true);
   };
 
   const handleSave = async () => {
-    const portMap: Record<string, number> = {};
-    let hasChange = false;
-    for (const p of ports) {
-      const [host, container] = p.split(":");
-      const val = parseInt(draft[container] || host, 10);
-      if (!isNaN(val) && val !== parseInt(host, 10)) { portMap[container] = val; hasChange = true; }
+    const portMappings: { index: number; published: number }[] = [];
+    for (let index = 0; index < mappings.length; index++) {
+      const port = mappings[index];
+      if (!port?.editable || draft[index] === port.published) continue;
+      const text = draft[index]?.trim() ?? "";
+      const published = Number(text);
+      if (!/^\d+$/.test(text) || published < 1 || published > 65535) {
+        setSaveError("Enter a whole host port from 1 to 65535.");
+        return;
+      }
+      portMappings.push({ index, published });
     }
-    if (!hasChange) { setEditing(false); return; }
+    if (!portMappings.length) { setEditing(false); return; }
     setSaving(true);
+    setSaveError(null);
     try {
       const res = await fetch(`/api/user-apps/${appId}/config`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serviceName: Object.keys(draft).length ? undefined : undefined, ports: portMap }),
+        body: JSON.stringify({ serviceName, portMappings }),
       });
-      if (res.ok) {
-        toast.success("Port mappings updated. Restart the container to apply.");
-        onSaved();
-        setEditing(false);
-      } else {
-        const d = await res.json() as { error?: string };
-        toast.error(d.error ?? "Failed to save");
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error ?? "Failed to save port mappings");
       }
-    } catch { toast.error("Network error"); }
-    finally { setSaving(false); }
+      toast.success("Port mappings saved. Recreate the app to apply changes.");
+      onSaved();
+      setEditing(false);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Network error");
+    } finally { setSaving(false); }
   };
 
   return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium">Port Mappings</h2>
+    <section className="flex flex-col gap-3" aria-labelledby="port-mappings-title">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 id="port-mappings-title" className="text-sm font-medium">Port Mappings</h2>
         {editing ? (
           <div className="flex gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
-            <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save"}</Button>
+            <Button variant="ghost" size="sm" disabled={saving} onClick={() => { setEditing(false); setSaveError(null); }}>Cancel</Button>
+            <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save ports"}</Button>
           </div>
         ) : (
-          <Button variant="ghost" size="sm" onClick={startEditing}>Edit</Button>
+          <Button variant="ghost" size="sm" onClick={startEditing} disabled={!mappings.some((port) => port?.editable)}>Edit ports</Button>
         )}
       </div>
-      <div className="space-y-2">
-        {ports.map((p) => {
-          const [host, container] = p.split(":");
-          return (
-            <div key={p} className="flex items-center gap-3 text-sm">
-              {editing ? (
-                <Input
-                  value={draft[container] ?? host}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, [container]: e.target.value }))}
-                  className="font-mono text-xs h-8 w-20"
-                />
-              ) : (
-                <Badge variant="outline" className="font-mono">{host}</Badge>
-              )}
-              <span className="text-muted-foreground">→</span>
-              <Badge variant="secondary" className="font-mono">{container}</Badge>
-              <span className="text-xs text-muted-foreground">(host → container)</span>
-            </div>
-          );
-        })}
+      <p className="text-xs text-muted-foreground">Host port → container port. Bind addresses and protocols are preserved.</p>
+      <div className="flex flex-col gap-2">
+        {mappings.map((port, index) => (
+          <div key={index} className="flex flex-wrap items-center gap-3 text-sm">
+            {editing && port?.editable ? (
+              <Input
+                aria-label={`Host port for ${port.target}/${port.protocol}${port.binding ? ` on ${port.binding}` : ""}`}
+                aria-invalid={!!saveError}
+                aria-describedby={saveError ? "port-error" : undefined}
+                inputMode="numeric"
+                value={draft[index] ?? port.published}
+                disabled={saving}
+                onChange={(e) => { setDraft((prev) => ({ ...prev, [index]: e.target.value })); setSaveError(null); }}
+                className="w-24"
+                placeholder="Automatic"
+              />
+            ) : <Badge variant="outline" className="max-w-full break-all whitespace-normal">{port?.published || "Automatic"}</Badge>}
+            <span aria-hidden className="text-muted-foreground">→</span>
+            <Badge variant="secondary" className="max-w-full break-all whitespace-normal">{port ? `${port.target}/${port.protocol}` : "Unsupported mapping"}</Badge>
+            {port?.binding && <span className="text-xs text-muted-foreground break-all">{port.binding}</span>}
+            {port && !port.editable && <span className="text-xs text-muted-foreground">Edit ranges or variables in Compose</span>}
+          </div>
+        ))}
       </div>
+      {saveError && <Alert variant="destructive" id="port-error"><AlertDescription>{saveError}</AlertDescription></Alert>}
     </section>
   );
-}
-
-function normaliseEnv(env: Record<string, string> | string[] | undefined): Record<string, string> {
-  if (!env) return {};
-  if (Array.isArray(env)) {
-    return Object.fromEntries(env.map((e) => e.split("=", 2) as [string, string]));
-  }
-  return env;
 }
 
 export default function ConfigurePage() {
@@ -129,17 +137,19 @@ export default function ConfigurePage() {
 
   const { data, error, mutate } = useSWR<ConfigResponse>(
     `/api/user-apps/${appId}/config`,
-    fetcher,
+    configFetcher,
   );
 
+  const [selectedService, setSelectedService] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editedEnv, setEditedEnv] = useState<Record<string, string> | null>(null);
 
   if (error) {
     return (
-      <div className="p-6 text-destructive">
-        Failed to load config: {error?.message ?? "Unknown error"}
-      </div>
+      <div className="p-4 sm:p-6"><Alert variant="destructive">
+        <AlertTitle>Configuration unavailable</AlertTitle>
+        <AlertDescription>{error?.message ?? "Unknown error"}<Button variant="outline" size="sm" onClick={() => mutate()}>Try again</Button></AlertDescription>
+      </Alert></div>
     );
   }
 
@@ -149,10 +159,10 @@ export default function ConfigurePage() {
 
   const services = data.config?.services ?? {};
   const serviceNames = Object.keys(services);
-  const primaryService = serviceNames[0];
+  const primaryService = selectedService && services[selectedService] ? selectedService : serviceNames[0];
   const service = services[primaryService];
 
-  const currentEnv = editedEnv ?? normaliseEnv(service?.environment);
+  const currentEnv = { ...normalizeComposeEnvironment(service?.environment), ...editedEnv };
 
   async function handleSave() {
     if (!editedEnv || !primaryService) return;
@@ -164,7 +174,7 @@ export default function ConfigurePage() {
         body: JSON.stringify({ serviceName: primaryService, env: editedEnv }),
       });
       if (res.ok) {
-        toast.success("Configuration saved. Restart the container to apply changes.");
+        toast.success("Configuration saved. Recreate the app to apply changes.");
         mutate();
         setEditedEnv(null);
       } else {
@@ -181,25 +191,37 @@ export default function ConfigurePage() {
   const isDirty = editedEnv !== null;
 
   return (
-    <div className="p-6 max-w-3xl space-y-8">
+    <div className="p-4 sm:p-6 max-w-3xl min-w-0 flex flex-col gap-8">
       <div>
-        <h1 className="text-2xl font-medium">{appId} — Configure</h1>
-        <p className="text-muted-foreground text-sm mt-1">{data.composePath}</p>
+        <h1 className="text-2xl font-medium break-words">{appId} — Configure</h1>
+        <p className="text-muted-foreground text-sm mt-1 break-all">{data.composePath}</p>
       </div>
+
+      {serviceNames.length > 1 && (
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="configure-service">Service</Label>
+          <Select value={primaryService} disabled={saving || editedEnv !== null} onValueChange={setSelectedService}>
+            <SelectTrigger id="configure-service"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup>{serviceNames.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectGroup></SelectContent>
+          </Select>
+          {editedEnv !== null && <p className="text-xs text-muted-foreground">Save or reset changes before switching services.</p>}
+        </div>
+      )}
+      {!service && <Alert><AlertDescription>No services are defined in this configuration.</AlertDescription></Alert>}
 
       {/* Image */}
       {service?.image && (
-        <section className="space-y-2">
+        <section className="flex flex-col gap-2">
           <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Image</h2>
-          <code className="text-sm bg-muted px-2 py-1 rounded">{service.image}</code>
+          <code className="text-sm bg-muted px-2 py-1 rounded break-all">{service.image}</code>
         </section>
       )}
 
       <Separator />
 
       {/* Environment Variables */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
+      <section className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-medium">Environment Variables</h2>
           {isDirty && (
             <div className="flex gap-2">
@@ -213,16 +235,19 @@ export default function ConfigurePage() {
           )}
         </div>
 
-        <div className="space-y-3">
+        <div className="flex flex-col gap-3">
           {Object.entries(currentEnv).map(([key, value]) => (
-            <div key={key} className="grid grid-cols-[1fr_2fr] gap-3 items-center">
-              <Label className="font-mono text-xs truncate" title={key}>
+            <div key={key} className="grid grid-cols-1 sm:grid-cols-[1fr_2fr] gap-2 sm:gap-3 sm:items-center">
+              <Label htmlFor={`env-${key}`} className="font-mono text-xs truncate" title={key}>
                 {key}
               </Label>
               <Input
-                value={value}
+                id={`env-${key}`}
+                value={value ?? ""}
+                placeholder={value === null ? "Inherited from host" : undefined}
+                disabled={saving}
                 onChange={(e) =>
-                  setEditedEnv({ ...currentEnv, [key]: e.target.value })
+                  setEditedEnv({ ...editedEnv, [key]: e.target.value })
                 }
                 className="font-mono text-xs h-8"
                 type={key.toLowerCase().includes("key") || key.toLowerCase().includes("secret") || key.toLowerCase().includes("password") ? "password" : "text"}
@@ -239,18 +264,18 @@ export default function ConfigurePage() {
 
       {/* Ports */}
       {service?.ports && service.ports.length > 0 && (
-        <PortEditor appId={appId} ports={service.ports} onSaved={() => mutate()} />
+        <PortEditor key={primaryService} appId={appId} serviceName={primaryService} ports={service.ports} onSaved={() => mutate()} />
       )}
 
       {/* Volumes */}
       {service?.volumes && service.volumes.length > 0 && (
         <>
           <Separator />
-          <section className="space-y-3">
+          <section className="flex flex-col gap-3">
             <h2 className="text-sm font-medium">Volume Mounts</h2>
-            <div className="space-y-1">
-              {service.volumes.map((v) => (
-                <code key={v} className="block text-xs bg-muted px-2 py-1 rounded">{v}</code>
+            <div className="flex flex-col gap-1">
+              {service.volumes.map((v, index) => (
+                <code key={index} className="block text-xs bg-muted px-2 py-1 rounded break-all">{typeof v === "string" ? v : JSON.stringify(v)}</code>
               ))}
             </div>
           </section>
@@ -261,7 +286,7 @@ export default function ConfigurePage() {
       {service?.deploy?.resources?.limits && (
         <>
           <Separator />
-          <section className="space-y-3">
+          <section className="flex flex-col gap-3">
             <h2 className="text-sm font-medium">Resource Limits</h2>
             <div className="flex gap-4 text-sm">
               {service.deploy.resources.limits.memory && (

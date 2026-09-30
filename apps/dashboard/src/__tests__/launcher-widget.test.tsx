@@ -20,6 +20,7 @@ const jellyfinContainer = {
   ],
   created: "2026-07-19T10:00:00.000Z",
   labels: {},
+  webUi: { port: 8096, protocol: "http" as const, path: "/", title: "Jellyfin", source: "detected" as const },
 };
 
 const stacks: ServiceStack[] = [{
@@ -68,7 +69,7 @@ describe("LauncherWidget", () => {
     expect(onLaunch).toHaveBeenCalledWith(expect.objectContaining({
       id: "jellyfin",
       name: "Jellyfin",
-      url: "http://localhost:8096",
+      url: "http://localhost:8096/",
       container: jellyfinContainer,
     }));
     expect(mocks.quickLookOpen).not.toHaveBeenCalled();

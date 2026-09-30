@@ -118,13 +118,20 @@ export function AssistantModelSelector({
                       onModelChange(option.id);
                       setOpen(false);
                     }}
-                    value={`${option.name} ${option.provider} ${option.id}`}
+                    value={`${option.name} ${option.description ?? ""} ${option.provider} ${option.id}`}
                   >
                     <ModelSelectorLogo
                       className="size-4 shrink-0"
                       provider={getProviderLogo(option.provider)}
                     />
-                    <ModelSelectorName>{option.name}</ModelSelectorName>
+                    <div className="min-w-0 flex-1 py-0.5">
+                      <ModelSelectorName className="block">{option.name}</ModelSelectorName>
+                      {option.description ? (
+                        <span className="block truncate text-[11px] leading-4 text-muted-foreground">
+                          {option.description}
+                        </span>
+                      ) : null}
+                    </div>
                     <HugeiconsIcon
                       aria-hidden="true"
                       className={cn("ml-auto shrink-0", selected ? "opacity-100" : "opacity-0")}

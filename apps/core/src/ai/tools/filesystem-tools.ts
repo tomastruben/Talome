@@ -5,10 +5,10 @@ import { join, resolve, basename, dirname, extname } from "node:path";
 import { existsSync } from "node:fs";
 import { writeAuditEntry } from "../../db/audit.js";
 import {
-  TALOME_HOME,
+  getAllowedRootInfos,
   getAllowedRoots,
   isAllowed,
-  sanitizePath,
+  isAllowedRoot,
 } from "../../utils/filesystem.js";
 
 function assertAllowed(absPath: string): void {
@@ -22,7 +22,7 @@ function assertAllowed(absPath: string): void {
 // ── browse_files ──────────────────────────────────────────────────────────────
 
 export const browseFilesTool = tool({
-  description: `Browse files and directories on the user's drives. Returns directory listings scoped to allowed roots (Talome home + enabled external drives).
+  description: `Browse files and directories on the user's drives. Returns directory listings scoped to allowed roots (Talome Files + enabled external drives).
 
 When called without a path, returns the list of allowed root directories so the user can choose where to browse.
 
@@ -45,14 +45,29 @@ Use this to help users find files, explore directory structures, or check what's
     try {
       // No path → return available roots
       if (!path) {
-        const roots = getAllowedRoots();
+        const roots = getAllowedRootInfos();
         const rootInfo = await Promise.all(
           roots.map(async (root) => {
             try {
-              const s = await stat(root);
-              return { path: root, label: basename(root), exists: true, isDirectory: true, modified: s.mtime.toISOString() };
+              const s = await stat(root.path);
+              return {
+                path: root.path,
+                label: root.label,
+                kind: root.kind,
+                hostLabel: root.hostLabel,
+                exists: true,
+                isDirectory: true,
+                modified: s.mtime.toISOString(),
+              };
             } catch {
-              return { path: root, label: basename(root), exists: false, isDirectory: true };
+              return {
+                path: root.path,
+                label: root.label,
+                kind: root.kind,
+                hostLabel: root.hostLabel,
+                exists: false,
+                isDirectory: true,
+              };
             }
           }),
         );
@@ -79,6 +94,7 @@ Use this to help users find files, explore directory structures, or check what's
           if (!showHidden && entry.name.startsWith(".")) continue;
 
           const fullPath = join(dir, entry.name);
+          if (!isAllowed(fullPath)) continue;
           try {
             const s = await stat(fullPath);
             results.push({
@@ -124,7 +140,7 @@ Use this to help users find files, explore directory structures, or check what's
 // ── read_user_file ────────────────────────────────────────────────────────────
 
 export const readUserFileTool = tool({
-  description: `Read a file from the user's drives. Returns the file contents as text. Scoped to allowed roots (Talome home + enabled external drives).
+  description: `Read a file from the user's drives. Returns the file contents as text. Scoped to allowed roots (Talome Files + enabled external drives).
 
 For binary files (images, videos, etc.), returns metadata instead of contents. Max 5MB for text files.`,
   inputSchema: z.object({
@@ -213,8 +229,7 @@ IMPORTANT: This is a destructive operation. Always confirm with the user before 
       assertAllowed(abs);
 
       // Prevent deleting root directories
-      const roots = getAllowedRoots();
-      if (roots.includes(abs)) {
+      if (isAllowedRoot(abs)) {
         return { error: "Cannot delete a root directory." };
       }
 
@@ -269,6 +284,9 @@ Both the source and destination must be within allowed roots. The new name must 
 
       const abs = resolve(path);
       assertAllowed(abs);
+      if (isAllowedRoot(abs)) {
+        return { error: "Cannot rename a root directory." };
+      }
 
       if (!existsSync(abs)) {
         return { error: `File not found: ${path}` };

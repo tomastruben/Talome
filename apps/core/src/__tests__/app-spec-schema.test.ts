@@ -2,6 +2,55 @@ import { describe, expect, it } from "vitest";
 import { createDefaultAppSpec, TalomeAppSpecSchema } from "../app-specs/schema.js";
 
 describe("Talome AppSpec", () => {
+  it("preserves grouped category charts, unit labels and legacy series identifiers", () => {
+    const spec = createDefaultAppSpec({ appId: "analysis", name: "Analysis", description: "Compare actual observations." });
+    spec.surfaces[0].blocks = [{
+      id: "comparison", component: "time-series", title: "Temperature by location", dataSource: "app-status",
+      rowsPath: "rows", xPath: "location", variant: "bar", xLabel: "Location", valueLabel: "Temperature", unit: "°C",
+      series: [{ id: "x", label: "Measured", valuePath: "measured" }, { id: "reference.v1:temp", label: "Reference", valuePath: "reference" }],
+    }];
+    expect(TalomeAppSpecSchema.parse(spec)).toEqual(spec);
+  });
+
+  it("rejects duplicate chart series instead of overwriting a measure", () => {
+    const spec = createDefaultAppSpec({ appId: "analysis", name: "Analysis", description: "Compare actual observations." });
+    spec.surfaces[0].blocks = [{
+      id: "comparison", component: "time-series", title: "Comparison", dataSource: "app-status", xPath: "category",
+      series: [{ id: "value", label: "Actual", valuePath: "actual" }, { id: "value", label: "Reference", valuePath: "reference" }],
+    }];
+    expect(TalomeAppSpecSchema.safeParse(spec).error?.issues).toEqual(expect.arrayContaining([expect.objectContaining({ message: "Duplicate chart series: value", path: ["surfaces", 0, "blocks", 0, "series", 1, "id"] })]));
+  });
+
+  it("rejects chart variants the shipped renderer does not implement", () => {
+    const spec = createDefaultAppSpec({ appId: "analysis", name: "Analysis", description: "Compare actual observations." });
+    const raw = { ...spec, surfaces: [{ ...spec.surfaces[0], blocks: [{ id: "unsupported", component: "time-series", title: "Scatter", dataSource: "app-status", xPath: "x", variant: "scatter", series: [{ id: "y", label: "Y", valuePath: "y" }] }] }] };
+    expect(TalomeAppSpecSchema.safeParse(raw).success).toBe(false);
+  });
+
+  it("rejects ambiguous surface, block, and action input identities", () => {
+    const spec = createDefaultAppSpec({ appId: "test", name: "Test", description: "Test app." });
+    spec.surfaces.push(structuredClone(spec.surfaces[0]));
+    spec.surfaces[0].blocks.push(structuredClone(spec.surfaces[0].blocks[0]));
+    spec.actions[0].input = [
+      { id: "name", type: "string", label: "Name" },
+      { id: "name", type: "number", label: "Count" },
+    ];
+    const messages = TalomeAppSpecSchema.safeParse(spec).error?.issues.map((issue) => issue.message);
+    expect(messages).toEqual(expect.arrayContaining(["Duplicate surface: overview", "Duplicate block: about", "Duplicate action input: name"]));
+  });
+
+  it("requires row actions to bind a declared action input", () => {
+    const spec = createDefaultAppSpec({ appId: "test", name: "Test", description: "Test app." });
+    spec.surfaces[0].blocks.push({
+      id: "activity", title: "Activity", component: "activity-list", dataSource: "app-status",
+      datePath: "date", titlePath: "name", valuePath: "amount",
+      rowAction: { actionId: "inspect-with-assistant", inputId: "record-id", valuePath: "id" },
+    });
+    expect(TalomeAppSpecSchema.safeParse(spec).error?.issues.some((issue) => issue.message === "Unknown action input: record-id")).toBe(true);
+    spec.actions[0].input = [{ id: "record-id", type: "string", label: "Record" }];
+    expect(TalomeAppSpecSchema.safeParse(spec).success).toBe(true);
+  });
+
   it("creates a valid native surface with assistant actions", () => {
     const spec = createDefaultAppSpec({
       appId: "family-budget",

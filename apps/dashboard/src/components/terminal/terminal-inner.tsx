@@ -7,6 +7,7 @@ import { ImageAddon } from "@xterm/addon-image";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { CORE_URL, getTerminalDaemonHttpUrl, getTerminalDaemonWsUrl } from "@/lib/constants";
+import { shouldSuppressEmptyNormalBufferWheel } from "./terminal-scroll";
 
 // ── iOS emoji → ANSI replacement ─────────────────────────────────────────────
 // iOS renders Unicode emoji as oversized colorful glyphs that break terminal
@@ -203,6 +204,20 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
       term.loadAddon(imageAddon);
       term.loadAddon(webLinksAddon);
       term.open(containerRef.current);
+
+      // xterm 6 translates wheel gestures into Up/Down key sequences whenever
+      // there is no scrollback. Keep that behavior for alternate-screen TUIs,
+      // but suppress it at a normal shell prompt so a wheel gesture cannot
+      // inject visible `^[[A`/`^[[B` text into the command line.
+      term.attachCustomWheelEventHandler((event) => {
+        if (!shouldSuppressEmptyNormalBufferWheel(term.buffer.active)) {
+          return true;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        return false;
+      });
 
       // Session ID is always provided by the parent — no localStorage fallback.
       const resolvedSessionId = sessionId || undefined;

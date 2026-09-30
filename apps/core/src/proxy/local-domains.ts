@@ -66,7 +66,7 @@ async function createProxyRoutesForApps(baseDomain: string, tlsMode: string): Pr
   if (!hasTalomeRoute) {
     const serverIp = getServerLanIp();
     const id = randomUUID();
-    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, '__talome__', ${homeDomain}, ${'http://' + serverIp + ':3000'}, ${tlsMode}, ${now})`);
+    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, '__talome__', ${homeDomain}, ${'http://' + serverIp + ':3000'}, ${tlsMode}, ${now}) ON CONFLICT(domain) DO UPDATE SET app_id = excluded.app_id, upstream = excluded.upstream, tls_mode = excluded.tls_mode`);
     created.push(homeDomain);
   } else {
     // Always update domain in case it changed (e.g. from bare domain to home.*)
@@ -81,7 +81,7 @@ async function createProxyRoutesForApps(baseDomain: string, tlsMode: string): Pr
     const upstream = `http://${appId}:${port}`;
     const id = randomUUID();
 
-    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId}, ${domain}, ${upstream}, ${tlsMode}, ${now})`);
+    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId}, ${domain}, ${upstream}, ${tlsMode}, ${now}) ON CONFLICT(domain) DO UPDATE SET app_id = COALESCE(excluded.app_id, app_id), upstream = excluded.upstream, tls_mode = excluded.tls_mode`);
 
     try {
       await connectContainerToProxyNetwork(appId);

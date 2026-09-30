@@ -12,6 +12,7 @@ import {
   LayoutGridIcon,
   DashboardCircleIcon,
   ArrowLeft01Icon,
+  ArrowDown01Icon,
   Add01Icon,
   Tick01Icon,
   DashboardSquare02Icon,
@@ -218,7 +219,7 @@ function TerminalHeaderAction() {
   }, [setAutoMode, setRemote]);
 
   return (
-    <div className="ml-auto shrink-0">
+    <div className="ml-auto flex shrink-0 items-center gap-2">
       <div className={cn(
         "flex items-center h-7 rounded-md transition-colors",
         autoMode ? "bg-status-warning/10 ring-1 ring-status-warning/20" : "bg-muted/30 ring-1 ring-border/50"
@@ -292,10 +293,10 @@ function TerminalHeaderAction() {
                   ? "text-status-warning/80 hover:text-status-warning hover:bg-status-warning/10"
                   : "text-muted-foreground hover:text-foreground"
               )}
-              disabled={headerAction.disabled}
             >
               <HugeiconsIcon icon={SourceCodeCircleIcon} size={14} />
               {headerAction.label}
+              <HugeiconsIcon icon={ArrowDown01Icon} size={11} />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={6} className="min-w-40">
@@ -305,7 +306,17 @@ function TerminalHeaderAction() {
                 {item.active && <HugeiconsIcon icon={Tick01Icon} size={13} className="ml-auto" />}
               </DropdownMenuItem>
             ))}
-            <DropdownMenuSeparator />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2.5 text-xs shadow-none" disabled={headerAction.disabled}>
+            Session
+            <HugeiconsIcon icon={ArrowDown01Icon} size={11} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={6} className="min-w-40">
             {headerAction.commandItems.map((item) => (
               <DropdownMenuItem
                 key={item.id}
@@ -315,9 +326,8 @@ function TerminalHeaderAction() {
                 {item.label}
               </DropdownMenuItem>
             ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

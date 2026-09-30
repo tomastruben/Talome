@@ -8,6 +8,7 @@
 // and no recent evolution change explains it.
 
 import { spawn } from "node:child_process";
+import { resolveClaudeBinary } from "../ai/claude-binary.js";
 import Database from "better-sqlite3";
 import type { DiagnosticsBundle, DiagnosisResult } from "./types.js";
 
@@ -19,7 +20,7 @@ async function isClaudeCodeAvailable(): Promise<boolean> {
   if (_claudeAvailable !== null) return _claudeAvailable;
   try {
     const result = await new Promise<{ code: number }>((resolve) => {
-      const proc = spawn("claude", ["--version"], { shell: false });
+      const proc = spawn(resolveClaudeBinary(), ["--version"], { shell: false });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ChildProcess type lacks .on() in newer @types/node
       const p = proc as any;
       p.on("close", (code: number | null) => resolve({ code: code ?? 1 }));
@@ -118,7 +119,7 @@ async function diagnoseViaClaudeCode(
     const { ANTHROPIC_API_KEY: _strip, CLAUDECODE: _strip2, ...cleanEnv } = process.env;
 
     const proc = spawn(
-      "claude",
+      resolveClaudeBinary(),
       ["--dangerously-skip-permissions", "--print", prompt],
       { cwd, env: cleanEnv, shell: false },
     );

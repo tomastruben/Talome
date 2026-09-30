@@ -47,7 +47,7 @@ proxy.post("/routes", async (c) => {
 
   const id = randomUUID();
   const now = new Date().toISOString();
-  db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId ?? null}, ${domain}, ${normalizedUpstream}, ${tlsMode}, ${now})`);
+  db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId ?? null}, ${domain}, ${normalizedUpstream}, ${tlsMode}, ${now}) ON CONFLICT(domain) DO UPDATE SET app_id = COALESCE(excluded.app_id, app_id), upstream = excluded.upstream, tls_mode = excluded.tls_mode`);
 
   // Ensure Caddy is running and reload
   await ensureCaddyRunning();
@@ -165,7 +165,7 @@ proxy.post("/apply-domain", async (c) => {
     const upstream = `http://${appId}:${port}`;
     const id = randomUUID();
 
-    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId}, ${domain}, ${upstream}, ${effectiveTls}, ${now})`);
+    db.run(sql`INSERT INTO proxy_routes (id, app_id, domain, upstream, tls_mode, created_at) VALUES (${id}, ${appId}, ${domain}, ${upstream}, ${effectiveTls}, ${now}) ON CONFLICT(domain) DO UPDATE SET app_id = COALESCE(excluded.app_id, app_id), upstream = excluded.upstream, tls_mode = excluded.tls_mode`);
 
     try {
       await connectContainerToProxyNetwork(appId);

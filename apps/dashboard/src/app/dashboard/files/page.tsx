@@ -73,6 +73,7 @@ import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useSystemStats } from "@/hooks/use-system-stats";
 import { isCodeHighlightable } from "@/lib/file-languages";
+import { getVisibleFileRoots, type FileManagerRoot } from "@/lib/file-roots";
 const VideoPlayer = dynamic(
   () => import("@/components/files/media-player").then((m) => ({ default: m.VideoPlayer })),
   { ssr: false },
@@ -117,6 +118,7 @@ interface ListResponse {
   parent: string | null;
   items: FileItem[];
   allowedRoots: string[];
+  roots?: FileManagerRoot[];
 }
 
 interface ReadResponse {
@@ -232,6 +234,7 @@ function rootLabel(rootPath: string): { label: string; icon: IconSvgElement } {
   if (rootPath.startsWith("/Volumes/") || rootPath.startsWith("/media/") || rootPath.startsWith("/run/media/") || rootPath.startsWith("/mnt/")) {
     return { label: name, icon: ExternalDriveIcon };
   }
+  if (rootPath.includes(".talome/files")) return { label: "Talome Files", icon: FolderOpenIcon };
   if (rootPath.includes(".talome")) return { label: "Talome", icon: HardDriveIcon };
   if (rootPath.includes("/tmp")) return { label: "Temp", icon: Folder01Icon };
   return { label: name, icon: Folder01Icon };
@@ -312,7 +315,7 @@ function findMountForRoot(root: string, mounts: DiskMount[]): DiskMount | undefi
 
 // ── Root-level volume list with disk stats ──────────────────────────────
 
-function RootsList({ roots, onSelect }: { roots: string[]; onSelect: (root: string) => void }) {
+function RootsList({ roots, onSelect }: { roots: FileManagerRoot[]; onSelect: (root: string) => void }) {
   const { stats } = useSystemStats();
   const mounts = stats?.disk.mounts ?? [];
 
@@ -320,22 +323,28 @@ function RootsList({ roots, onSelect }: { roots: string[]; onSelect: (root: stri
     <div className="flex min-h-full flex-col justify-center px-4 py-6">
       <div className="mx-auto flex w-full max-w-lg flex-col gap-3">
         {roots.map((root) => {
-          const { label, icon } = rootLabel(root);
-          const mount = findMountForRoot(root, mounts);
+          const icon = root.kind === "talome-files" ? FolderOpenIcon : ExternalDriveIcon;
+          const mount = root.kind === "external"
+            ? findMountForRoot(root.hostMount ?? root.path, mounts)
+            : undefined;
           const freeBytes = mount ? mount.totalBytes - mount.usedBytes : null;
 
           return (
             <button
-              key={root}
-              onClick={() => onSelect(root)}
+              key={root.id}
+              onClick={() => onSelect(root.path)}
               className="flex items-center gap-3 rounded-xl border px-4 py-3.5 transition-colors hover:bg-muted/30 text-left group"
             >
               <div className="flex items-center justify-center size-8 rounded-lg bg-muted shrink-0">
                 <HugeiconsIcon icon={icon} size={14} className="text-muted-foreground" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium leading-snug">{label}</p>
-                {mount ? (
+                <p className="text-sm font-medium leading-snug">{root.label}</p>
+                {root.kind === "talome-files" ? (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    User files{root.hostLabel ? ` · Stored on ${root.hostLabel}` : ""}
+                  </p>
+                ) : mount ? (
                   <>
                     <div className="flex items-center gap-2 mt-1.5">
                       <Progress
@@ -351,7 +360,7 @@ function RootsList({ roots, onSelect }: { roots: string[]; onSelect: (root: stri
                     </p>
                   </>
                 ) : (
-                  <p className="text-xs text-muted-foreground mt-0.5">{root}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{root.path}</p>
                 )}
               </div>
               <HugeiconsIcon
@@ -1146,13 +1155,28 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
 
   // ── Path segments ───────────────────────────────────────────────────
 
+  // Build breadcrumbs from the user-visible root instead of exposing the
+  // server's host path (for example /Users/<name>/.talome/files). This also
+  // keeps external-drive breadcrumbs stable when their mount path changes.
   const segments: { name: string; path: string }[] = [];
   if (data?.path) {
-    const parts = data.path.split("/").filter(Boolean);
-    let accumulated = "";
-    for (const part of parts) {
-      accumulated += "/" + part;
-      segments.push({ name: part, path: accumulated });
+    const matchingRoot = (data.roots ?? [])
+      .filter((root) => data.path === root.path || data.path.startsWith(`${root.path}/`))
+      .sort((a, b) => b.path.length - a.path.length)[0];
+
+    if (matchingRoot) {
+      segments.push({ name: matchingRoot.label, path: matchingRoot.path });
+      const parts = data.path.slice(matchingRoot.path.length).split("/").filter(Boolean);
+      let accumulated = matchingRoot.path;
+      for (const part of parts) {
+        accumulated += `/${part}`;
+        segments.push({ name: part, path: accumulated });
+      }
+    } else {
+      segments.push({
+        name: data.path.split("/").filter(Boolean).pop() || "Files",
+        path: data.path,
+      });
     }
   }
 
@@ -1228,7 +1252,15 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                 )
               ) : isAtVirtualRoot && data?.allowedRoots ? (
                 <RootsList
-                  roots={data.allowedRoots}
+                  roots={getVisibleFileRoots(
+                    data.roots ?? data.allowedRoots.map((root) => ({
+                      id: root,
+                      path: root,
+                      label: rootLabel(root).label,
+                      kind: root.includes(".talome/files") ? "talome-files" : "external",
+                    })),
+                    { keepTalomeFallback: true },
+                  )}
                   onSelect={(root) => navigate(root)}
                 />
               ) : !data?.items ? (
@@ -1461,11 +1493,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                       )}
                       onClick={() => {
                         if (isLast) return;
-                        if (hasMultipleRoots && data?.allowedRoots?.some((r: string) => r === seg.path || seg.path.length < r.length)) {
-                          goToVirtualRoot();
-                        } else {
-                          navigate(seg.path);
-                        }
+                        navigate(seg.path);
                       }}
                       disabled={isLast}
                     >
