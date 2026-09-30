@@ -81,7 +81,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { IconSwap, PopText } from "@/components/ui/micro";
+import { IconSwap } from "@/components/ui/micro";
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -547,44 +547,6 @@ function readPersistedDock(): {
   } catch {
     return { serviceApps: [], appIds: [], order: [] };
   }
-}
-
-function greetingFor(hour: number): string {
-  if (hour < 5) return "Good night";
-  if (hour < 12) return "Good morning";
-  if (hour < 18) return "Good afternoon";
-  return "Good evening";
-}
-
-/** A quiet hello over the wallpaper: who's here, and what time it is. */
-function DesktopGreeting({ name }: { name?: string }) {
-  const [now, setNow] = useState<Date | null>(null);
-
-  useEffect(() => {
-    const tick = () => setNow(new Date());
-    const first = window.setTimeout(tick, 0);
-    const timer = window.setInterval(tick, 15_000);
-    return () => {
-      window.clearTimeout(first);
-      window.clearInterval(timer);
-    };
-  }, []);
-
-  if (!now) return <div data-desktop-greeting="" className="h-16" aria-hidden="true" />;
-  const displayName = name ? name.charAt(0).toUpperCase() + name.slice(1) : undefined;
-
-  return (
-    <header data-desktop-greeting="" className="desktop-greeting tm-rise flex flex-col gap-1 px-1 pb-5">
-      <h1 className="text-2xl font-medium tracking-tight">
-        {greetingFor(now.getHours())}{displayName ? `, ${displayName}` : ""}
-      </h1>
-      <p className="flex items-center gap-2 text-sm opacity-75">
-        <span>{now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</span>
-        <span aria-hidden="true">·</span>
-        <PopText value={now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} />
-      </p>
-    </header>
-  );
 }
 
 interface DesktopSurfaceContextMenuContentProps {
@@ -1548,7 +1510,6 @@ export function DesktopExperience() {
                   : "min(44rem, calc(100% - 3rem))",
               }}
             >
-              {!desktopWidgetsEditing ? <DesktopGreeting name={user?.username} /> : null}
               <ControlledWidgetGrid
                 controller={desktopWidgetLayoutController}
                 editMode={desktopWidgetsEditing}

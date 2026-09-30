@@ -25,7 +25,8 @@ export type BuiltinWidgetType =
   | "ollama-status"
   | "launcher"
   | "audiobooks"
-  | "optimization";
+  | "optimization"
+  | "clock";
 
 export type WidgetType = BuiltinWidgetType | `widget:${string}`;
 
@@ -76,6 +77,7 @@ export const WIDGET_SIZE_PRESETS: Record<BuiltinWidgetType, WidgetSize[]> = {
   launcher:            [{ cols: 2, rows: 2 }, { cols: 2, rows: 1 }, { cols: 4, rows: 2 }],
   audiobooks:          [{ cols: 2, rows: 1 }, { cols: 2, rows: 2 }],
   optimization:        [{ cols: 1, rows: 1 }, { cols: 2, rows: 1 }, { cols: 2, rows: 2 }],
+  clock:               [{ cols: 2, rows: 1 }, { cols: 1, rows: 1 }],
 };
 
 function makeInstanceId(widgetType: WidgetType): string {

@@ -41,6 +41,7 @@ import { SystemInfoWidget } from "./system-info-widget";
 import { SystemStatusWidget } from "./system-status-widget";
 import { NetworkWidget } from "./network-widget";
 import { DividerWidget } from "./divider-widget";
+import { ClockWidget } from "./clock-widget";
 import { BackupStatusWidget } from "./backup-status-widget";
 import { OllamaStatusWidget } from "./ollama-status-widget";
 import { LauncherWidget } from "./launcher-widget";
@@ -87,6 +88,7 @@ const WIDGET_LABELS: Record<BuiltinWidgetType, string> = {
   launcher:             "Launcher",
   audiobooks:           "Continue Listening",
   optimization:         "Media Health",
+  clock:                "Clock",
 };
 
 function widgetComponent(
@@ -135,6 +137,7 @@ function widgetComponent(
       return <NetworkWidget mode={mode} />;
     }
     case "divider":             return <DividerWidget />;
+    case "clock":               return <ClockWidget compact={size?.cols === 1} />;
     case "backup-status":       return <BackupStatusWidget />;
     case "ollama-status":       return <OllamaStatusWidget />;
     case "launcher":            return <LauncherWidget />;

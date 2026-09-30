@@ -11,6 +11,7 @@ import {
 const DESKTOP_WIDGET_LAYOUT_STORAGE_KEY = "talome-desktop-widget-layout-v1";
 
 const DEFAULT_DESKTOP_WIDGET_LAYOUT: WidgetInstance[] = [
+  { instanceId: "desktop-clock", widgetType: "clock", visible: true, size: { cols: 2, rows: 1 } },
   { instanceId: "desktop-cpu", widgetType: "cpu", visible: true, size: { cols: 1, rows: 1 } },
   { instanceId: "desktop-memory", widgetType: "memory", visible: true, size: { cols: 1, rows: 1 } },
   { instanceId: "desktop-disk", widgetType: "disk", visible: true, size: { cols: 1, rows: 1 } },
@@ -55,7 +56,10 @@ function normalizeDesktopLayout(saved: WidgetInstance[]): WidgetInstance[] {
   const missingDefaults = DEFAULT_DESKTOP_WIDGET_LAYOUT.filter(
     (widget) => !presentTypes.has(widget.widgetType),
   ).map(normalizeDesktopWidget);
-  return [...supported, ...missingDefaults];
+  // The clock opens the desktop, where the greeting used to be
+  const missingClock = missingDefaults.filter((widget) => widget.widgetType === "clock");
+  const otherMissing = missingDefaults.filter((widget) => widget.widgetType !== "clock");
+  return [...missingClock, ...supported, ...otherMissing];
 }
 
 function loadDesktopLayout(): WidgetInstance[] {
