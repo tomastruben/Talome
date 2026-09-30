@@ -1499,7 +1499,7 @@ export function DesktopExperience() {
               data-drive-lane-reserved={showDesktopDrives && !desktopWidgetsEditing ? "true" : "false"}
               aria-label="Desktop widgets"
               className={cn(
-                "absolute top-6 left-6 opacity-90 transition-opacity duration-150",
+                "absolute top-6 left-6 transition-opacity duration-150",
                 desktopWidgetsEditing
                   ? "z-[1100] max-h-[calc(100%-6rem)] overflow-y-auto overscroll-contain p-3 pb-4 pr-4 opacity-100"
                   : "z-[1]",
