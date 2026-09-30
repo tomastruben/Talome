@@ -68,7 +68,7 @@ Key frontend paths:
 
 ## Design Principles
 
-Talome is a server that an agent operates on your behalf, inside boundaries, with receipts. UI should feel like professional tooling you can trust with root: calm, instant, legible and honest. The full spec is `design-system-spec.md` (tokens, motion, components, copy, accessibility). These rules apply to all UI work: generated apps, dashboard changes, desktop mode, new components.
+Talome is a server that an agent operates on your behalf, inside boundaries, with receipts. UI should feel like professional tooling you can trust with root: calm, instant, legible and honest. This section and the Colour Palette below are the in-repo summary of the design-system spec (tokens, motion, components, copy, accessibility). These rules apply to all UI work: generated apps, dashboard changes, desktop mode, new components.
 
 - **Every signal is true.** No toast, badge, shortcut hint, status or "Saved" without a verified cause. Show "Couldn't load · Retry" instead of a default value. Success toasts fire on a verified server state, not on an HTTP 200.
 - **Work ends in a receipt.** State-changing actions end in one line: what happened · how it was verified · by whom · Undo/Roll back.
@@ -84,7 +84,7 @@ Talome is a server that an agent operates on your behalf, inside boundaries, wit
 - **States are designed.** Skeletons only after 200ms and shaped like the result; empty states say what this is and how to start; errors name the fix and offer Retry (and "Ask Talome" when allowed); stale data stays visible with "Couldn't refresh · Retry". Optimistic updates only for reversible, low-risk, client-known changes; never for security, lifecycle, files, backups or agent actions.
 - **Accessible by default.** WCAG 2.2 AA. Never set `maximumScale`. Focus ring: `focus-visible:ring-2 ring-ring ring-offset-2 ring-offset-background` (inset in tight chrome). Targets ≥24px, ≥44px on coarse pointers (`pointer-coarse:`). Switches use `ui/switch` (`role=switch`), radio cards `RadioCardGroup`, checkboxes `ui/checkbox`. Approvals, job progress and copy announce through the shell's live announcer. Shortcut hints only for shortcuts registered in the keymap.
 - **Both themes.** Dark is the default, light is live: check every change in both. Only token colours; no hex, `rgba()`, Tailwind palette hues or inline colour styles.
-- **Copy.** "agent" for anything that acts; "Assistant" for the built-in chat agent; Approve/Deny; Install/Open/Update/Uninstall; "Move to Trash" vs "Delete permanently"; "…" not "..."; errors say what failed, why, and the fix. Format numbers, bytes, dates and durations only through `lib/format.ts` (Intl-based).
+- **Copy.** "agent" for anything that acts; "Assistant" for the built-in chat agent; Approve/Deny; Install/Open/Update/Uninstall; "Move to Trash" vs "Delete permanently"; "…" not "..."; errors say what failed, why, and the fix. Bytes, uptimes and relative times go through `lib/format.ts` (`formatBytes`, `formatUptime`, `relativeTime`); other numbers and dates use `Intl.NumberFormat` / `Intl.DateTimeFormat`, never hand-rolled strings.
 
 ---
 
@@ -117,7 +117,7 @@ All theming lives in `apps/dashboard/src/app/globals.css`: light in `:root`, dar
 --terminal / -foreground     oklch(0.16 0 0) / oklch(0.92 0 0) in both themes
 ```
 
-Status colours have three recipes only: indicator (`bg-status-X` dot or `text-status-X` icon, with a label), tint (`bg-status-X/12 text-status-X`, body text stays `text-foreground`), and solid (`bg-status-X text-status-X-foreground`, only for the "needs you" count and the destructive button). `--window-close/-minimize/-zoom` exist only for desktop-mode traffic lights.
+Status colours have three recipes only: indicator (`bg-status-X` dot or `text-status-X` icon, with a label), tint (`bg-status-X/12 text-status-X`, body text stays `text-foreground`), and solid (`bg-status-X text-status-X-foreground`, only for the "needs you" count and the destructive button). `--window-close/-minimize/-zoom` exist only for desktop-mode traffic lights. Surfaces that stay dark in both themes (terminal page, terminal sheet, `ClaudeTerminal`) carry the `dark` class, so status and text tokens inside them use the dark values. Container status dots come from `lib/container-status.ts` in every view.
 
 ---
 
@@ -138,7 +138,7 @@ All of these are already installed in `apps/dashboard/src/components/ui/`. **Nev
 **Primitives:**
 `alert` · `avatar` · `badge` · `breadcrumb` · `button` (with `busy`) · `button-group` · `card` · `chart` · `checkbox` · `collapsible` · `command` · `confirm-dialog` (`useConfirm`) · `context-menu` · `copy-button` · `dialog` · `dropdown-menu` · `empty-state` (`EmptyState`, `ErrorState`) · `hover-card` · `input` · `input-group` · `label` · `live-announcer` · `popover` · `progress` · `radio-card-group` · `resizable` · `scroll-area` · `search-field` · `select` · `separator` · `sheet` · `sidebar` · `skeleton` · `slider` · `sonner` · `spinner` · `status-dot` · `switch` · `table` · `tabs` · `textarea` · `toggle` · `toggle-group` · `tooltip`
 
-Motion comes from `apps/dashboard/src/lib/motion.ts`; formatting from `apps/dashboard/src/lib/format.ts`. Only `motion/react` (not `framer-motion`).
+Motion comes from `apps/dashboard/src/lib/motion.ts`; byte, uptime and relative-time formatting from `apps/dashboard/src/lib/format.ts`. Only `motion/react` (not `framer-motion`).
 
 **Dashboard Widgets** (`apps/dashboard/src/components/widgets/`):
 `active-downloads` · `activity` · `arr-status` · `cpu` · `declarative` · `digest` · `disk` · `divider` · `list` · `media-calendar` · `memory` · `network` · `quick-actions` · `services` · `stat-tile` · `storage-mounts` · `system-health` · `system-info` · `system-status`

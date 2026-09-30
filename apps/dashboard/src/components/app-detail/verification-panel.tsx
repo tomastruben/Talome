@@ -3,6 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
+import { toastWarning } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -133,7 +134,7 @@ export function VerificationPanel({
       if (fresh) {
         const label = VERIFICATION_STATUS_LABELS[fresh.status];
         if (fresh.status === "verified") toast.success(`${label}: ${fresh.summary || "everything checks out"}`);
-        else toast.warning(`${label}`, { description: fresh.summary || undefined });
+        else toastWarning(`${label}`, { description: fresh.summary || undefined });
       }
     } catch (err) {
       toast.error("Verification failed to run", {

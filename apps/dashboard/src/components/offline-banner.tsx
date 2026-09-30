@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
+import { toastWarning } from "@/lib/toast";
 import { useIsOnline } from "@/hooks/use-is-online";
 import { useAssistant } from "@/components/assistant/assistant-context";
 
@@ -46,7 +47,7 @@ export function OfflineBanner() {
       toast.dismiss(OFFLINE_TOAST_ID);
       // Server is up but a subsystem (Docker/DB) is failing — AI can still
       // help diagnose since the API is reachable.
-      toast.warning("Some services unavailable", {
+      toastWarning("Some services unavailable", {
         id: DEGRADED_TOAST_ID,
         description: "Docker or database may be down.",
         duration: Infinity,

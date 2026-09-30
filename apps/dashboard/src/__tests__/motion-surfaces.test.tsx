@@ -5,6 +5,7 @@ const toastMock = vi.hoisted(() => ({
   loading: vi.fn(() => "toast-1"),
   success: vi.fn(),
   error: vi.fn(),
+  warning: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -21,7 +22,7 @@ import {
   slideVariants,
   stackDirection,
 } from "@/components/layout/stack-layout";
-import { TOAST_DURATION, promiseToast, toastIcons } from "@/components/ui/sonner";
+import { TOAST_DURATION, promiseToast, toastIcons, toastWarning } from "@/components/ui/sonner";
 import { DURATION, TRAVEL } from "@/lib/motion";
 
 describe("StackLayout motion", () => {
@@ -73,6 +74,43 @@ describe("toasts", () => {
     toastMock.loading.mockClear();
     toastMock.success.mockClear();
     toastMock.error.mockClear();
+  });
+
+  it("keeps warnings up for 6s, not the Toaster's 4s default, unless the caller says otherwise", () => {
+    toastWarning("Some services unavailable", { description: "Docker is down." });
+    expect(toastMock.warning).toHaveBeenLastCalledWith("Some services unavailable", {
+      duration: TOAST_DURATION.warning,
+      description: "Docker is down.",
+    });
+    toastWarning("Still offline", { duration: Infinity });
+    expect(toastMock.warning).toHaveBeenLastCalledWith("Still offline", { duration: Infinity });
+    expect(TOAST_DURATION.warning).toBe(6000);
+  });
+
+  it("routes every warning toast through toastWarning()", async () => {
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const root = join(__dirname, "..");
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) {
+          if (name !== "__tests__") walk(path);
+        } else if (/\.tsx?$/.test(name) && !path.endsWith("lib/toast.ts")) {
+          if (/\btoast\.warning\(/.test(readFileSync(path, "utf8"))) offenders.push(path);
+        }
+      }
+    };
+    walk(root);
+    expect(offenders).toEqual([]);
+  });
+
+  it("gives the toast close button a 44px target on coarse pointers", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const css = readFileSync(join(__dirname, "../app/globals.css"), "utf8");
+    expect(css).toMatch(/@media \(pointer: coarse\) \{[\s\S]*?\[data-close-button\] \{[^}]*width: 2\.75rem;[^}]*height: 2\.75rem;/);
   });
 
   it("gives warning and error different glyphs, with colour only on the icon", () => {

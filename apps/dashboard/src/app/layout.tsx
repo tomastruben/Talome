@@ -6,6 +6,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { MotionProvider } from "@/components/motion-provider";
 import { ConfirmDialogHost } from "@/components/ui/confirm-dialog";
 import { LiveAnnouncer } from "@/components/ui/live-announcer";
+import { ThemeColorSync } from "@/components/theme-color-sync";
+import { THEME_COLOR } from "@/lib/theme-color";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -41,9 +43,10 @@ export const viewport: Viewport = {
   initialScale: 1,
   // No maximum scale: people must be able to zoom (WCAG 1.4.4).
   viewportFit: "cover",
+  // First paint only; ThemeColorSync then applies the theme chosen in Talome.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+    { media: "(prefers-color-scheme: light)", color: THEME_COLOR.light },
+    { media: "(prefers-color-scheme: dark)", color: THEME_COLOR.dark },
   ],
 };
 
@@ -63,6 +66,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          <ThemeColorSync />
           <MotionProvider>
             <TooltipProvider>
               {children}

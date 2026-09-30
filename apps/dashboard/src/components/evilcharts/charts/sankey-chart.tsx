@@ -36,7 +36,7 @@ import {
   type SankeyData,
   type SankeyNode as RechartsSankeyNode,
 } from "recharts";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 
 // Constants
 const LOADING_ANIMATION_DURATION = 2000; // full loading cycle duration in milliseconds
@@ -739,6 +739,9 @@ const GlowFilter = ({
  * place of the real diagram — a fixed grid of pulsing nodes and links.
  */
 const LoadingSankey = () => {
+  // MotionConfig reducedMotion="user" does not stop opacity keyframe loops,
+  // so the skeleton holds still under reduced motion.
+  const reduceMotion = useReducedMotion();
   const nodes = [
     { x: 30, y: 25, width: 12, height: 65, delay: 0 },
     { x: 30, y: 110, width: 12, height: 50, delay: 0.3 },
@@ -788,14 +791,18 @@ const LoadingSankey = () => {
           fill="none"
           stroke="currentColor"
           strokeWidth={link.width}
-          initial={{ opacity: 0.04 }}
-          animate={{ opacity: [0.04, 0.14, 0.04] }}
-          transition={{
-            duration: baseDuration * (0.8 + (i % 3) * 0.2),
-            delay: link.delay,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
+          initial={{ opacity: reduceMotion ? 0.09 : 0.04 }}
+          animate={reduceMotion ? { opacity: 0.09 } : { opacity: [0.04, 0.14, 0.04] }}
+          transition={
+            reduceMotion
+              ? { duration: 0 }
+              : {
+                  duration: baseDuration * (0.8 + (i % 3) * 0.2),
+                  delay: link.delay,
+                  repeat: Infinity,
+                  ease: "easeInOut",
+                }
+          }
         />
       ))}
       {nodes.map((node, i) => (
@@ -807,14 +814,18 @@ const LoadingSankey = () => {
           height={node.height}
           rx={2}
           fill="currentColor"
-          initial={{ opacity: 0.15 }}
-          animate={{ opacity: [0.15, 0.4, 0.15] }}
-          transition={{
-            duration: baseDuration * (0.9 + (i % 4) * 0.1),
-            delay: node.delay,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
+          initial={{ opacity: reduceMotion ? 0.25 : 0.15 }}
+          animate={reduceMotion ? { opacity: 0.25 } : { opacity: [0.15, 0.4, 0.15] }}
+          transition={
+            reduceMotion
+              ? { duration: 0 }
+              : {
+                  duration: baseDuration * (0.9 + (i % 4) * 0.1),
+                  delay: node.delay,
+                  repeat: Infinity,
+                  ease: "easeInOut",
+                }
+          }
         />
       ))}
     </>

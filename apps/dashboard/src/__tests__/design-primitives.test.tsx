@@ -46,6 +46,40 @@ describe("Button", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it("scales on press for buttons but never for links (spec §4.3)", () => {
+    render(
+      <>
+        <Button>Save</Button>
+        <Button variant="link">Learn more</Button>
+        <Button variant="ghost">Skip</Button>
+      </>,
+    );
+    expect(screen.getByRole("button", { name: "Save" }).className).toContain("pressable");
+    expect(screen.getByRole("button", { name: "Skip" }).className).toContain("pressable");
+    const link = screen.getByRole("button", { name: "Learn more" });
+    expect(link.className).not.toContain("pressable");
+    expect(link.className).toContain("transition-colors");
+  });
+
+  it("keeps icon padding when `busy` wraps the children in the label span", () => {
+    const icon = <svg data-testid="icon" />;
+    const sizes = { default: "px-3", xs: "px-1.5", sm: "px-2.5", lg: "px-4" } as const;
+    for (const [size, padding] of Object.entries(sizes) as Array<[keyof typeof sizes, string]>) {
+      const { unmount } = render(
+        <Button size={size} busy={false}>
+          {icon}
+          Install
+        </Button>,
+      );
+      const button = screen.getByRole("button", { name: "Install" });
+      // The svg is a grandchild now; the wrapper-aware rule must match the plain one.
+      expect(button.querySelector("[data-slot=button-label] > svg")).not.toBeNull();
+      expect(button.className, size).toContain(`has-[>svg]:${padding}`);
+      expect(button.className, size).toContain(`has-[>[data-slot=button-label]>svg]:${padding}`);
+      unmount();
+    }
+  });
+
   it("does not submit a form while busy", () => {
     const onSubmit = vi.fn((event: React.FormEvent) => event.preventDefault());
     render(

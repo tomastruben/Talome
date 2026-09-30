@@ -82,8 +82,11 @@ function ScrollArea({
         ref={viewportRef}
         data-slot="scroll-area-viewport"
         className={cn(
-          "size-full rounded-[inherit] [&>div]:!block transition-[color,box-shadow] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          fadeEdges && "edge-fade"
+          "size-full rounded-[inherit] [&>div]:!block outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          // .edge-fade owns the whole transition (colour, focus ring and the
+          // mask edges). A transition utility here would sit in a later
+          // layer and silently drop the 100ms mask fade.
+          fadeEdges ? "edge-fade" : "transition-[color,box-shadow]"
         )}
       >
         {children}

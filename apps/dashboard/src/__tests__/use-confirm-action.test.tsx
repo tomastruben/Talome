@@ -28,6 +28,21 @@ describe("useConfirmAction", () => {
     await expect(outcome).resolves.toBe(true);
   });
 
+  it("keeps the dialog component stable across a request, so the dialog can play its exit", async () => {
+    const { result } = renderHook(() => useConfirmAction(false));
+    const before = result.current.ConfirmDialog;
+    let outcome: Promise<boolean> | undefined;
+    act(() => {
+      outcome = result.current.confirmAction({ title: "Stop sonarr?", description: "Downloads pause." });
+    });
+    expect(result.current.ConfirmDialog).toBe(before);
+    const { ConfirmDialog } = result.current;
+    render(<ConfirmDialog />);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await expect(outcome).resolves.toBe(true);
+    expect(result.current.ConfirmDialog).toBe(before);
+  });
+
   it("lets Auto mode skip only the soft tier", async () => {
     const { result } = renderHook(() => useConfirmAction(true));
     await expect(

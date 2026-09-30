@@ -641,7 +641,7 @@ function DesktopWallpaperPicker({
           <button
             type="button"
             aria-label="Close Desktop Wallpaper"
-            className="group/control flex size-3.5 items-center justify-center rounded-full bg-status-critical/70 transition-colors duration-150 hover:bg-status-critical"
+            className="group/control flex size-3.5 items-center justify-center rounded-full bg-window-close ring-1 ring-inset ring-window-control-edge transition-colors duration-150"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => onOpenChange(false)}
           >

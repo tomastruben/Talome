@@ -353,28 +353,8 @@
     flex-shrink: 0;
     background-color: color-mix(in oklch, var(--muted-foreground) 30%, transparent);
   }
-  .status-dot[data-status="running"] {
-    background-color: var(--status-healthy);
-  }
-  /* Work in flight: the breathing info dot (static under reduced motion). */
-  .status-dot[data-status="restarting"] {
-    background-color: var(--status-info);
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .status-dot[data-status="restarting"] {
-      animation: breathe 1.5s ease-in-out infinite;
-    }
-  }
-  /* Stopped is not a failure: grey, not red. Docker reports a container
-     stopped on purpose as "exited", so it is grey too. */
-  .status-dot[data-status="exited"],
-  .status-dot[data-status="stopped"] {
-    background-color: color-mix(in oklch, var(--muted-foreground) 40%, transparent);
-  }
-  /* A container Docker could not stop or remove cleanly is a failure. */
-  .status-dot[data-status="dead"] {
-    background-color: var(--status-critical);
-  }
+  /* Colour comes from lib/container-status.ts (CONTAINER_HEALTH_DOT_CLASS),
+     the one mapping every container view shares. */
 
   /* ── Port chips ───────────────────────────────────── */
   .port-chip {
@@ -1985,6 +1965,20 @@
   }
 }
 
+/* Coarse pointers: a 44px close target (spec §6.4) in the corner, with the
+   toast's content kept clear of it. */
+@media (pointer: coarse) {
+  [data-sonner-toast][data-styled='true'] {
+    padding-right: 2.75rem;
+  }
+  [data-sonner-toast][data-styled='true'] [data-close-button] {
+    top: 0;
+    right: 0;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+
 [data-sonner-toast][data-styled='true'] [data-close-button] svg {
   width: 0.75rem;
   height: 0.75rem;
@@ -2125,9 +2119,16 @@
   .edge-fade[data-fade-bottom="true"] { --edge-fade-bottom: var(--edge-fade-size); }
   .edge-fade[data-fade-left="true"] { --edge-fade-left: var(--edge-fade-size); }
   .edge-fade[data-fade-right="true"] { --edge-fade-right: var(--edge-fade-size); }
+  /* The Viewport carries no transition utility when it fades edges, so this
+     is the only transition on it: colour and focus ring, plus the mask edges
+     over 100ms while motion is allowed. */
+  .edge-fade {
+    transition: color var(--duration-fast) ease-out, box-shadow var(--duration-fast) ease-out;
+  }
   @media (prefers-reduced-motion: no-preference) {
     .edge-fade {
-      transition: --edge-fade-top var(--duration-press) ease-out, --edge-fade-bottom var(--duration-press) ease-out,
+      transition: color var(--duration-fast) ease-out, box-shadow var(--duration-fast) ease-out,
+        --edge-fade-top var(--duration-press) ease-out, --edge-fade-bottom var(--duration-press) ease-out,
         --edge-fade-left var(--duration-press) ease-out, --edge-fade-right var(--duration-press) ease-out;
     }
   }
@@ -2158,6 +2159,7 @@
   .animate-ping,
   .animate-pulse,
   .animate-bounce,
+  .animate-spin,
   .animate-breathe,
   .animate-thinking-dot {
     animation: none !important;

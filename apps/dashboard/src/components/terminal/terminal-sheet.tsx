@@ -137,7 +137,9 @@ export function TerminalSheet({ open, onOpenChange, initialCommand }: TerminalSh
       {/* Panel — slides in from right, sits below assistant dock z-level so both are usable */}
       <div
         className={cn(
-          "fixed inset-y-0 right-0 z-[46] w-[720px] max-w-full flex flex-col border-l shadow-lg transition-transform duration-300 ease-in-out",
+          // `dark`: the terminal stays dark in both themes, so the status and
+          // text tokens inside use the dark values.
+          "dark fixed inset-y-0 right-0 z-[46] w-[720px] max-w-full flex flex-col border-l shadow-lg transition-transform duration-300 ease-in-out",
           open ? "translate-x-0" : "translate-x-full pointer-events-none"
         )}
         style={{ background: "#0d1117" }}

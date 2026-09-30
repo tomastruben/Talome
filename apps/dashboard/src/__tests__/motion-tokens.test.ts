@@ -93,12 +93,36 @@ describe("one motion package", () => {
 });
 
 describe("accessibility baseline (P0-1)", () => {
-  it("writes every ping, pulse and bounce loop with motion-safe:", () => {
-    const bare = /(?<![\w:[-])animate-(ping|pulse|bounce)\b/;
+  it("writes every ping, pulse, bounce and spin loop with motion-safe:", () => {
+    const bare = /(?<![\w:[-])animate-(ping|pulse|bounce|spin)\b/;
     const offenders = sources
       .filter((s) => !s.path.endsWith(".css") && bare.test(s.text))
       .map((s) => s.path);
     expect(offenders).toEqual([]);
+  });
+
+  it("stops every CSS loop, spin included, in the reduced-motion safety net", () => {
+    const css = readFileSync(join(SRC, "app/globals.css"), "utf8");
+    const net = css.slice(css.indexOf("Reduced motion safety net"));
+    const block = /\.animate-ping,[\s\S]*?\{\s*animation: none !important;/.exec(net)?.[0] ?? "";
+    for (const loop of ["ping", "pulse", "bounce", "spin", "breathe", "thinking-dot"]) {
+      expect(block, loop).toContain(`.animate-${loop}`);
+    }
+  });
+
+  it("holds motion/react keyframe loops still under reduced motion", () => {
+    // MotionConfig reducedMotion="user" drops transforms but not opacity loops.
+    const offenders = sources
+      .filter((s) => /repeat:\s*Infinity/.test(s.text) && !/useReducedMotion\(\)/.test(s.text))
+      .map((s) => s.path);
+    expect(offenders).toEqual([]);
+  });
+
+  it("lets the edge-fade transition win: no transition utility on a fading viewport", () => {
+    const scrollArea = readFileSync(join(SRC, "components/ui/scroll-area.tsx"), "utf8");
+    expect(scrollArea).toMatch(/fadeEdges \? "edge-fade" : "transition-\[color,box-shadow\]"/);
+    const css = readFileSync(join(SRC, "app/globals.css"), "utf8");
+    expect(css).toMatch(/\.edge-fade \{\s*transition: color var\(--duration-fast\)[^;]*--edge-fade-top var\(--duration-press\)/);
   });
 
   it("never disables pinch zoom", () => {

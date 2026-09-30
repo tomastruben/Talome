@@ -11,11 +11,12 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger, TabsDot } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
 import { CORE_URL } from "@/lib/constants";
 import type { Container, ContainerStats } from "@talome/types";
 import { cn } from "@/lib/utils";
+import { CONTAINER_HEALTH_DOT_CLASS, containerHealth } from "@/lib/container-status";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
   HugeiconsIcon,
@@ -215,14 +216,7 @@ function OverviewTab({
   container: Container;
   onOpenPreview: () => void;
 }) {
-  const statusColors: Record<Container["status"], string> = {
-    running:    "emerald",
-    stopped:    "red",
-    exited:     "red",
-    restarting: "amber",
-    paused:     "amber",
-    created:    "muted",
-  } as const;
+  const health = containerHealth(container);
 
   const kind = containerKind(container.labels);
   const composeProject = container.labels["com.docker.compose.project"];
@@ -244,7 +238,11 @@ function OverviewTab({
             <td className="px-4 py-2.5 text-muted-foreground w-28 shrink-0">Status</td>
             <td className="px-4 py-2.5">
               <span className="inline-flex items-center gap-1.5">
-                <TabsDot color={statusColors[container.status] as "emerald" | "red" | "amber" | "muted"} pulse={container.status === "running"} />
+                <span
+                  aria-hidden="true"
+                  data-health={health}
+                  className={cn("size-1.5 shrink-0 rounded-full", CONTAINER_HEALTH_DOT_CLASS[health])}
+                />
                 <span className="capitalize">{container.status}</span>
               </span>
             </td>

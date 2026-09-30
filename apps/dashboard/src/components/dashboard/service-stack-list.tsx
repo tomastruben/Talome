@@ -40,11 +40,11 @@ import {
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import { ContainerDetailSheet } from "./container-detail-sheet";
-import { PillIndicator } from "@/components/kibo-ui/pill";
 import { talomePost, talomeDelete } from "@/hooks/use-talome-api";
 import { CORE_URL, getHostUrl } from "@/lib/constants";
 import { toast } from "sonner";
 import type { Container, ServiceStack } from "@talome/types";
+import { CONTAINER_HEALTH_DOT_CLASS, containerHealth, stackHealth, type ContainerHealth } from "@/lib/container-status";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { useSWRConfig } from "swr";
@@ -80,18 +80,16 @@ function shortImage(image: string) {
 
 // ── Status Badge ─────────────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: "running" | "partial" | "stopped" | Container["status"] }) {
-  const color =
-    status === "running" ? "bg-status-healthy" :
-    status === "partial" || status === "restarting" || status === "paused" ? "bg-status-warning" :
-    status === "stopped" || status === "exited" ? "bg-status-critical/70" :
-    "bg-muted-foreground/40";
-
+function StatusBadge({ health }: { health: ContainerHealth }) {
   return (
-    <span className={cn(
-      "absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-background",
-      color,
-    )} />
+    <span
+      aria-hidden="true"
+      data-health={health}
+      className={cn(
+        "absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-background",
+        CONTAINER_HEALTH_DOT_CLASS[health],
+      )}
+    />
   );
 }
 
@@ -110,7 +108,7 @@ function IconBox({
   name?: string;
   fallbackIcon?: IconSvgElement;
   size?: "sm" | "md";
-  status?: "running" | "partial" | "stopped" | Container["status"];
+  status?: ContainerHealth;
 }) {
   const realIconUrl = resolveApplicationIconUrl(iconUrl);
   const sizeClass = size === "sm" ? "size-6 rounded-md text-sm" : "size-9 rounded-lg text-lg";
@@ -144,7 +142,7 @@ function IconBox({
           <HugeiconsIcon icon={FallbackIcon} size={iconSize} className="text-dim-foreground" />
         )}
       </div>
-      {status && <StatusBadge status={status} />}
+      {status && <StatusBadge health={status} />}
     </div>
   );
 }
@@ -158,7 +156,7 @@ function StackIcon({ stack }: { stack: ServiceStack }) {
       icon={stack.icon}
       name={stack.name}
       fallbackIcon={stack.kind === "compose" ? Layers01Icon : Package01Icon}
-      status={stack.status}
+      status={stackHealth(stack)}
     />
   );
 }
@@ -174,7 +172,7 @@ function ContainerIcon({ container, stack }: { container: Container; stack: Serv
       name={iconInfo?.name ?? container.name}
       fallbackIcon={Package01Icon}
       size="sm"
-      status={container.status}
+      status={containerHealth(container)}
     />
   );
 }
@@ -282,17 +280,6 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
     }
   }, [handleSubmit, router]);
 
-  const statusVariant = (status: Container["status"]) =>
-    status === "running" ? "success" :
-    status === "restarting" ? "warning" :
-    status === "paused" ? "info" :
-    "error";
-
-  const stackStatusVariant = (status: ServiceStack["status"]) =>
-    status === "running" ? "success" :
-    status === "partial" ? "warning" :
-    "error";
-
   return (
     <>
       <div className="rounded-lg border overflow-hidden">
@@ -369,9 +356,10 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <PillIndicator
-                            variant={stackStatusVariant(stack.status)}
-                            pulse={stack.status === "running"}
+                          <span
+                            aria-hidden="true"
+                            data-health={stackHealth(stack)}
+                            className={cn("size-2 shrink-0 rounded-full", CONTAINER_HEALTH_DOT_CLASS[stackHealth(stack)])}
                           />
                           {isMulti
                             ? `${stack.runningCount}/${stack.totalCount}`

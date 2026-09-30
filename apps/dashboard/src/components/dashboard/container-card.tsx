@@ -3,6 +3,7 @@
 import { HugeiconsIcon, Globe02Icon } from "@/components/icons";
 import { getHostUrl } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { CONTAINER_HEALTH_DOT_CLASS, containerHealth } from "@/lib/container-status";
 import type { Container } from "@talome/types";
 
 interface ContainerCardProps {
@@ -15,6 +16,7 @@ interface ContainerCardProps {
 
 export function ContainerCard({ container, variant = "card", onPortClick }: ContainerCardProps) {
   const isRunning = container.status === "running";
+  const health = containerHealth(container);
   const ports = container.ports
     .filter((p) => p.protocol === "tcp" && p.host > 0)
     .map((p) => p.host)
@@ -29,7 +31,13 @@ export function ContainerCard({ container, variant = "card", onPortClick }: Cont
           : "px-4 py-2.5"
       )}
     >
-      <span className="status-dot shrink-0" data-status={container.status} role="img" aria-label={`Status: ${container.status}`} />
+      <span
+        className={cn("status-dot shrink-0", CONTAINER_HEALTH_DOT_CLASS[health])}
+        data-status={container.status}
+        data-health={health}
+        role="img"
+        aria-label={`Status: ${container.status}`}
+      />
 
       <div className="flex-1 min-w-0">
         <p className="container-name">{container.name}</p>

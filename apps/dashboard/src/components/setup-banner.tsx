@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { toastWarning } from "@/lib/toast";
 import { useSetupStatus } from "@/hooks/use-setup-status";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
@@ -21,7 +22,7 @@ export function SetupBanner() {
     // AI provider not configured — persistent toast
     if (!isConfigured && !aiShownRef.current) {
       aiShownRef.current = true;
-      toast.warning("AI provider not configured", {
+      toastWarning("AI provider not configured", {
         id: TOAST_AI,
         description: "Set up a key to use the Assistant.",
         duration: Infinity,

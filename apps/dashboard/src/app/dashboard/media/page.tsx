@@ -351,7 +351,7 @@ function DownloadQueueRow({
                     disabled={retryingId === item.id}
                     aria-label={retryingId === item.id ? "Retrying download" : "Retry download"}
                   >
-                    <HugeiconsIcon icon={Refresh01Icon} size={14} className={retryingId === item.id ? "animate-spin" : ""} />
+                    <HugeiconsIcon icon={Refresh01Icon} size={14} className={retryingId === item.id ? "motion-safe:animate-spin" : ""} />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="left">

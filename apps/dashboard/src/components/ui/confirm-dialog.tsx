@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { DURATION_MS } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 /**
@@ -40,6 +41,8 @@ export interface ConfirmOptions<R = unknown> {
   irreversible?: boolean
   /** Verb plus object: "Uninstall Jellyfin". */
   confirmLabel: string
+  /** Defaults to "Cancel". */
+  cancelLabel?: string
   /** An option such as "Keep app data" (usually on by default). */
   option?: { label: string; defaultChecked: boolean; description?: string }
   /** Bulk or volume-level loss: the person must type this exact text first. */
@@ -62,27 +65,39 @@ export interface ConfirmResult {
   optionChecked: boolean
 }
 
+/**
+ * The message when `run` failed without saying why. It still names the
+ * action and the likeliest fix (spec §5.5: errors name the fix).
+ */
+export function confirmRunFallback(confirmLabel?: string): string {
+  const action = confirmLabel?.trim()
+  const what = action ? action.charAt(0).toLowerCase() + action.slice(1) : "finish that"
+  return `Couldn't ${what}. Check that the Talome server is reachable, then retry.`
+}
+
 /** Normalises a thrown value or a `{ ok: false, error }` result into a message, or null on success. */
-export function confirmRunError(outcome: { ok: true; value: unknown } | { ok: false; error: unknown }): string | null {
+export function confirmRunError(
+  outcome: { ok: true; value: unknown } | { ok: false; error: unknown },
+  confirmLabel?: string,
+): string | null {
   if (outcome.ok) {
     const value = outcome.value
     if (value && typeof value === "object" && "ok" in value && (value as { ok: unknown }).ok === false) {
       const error = (value as { error?: unknown }).error
-      return typeof error === "string" && error ? error : "That didn't work. Try again."
+      return typeof error === "string" && error ? error : confirmRunFallback(confirmLabel)
     }
     return null
   }
   const error = outcome.error
   if (error instanceof Error && error.message) return error.message
   if (typeof error === "string" && error) return error
-  return "That didn't work. Try again."
+  return confirmRunFallback(confirmLabel)
 }
 
 export type ConfirmDialogProps<R = unknown> = ConfirmOptions<R> & {
   open: boolean
   /** Called with the outcome when the dialog closes (confirmed, cancelled, or dismissed). */
   onResult: (result: ConfirmResult) => void
-  cancelLabel?: string
 }
 
 /**
@@ -152,7 +167,7 @@ export function ConfirmDialog<R = unknown>({
     } catch (err) {
       outcome = { ok: false, error: err }
     }
-    const message = confirmRunError(outcome)
+    const message = confirmRunError(outcome, confirmLabel)
     if (message) {
       setRunning(false)
       setError(message)
@@ -198,19 +213,25 @@ export function ConfirmDialog<R = unknown>({
       >
         <DialogHeader className="gap-2 text-left">
           <DialogTitle className="text-base font-medium">{title}</DialogTitle>
-          <DialogDescription className="text-sm text-foreground">{consequence}</DialogDescription>
-          {recovery ? (
-            <p data-slot="confirm-recovery" className="flex items-start gap-2 text-sm text-muted-foreground">
-              <HugeiconsIcon
-                icon={irreversible ? AlertCircleIcon : Tick02Icon}
-                size={14}
-                strokeWidth={1.5}
-                aria-hidden="true"
-                className={cn("mt-0.5 shrink-0", irreversible ? "text-status-critical" : "text-status-healthy")}
-              />
-              <span>{recovery}</span>
-            </p>
-          ) : null}
+          {/* One description holds both lines, so the alertdialog announces the
+              consequence and the recovery ("This can't be undone.") together. */}
+          <DialogDescription asChild>
+            <div className="flex flex-col gap-2">
+              <p data-slot="confirm-consequence" className="text-sm text-foreground">{consequence}</p>
+              {recovery ? (
+                <p data-slot="confirm-recovery" className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <HugeiconsIcon
+                    icon={irreversible ? AlertCircleIcon : Tick02Icon}
+                    size={14}
+                    strokeWidth={1.5}
+                    aria-hidden="true"
+                    className={cn("mt-0.5 shrink-0", irreversible ? "text-status-critical" : "text-status-healthy")}
+                  />
+                  <span>{recovery}</span>
+                </p>
+              ) : null}
+            </div>
+          </DialogDescription>
         </DialogHeader>
 
         {option ? (
@@ -283,12 +304,24 @@ type PendingConfirm = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   options: ConfirmOptions<any>
   resolve: (result: ConfirmResult) => void
+  /** Decided and resolved; still mounted (closed) while the exit animation plays. */
+  closing?: boolean
 }
 
 type Listener = () => void
 
-/** A tiny queue shared by `useConfirm()` callers and the one mounted host. */
-function createConfirmStore() {
+/**
+ * How long a decided dialog stays mounted (closed) so its exit animation can
+ * play before the next one opens: the 140ms exit plus a frame of slack.
+ */
+export const CONFIRM_EXIT_MS = DURATION_MS.exit + 20
+
+/**
+ * A tiny queue of confirmations and the host that renders them. The global
+ * one backs `useConfirm()`; `useConfirmAction` keeps its own. `requireHost`
+ * makes a request with no mounted host resolve as cancelled.
+ */
+export function createConfirmStore({ requireHost = true }: { requireHost?: boolean } = {}) {
   let queue: PendingConfirm[] = []
   let nextId = 1
   let hosts = 0
@@ -310,7 +343,7 @@ function createConfirmStore() {
       }
     },
     request<R>(options: ConfirmOptions<R>): Promise<ConfirmResult> {
-      if (hosts === 0) {
+      if (requireHost && hosts === 0) {
         // Never proceed with an action nobody confirmed.
         if (process.env.NODE_ENV !== "production") {
           console.error("useConfirm: no <ConfirmDialogHost /> is mounted; treating as cancelled.")
@@ -322,10 +355,20 @@ function createConfirmStore() {
         emit()
       })
     },
+    /**
+     * Resolves the request right away (the caller proceeds) and marks it
+     * closing; the host removes it after CONFIRM_EXIT_MS so the dialog and its
+     * scrim fade out instead of disappearing.
+     */
     settle(id: number, result: ConfirmResult) {
       const entry = queue.find((item) => item.id === id)
+      if (!entry || entry.closing) return
+      queue = queue.map((item) => (item.id === id ? { ...item, closing: true } : item))
+      entry.resolve(result)
+      emit()
+    },
+    remove(id: number) {
       queue = queue.filter((item) => item.id !== id)
-      entry?.resolve(result)
       emit()
     },
     /** Test helper: cancel everything pending. */
@@ -361,18 +404,32 @@ export function useConfirm() {
   return React.useCallback(<R,>(options: ConfirmOptions<R>) => confirmStore.request(options), [])
 }
 
-/** Renders the dialog for `useConfirm()` requests, one at a time. Mount once. */
-export function ConfirmDialogHost() {
-  const pending = React.useSyncExternalStore(confirmStore.subscribe, confirmStore.current, () => null)
-  React.useEffect(() => confirmStore.registerHost(), [])
+type ConfirmStore = ReturnType<typeof createConfirmStore>
+
+/** Renders a store's requests one at a time, keeping a decided one mounted while it closes. */
+export function ConfirmQueue({ store }: { store: ConfirmStore }) {
+  const pending = React.useSyncExternalStore(store.subscribe, store.current, () => null)
+  const closingId = pending?.closing ? pending.id : null
+
+  React.useEffect(() => {
+    if (closingId === null) return
+    const timer = window.setTimeout(() => store.remove(closingId), CONFIRM_EXIT_MS)
+    return () => window.clearTimeout(timer)
+  }, [closingId, store])
 
   if (!pending) return null
   return (
     <ConfirmDialog
       key={pending.id}
-      open
+      open={!pending.closing}
       {...pending.options}
-      onResult={(result) => confirmStore.settle(pending.id, result)}
+      onResult={(result) => store.settle(pending.id, result)}
     />
   )
+}
+
+/** Renders the dialog for `useConfirm()` requests, one at a time. Mount once. */
+export function ConfirmDialogHost() {
+  React.useEffect(() => confirmStore.registerHost(), [])
+  return <ConfirmQueue store={confirmStore} />
 }

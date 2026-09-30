@@ -11,19 +11,11 @@ import {
   AlertCircleIcon,
 } from "@/components/icons"
 import { Spinner } from "@/components/ui/spinner"
-import { UNDO_WINDOW_MS } from "@/lib/motion"
+import { TOAST_DURATION, toastWarning } from "@/lib/toast"
 
 /** Clears the desktop-mode dock (dock height plus its bottom gap). */
 const DESKTOP_TOAST_OFFSET = { bottom: 88, left: 16 } as const
 const DEFAULT_TOAST_OFFSET = 16
-
-/** Toast durations (ms): success and info 4s, warning 6s, undo 6s. */
-export const TOAST_DURATION = {
-  success: 4000,
-  info: 4000,
-  warning: 6000,
-  undo: UNDO_WINDOW_MS,
-} as const
 
 /**
  * Status icons. The toast surface stays neutral; only the icon carries
@@ -71,8 +63,13 @@ export const toastIcons = {
 }
 
 /**
- * Rendered once, by the top-level document (see app/layout.tsx). Neutral
- * `--surface-toast` background, `rounded-lg`, `shadow-lg`, no rich colours.
+ * Mounted by the root layout (app/layout.tsx). Neutral `--surface-toast`
+ * background, `rounded-lg`, `shadow-lg`, no rich colours.
+ *
+ * Not yet top-level only: every desktop-window iframe loads the same root
+ * layout, so each window still has its own Toaster until the iframe toast
+ * bridge lands (spec §4.7). Sonner has no per-type duration, so the default
+ * here is the success/info 4s; warnings go through `toastWarning()` (6s).
  */
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "system" } = useTheme()
@@ -165,4 +162,4 @@ function promiseToast<T>(run: Promise<T> | (() => Promise<T>), options: PromiseT
   return promise
 }
 
-export { Toaster, promiseToast }
+export { Toaster, promiseToast, toastWarning, TOAST_DURATION }

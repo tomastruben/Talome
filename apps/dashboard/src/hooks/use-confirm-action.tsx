@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ConfirmDialog as ConfirmDialogView, type ConfirmTier } from "@/components/ui/confirm-dialog";
+import { ConfirmQueue, createConfirmStore, type ConfirmTier } from "@/components/ui/confirm-dialog";
 
 export interface ConfirmActionOptions {
   title: string;
@@ -17,11 +17,6 @@ export interface ConfirmActionOptions {
   variant?: "default" | "destructive";
   /** Explicit tier; wins over `variant`. */
   tier?: ConfirmTier;
-}
-
-interface PendingAction {
-  options: ConfirmActionOptions;
-  resolve: (confirmed: boolean) => void;
 }
 
 export function confirmTierOf(options: Pick<ConfirmActionOptions, "tier" | "variant">): ConfirmTier {
@@ -49,51 +44,37 @@ export function canAutoConfirm(autoMode: boolean, options: Pick<ConfirmActionOpt
  * which takes explicit consequence and recovery lines.
  */
 export function useConfirmAction(autoMode: boolean) {
-  const [pending, setPending] = useState<PendingAction | null>(null);
+  // Each caller keeps its own queue, rendered by its own <ConfirmDialog />.
+  // A decided dialog stays mounted (closed) for its exit animation.
+  const [store] = useState(() => createConfirmStore({ requireHost: false }));
 
   const confirmAction = useCallback(
     (options: ConfirmActionOptions): Promise<boolean> => {
       if (canAutoConfirm(autoMode, options)) return Promise.resolve(true);
 
-      return new Promise<boolean>((resolve) => {
-        setPending({ options, resolve });
-      });
+      return store
+        .request({
+          tier: confirmTierOf(options),
+          title: options.title,
+          consequence: options.description,
+          recovery: options.recovery ?? "",
+          irreversible: options.irreversible,
+          confirmLabel: options.confirmLabel ?? "Confirm",
+          cancelLabel: options.cancelLabel,
+        })
+        .then((result) => result.confirmed);
     },
-    [autoMode],
+    [autoMode, store],
   );
 
-  const settle = useCallback(
-    (confirmed: boolean) => {
-      pending?.resolve(confirmed);
-      setPending(null);
-    },
-    [pending],
-  );
-
-  // Memoised on `pending` so the dialog keeps its identity (and does not
-  // remount or replay its entrance) while the parent re-renders.
+  // Stable identity: the element-component never remounts, so the dialog
+  // keeps its state and plays its exit instead of vanishing.
   const ConfirmDialog = useMemo(() => {
     function PendingConfirmDialog() {
-      if (!pending) return null;
-
-      const { options } = pending;
-
-      return (
-        <ConfirmDialogView
-          open
-          tier={confirmTierOf(options)}
-          title={options.title}
-          consequence={options.description}
-          recovery={options.recovery ?? ""}
-          irreversible={options.irreversible}
-          confirmLabel={options.confirmLabel ?? "Confirm"}
-          cancelLabel={options.cancelLabel}
-          onResult={(result) => settle(result.confirmed)}
-        />
-      );
+      return <ConfirmQueue store={store} />;
     }
     return PendingConfirmDialog;
-  }, [pending, settle]);
+  }, [store]);
 
   return { confirmAction, ConfirmDialog };
 }

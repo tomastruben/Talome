@@ -314,7 +314,9 @@ export function TerminalPage() {
 
   return (
     <div
-      className="absolute inset-0 flex flex-col overflow-hidden"
+      // The terminal stays dark in both themes, so its status and text tokens
+      // use the dark values (the light ones are too dark for this surface).
+      className="dark absolute inset-0 flex flex-col overflow-hidden"
       style={{ background: "#0d1117" }}
     >
       {error ? (

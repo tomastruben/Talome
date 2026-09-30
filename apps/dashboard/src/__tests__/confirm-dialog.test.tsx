@@ -7,6 +7,7 @@ vi.mock("sonner", () => ({ toast: { success: (...args: unknown[]) => toastSucces
 
 import {
   ConfirmDialog,
+  CONFIRM_EXIT_MS,
   ConfirmDialogHost,
   confirmRunError,
   confirmStore,
@@ -47,6 +48,27 @@ describe("ConfirmDialog", () => {
     expect(screen.getByText(uninstall.recovery)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Uninstall Jellyfin" })).toBeInTheDocument();
+  });
+
+  it("describes the alertdialog with both the consequence and the recovery line", () => {
+    render(
+      <ConfirmDialog
+        open
+        onResult={() => {}}
+        {...uninstall}
+        recovery="This can't be undone."
+        irreversible
+      />,
+    );
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveAccessibleDescription(expect.stringContaining(uninstall.consequence));
+    expect(dialog).toHaveAccessibleDescription(expect.stringContaining("This can't be undone."));
+  });
+
+  it("has no close X: Cancel is the only way out, and it is disabled while run() works", () => {
+    render(<ConfirmDialog open onResult={() => {}} {...uninstall} />);
+    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Cancel", "Uninstall Jellyfin"]);
   });
 
   it("focuses Cancel for the destructive tier, so Enter never confirms by accident", async () => {
@@ -142,7 +164,14 @@ describe("confirmRunError", () => {
     expect(confirmRunError({ ok: true, value: { ok: true } })).toBeNull();
     expect(confirmRunError({ ok: true, value: { ok: false, error: "Port 8096 is in use." } })).toBe("Port 8096 is in use.");
     expect(confirmRunError({ ok: false, error: new Error("Nope.") })).toBe("Nope.");
-    expect(confirmRunError({ ok: false, error: null })).toMatch(/Try again/);
+  });
+
+  it("names the action and the fix when run() fails without a message", () => {
+    const message = confirmRunError({ ok: false, error: null }, "Uninstall Jellyfin");
+    expect(message).toBe("Couldn't uninstall Jellyfin. Check that the Talome server is reachable, then retry.");
+    expect(confirmRunError({ ok: true, value: { ok: false } }, "Delete 3 files")).toMatch(/^Couldn't delete 3 files\./);
+    expect(confirmRunError({ ok: false, error: undefined })).toMatch(/^Couldn't finish that\./);
+    expect(confirmRunError({ ok: false, error: null }, "Stop sonarr")).not.toMatch(/That didn't work/);
   });
 });
 
@@ -174,6 +203,57 @@ describe("useConfirm with ConfirmDialogHost", () => {
     expect(await screen.findByRole("button", { name: "Uninstall Jellyfin" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await expect(second).resolves.toEqual({ confirmed: false, optionChecked: false });
+  });
+
+  it("resolves at once but keeps the decided dialog mounted (closed) for its exit animation", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<ConfirmDialogHost />);
+      const { result } = renderHook(() => useConfirm());
+      let first: Promise<unknown> | undefined;
+      let second: Promise<unknown> | undefined;
+      act(() => {
+        first = result.current(stop);
+        second = result.current(uninstall);
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Stop sonarr" }));
+      await act(async () => {
+        await expect(first).resolves.toEqual({ confirmed: true, optionChecked: false });
+      });
+      // Still the first entry, now closing: the next dialog waits for the exit.
+      expect(confirmStore.current()?.closing).toBe(true);
+      expect(confirmStore.current()?.options.title).toBe(stop.title);
+      expect(screen.queryByRole("button", { name: "Uninstall Jellyfin" })).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(CONFIRM_EXIT_MS);
+      });
+      expect(confirmStore.current()?.options.title).toBe(uninstall.title);
+      expect(screen.getByRole("button", { name: "Uninstall Jellyfin" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await act(async () => {
+        await expect(second).resolves.toEqual({ confirmed: false, optionChecked: false });
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a second decision for a dialog that is already closing", () => {
+    const store = confirmStore;
+    const seen: unknown[] = [];
+    render(<ConfirmDialogHost />);
+    act(() => {
+      void store.request(stop).then((r) => seen.push(r));
+    });
+    const id = store.current()!.id;
+    act(() => {
+      store.settle(id, { confirmed: true, optionChecked: false });
+      store.settle(id, { confirmed: false, optionChecked: false });
+    });
+    return Promise.resolve().then(() => {
+      expect(seen).toEqual([{ confirmed: true, optionChecked: false }]);
+    });
   });
 
   it("treats a request as cancelled when no host is mounted", async () => {

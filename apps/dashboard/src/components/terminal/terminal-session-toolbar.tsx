@@ -211,7 +211,7 @@ function RebuildButton() {
           <HugeiconsIcon
             icon={SystemUpdate01Icon}
             size={13}
-            className={state === "building" ? "animate-spin" : ""}
+            className={state === "building" ? "motion-safe:animate-spin" : ""}
           />
           {label}
         </Button>
