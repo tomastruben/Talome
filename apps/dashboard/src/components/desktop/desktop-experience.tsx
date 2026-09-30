@@ -1635,7 +1635,7 @@ export function DesktopExperience() {
                 }}
                 src={windowModel.url}
                 title={windowModel.title}
-                className="size-full border-0 bg-background"
+                className="size-full border-0 bg-transparent"
                 allow="autoplay; fullscreen; picture-in-picture"
                 allowFullScreen
                 onLoad={(event) => handleAppFrameLoad(windowModel.id, event)}

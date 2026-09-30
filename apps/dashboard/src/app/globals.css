@@ -2082,24 +2082,40 @@ html[data-status-bar="ios"] [data-desktop-dock-band] {
 /* The title bar is frosted glass over whatever sits behind the window */
 .tm-window-titlebar {
   border-color: oklch(1 0 0 / 6%);
-  background: color-mix(in oklch, var(--card) 62%, transparent);
+  background: color-mix(in oklch, var(--card) 82%, transparent);
   backdrop-filter: blur(28px) saturate(1.7);
-  -webkit-backdrop-filter: blur(28px) saturate(1.7);
 }
 .tm-window:not([data-active]) .tm-window-titlebar {
-  background: color-mix(in oklch, var(--card) 48%, transparent);
+  background: color-mix(in oklch, var(--card) 72%, transparent);
 }
 .tm-window:not([data-active]) .tm-window-titlebar [data-title-placement] { opacity: 0.7; }
 :root:not(.dark) .tm-window { border-color: oklch(0 0 0 / 10%); box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), 0 12px 32px -12px oklch(0 0 0 / 20%), 0 2px 8px -2px oklch(0 0 0 / 12%); }
 :root:not(.dark) .tm-window[data-active] { border-color: oklch(0 0 0 / 14%); box-shadow: 0 0 0 1px oklch(1 0 0 / 60%), 0 28px 64px -16px oklch(0 0 0 / 28%), 0 10px 24px -8px oklch(0 0 0 / 16%); }
 
+/* Inside a desktop window the page itself is transparent: the window's frosted
+   body shows through wherever the app doesn't paint (its sidebar), and the
+   app's content column paints the solid background */
+html[data-embedded-frame],
+html[data-embedded-frame] body {
+  background: transparent;
+}
+
+/* The window body is the same glass as the title bar, so a sidebar and the
+   title bar read as one frosted surface around the content */
+.tm-window-body {
+  background: color-mix(in oklch, var(--card) 82%, transparent);
+  backdrop-filter: blur(28px) saturate(1.7);
+}
+.tm-window:not([data-active]) .tm-window-body {
+  background: color-mix(in oklch, var(--card) 72%, transparent);
+}
+
 /* Widgets on the desktop are glass too, so the wallpaper stays part of the
    composition (Home keeps solid cards) */
 [data-desktop-widget-canvas] [data-widget] {
-  background: color-mix(in oklch, var(--card) 50%, transparent);
+  background: color-mix(in oklch, var(--card) 66%, transparent);
   border-color: oklch(1 0 0 / 10%);
   backdrop-filter: blur(28px) saturate(1.7);
-  -webkit-backdrop-filter: blur(28px) saturate(1.7);
   box-shadow: 0 0 0 1px oklch(0 0 0 / 30%), inset 0 1px 0 oklch(1 0 0 / 7%);
 }
 [data-desktop-widget-canvas] [data-widget] > .border-b {
@@ -2111,13 +2127,37 @@ html[data-status-bar="ios"] [data-desktop-dock-band] {
   box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%);
 }
 
-/* Frosted glass for floating desktop chrome (the Dock): the wallpaper shows
-   through, blurred and a little richer, framed by the same two strokes */
+/* Denser glass for surfaces you read and type on (the sign-in card): the
+   wallpaper's colour comes through, its detail doesn't */
+.tm-glass-dense {
+  background: color-mix(in oklch, var(--background) 82%, transparent);
+  border-color: oklch(1 0 0 / 10%);
+  backdrop-filter: blur(32px) saturate(1.5);
+  box-shadow:
+    0 0 0 1px oklch(0 0 0 / 35%),
+    inset 0 1px 0 oklch(1 0 0 / 8%),
+    0 24px 60px -20px oklch(0 0 0 / 60%);
+}
+:root:not(.dark) .tm-glass-dense {
+  background: color-mix(in oklch, var(--background) 85%, transparent);
+  border-color: oklch(0 0 0 / 8%);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%), 0 24px 60px -20px oklch(0 0 0 / 25%);
+}
+
+/* Text set straight on the wallpaper (desktop icon names): white with a soft
+   shadow, legible on any photo without a chip behind it */
+.tm-on-wallpaper {
+  color: oklch(0.985 0 0);
+  text-shadow: 0 1px 2px oklch(0 0 0 / 55%), 0 0 12px oklch(0 0 0 / 35%);
+}
+
+/* Frosted glass for floating desktop chrome (the Dock, desktop icons): the
+   wallpaper shows through, blurred and a little richer, framed by the same two
+   strokes as windows */
 .tm-glass {
-  background: color-mix(in oklch, var(--card) 55%, transparent);
+  background: color-mix(in oklch, var(--card) 64%, transparent);
   border-color: oklch(1 0 0 / 12%);
   backdrop-filter: blur(28px) saturate(1.7);
-  -webkit-backdrop-filter: blur(28px) saturate(1.7);
   box-shadow:
     0 0 0 1px oklch(0 0 0 / 35%),
     inset 0 1px 0 oklch(1 0 0 / 10%),

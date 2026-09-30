@@ -31,7 +31,9 @@ export function hasOverlaidStatusBar(signals: DeviceSignals): boolean {
 
 /**
  * Runs in <head> before first paint: marks <html data-status-bar="ios"> so CSS
- * can keep content clear of the status bar without a layout jump. A plain
+ * can keep content clear of the status bar without a layout jump, and
+ * <html data-embedded-frame> inside a desktop window, whose page background
+ * then turns transparent so the window's frosted glass shows through. A plain
  * string mirroring hasOverlaidStatusBar (it can't import modules).
  */
-export const STATUS_BAR_SCRIPT = `(function(){try{var n=navigator;var apple=/iPad|iPhone|iPod/.test(n.userAgent)||(n.platform==="MacIntel"&&n.maxTouchPoints>1);var full=n.standalone===true||matchMedia("(display-mode: standalone)").matches||matchMedia("(display-mode: fullscreen)").matches;if(apple&&full)document.documentElement.setAttribute("data-status-bar","ios");}catch(e){}})();`;
+export const STATUS_BAR_SCRIPT = `(function(){try{if(window.self!==window.top)document.documentElement.setAttribute("data-embedded-frame","");var n=navigator;var apple=/iPad|iPhone|iPod/.test(n.userAgent)||(n.platform==="MacIntel"&&n.maxTouchPoints>1);var full=n.standalone===true||matchMedia("(display-mode: standalone)").matches||matchMedia("(display-mode: fullscreen)").matches;if(apple&&full)document.documentElement.setAttribute("data-status-bar","ios");}catch(e){}})();`;

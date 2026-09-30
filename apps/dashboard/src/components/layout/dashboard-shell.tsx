@@ -86,7 +86,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 {children}
               </main>
             ) : embeddedFrame ? (
-              <main id="main-content" className="relative flex h-dvh min-h-0 flex-1 flex-col overflow-hidden bg-background [container-type:inline-size]">
+              <main id="main-content" className="relative flex h-dvh min-h-0 flex-1 flex-col overflow-hidden [container-type:inline-size]">
                 {embeddedAudiobookRoute ? (
                   <>
                     <AudiobookAudioEngine />
@@ -97,7 +97,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 <DesktopAppActionBridge />
                 <div className="flex min-h-0 flex-1">
                   <WindowSidebarSlot />
-                  <div ref={contentScrollRef} className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${embeddedPlayerRoute ? "overflow-hidden bg-black" : "overflow-y-auto p-4"}`}>
+                  <div ref={contentScrollRef} className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${embeddedPlayerRoute ? "overflow-hidden bg-black" : "overflow-y-auto bg-background p-4"}`}>
                     {children}
                   </div>
                 </div>

@@ -1324,7 +1324,8 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         ) : null}
       >
       <div
-        className="flex flex-col flex-1 min-h-0 relative"
+        // In a window Files runs edge to edge, like Finder: no shell padding around the list and path bar
+        className={cn("flex flex-col flex-1 min-h-0 relative", embedded && "-m-4")}
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}

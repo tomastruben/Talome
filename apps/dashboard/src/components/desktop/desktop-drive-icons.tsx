@@ -120,8 +120,8 @@ export function DesktopDriveIcons({
             <button
               type="button"
               className={cn(
-                "group flex w-24 flex-col items-center gap-1.5 rounded-lg px-2 py-1.5 text-center outline-none transition-colors duration-150 hover:bg-muted/35 focus-visible:ring-1 focus-visible:ring-foreground/50",
-                selectedPath === drive.path && "bg-muted/55 ring-1 ring-foreground/15",
+                "group flex w-24 flex-col items-center gap-2 rounded-xl px-2 py-2 text-center outline-none transition-colors duration-150 hover:bg-foreground/[0.06] focus-visible:ring-1 focus-visible:ring-foreground/50",
+                selectedPath === drive.path && "bg-foreground/[0.1]",
               )}
               aria-label={`Open ${drive.label} drive`}
               aria-pressed={selectedPath === drive.path}
@@ -134,10 +134,10 @@ export function DesktopDriveIcons({
                 onOpen(drive.path);
               }}
             >
-              <span className="flex size-14 items-center justify-center rounded-xl border border-border/80 bg-card/85 text-muted-foreground backdrop-blur-sm transition-colors duration-150 group-hover:text-foreground">
+              <span className="tm-glass flex size-14 items-center justify-center rounded-2xl border text-foreground/80 transition-colors duration-150 group-hover:text-foreground">
                 <HugeiconsIcon icon={drive.icon} size={30} strokeWidth={1.25} />
               </span>
-              <span className="max-w-full truncate rounded bg-background/70 px-1.5 py-0.5 text-xs font-medium text-foreground backdrop-blur-sm">
+              <span className="tm-on-wallpaper max-w-full truncate px-1 text-xs font-medium">
                 {drive.label}
               </span>
             </button>

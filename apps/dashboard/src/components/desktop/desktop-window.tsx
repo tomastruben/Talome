@@ -610,7 +610,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         </div>
       </div>
 
-      <div className="relative flex-1 min-h-0 overflow-hidden bg-background">
+      <div className="tm-window-body relative flex-1 min-h-0 overflow-hidden">
         <div className={cn("size-full", isManipulating && "pointer-events-none")}>
           {children}
         </div>

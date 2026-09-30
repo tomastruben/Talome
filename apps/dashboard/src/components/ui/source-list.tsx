@@ -34,9 +34,9 @@ export function SourceListItem({ icon, label, active = false, trailing, iconClas
       type="button"
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-sm transition-colors duration-150 ease-out",
+        "flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors duration-150 ease-out",
         active
-          ? "bg-foreground/[0.09] text-foreground"
+          ? "bg-foreground/[0.1] text-foreground"
           : "text-foreground/80 hover:bg-foreground/[0.05] hover:text-foreground",
       )}
       onClick={onSelect}
@@ -59,7 +59,7 @@ export function SourceListItem({ icon, label, active = false, trailing, iconClas
 export function SourceListSection({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-px">
-      {title && <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">{title}</h2>}
+      {title && <h2 className="px-2.5 pb-1.5 text-xs font-medium text-muted-foreground">{title}</h2>}
       {children}
     </section>
   );
@@ -70,7 +70,7 @@ export function SourceList({ label, children, className }: { label: string; chil
     <nav
       aria-label={label}
       className={cn(
-        "flex h-full w-52 shrink-0 flex-col gap-5 overflow-y-auto border-r border-border/60 bg-muted/20 px-2 py-3 scrollbar-none",
+        "flex h-full w-56 shrink-0 flex-col gap-6 overflow-y-auto border-r border-foreground/[0.06] px-3 py-4 scrollbar-none",
         className,
       )}
     >

@@ -137,7 +137,9 @@ function LoginContent() {
     enter(searchParams.get("from") || "/dashboard");
   }
 
-  const inputClass = "h-10 bg-background/40 border-border/60 text-sm placeholder:text-muted-foreground";
+  // Focus shows as a brighter border inside the field, not a ring outside it,
+  // so every field keeps the same edges as the button below
+  const inputClass = "h-10 bg-foreground/[0.04] border-foreground/10 text-sm placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:border-foreground/35 focus-visible:bg-foreground/[0.06]";
   const setupStep = isFirstTime && view === "login" ? 1 : view === "setup-recovery-code" ? 2 : null;
 
   return (
@@ -154,7 +156,7 @@ function LoginContent() {
           >
             <LockClock />
 
-            <div className={`w-full rounded-2xl border border-white/10 bg-background/60 backdrop-blur-xl p-6 ${shakeClassName ?? ""}`}>
+            <div className={`tm-glass-dense w-full rounded-2xl border p-6 ${shakeClassName ?? ""}`}>
             {setupStep && <SetupSteps step={setupStep} />}
 
             {/* Brand mark */}

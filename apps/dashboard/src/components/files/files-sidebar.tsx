@@ -60,8 +60,10 @@ export function folderIcon(path: string): IconSvgElement {
   return WELL_KNOWN_FOLDERS[name] ?? Folder01Icon;
 }
 
+/** Sidebar labels name places, so they start with a capital ("backups" reads "Backups"); the file list keeps real names. */
 function folderName(path: string): string {
-  return path.split("/").filter(Boolean).pop() ?? path;
+  const name = path.split("/").filter(Boolean).pop() ?? path;
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 function readStoredFavorites(): string[] | null {
