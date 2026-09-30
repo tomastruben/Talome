@@ -242,7 +242,7 @@ describe("backups are app operations", () => {
       // Waits (bounded) for the update, then gives up with a "skipped" notice
       const scheduled = await runScheduledBackup(schedule, APP, { conflictWaitMs: 30 });
       expect(scheduled.success).toBe(false);
-      expect(m.writeNotification).toHaveBeenCalledWith("warning", "Backup skipped", expect.stringContaining(APP));
+      expect(m.writeNotification).toHaveBeenCalledWith("warning", "Backup skipped", expect.stringContaining(APP), APP, { dedupe: false });
 
       // Nothing was stopped
       expect(dockerState.events).toEqual([]);
@@ -264,8 +264,8 @@ describe("backups are app operations", () => {
 
     const result = await scheduled;
     expect(result.success).toBe(true);
-    expect(m.writeNotification).not.toHaveBeenCalledWith("warning", "Backup skipped", expect.anything());
-    expect(m.writeNotification).toHaveBeenCalledWith("info", "Backup completed", expect.stringContaining(APP));
+    expect(m.writeNotification).not.toHaveBeenCalledWith("warning", "Backup skipped", expect.anything(), expect.anything(), expect.anything());
+    expect(m.writeNotification).toHaveBeenCalledWith("info", "Backup completed", expect.stringContaining(APP), APP, { dedupe: false });
     const ops = db.select().from(schema.appOperations).all().map((o) => `${o.kind}:${o.status}`);
     expect(ops).toEqual(expect.arrayContaining(["update:succeeded", "backup:succeeded"]));
   });
