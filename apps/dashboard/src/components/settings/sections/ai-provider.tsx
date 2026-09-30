@@ -15,6 +15,7 @@ import { HugeiconsIcon, Delete01Icon, LinkSquare01Icon, CheckmarkCircle02Icon, A
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
 import { SettingsGroup, SettingsRow, SecretRow, TextRow } from "@/components/settings/settings-primitives";
+import { VoiceSettings } from "@/components/settings/voice-settings";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 
 /* ── Types ───────────────────────────────────────────────────────────────── */
@@ -560,6 +561,8 @@ export function AiProviderSection() {
           )}
         </div>
       )}
+
+      <VoiceSettings />
 
       <ConfigureWithAI prompt="I'd like to review my AI provider configuration" />
     </div>

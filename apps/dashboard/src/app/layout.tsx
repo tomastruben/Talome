@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { STATUS_BAR_SCRIPT } from "@/lib/device";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -49,6 +50,8 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <meta name="theme-color" content="#0a0a0a" />
+        {/* Before first paint: leave room for the iPad status bar only where it overlaps */}
+        <script dangerouslySetInnerHTML={{ __html: STATUS_BAR_SCRIPT }} />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}

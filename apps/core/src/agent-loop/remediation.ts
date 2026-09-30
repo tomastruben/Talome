@@ -3,6 +3,7 @@
 import { generateText, stepCountIs } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { db, schema } from "../db/index.js";
+import { getSetting } from "../utils/settings.js";
 import { eq, and } from "drizzle-orm";
 import { checkBudget, logAiUsage, shouldRunService } from "./budget.js";
 import { writeNotification } from "../db/notifications.js";
@@ -21,18 +22,11 @@ import { jellyfinGetStatusTool, jellyfinScanLibraryTool } from "../ai/tools/jell
 import { cleanupDockerTool } from "../ai/tools/storage-tools.js";
 import { searchContainerLogsTool } from "../ai/tools/log-tools.js";
 import { rollbackUpdateTool, checkDependenciesTool } from "../ai/tools/app-tools.js";
+import { gateTools } from "../ai/tool-gateway.js";
+import { getToolTier } from "../ai/agent.js";
 
 function getApiKey(): string | undefined {
-  try {
-    const row = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, "anthropic_key"))
-      .get();
-    return row?.value || process.env.ANTHROPIC_API_KEY;
-  } catch {
-    return process.env.ANTHROPIC_API_KEY;
-  }
+  return getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
 }
 
 function getModel(): string {
@@ -288,7 +282,7 @@ async function remediateViaApi(
     model: anthropic(model),
     system: buildSystemPrompt(autoRemediate, event.type),
     prompt: buildEventPrompt(event, triage, autoRemediate),
-    tools: REMEDIATION_TOOLS,
+    tools: gateTools(REMEDIATION_TOOLS, { kind: "background", loop: "remediation" }, getToolTier),
     stopWhen: stepCountIs(8),
     maxRetries: 1,
   });

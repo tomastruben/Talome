@@ -19,6 +19,83 @@ describe("DesktopWindow", () => {
     onMaximizeChange: vi.fn(),
   };
 
+  const openArrangeMenu = () => {
+    const trigger = screen.getByRole("button", { name: "Arrange Files" });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+  };
+
+  it("uses quiet window controls instead of coloured traffic lights", () => {
+    render(
+      <DesktopWindow {...defaultProps}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    const controls = screen.getByRole("group", { name: "Window controls" });
+    const colouredAtRest = Array.from(controls.querySelectorAll("button")).filter((button) =>
+      button.className.split(/\s+/).some((token) => token.startsWith("bg-status-")),
+    );
+    expect(colouredAtRest).toEqual([]);
+    expect(screen.getByRole("button", { name: "Minimize Files" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Arrange Files" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close Files" })).toBeVisible();
+  });
+
+  it("arranges a window into the left half and remembers its size", async () => {
+    const onTile = vi.fn();
+    render(
+      <DesktopWindow {...defaultProps} onTile={onTile}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    openArrangeMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Left half" }));
+
+    expect(onTile).toHaveBeenCalledWith(
+      { x: 0, y: 0, width: 700, height: 820 },
+      defaultProps.bounds,
+    );
+  });
+
+  it("fills the desktop from Arrange", async () => {
+    const onMaximizeChange = vi.fn();
+    const onBoundsChange = vi.fn();
+    render(
+      <DesktopWindow {...defaultProps} onTile={vi.fn()} onMaximizeChange={onMaximizeChange} onBoundsChange={onBoundsChange}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    openArrangeMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Fill" }));
+
+    expect(screen.queryByRole("menuitem", { name: "Previous size" })).toBeNull();
+    expect(onMaximizeChange).toHaveBeenCalledWith(true, defaultProps.bounds);
+    expect(onBoundsChange).toHaveBeenCalledWith({ x: 0, y: 0, width: 1400, height: 820 });
+  });
+
+  it("offers the previous size once a window is arranged", async () => {
+    const onMaximizeChange = vi.fn();
+    render(
+      <DesktopWindow
+        {...defaultProps}
+        maximized
+        bounds={{ x: 0, y: 0, width: 1400, height: 820 }}
+        restoreBounds={defaultProps.bounds}
+        onTile={vi.fn()}
+        onMaximizeChange={onMaximizeChange}
+      >
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    openArrangeMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Previous size" }));
+
+    expect(onMaximizeChange).toHaveBeenCalledWith(false, defaultProps.bounds);
+  });
+
   it("reports pointer-driven resize geometry", () => {
     const onBoundsChange = vi.fn();
 
@@ -31,7 +108,7 @@ describe("DesktopWindow", () => {
       </DesktopWindow>,
     );
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Resize Files" }), {
+    fireEvent.pointerDown(document.querySelector('[data-resize-edge="se"]')!, {
       button: 0,
       clientX: 780,
       clientY: 600,
@@ -44,6 +121,62 @@ describe("DesktopWindow", () => {
       width: 780,
       height: 550,
     });
+  });
+
+  it("resizes from the left edge while the right edge stays put", () => {
+    const onBoundsChange = vi.fn();
+    render(
+      <DesktopWindow {...defaultProps} onBoundsChange={onBoundsChange}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    fireEvent.pointerDown(document.querySelector('[data-resize-edge="w"]')!, { button: 0, clientX: 80, clientY: 300 });
+    fireEvent.pointerMove(window, { clientX: 40, clientY: 300 });
+
+    expect(onBoundsChange).toHaveBeenLastCalledWith({ x: 40, y: 100, width: 740, height: 500 });
+  });
+
+  it("snaps to the left half when dragged to the left edge, remembering its size", () => {
+    const onTile = vi.fn();
+    render(
+      <DesktopWindow {...defaultProps} onTile={onTile}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    fireEvent.pointerDown(screen.getByText("Files").parentElement!.parentElement!, { button: 0, clientX: 300, clientY: 120 });
+    fireEvent.pointerMove(window, { clientX: 2, clientY: 300 });
+    fireEvent.pointerUp(window);
+
+    expect(onTile).toHaveBeenCalledWith(
+      { x: 0, y: 0, width: 700, height: 820 },
+      { x: 80, y: 100, width: 700, height: 500 },
+    );
+  });
+
+  it("gives a snapped window its previous size back when dragged away", () => {
+    const onTile = vi.fn();
+    render(
+      <DesktopWindow
+        {...defaultProps}
+        bounds={{ x: 0, y: 0, width: 700, height: 820 }}
+        restoreBounds={{ x: 80, y: 100, width: 600, height: 400 }}
+        onTile={onTile}
+      >
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    fireEvent.pointerDown(screen.getByText("Files").parentElement!.parentElement!, { button: 0, clientX: 350, clientY: 20 });
+    fireEvent.pointerMove(window, { clientX: 351, clientY: 21 }); // below the drag threshold
+    expect(onTile).not.toHaveBeenCalled();
+    fireEvent.pointerMove(window, { clientX: 400, clientY: 60 });
+
+    expect(onTile).toHaveBeenCalledTimes(1);
+    const [restored, restore] = onTile.mock.calls[0];
+    expect(restored).toMatchObject({ width: 600, height: 400 });
+    expect(restore).toBeUndefined();
   });
 
   it("renders leading, trailing, and toggle actions in the titlebar", () => {
@@ -82,7 +215,7 @@ describe("DesktopWindow", () => {
     expect(screen.getByText("Files")).toHaveAttribute("data-title-placement", "leading");
   });
 
-  it("removes inset window chrome when maximized", () => {
+  it("fills the area edge to edge when maximized, rounding only the corners above the Dock", () => {
     render(
       <DesktopWindow
         {...defaultProps}
@@ -94,9 +227,9 @@ describe("DesktopWindow", () => {
     );
 
     const windowRegion = screen.getByRole("region", { name: "Files window" });
-    expect(windowRegion).toHaveClass("rounded-none", "border-0");
-    expect(windowRegion).not.toHaveClass("rounded-xl");
-    expect(screen.queryByRole("button", { name: "Resize Files" })).not.toBeInTheDocument();
+    expect(windowRegion).toHaveClass("rounded-t-none", "rounded-b-2xl", "border-x-0", "border-t-0");
+    expect(windowRegion).not.toHaveClass("rounded-2xl");
+    expect(document.querySelector("[data-resize-edge]")).toBeNull();
   });
 
   it("removes a disabled window and its controls from interaction", () => {

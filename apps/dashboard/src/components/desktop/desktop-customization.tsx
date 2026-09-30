@@ -12,8 +12,6 @@ import {
 import Image from "next/image";
 import {
   ArrowLeft01Icon,
-  Cancel01Icon,
-  CheckmarkCircle02Icon,
   DashboardSquareEditIcon,
   HugeiconsIcon,
   Image01Icon,
@@ -21,6 +19,8 @@ import {
   Search01Icon,
   Tick01Icon,
 } from "@/components/icons";
+import { SuccessCheck } from "@/components/ui/micro";
+import { WindowControls } from "@/components/desktop/window-controls";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -163,7 +163,7 @@ function WallpaperPresetButton({
       role="radio"
       aria-checked={selected}
       aria-label={`Use ${preset.name} wallpaper`}
-      className="group grid min-w-0 gap-2 text-left outline-none"
+      className="group grid min-w-0 gap-2 text-left outline-none transition-transform duration-150 active:scale-[0.98]"
       onClick={onSelect}
     >
       <span
@@ -181,8 +181,8 @@ function WallpaperPresetButton({
           className="transition-transform duration-150 group-hover:scale-[1.02]"
         />
         {selected ? (
-          <span className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm backdrop-blur-sm">
-            <HugeiconsIcon icon={CheckmarkCircle02Icon} size={15} />
+          <span className="tm-badge-in absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 shadow-sm backdrop-blur-sm">
+            <SuccessCheck size={18} className="text-foreground" />
           </span>
         ) : null}
       </span>
@@ -232,8 +232,8 @@ function OnlineWallpaperCard({
         />
         <span className="absolute inset-x-0 bottom-0 h-1/2 bg-linear-to-t from-black/55 to-transparent" />
         {selected ? (
-          <span className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm backdrop-blur-sm">
-            <HugeiconsIcon icon={CheckmarkCircle02Icon} size={15} />
+          <span className="tm-badge-in absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 shadow-sm backdrop-blur-sm">
+            <SuccessCheck size={18} className="text-foreground" />
           </span>
         ) : null}
         {applying ? (
@@ -485,38 +485,14 @@ function DesktopWallpaperPicker({
     <>
       <header
         data-wallpaper-drag-handle
-        className="grid h-11 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-border/70 px-3 active:cursor-grabbing"
+        className="tm-window-titlebar grid h-10 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b px-2 active:cursor-grabbing"
         onPointerDown={onTitlebarPointerDown}
       >
-        <div className="flex items-center gap-2" aria-label="Window controls">
-          <button
-            type="button"
-            aria-label="Close Desktop Wallpaper"
-            className="group/control flex size-3.5 items-center justify-center rounded-full bg-status-critical/70 transition-colors duration-150 hover:bg-status-critical"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => onOpenChange(false)}
-          >
-            <HugeiconsIcon
-              icon={Cancel01Icon}
-              size={8}
-              strokeWidth={2}
-              className="text-background opacity-0 transition-opacity duration-150 group-hover/control:opacity-100"
-            />
-          </button>
-          <button
-            type="button"
-            aria-label="Minimize Desktop Wallpaper"
-            className="size-3.5 cursor-default rounded-full bg-muted-foreground/20"
-            disabled
-          />
-          <button
-            type="button"
-            aria-label="Maximize Desktop Wallpaper"
-            className="size-3.5 cursor-default rounded-full bg-muted-foreground/20"
-            disabled
-          />
-        </div>
-        <DialogTitle className="pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
+        <WindowControls
+          title="Desktop Wallpaper"
+          onClose={() => onOpenChange(false)}
+        />
+        <DialogTitle className="tm-cap-trim pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
           Desktop Wallpaper
         </DialogTitle>
         <DialogDescription className="sr-only">

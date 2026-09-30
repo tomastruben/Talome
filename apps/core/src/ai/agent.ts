@@ -1,5 +1,5 @@
 import { streamText, generateText, convertToModelMessages, stepCountIs } from "ai";
-import type { UIMessage, SystemModelMessage, LanguageModel } from "ai";
+import type { UIMessage, SystemModelMessage, LanguageModel, Tool } from "ai";
 import { createAnthropic, anthropic as anthropicProvider } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { AiProvider } from "../routes/ai-models.js";
@@ -309,7 +309,8 @@ import {
   getToolsForMessage,
   getAllTiers,
 } from "./tool-registry.js";
-import { gateToolExecution, getSecurityMode } from "./tool-gateway.js";
+import { gateTools, getSecurityMode } from "./tool-gateway.js";
+import type { ExecutionActor } from "./execution-actor.js";
 import { getFeatureStackStatus } from "../stacks/feature-stacks.js";
 
 // getSetting imported from ../utils/settings.js
@@ -459,6 +460,9 @@ registerDomain({
     get_smart_status: "read",
     cleanup_docker: "destructive",
     get_storage_breakdown: "read",
+    get_reclaimable_space: "read",
+    analyze_watched_media: "read",
+    cleanup_hls_cache: "modify",
     list_apps: "read",
     search_apps: "read",
     start_container: "modify",
@@ -471,6 +475,9 @@ registerDomain({
     update_app: "modify",
     add_store: "modify",
     rollback_update: "destructive",
+    check_dependencies: "read",
+    bulk_app_action: "modify",
+    bulk_update_apps: "modify",
     list_groups: "read",
     create_group: "modify",
     update_group: "modify",
@@ -540,6 +547,8 @@ registerDomain({
     browse_files: "read",
     read_user_file: "read",
     delete_file: "destructive",
+    run_shell: "destructive",
+    create_tool: "destructive",
     rename_file: "modify",
     create_directory: "modify",
     get_file_info: "read",
@@ -1065,7 +1074,7 @@ Give a summary table or checklist of what was configured. Make it scannable. End
 - When the user asks about apps, use search_apps or list_apps to find them first.
 - For install_app, you need both appId and storeId — get these from search/list results.
 - For modify actions (start, stop, restart, install, update, add_store): briefly explain what you'll do, then execute.
-- For destructive actions (uninstall): you MUST ask the user to type CONFIRM before proceeding.
+- For destructive actions (uninstall, delete, rollback, shell): Talome asks the user to approve the call itself — in the dashboard chat an approval prompt appears; elsewhere the tool returns an approval request with a code. Explain what will happen before calling. If a tool reports it needs approval, relay the instructions it gives and wait; do not retry with different arguments to get around it.
 - For run_shell: ONLY execute commands explicitly requested by the user. Always explain what the command will do before running. Never run commands autonomously.
 - **NEVER tell the user to open a config file or navigate to an app's settings page. Use the available tools to do it for them.**
 - If a configuration tool fails due to missing global settings, immediately use compose/config-file tools to complete the task instead of deferring to UI setup steps.
@@ -1194,66 +1203,62 @@ function getResolvedSystemPrompt(pageContext?: string): string {
 }
 
 // ── Tool access ─────────────────────────────────────────────────────────────
-// activeTools: only tools from configured domains — used by MCP server + dashboard chat
+// getEnabledRegisteredTools(): configured domains minus disabled tools — MCP server
+// getActiveTools(): the same plus custom tools, gated — dashboard chat and automations
 // getAllRegisteredTools(): full set — only for builtin-name registration
-
-export const activeTools = getActiveRegisteredTools();
 
 // Register built-in tool names so custom tools cannot shadow them (needs full set)
 setBuiltinToolNames(Object.keys(getAllRegisteredTools()));
 
 const TOOL_TIERS = getAllTiers();
 
-/** Produce a concise, human-readable details string for audit log entries. */
-function summarizeToolArgs(toolName: string, args: Record<string, unknown>): string {
-  switch (toolName) {
-    case "track_issue":
-      return `${args.priority} ${args.category}: ${args.title}`;
-    case "remember":
-      return String(args.content ?? args.text ?? "").slice(0, 200);
-    case "forget":
-      return `memory: ${args.id ?? args.query ?? ""}`;
-    case "apply_change":
-      return String(args.description ?? args.task ?? "").slice(0, 200);
-    case "set_app_env":
-      return `${args.appId}: ${args.key}=${args.value ? "***" : "(empty)"}`;
-    case "install_app":
-    case "uninstall_app":
-    case "start_app":
-    case "stop_app":
-    case "restart_app":
-    case "update_app":
-      return String(args.appId ?? args.name ?? "");
-    case "create_automation":
-    case "update_automation":
-    case "delete_automation":
-      return String(args.name ?? args.id ?? "");
-    default: {
-      const s = JSON.stringify(args);
-      return s.length > 300 ? s.slice(0, 300) + "…" : s;
-    }
+/**
+ * Security tier for a tool. Tools without a declared tier — user-created custom
+ * tools, which can run arbitrary code — are treated as "modify" so locked mode
+ * blocks them. Every built-in tool declares its tier (enforced by a test).
+ */
+export function getToolTier(toolName: string): "read" | "modify" | "destructive" {
+  return TOOL_TIERS[toolName] ?? "modify";
+}
+
+/** Names the user has switched off in Settings; excluded from every execution path. */
+export function getDisabledToolNames(): Set<string> {
+  const raw = getSetting("disabled_tools");
+  if (!raw) return new Set();
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === "string") : []);
+  } catch {
+    return new Set();
   }
 }
+
+/**
+ * Tools from configured domains, minus the ones the user disabled. Resolved per
+ * call so domains configured after startup appear without restarting a
+ * long-running process (e.g. the MCP stdio server). Not gated — callers must run
+ * each call through checkToolPolicy or gateToolExecution.
+ */
+export function getEnabledRegisteredTools(): Record<string, Tool> {
+  const disabled = getDisabledToolNames();
+  return Object.fromEntries(
+    Object.entries(getActiveRegisteredTools()).filter(([name]) => !disabled.has(name)),
+  );
+}
+
 
 /**
  * Returns tools for dashboard chat — only domains whose apps are configured,
  * plus custom tools, minus explicitly disabled tools.
  */
-function getActiveTools(message?: string) {
+function getActiveTools(actor: ExecutionActor, message?: string) {
   const domainTools = message ? getToolsForMessage(message) : getActiveRegisteredTools();
   const customTools = getCustomTools();
   const mergedTools = { ...domainTools, ...customTools };
 
-  const disabledToolsRaw = getSetting("disabled_tools");
-  const disabledTools = new Set<string>(disabledToolsRaw ? JSON.parse(disabledToolsRaw) : []);
-
-  const mode = getSecurityMode();
-
-  return Object.fromEntries(
-    Object.entries(mergedTools)
-      .filter(([name]) => !disabledTools.has(name))
-      .map(([name, t]) => [name, gateToolExecution(t, name, TOOL_TIERS[name] ?? "read", mode)])
-  );
+  const disabledTools = getDisabledToolNames();
+  const enabled = Object.fromEntries(Object.entries(mergedTools).filter(([name]) => !disabledTools.has(name)));
+  return gateTools(enabled, actor, getToolTier);
 }
 
 const ANTHROPIC_MODEL_MAP: Record<string, string> = {
@@ -1322,7 +1327,14 @@ function createModelInstance(provider: AiProvider, modelId: string): LanguageMod
   }
 }
 
-export async function createChatStream(messages: UIMessage[], pageContext?: string, modelHint?: string, abortSignal?: AbortSignal, providerHint?: string) {
+export async function createChatStream(
+  messages: UIMessage[],
+  pageContext?: string,
+  modelHint?: string,
+  abortSignal?: AbortSignal,
+  providerHint?: string,
+  actor: ExecutionActor = { kind: "dashboard" },
+) {
   const provider = (providerHint === "anthropic" || providerHint === "openai" || providerHint === "ollama")
     ? providerHint
     : getActiveProvider();
@@ -1381,7 +1393,7 @@ ${stackSummary}
 
 When the user asks about setting up services, or when you notice they're trying to use a feature that requires unconfigured services, proactively mention what's missing and offer to install/configure it. After installing an app, offer to configure its integration and wire it to related apps.
 
-Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive actions require confirmation and shell commands are restricted to a safe allowlist." : securityMode === "locked" ? "Only read operations are allowed." : "Full access mode — the user accepts all risks."}`);
+Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive actions need the user's approval, which Talome requests when you call the tool, and shell commands are restricted to a safe allowlist." : securityMode === "locked" ? "Only read operations are allowed." : "Full access mode — the user accepts all risks."}`);
   }
 
   // Extract last user message text for intelligent tool routing
@@ -1390,7 +1402,7 @@ Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive
     ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text)
     .join(" ") ?? "";
-  const activeTools = getActiveTools(lastUserText || undefined);
+  const activeTools = getActiveTools(actor, lastUserText || undefined);
 
   // Inject domain knowledge when user asks about setup, configuration, or troubleshooting
   const setupKeywords = ["setup", "configure", "connect", "wire", "api key", "not working",
@@ -1453,17 +1465,7 @@ Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive
           }
         }
       }
-      if (!toolCalls) return;
-      for (const call of toolCalls) {
-        const tier = TOOL_TIERS[call.toolName] ?? "read";
-        if (tier !== "read") {
-          writeAuditEntry(
-            `AI: ${call.toolName}`,
-            tier,
-            summarizeToolArgs(call.toolName, (call as any).args),
-          );
-        }
-      }
+      // Non-read tool calls are audited by the gateway wrapper (tool-gateway.ts).
     },
     onFinish: ({ usage }) => {
       logAiUsage({
@@ -1488,7 +1490,7 @@ export async function runAutomationPrompt(params: {
   const modelId = resolveModel(provider);
   const model = createModelInstance(provider, modelId);
   const isAnthropic = provider === "anthropic";
-  const activeTools = getActiveTools();
+  const activeTools = getActiveTools({ kind: "automation", name: params.automationName });
 
   // Use provided allowedTools, or fall back to all automation-safe tools
   const { getAutomationSafeToolNames } = await import("./automation-safe-tools.js");

@@ -52,6 +52,9 @@ import { useRouter } from "next/navigation";
 import { useSetAtom } from "jotai";
 import { terminalCommandAtom } from "@/atoms/terminal";
 import { Shimmer } from "@/components/ai-elements/shimmer";
+import { motion } from "motion/react";
+import { ThinkingOrb } from "thinking-orbs";
+import { toolOrbState } from "@/lib/agent-activity";
 
 import { CodeBlock } from "./code-block";
 import { Pill } from "@/components/kibo-ui/pill";
@@ -74,7 +77,7 @@ export type ToolProps = ComponentProps<typeof Collapsible>;
 export const Tool = ({ className, ...props }: ToolProps) => (
   <Collapsible
     className={cn(
-      "group/tool not-prose mb-2 w-full rounded-xl border border-border/40 bg-card/20 backdrop-blur-sm",
+      "group/tool not-prose -mx-2 mb-1 rounded-xl border border-transparent transition-[background-color,border-color] duration-150 ease-out data-[state=open]:mb-2 data-[state=open]:border-border/40 data-[state=open]:bg-card/30",
       className
     )}
     {...props}
@@ -162,22 +165,22 @@ const statusConfig: Record<
   { label: string; dot: string; pulse?: boolean }
 > = {
   "approval-requested": {
-    label: "Awaiting Approval",
+    label: "Needs your approval",
     dot: "bg-status-warning",
     pulse: true,
   },
-  "approval-responded": { label: "Responded", dot: "bg-status-info" },
+  "approval-responded": { label: "Answered", dot: "bg-status-info" },
   "input-available": { label: "Running", dot: "bg-indigo-400", pulse: true },
   "input-streaming": { label: "Preparing", dot: "bg-muted-foreground/60" },
-  "output-available": { label: "Completed", dot: "bg-status-healthy" },
-  "output-denied": { label: "Denied", dot: "bg-status-warning" },
-  "output-error": { label: "Error", dot: "bg-destructive" },
+  "output-available": { label: "Done", dot: "bg-status-healthy" },
+  "output-denied": { label: "Declined", dot: "bg-status-warning" },
+  "output-error": { label: "Failed", dot: "bg-destructive" },
 };
 
 export const getStatusBadge = (status: ToolPart["state"]) => {
   const { label, dot, pulse } = statusConfig[status];
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="flex shrink-0 items-center gap-1.5">
       <span
         className={cn(
           "inline-block size-1.5 rounded-full",
@@ -189,6 +192,14 @@ export const getStatusBadge = (status: ToolPart["state"]) => {
     </span>
   );
 };
+
+/** "get_system_stats" reads as "Get system stats" — a sentence, not a function name. */
+export function sentenceCaseToolName(name: string): string {
+  const words = name.split(/[_\s]+/).filter(Boolean);
+  if (words.length === 0) return name;
+  const sentence = words.join(" ");
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
 
 export type ToolHeaderProps = {
   title?: string;
@@ -220,43 +231,55 @@ export const ToolHeader = ({
   const { icon, tier } = config;
   const styles = tierStyles[tier];
 
-  const formattedName = (title ?? derivedName)
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  const formattedName = sentenceCaseToolName(title ?? derivedName);
   const isToolRunning = state === "input-available" || state === "input-streaming";
 
   return (
     <CollapsibleTrigger
       className={cn(
-        "flex w-full items-center gap-3.5 px-3.5 py-3 text-left",
+        "group/tool-row flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors duration-150 ease-out hover:bg-muted/40 group-data-[state=open]/tool:rounded-b-none group-data-[state=open]/tool:hover:bg-transparent",
         className
       )}
       {...props}
     >
       <div
         className={cn(
-          "flex size-9 shrink-0 items-center justify-center rounded-xl",
-          styles.bg
+          "flex size-7 shrink-0 items-center justify-center rounded-lg transition-colors duration-150",
+          isToolRunning ? "bg-foreground/[0.06]" : styles.bg
         )}
       >
-        <HugeiconsIcon icon={icon} size={18} className={styles.text} />
+        {/* While it runs, an orb shows what kind of work it is; the icon returns when it's done */}
+        {isToolRunning ? (
+          <ThinkingOrb state={toolOrbState(derivedName)} size={20} aria-hidden />
+        ) : (
+          <motion.span
+            key="icon"
+            initial={{ opacity: 0, scale: 0.85 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            className="flex"
+          >
+            <HugeiconsIcon icon={icon} size={15} className={styles.text} />
+          </motion.span>
+        )}
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="text-sm font-medium leading-none text-foreground">
-          {isToolRunning ? (
-            <Shimmer as="span" className="text-sm font-medium leading-none" duration={1.8}>
-              {formattedName}
-            </Shimmer>
-          ) : (
-            formattedName
-          )}
-        </span>
-        {getStatusBadge(state)}
-      </div>
+      <span className="min-w-0 truncate text-sm text-foreground/90">
+        {isToolRunning ? (
+          <Shimmer as="span" className="text-sm" duration={1.8}>
+            {formattedName}
+          </Shimmer>
+        ) : (
+          formattedName
+        )}
+      </span>
+      {getStatusBadge(state)}
 
-      <HugeiconsIcon icon={ArrowDown01Icon} size={14} className="shrink-0 text-dim-foreground transition-transform group-data-[state=open]/tool:rotate-180" />
+      <HugeiconsIcon
+        icon={ArrowDown01Icon}
+        size={14}
+        className="ml-auto shrink-0 text-dim-foreground opacity-0 transition-[opacity,transform] duration-150 group-hover/tool-row:opacity-100 group-focus-visible/tool-row:opacity-100 group-data-[state=open]/tool:rotate-180 group-data-[state=open]/tool:opacity-100"
+      />
     </CollapsibleTrigger>
   );
 };
@@ -279,10 +302,7 @@ export const ToolHeaderInline = ({
   const { icon, tier } = config;
   const styles = tierStyles[tier];
 
-  const formattedName = (title ?? derivedName)
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  const formattedName = sentenceCaseToolName(title ?? derivedName);
 
   return (
     <>

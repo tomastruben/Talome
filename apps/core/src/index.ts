@@ -20,6 +20,9 @@ import { notifications } from "./routes/notifications.js";
 import { notificationChannels } from "./routes/notification-channels.js";
 import { memories } from "./routes/memories.js";
 import { integrations } from "./routes/integrations.js";
+import { approvals } from "./routes/approvals.js";
+import { voice } from "./routes/voice.js";
+import { setupVoiceLive } from "./routes/voice-live.js";
 import { mcp } from "./routes/mcp.js";
 import { setupTerminal } from "./routes/terminal.js";
 import { automations } from "./routes/automations.js";
@@ -56,6 +59,7 @@ import { diagnostics as diagnosticsRoute } from "./routes/diagnostics.js";
 import { search as searchRoute } from "./routes/search.js";
 import { supervisor as supervisorRoute } from "./routes/supervisor.js";
 import { startAutomationCron, stopAutomationCron } from "./automation/cron.js";
+import { startAutomationRecovery } from "./automation/engine.js";
 import { startMonitor } from "./monitor.js";
 import { startAgentLoop } from "./agent-loop/index.js";
 import { startDigestScheduler } from "./digest.js";
@@ -64,6 +68,7 @@ import { runMigrations } from "./db/migrate.js";
 import { initializeStores } from "./stores/sync.js";
 import { migrateLegacyNetworks } from "./stores/lifecycle.js";
 import { db, schema } from "./db/index.js";
+import { getSetting } from "./utils/settings.js";
 import { eq } from "drizzle-orm";
 import { startTelegramBot } from "./messaging/telegram.js";
 // discord-bot.js is imported dynamically below to avoid loading discord.js at startup
@@ -333,6 +338,8 @@ app.use("*", async (c, next) => {
 
 // ── Request body size limit (5 MB for JSON APIs) ─────────────────────────────
 app.use("/api/*", async (c, next) => {
+  // Streaming file uploads write straight to disk and are bounded by free space instead
+  if (c.req.path === "/api/files/upload-stream") return next();
   const contentLength = parseInt(c.req.header("content-length") || "0", 10);
   if (contentLength > 5 * 1024 * 1024) {
     return c.json({ error: "Request body too large" }, 413);
@@ -384,6 +391,9 @@ app.use("/api/users/*", requireRole("admin"));
 app.use("/api/settings/*", requireRole("admin"));
 app.use("/api/evolution/*", requireRole("admin"));
 app.use("/api/stores/*", requireRole("admin"));
+// MCP tokens and bot credentials grant access to every tool — admin only
+app.use("/api/integrations/*", requireRole("admin"));
+app.use("/api/approvals/*", requireRole("admin"));
 
 // ── Feature-level permission guards ─────────────────────────────────────────
 app.use("/api/media/*", requirePermission("media"));
@@ -422,6 +432,10 @@ app.route("/api/notification-channels", notificationChannels);
 app.route("/api/memories", memories);
 app.route("/api/suggestions", suggestionsRoute);
 app.route("/api/integrations", integrations);
+app.route("/api/approvals", approvals);
+app.use("/api/voice/*", requirePermission("chat"));
+setupVoiceLive(app, upgradeWebSocket);
+app.route("/api/voice", voice);
 app.route("/api/widgets", widgets);
 app.route("/api/community", community);
 app.route("/api/proxy", proxy);
@@ -553,8 +567,10 @@ let stopMonitor: (() => void) | undefined;
 let stopAgentLoop: (() => void) | undefined;
 let stopPrune: (() => void) | undefined;
 
+// "::" accepts IPv4 and IPv6 on dual-stack hosts; hosts without IPv6 fall back
+// to 0.0.0.0 in the error handler below.
 const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
-  startupLog.info(`Talome Core running on http://0.0.0.0:${info.port}`);
+  startupLog.info(`Talome Core running on ${info.family === "IPv6" ? `http://[${info.address}]` : `http://${info.address}`}:${info.port}`);
 
   injectWebSocket(server);
 
@@ -576,6 +592,8 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
 
   try {
     startAutomationCron();
+    // Resume or close out automation runs interrupted by a restart
+    startAutomationRecovery();
   } catch (err) {
     startupLog.error("startAutomationCron failed", err);
   }
@@ -642,13 +660,9 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
   }
 
   try {
-    const tokenRow = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, "telegram_bot_token"))
-      .get();
-    if (tokenRow?.value) {
-      startTelegramBot(tokenRow.value).then((result) => {
+    const telegramToken = getSetting("telegram_bot_token");
+    if (telegramToken) {
+      startTelegramBot(telegramToken).then((result) => {
         if (!result.ok) {
           startupLog.error("Telegram bot failed to start", result.error);
         }
@@ -692,14 +706,10 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
 
   // Auto-start Discord bot if token is saved (lazy-load discord.js)
   try {
-    const discordRow = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, "discord_bot_token"))
-      .get();
-    if (discordRow?.value) {
+    const discordToken = getSetting("discord_bot_token");
+    if (discordToken) {
       import("./messaging/discord-bot.js").then(({ startDiscordBot }) => {
-        startDiscordBot(discordRow.value).then((result: { ok: boolean; error?: string }) => {
+        startDiscordBot(discordToken).then((result: { ok: boolean; error?: string }) => {
           if (!result.ok) {
             startupLog.error("Discord bot failed to start", result.error);
           }
@@ -713,7 +723,21 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
   }
 });
 
+// Node aborts any request still receiving its body after 5 minutes by default,
+// which would cut off large streaming uploads. Allow long transfers; slow-header
+// attacks are still bounded by headersTimeout.
+if ("requestTimeout" in server) server.requestTimeout = 24 * 60 * 60 * 1000;
+
+let triedIpv4Fallback = false;
 server.on("error", (err: NodeJS.ErrnoException) => {
+  // No IPv6 on this host (common in containers): listen on IPv4 instead. The
+  // startup callback passed to serve() is still registered and runs on success.
+  if ((err.code === "EAFNOSUPPORT" || err.code === "EADDRNOTAVAIL") && !triedIpv4Fallback) {
+    triedIpv4Fallback = true;
+    startupLog.warn(`IPv6 unavailable (${err.code}) — listening on 0.0.0.0:${port} instead`);
+    server.listen(port, "0.0.0.0");
+    return;
+  }
   if (err.code === "EADDRINUSE") {
     startupLog.error(`Port ${port} is already in use. Stop the other core process and restart.`);
     return;

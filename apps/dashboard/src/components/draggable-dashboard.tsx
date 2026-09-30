@@ -21,6 +21,7 @@ import {
 import {
   useSortable,
 } from '@dnd-kit/sortable'
+import { motion, useReducedMotion } from 'motion/react'
 import { cn } from '@/lib/utils'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
@@ -76,6 +77,7 @@ export function DraggableWrapper({
     animateLayoutChanges: () => false,
   })
 
+  const reduceMotion = useReducedMotion()
   const spanCols = Math.min(gridSize.cols, availableCols)
   const style: React.CSSProperties = {
     gridColumn: `span ${spanCols} / span ${spanCols}`,
@@ -83,10 +85,14 @@ export function DraggableWrapper({
   }
 
   return (
-    <div
+    // Neighbours glide to their new slots when the order or a size changes.
+    // Position only, so content never stretches mid-flight.
+    <motion.div
       ref={setNodeRef}
       style={style}
       data-widget-id={id}
+      layout={reduceMotion ? false : "position"}
+      transition={{ layout: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } }}
       className={cn("group relative", className)}
     >
       {/* Placeholder outline shown in the slot while the item is being dragged */}
@@ -103,7 +109,7 @@ export function DraggableWrapper({
             {...attributes}
             {...listeners}
             className={cn(
-              "absolute -top-2 -left-2 z-20 flex items-center justify-center size-5",
+              "tm-badge-in absolute -top-2 -left-2 z-20 flex items-center justify-center size-5",
               "rounded-full bg-background border border-border/80 shadow-sm",
               "cursor-grab active:cursor-grabbing",
               "opacity-30 group-hover:opacity-100 transition-opacity",
@@ -116,7 +122,7 @@ export function DraggableWrapper({
         )}
         {children}
       </div>
-    </div>
+    </motion.div>
   )
 }
 

@@ -77,6 +77,8 @@
   --duration-fast: 100ms;
   --duration-normal: 150ms;
   --duration-slow: 200ms;
+  /* The one curve for things arriving: fast start, long soft landing */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* ── Elevation (subtle depth instead of hard borders) ── */
   --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 4%);
@@ -618,11 +620,11 @@
 }
 
 @keyframes widget-enter {
-  from { opacity: 0; transform: scale(0.97); }
-  to   { opacity: 1; transform: scale(1); }
+  from { opacity: 0; transform: scale(0.94); filter: blur(4px); }
+  to   { opacity: 1; transform: scale(1); filter: blur(0); }
 }
 .animate-widget-enter {
-  animation: widget-enter 300ms cubic-bezier(0.2, 0, 0, 1) both;
+  animation: widget-enter 320ms var(--ease-out-quint) both;
 }
 
 /* ── Audiobook detail cover glow ───────────────── */
@@ -1797,4 +1799,391 @@
 [data-sonner-toast][data-styled='true'] [data-close-button] svg {
   width: 0.75rem;
   height: 0.75rem;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Micro-interactions
+   Tuned after transitions.dev by Jakub Antalik (free set, MIT): surfaces grow
+   from where they came from, arrive slower than they leave, and settle on one
+   ease-out curve. Everything here stands down for reduced motion.
+───────────────────────────────────────────────────────────────────────────── */
+
+/* Menus and popovers grow from their trigger — scale and fade only, no slide */
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="context-menu-content"],
+[data-slot="context-menu-sub-content"],
+[data-slot="popover-content"],
+[data-slot="select-content"],
+[data-slot="hover-card-content"] {
+  --tw-ease: var(--ease-out-quint);
+  --tw-enter-scale: 0.97;
+  --tw-exit-scale: 0.99;
+  --tw-enter-translate-x: 0;
+  --tw-enter-translate-y: 0;
+  --tw-exit-translate-x: 0;
+  --tw-exit-translate-y: 0;
+}
+[data-slot$="-content"][data-state="open"]:is([data-slot^="dropdown-menu"], [data-slot^="context-menu"], [data-slot="popover-content"], [data-slot="select-content"], [data-slot="hover-card-content"]) {
+  --tw-animation-duration: 200ms;
+}
+[data-slot$="-content"][data-state="closed"]:is([data-slot^="dropdown-menu"], [data-slot^="context-menu"], [data-slot="popover-content"], [data-slot="select-content"], [data-slot="hover-card-content"]) {
+  --tw-animation-duration: 120ms;
+}
+
+/* Tooltips appear quickly and leave almost at once */
+[data-slot="tooltip-content"] {
+  --tw-ease: ease-out;
+  --tw-enter-scale: 0.98;
+  --tw-exit-scale: 0.98;
+  --tw-animation-duration: 150ms;
+}
+[data-slot="tooltip-content"][data-state="closed"] {
+  --tw-animation-duration: 60ms;
+}
+
+/* Dialogs rise from the middle with a hint of focus coming in */
+[data-slot="dialog-content"] {
+  --tw-ease: var(--ease-out-quint);
+  --tw-enter-scale: 0.96;
+  --tw-exit-scale: 0.97;
+  --tw-enter-blur: 2px;
+}
+[data-slot="dialog-content"][data-state="open"],
+[data-slot="dialog-overlay"][data-state="open"] { --tw-animation-duration: 200ms; }
+[data-slot="dialog-content"][data-state="closed"],
+[data-slot="dialog-overlay"][data-state="closed"] { --tw-animation-duration: 140ms; }
+
+/* Sheets slide in decisively instead of drifting */
+[data-slot="sheet-content"] { --tw-ease: var(--ease-out-quint); }
+[data-slot="sheet-content"][data-state="open"] { --tw-animation-duration: 320ms; }
+[data-slot="sheet-content"][data-state="closed"] { --tw-animation-duration: 200ms; }
+
+/* Switch: the thumb glides on the same curve, and stretches while pressed */
+[data-slot="switch-thumb"] {
+  transition:
+    transform 240ms var(--ease-out-quint),
+    width 160ms var(--ease-out-quint),
+    margin 160ms var(--ease-out-quint);
+}
+[data-slot="switch"]:active:not(:disabled) [data-slot="switch-thumb"] {
+  width: calc(1rem + 3px);
+}
+[data-slot="switch"][data-state="checked"]:active:not(:disabled) [data-slot="switch-thumb"] {
+  margin-left: -6px;
+}
+
+/* Error shake — a percussive "not quite" that never moves the layout */
+@keyframes tm-shake {
+  0%      { transform: translateX(0);    animation-timing-function: var(--ease-out-quint); }
+  28.57%  { transform: translateX(6px);  animation-timing-function: var(--ease-out-quint); }
+  57.14%  { transform: translateX(-6px); animation-timing-function: var(--ease-out-quint); }
+  78.57%  { transform: translateX(4px);  animation-timing-function: var(--ease-out-quint); }
+  100%    { transform: translateX(0); }
+}
+@keyframes tm-shake-again {
+  0%      { transform: translateX(0);    animation-timing-function: var(--ease-out-quint); }
+  28.57%  { transform: translateX(6px);  animation-timing-function: var(--ease-out-quint); }
+  57.14%  { transform: translateX(-6px); animation-timing-function: var(--ease-out-quint); }
+  78.57%  { transform: translateX(4px);  animation-timing-function: var(--ease-out-quint); }
+  100%    { transform: translateX(0); }
+}
+.tm-shake { animation: tm-shake 280ms linear; }
+/* A second name so a repeat mistake replays the shake */
+.tm-shake-again { animation: tm-shake-again 280ms linear; }
+
+/* Success check — fades up into place while its stroke draws */
+@keyframes tm-check-in {
+  from { opacity: 0; transform: translateY(6px) rotate(-30deg) scale(0.8); filter: blur(4px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
+@keyframes tm-check-draw { to { stroke-dashoffset: 0; } }
+.tm-success-check { display: inline-flex; animation: tm-check-in 360ms var(--ease-out-quint) both; }
+.tm-success-check path { stroke-dasharray: 24; stroke-dashoffset: 24; animation: tm-check-draw 320ms var(--ease-out-quint) 80ms forwards; }
+
+/* Number pop-in — digits that change rise into place through a light blur */
+@keyframes tm-digit-in {
+  from { opacity: 0; transform: translateY(0.35em); filter: blur(2px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
+.tm-digit { display: inline-block; animation: tm-digit-in 320ms var(--ease-out-quint) both; }
+
+/* Badge — a new dot arrives with a small pop */
+@keyframes tm-badge-in {
+  from { opacity: 0; transform: scale(0.4); filter: blur(2px); }
+  to   { opacity: 1; transform: scale(1); filter: blur(0); }
+}
+.tm-badge-in { animation: tm-badge-in 260ms var(--ease-out-quint) both; }
+
+/* Tilt: posters lean toward the pointer and catch a little light, then
+   settle back slowly when it leaves */
+.tm-tilt {
+  transform: perspective(700px) rotateX(var(--tm-rx, 0deg)) rotateY(var(--tm-ry, 0deg));
+  transition: transform 700ms var(--ease-out-quint);
+}
+.tm-tilt[data-tilting] { transition-duration: 140ms; }
+.tm-tilt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(circle at var(--tm-gx, 50%) var(--tm-gy, 0%), oklch(1 0 0 / 14%), transparent 55%);
+  opacity: 0;
+  transition: opacity 300ms var(--ease-out-quint);
+}
+.tm-tilt[data-tilting]::after { opacity: 1; }
+
+/* Hero: a backdrop settles into place; the text over it rises in sequence */
+@keyframes tm-hero-in {
+  from { opacity: 0; transform: scale(1.04); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.tm-hero-in { animation: tm-hero-in 600ms var(--ease-out-quint) both; }
+@keyframes tm-rise {
+  from { opacity: 0; transform: translateY(12px); filter: blur(3px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
+.tm-rise { animation: tm-rise 500ms var(--ease-out-quint) 120ms both; }
+.tm-rise-2 { animation-delay: 160ms; }
+
+/* Selection mark: ring fills, then the check draws; unselecting reverses fast */
+.tm-select-mark .tm-select-ring {
+  fill: transparent;
+  transition: fill 150ms var(--ease-out-quint), stroke 150ms var(--ease-out-quint);
+}
+.tm-select-mark .tm-select-check {
+  stroke: var(--background);
+  stroke-dasharray: 16;
+  stroke-dashoffset: 16;
+  transition: stroke-dashoffset 120ms ease-out;
+}
+.tm-select-mark[data-selected] .tm-select-ring { fill: var(--foreground); stroke: var(--foreground); }
+.tm-select-mark[data-selected] .tm-select-check {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 280ms var(--ease-out-quint) 60ms;
+}
+
+/* Edit mode: widgets sway a touch so they read as movable, and hold still
+   under the pointer so their controls are easy to hit */
+@keyframes tm-jiggle {
+  from { transform: rotate(-0.35deg); }
+  to   { transform: rotate(0.35deg); }
+}
+.tm-jiggle > div { animation: tm-jiggle 260ms ease-in-out infinite alternate; }
+.tm-jiggle:nth-child(2n) > div { animation-delay: -130ms; animation-duration: 290ms; }
+.tm-jiggle:nth-child(3n) > div { animation-delay: -60ms; animation-duration: 240ms; }
+.tm-jiggle:hover > div,
+.tm-jiggle:focus-within > div { animation-play-state: paused; }
+
+/* A removed widget shrinks away before the grid closes the gap */
+@keyframes tm-widget-leave {
+  to { opacity: 0; transform: scale(0.92); filter: blur(3px); }
+}
+.tm-widget-leave { animation: tm-widget-leave 160ms var(--ease-out-quint) forwards; pointer-events: none; }
+
+/* An error toast's icon gives a small shake once it has arrived */
+[data-sonner-toast][data-type="error"] [data-icon] { animation: tm-shake 280ms linear 180ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-sonner-toast][data-type="error"] [data-icon],
+  .tm-jiggle > div,
+  .tm-widget-leave,
+  .tm-select-mark *,
+  .tm-tilt,
+  .tm-tilt::after,
+  .tm-hero-in,
+  .tm-rise,
+  .tm-shake,
+  .tm-shake-again,
+  .tm-success-check,
+  .tm-digit,
+  .tm-badge-in { animation: none !important; }
+  .tm-success-check path { animation: none !important; stroke-dashoffset: 0 !important; }
+  [data-slot="switch-thumb"] { transition: none !important; }
+  .animate-in,
+  .animate-out,
+  .animate-widget-enter { animation-duration: 1ms !important; }
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   iPad and other touch screens
+───────────────────────────────────────────────────────────────────────────── */
+
+/* Full screen from the Home Screen: the status bar and home indicator sit over
+   the page, so the sidebar and the content card keep clear of them. */
+@media (display-mode: standalone) and (min-width: 768px) {
+  [data-slot="sidebar-container"] {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 0.5rem);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+  }
+  [data-slot="sidebar-inset"] {
+    margin-top: calc(env(safe-area-inset-top, 0px) + 0.5rem);
+    margin-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+  }
+}
+
+/* Desktop mode opened full screen: the wallpaper runs to every edge. */
+@media (display-mode: standalone) {
+  [data-desktop-root] {
+    position: fixed;
+    inset: 0;
+    height: auto;
+  }
+}
+
+/* Only iPadOS draws its status bar over a full-screen web app (the <head>
+   script marks it). There, windows, widgets and the desktop icons start below
+   the status bar and the Dock clears the home indicator; everywhere else the
+   desktop uses the whole screen. */
+html[data-status-bar="ios"] [data-desktop-root] {
+  padding-top: max(env(safe-area-inset-top, 0px), 1.5rem);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+html[data-status-bar="ios"] [data-desktop-dock-band] {
+  height: calc(5.75rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* Optical centring for a line of text next to icons: trim the text box to the
+   capital letters so flex centring lines caps up with the icon centres in any
+   font. Equal padding above and below keeps room for descenders, so a
+   truncating label (overflow: hidden) never clips a g or a y. */
+.tm-cap-trim {
+  padding-block: 0.25em;
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+}
+
+/* Desktop windows: a hairline catches the light along the top edge, and
+   layered shadows lift the window you're working in above the rest. */
+.tm-window {
+  /* Two strokes: a light hairline on the inside catches the edge on dark
+     wallpapers, a dark rim outside separates it from bright ones */
+  border-color: oklch(1 0 0 / 9%);
+  box-shadow:
+    0 0 0 1px oklch(0 0 0 / 40%),
+    inset 0 1px 0 oklch(1 0 0 / 6%),
+    0 12px 32px -12px oklch(0 0 0 / 45%),
+    0 2px 8px -2px oklch(0 0 0 / 30%);
+}
+.tm-window[data-active] {
+  border-color: oklch(1 0 0 / 15%);
+  box-shadow:
+    0 0 0 1px oklch(0 0 0 / 55%),
+    inset 0 1px 0 oklch(1 0 0 / 10%),
+    0 32px 80px -16px oklch(0 0 0 / 65%),
+    0 12px 28px -8px oklch(0 0 0 / 45%);
+}
+/* The title bar is frosted glass over whatever sits behind the window */
+.tm-window-titlebar {
+  border-color: oklch(1 0 0 / 6%);
+  background: color-mix(in oklch, var(--card) 90%, transparent);
+  backdrop-filter: blur(40px) saturate(1.8);
+}
+.tm-window:not([data-active]) .tm-window-titlebar {
+  background: color-mix(in oklch, var(--card) 84%, transparent);
+}
+.tm-window:not([data-active]) .tm-window-titlebar [data-title-placement] { opacity: 0.7; }
+:root:not(.dark) .tm-window { border-color: oklch(0 0 0 / 10%); box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), 0 12px 32px -12px oklch(0 0 0 / 20%), 0 2px 8px -2px oklch(0 0 0 / 12%); }
+:root:not(.dark) .tm-window[data-active] { border-color: oklch(0 0 0 / 14%); box-shadow: 0 0 0 1px oklch(1 0 0 / 60%), 0 28px 64px -16px oklch(0 0 0 / 28%), 0 10px 24px -8px oklch(0 0 0 / 16%); }
+
+/* Inside a desktop window the page itself is transparent: the window's frosted
+   body shows through wherever the app doesn't paint (its sidebar), and the
+   app's content column paints the solid background */
+html[data-embedded-frame],
+html[data-embedded-frame] body {
+  background: transparent;
+}
+
+/* The window body is the same glass as the title bar, so a sidebar and the
+   title bar read as one frosted surface around the content */
+.tm-window-body {
+  background: color-mix(in oklch, var(--card) 90%, transparent);
+  backdrop-filter: blur(40px) saturate(1.8);
+}
+.tm-window:not([data-active]) .tm-window-body {
+  background: color-mix(in oklch, var(--card) 84%, transparent);
+}
+
+/* Widgets on the desktop are glass too, so the wallpaper stays part of the
+   composition (Home keeps solid cards) */
+[data-desktop-widget-canvas] [data-widget] {
+  background: color-mix(in oklch, var(--card) 74%, transparent);
+  border-color: oklch(1 0 0 / 10%);
+  backdrop-filter: blur(40px) saturate(1.8);
+  box-shadow: 0 0 0 1px oklch(0 0 0 / 30%), inset 0 1px 0 oklch(1 0 0 / 7%);
+}
+[data-desktop-widget-canvas] [data-widget] > .border-b {
+  border-color: oklch(1 0 0 / 8%);
+}
+:root:not(.dark) [data-desktop-widget-canvas] [data-widget] {
+  background: color-mix(in oklch, var(--card) 60%, transparent);
+  border-color: oklch(0 0 0 / 8%);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%);
+}
+
+/* Denser glass for surfaces you read and type on (the sign-in card): the
+   wallpaper's colour comes through, its detail doesn't */
+.tm-glass-dense {
+  background: color-mix(in oklch, var(--background) 82%, transparent);
+  border-color: oklch(1 0 0 / 10%);
+  backdrop-filter: blur(32px) saturate(1.5);
+  box-shadow:
+    0 0 0 1px oklch(0 0 0 / 35%),
+    inset 0 1px 0 oklch(1 0 0 / 8%),
+    0 24px 60px -20px oklch(0 0 0 / 60%);
+}
+:root:not(.dark) .tm-glass-dense {
+  background: color-mix(in oklch, var(--background) 85%, transparent);
+  border-color: oklch(0 0 0 / 8%);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%), 0 24px 60px -20px oklch(0 0 0 / 25%);
+}
+
+/* Text set straight on the wallpaper (desktop icon names): white with a soft
+   shadow, legible on any photo without a chip behind it */
+.tm-on-wallpaper {
+  color: oklch(0.985 0 0);
+  text-shadow: 0 1px 2px oklch(0 0 0 / 55%), 0 0 12px oklch(0 0 0 / 35%);
+}
+
+/* Frosted glass for floating desktop chrome (the Dock, desktop icons): the
+   wallpaper shows through, blurred and a little richer, framed by the same two
+   strokes as windows */
+.tm-glass {
+  background: color-mix(in oklch, var(--card) 72%, transparent);
+  border-color: oklch(1 0 0 / 12%);
+  backdrop-filter: blur(40px) saturate(1.8);
+  box-shadow:
+    0 0 0 1px oklch(0 0 0 / 35%),
+    inset 0 1px 0 oklch(1 0 0 / 10%),
+    0 18px 40px -14px oklch(0 0 0 / 55%);
+}
+:root:not(.dark) .tm-glass {
+  background: color-mix(in oklch, var(--card) 60%, transparent);
+  border-color: oklch(0 0 0 / 8%);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%), 0 18px 40px -14px oklch(0 0 0 / 25%);
+}
+
+/* No hover on a touch screen: whatever would appear on hover is simply shown,
+   so selection, copy, drag handles and row actions stay reachable. */
+@media (hover: none) and (pointer: coarse) {
+  [class*="group-hover"][class*="opacity-0"] { opacity: 1 !important; }
+
+  /* Window controls and edges sized for a finger */
+  [data-window-controls] > button { width: 2rem; height: 2rem; }
+  [data-resize-edge="n"], [data-resize-edge="s"] { height: 0.875rem; }
+  [data-resize-edge="e"], [data-resize-edge="w"] { width: 0.875rem; }
+  [data-resize-edge="nw"], [data-resize-edge="ne"], [data-resize-edge="sw"], [data-resize-edge="se"] { width: 1.75rem; height: 1.75rem; }
+
+  /* Long-press opens Talome's own menu, not Safari's callout or a text selection */
+  [data-slot="context-menu-trigger"] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
 }

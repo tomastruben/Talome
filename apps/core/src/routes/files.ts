@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import { readdir, stat, readFile, writeFile, unlink, mkdir, rename, rm } from "node:fs/promises";
 import { join, resolve, basename, dirname, extname } from "node:path";
 import { createHash } from "node:crypto";
@@ -18,6 +19,7 @@ import {
   invalidateDriveCache,
 } from "../utils/filesystem.js";
 import { createLogger } from "../utils/logger.js";
+import { resolveUploadTarget, streamUpload } from "../utils/upload.js";
 
 const log = createLogger("files");
 const files = new Hono();
@@ -1428,6 +1430,48 @@ files.post("/upload", async (c) => {
   }
 
   return c.json({ ok: true, uploaded, errors: errors.length > 0 ? errors : undefined });
+});
+
+/**
+ * Streaming upload: one file per request, body is the raw file bytes.
+ * No size cap beyond free disk space; progress and cancel are handled by the
+ * client (XHR), and folder uploads pass the file's relative path.
+ *
+ * Query: dir (target folder), path (file name, or relative path for folder
+ * uploads), size (expected bytes), conflict = rename (default) | replace | skip.
+ */
+const uploadQuerySchema = z.object({
+  dir: z.string().min(1),
+  path: z.string().min(1).max(4096),
+  size: z.coerce.number().int().min(0).optional(),
+  conflict: z.enum(["rename", "replace", "skip"]).default("rename"),
+});
+
+files.put("/upload-stream", async (c) => {
+  const parsed = uploadQuerySchema.safeParse(c.req.query());
+  if (!parsed.success) return c.json({ ok: false, error: "dir and path are required" }, 400);
+  const { dir, path, size, conflict } = parsed.data;
+
+  try {
+    const target = await resolveUploadTarget(dir, path);
+    if (!target.ok) return c.json({ ok: false, error: target.error }, target.status);
+
+    const result = await streamUpload({
+      body: c.req.raw.body,
+      dir: target.dir,
+      fileName: target.fileName,
+      conflict,
+      expectedBytes: size,
+      signal: c.req.raw.signal,
+    });
+    if (!result.ok) {
+      if (!result.cancelled) log.warn(`Upload of ${path} failed: ${result.error}`);
+      return c.json({ ok: false, error: result.error }, result.status);
+    }
+    return c.json({ ok: true, name: result.name, path: result.path, bytes: result.bytes, skipped: result.skipped ?? false });
+  } catch (err) {
+    return serverError(c, err, { message: "Upload failed", context: { dir, path } });
+  }
 });
 
 // ── Drive management ──────────────────────────────────────────────────

@@ -8,27 +8,7 @@ import useSWR from "swr";
 import {
   HugeiconsIcon,
   ArrowRight01Icon,
-  UserIcon,
-  AiCloudIcon,
-  AiMagicIcon,
-  ToolsIcon,
-  QuillWrite01Icon,
-  AiBrain01Icon,
-  PlayIcon,
-  ChatBotIcon,
-  Plug02Icon,
-  Layers01Icon,
-  PackageAdd01Icon,
-  CheckmarkBadge01Icon,
-  Globe02Icon,
-  ArchiveIcon,
   Logout01Icon,
-  ChartIcon,
-  HardDriveIcon,
-  FileVideoIcon,
-  Shield01Icon,
-  AlertCircleIcon,
-  SystemUpdate01Icon,
   CpuIcon,
   LayoutGridIcon,
   ComputerTerminal01Icon,
@@ -37,53 +17,9 @@ import { useUser } from "@/hooks/use-user";
 import { CORE_URL } from "@/lib/constants";
 import { SettingsGroup, ToggleRow, InfoRow } from "@/components/settings/settings-primitives";
 import type { IconSvgElement } from "@/components/icons";
+import { SETTINGS_CATEGORIES, type SettingsLink } from "@/components/settings/settings-nav";
+import { useSettingsLayout } from "@/components/settings/settings-layout-context";
 
-interface SettingsLink {
-  slug: string;
-  icon: IconSvgElement;
-  title: string;
-  description: string;
-  adminOnly?: boolean;
-}
-
-const GENERAL_ITEMS: SettingsLink[] = [
-  { slug: "users", icon: UserIcon, title: "Users & Access", description: "Create members, manage roles", adminOnly: true },
-];
-
-const AI_ITEMS: SettingsLink[] = [
-  { slug: "ai-provider", icon: AiCloudIcon, title: "AI Provider", description: "Anthropic, OpenAI, and Ollama keys" },
-  { slug: "intelligence", icon: AiMagicIcon, title: "Intelligence", description: "Agent loop, auto-remediation, self-improvement", adminOnly: true },
-  { slug: "ai-cost", icon: ChartIcon, title: "API Cost", description: "Track spend, set daily caps, view usage breakdown" },
-  { slug: "ai-tools", icon: ToolsIcon, title: "AI Tools", description: "Manage built-in and custom tools" },
-  { slug: "ai-prompt", icon: QuillWrite01Icon, title: "System Prompt", description: "Customise the assistant's personality" },
-  { slug: "ai-memory", icon: AiBrain01Icon, title: "Memory", description: "What the assistant remembers about you" },
-];
-
-const INFRASTRUCTURE_ITEMS: SettingsLink[] = [
-  { slug: "security", icon: Shield01Icon, title: "Security", description: "Control AI access level and shell permissions", adminOnly: true },
-  { slug: "notifications", icon: AlertCircleIcon, title: "Notifications", description: "Alert thresholds and notification channels" },
-  { slug: "networking", icon: Globe02Icon, title: "Networking", description: "Reverse proxy, remote access, Docker networks", adminOnly: true },
-  { slug: "backups", icon: ArchiveIcon, title: "Backups", description: "Scheduled backups and restore history" },
-  { slug: "file-manager", icon: HardDriveIcon, title: "File Manager", description: "Control which external drives are accessible", adminOnly: true },
-  { slug: "media-player", icon: FileVideoIcon, title: "Media Player", description: "HLS transcode cache and playback settings" },
-  { slug: "updates", icon: SystemUpdate01Icon, title: "App Updates", description: "Available updates and auto-update policies", adminOnly: true },
-];
-
-const CONNECTIONS_ITEMS: SettingsLink[] = [
-  { slug: "connections", icon: PlayIcon, title: "Media Services", description: "Sonarr, Radarr, Prowlarr, qBittorrent, Overseerr" },
-  { slug: "integrations", icon: ChatBotIcon, title: "Chat Bots", description: "Telegram and Discord" },
-];
-
-const DEVELOPER_ITEMS: SettingsLink[] = [
-  { slug: "mcp", icon: Plug02Icon, title: "MCP Server", description: "Connect Cursor, Claude Desktop, or Claude Code" },
-  { slug: "app-sources", icon: PackageAdd01Icon, title: "App Sources", description: "Manage app store sources" },
-  { slug: "community-review", icon: CheckmarkBadge01Icon, title: "Community Review", description: "Review and approve submitted apps", adminOnly: true },
-  { slug: "stacks", icon: Layers01Icon, title: "Export & Import", description: "Share settings and app stack codes" },
-];
-
-const LEGAL_ITEMS: SettingsLink[] = [
-  { slug: "legal", icon: Shield01Icon, title: "Legal & Disclaimer", description: "User responsibility, content policies, compliance" },
-];
 
 function CategoryLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -343,17 +279,16 @@ function LogoutButton() {
 
 export default function SettingsPage() {
   const { isAdmin } = useUser();
+  const { twoPane } = useSettingsLayout();
 
   return (
     <div className="mx-auto w-full max-w-2xl min-w-0 grid gap-8 pb-12">
       <GeneralInline />
       <ServicesSection />
-      <SettingsCategory label="Access" items={GENERAL_ITEMS} isAdmin={isAdmin} />
-      <SettingsCategory label="AI" items={AI_ITEMS} isAdmin={isAdmin} />
-      <SettingsCategory label="Infrastructure" items={INFRASTRUCTURE_ITEMS} isAdmin={isAdmin} />
-      <SettingsCategory label="Connections" items={CONNECTIONS_ITEMS} isAdmin={isAdmin} />
-      <SettingsCategory label="Developer" items={DEVELOPER_ITEMS} isAdmin={isAdmin} />
-      <SettingsCategory label="Legal" items={LEGAL_ITEMS} isAdmin={isAdmin} />
+      {/* In two-pane mode the sidebar lists the sections; this pane is "General" */}
+      {!twoPane && SETTINGS_CATEGORIES.map((category) => (
+        <SettingsCategory key={category.label} label={category.label} items={category.items} isAdmin={isAdmin} />
+      ))}
       <LogoutButton />
       <p className="text-center text-xs text-muted-foreground/30 pt-2">
         Designed and built by Tomas Truben &middot; AGPL-3.0

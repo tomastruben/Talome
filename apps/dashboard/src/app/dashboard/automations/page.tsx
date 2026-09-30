@@ -39,6 +39,7 @@ interface AutomationRow {
   runCount: number;
   createdAt: string;
   lastRunSuccess?: boolean;
+  lastRunStatus?: "running" | "succeeded" | "failed" | "waiting_approval" | "interrupted";
   lastRunError?: string | null;
   lastRunTriggeredAt?: string;
 }
@@ -212,8 +213,12 @@ export default function AutomationsPage() {
 
             // Derive status from enriched data
             const hasRun = row.lastRunTriggeredAt != null;
-            const statusVariant: "success" | "error" =
-              row.lastRunSuccess ? "success" : "error";
+            const lastStatus = row.lastRunStatus ?? (row.lastRunSuccess ? "succeeded" : "failed");
+            const statusVariant: "success" | "error" | "warning" | "info" =
+              lastStatus === "succeeded" ? "success"
+                : lastStatus === "failed" ? "error"
+                : lastStatus === "running" ? "info"
+                : "warning";
 
             return (
               <div
@@ -282,10 +287,14 @@ export default function AutomationsPage() {
                 {/* Last run status — honest, inline */}
                 {(hasRun || row.runCount > 0) && (
                   <div className="flex items-center gap-1.5 mt-1 ml-11 text-xs text-muted-foreground">
-                    {isRunning ? (
+                    {isRunning || lastStatus === "running" ? (
                       <span>Running…</span>
+                    ) : hasRun && lastStatus === "waiting_approval" ? (
+                      <span className="text-status-warning">Waiting for approval · Settings › Security</span>
+                    ) : hasRun && lastStatus === "interrupted" ? (
+                      <span className="text-status-warning">Interrupted {relativeTime(row.lastRunTriggeredAt!)}</span>
                     ) : hasRun ? (
-                      row.lastRunSuccess ? (
+                      lastStatus === "succeeded" ? (
                         <span>Succeeded {relativeTime(row.lastRunTriggeredAt!)}</span>
                       ) : row.lastRunError ? (
                         <Tooltip>

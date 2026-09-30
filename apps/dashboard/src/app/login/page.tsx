@@ -1,10 +1,15 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useRef, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { PopText, useShake } from "@/components/ui/micro";
+import { DEFAULT_SIGN_IN_WALLPAPER, readStoredWallpaper } from "@/lib/wallpaper";
+
+const MOTION = { duration: 0.18, ease: "easeOut" } as const;
 
 export default function LoginPage() {
   return (
@@ -29,6 +34,26 @@ function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [isFirstTime, setIsFirstTime] = useState(false);
   const [ready, setReady] = useState(false);
+  // Signed in: the card lifts away and the wallpaper eases forward before the dashboard appears
+  const [unlocking, setUnlocking] = useState(false);
+  const { shake, shakeClassName } = useShake();
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const reduceMotion = useReducedMotion();
+
+  function enter(returnTo: string) {
+    setUnlocking(true);
+    window.setTimeout(() => {
+      router.replace(returnTo);
+      router.refresh();
+    }, reduceMotion ? 0 : 260);
+  }
+
+  function reject(message: string) {
+    setError(message);
+    shake();
+    // Like a lock screen: the password is selected, ready to retype
+    requestAnimationFrame(() => passwordRef.current?.select());
+  }
 
   useEffect(() => {
     fetch("/api/auth/status")
@@ -62,14 +87,13 @@ function LoginContent() {
           setView("setup-recovery-code");
           return;
         }
-        const returnTo = searchParams.get("from") || "/dashboard";
-        router.replace(returnTo);
-        router.refresh();
+        enter(searchParams.get("from") || "/dashboard");
+        return;
       } else {
-        setError(data.error ?? "Login failed");
+        reject(data.error ?? "Login failed");
       }
     } catch {
-      setError("Network error — is Talome running?");
+      reject("Network error — is Talome running?");
     } finally {
       setLoading(false);
     }
@@ -99,32 +123,42 @@ function LoginContent() {
         setView("recovery-success");
       } else {
         setError(data.error ?? "Recovery failed");
+        shake();
       }
     } catch {
       setError("Network error — is Talome running?");
+      shake();
     } finally {
       setLoading(false);
     }
   }
 
   function proceedToDashboard() {
-    const returnTo = searchParams.get("from") || "/dashboard";
-    router.replace(returnTo);
-    router.refresh();
+    enter(searchParams.get("from") || "/dashboard");
   }
 
-  const inputClass = "h-10 bg-muted/30 border-border/50 text-sm placeholder:text-muted-foreground";
+  // Focus shows as a brighter border inside the field, not a ring outside it,
+  // so every field keeps the same edges as the button below
+  const inputClass = "h-10 bg-foreground/[0.04] border-foreground/10 text-sm placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:border-foreground/35 focus-visible:bg-foreground/[0.06]";
+  const setupStep = isFirstTime && view === "login" ? 1 : view === "setup-recovery-code" ? 2 : null;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-6">
+    <div className="relative min-h-screen flex flex-col items-center justify-center bg-background p-6 overflow-hidden">
+      <SignInBackdrop unlocking={unlocking} />
+
       <AnimatePresence>
         {ready && (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
-            className="w-full max-w-xs"
+            animate={unlocking ? { opacity: 0, y: -8, scale: 1.02, filter: "blur(4px)" } : { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
+            transition={unlocking ? { duration: 0.26, ease: [0.22, 1, 0.36, 1] } : MOTION}
+            className="relative z-10 w-full max-w-sm flex flex-col items-center"
           >
+            <LockClock />
+
+            <div className={`tm-glass-dense w-full rounded-2xl border p-6 ${shakeClassName ?? ""}`}>
+            {setupStep && <SetupSteps step={setupStep} />}
+
             {/* Brand mark */}
             <div className="flex flex-col items-center mb-8">
               <div className="size-10 rounded-full bg-foreground/[0.06] flex items-center justify-center mb-4">
@@ -132,11 +166,20 @@ function LoginContent() {
                   <circle cx="12" cy="4.5" r="1.7" opacity="1"/><circle cx="17.1" cy="7" r="1.27" opacity="0.56"/><circle cx="12" cy="9.5" r="0.72" opacity="0.12"/><circle cx="6.5" cy="12" r="1.27" opacity="0.56"/><circle cx="12" cy="14.5" r="1.7" opacity="1"/><circle cx="17.5" cy="17" r="1.27" opacity="0.56"/><circle cx="12" cy="19.5" r="0.72" opacity="0.12"/><circle cx="12" cy="4.5" r="0.72" opacity="0.12"/><circle cx="6.5" cy="7" r="1.27" opacity="0.56"/><circle cx="12" cy="9.5" r="1.7" opacity="1"/><circle cx="17.5" cy="12" r="1.27" opacity="0.56"/><circle cx="12" cy="14.5" r="0.72" opacity="0.12"/><circle cx="6.5" cy="17" r="1.27" opacity="0.56"/><circle cx="12" cy="19.5" r="1.7" opacity="1"/>
                 </svg>
               </div>
-              <h1 className="text-lg font-medium tracking-tight text-foreground">
-                {view === "recover" ? "Reset password" :
-                 view === "setup-recovery-code" || view === "recovery-success" ? "Recovery code" :
-                 isFirstTime ? "Welcome to Talome" : "Welcome back"}
-              </h1>
+              <AnimatePresence mode="popLayout" initial={false}>
+                <motion.h1
+                  key={view === "recover" ? "recover" : view === "setup-recovery-code" || view === "recovery-success" ? "code" : "welcome"}
+                  initial={{ opacity: 0, y: 4, filter: "blur(2px)" }}
+                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                  exit={{ opacity: 0, y: -4, filter: "blur(2px)" }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                  className="text-lg font-medium tracking-tight text-foreground"
+                >
+                  {view === "recover" ? "Reset password" :
+                   view === "setup-recovery-code" || view === "recovery-success" ? "Recovery code" :
+                   isFirstTime ? "Welcome to Talome" : "Welcome back"}
+                </motion.h1>
+              </AnimatePresence>
               <p className="text-sm text-muted-foreground mt-1">
                 {view === "recover"
                   ? "Enter your recovery code to set a new password."
@@ -163,16 +206,18 @@ function LoginContent() {
                   className={inputClass}
                 />
                 <Input
+                  ref={passwordRef}
                   type="password"
                   placeholder={isFirstTime ? "Choose a password (min 8 chars)" : "Password"}
                   value={password}
                   onChange={(e) => { setPassword(e.target.value); if (error) setError(""); }}
                   autoComplete={isFirstTime ? "new-password" : "current-password"}
+                  aria-invalid={error ? true : undefined}
                   className={inputClass}
                 />
                 <ErrorMessage error={error} />
-                <Button type="submit" className="w-full h-10" disabled={loading || !password || (isFirstTime && password.length < 8)}>
-                  {loading ? "..." : isFirstTime ? "Create account" : "Sign in"}
+                <Button type="submit" className="w-full h-10" disabled={loading || unlocking || !password || (isFirstTime && password.length < 8)}>
+                  {loading || unlocking ? <Spinner className="size-4" /> : isFirstTime ? "Create account" : "Sign in"}
                 </Button>
               </form>
             )}
@@ -208,7 +253,7 @@ function LoginContent() {
                 />
                 <ErrorMessage error={error} />
                 <Button type="submit" className="w-full h-10" disabled={loading || !username || !recoveryCode || newPassword.length < 8}>
-                  {loading ? "..." : "Reset password"}
+                  {loading ? <Spinner className="size-4" /> : "Reset password"}
                 </Button>
               </form>
             )}
@@ -244,14 +289,102 @@ function LoginContent() {
               </div>
             )}
 
+            </div>
+
             {/* Footer */}
-            <p className="text-center text-sm text-muted-foreground mt-8">
+            <p className="text-center text-sm text-foreground/70 mt-6">
               Your data stays on your server
             </p>
           </motion.div>
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/**
+ * The desktop wallpaper chosen on this device fills the screen behind sign-in,
+ * under a flat scrim so the form stays legible on any image.
+ */
+function subscribeToWallpaper(onChange: () => void) {
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+}
+
+function SignInBackdrop({ unlocking }: { unlocking: boolean }) {
+  const stored = useSyncExternalStore(subscribeToWallpaper, () => readStoredWallpaper() ?? DEFAULT_SIGN_IN_WALLPAPER, () => null);
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const reduceMotion = useReducedMotion();
+
+  if (!stored) return null;
+  const url = failed ? DEFAULT_SIGN_IN_WALLPAPER : stored;
+  return (
+    <div className="absolute inset-0" aria-hidden>
+      {/* eslint-disable-next-line @next/next/no-img-element -- local, data: or remote wallpaper URLs */}
+      <img
+        src={url}
+        alt=""
+        onLoad={() => setLoaded(true)}
+        onError={() => { if (url !== DEFAULT_SIGN_IN_WALLPAPER) setFailed(true); }}
+        className="absolute inset-0 size-full object-cover"
+        style={{
+          opacity: loaded ? 1 : 0,
+          transform: reduceMotion ? "scale(1)" : unlocking ? "scale(1.04)" : loaded ? "scale(1)" : "scale(1.03)",
+          transition: reduceMotion ? "none" : unlocking
+            ? "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)"
+            : "opacity 180ms ease-out, transform 180ms ease-out",
+        }}
+      />
+      {/* The scrim lifts as you sign in, so the desktop seems to come forward */}
+      <div className={`absolute inset-0 bg-background/45 transition-opacity duration-300 ${unlocking ? "opacity-0" : ""}`} />
+    </div>
+  );
+}
+
+/** Time and date above the sign-in card, like a lock screen. */
+function subscribeToClock(onTick: () => void) {
+  const timer = setInterval(onTick, 10_000);
+  return () => clearInterval(timer);
+}
+
+/** Current time, rounded to the minute so the snapshot is stable between ticks. */
+function clockSnapshot(): number {
+  return Math.floor(Date.now() / 60_000) * 60_000;
+}
+
+function LockClock() {
+  const minute = useSyncExternalStore(subscribeToClock, clockSnapshot, () => null);
+
+  if (minute === null) return <div className="h-16 mb-6" />;
+  const now = new Date(minute);
+  return (
+    <div className="mb-6 text-center select-none">
+      <p className="text-2xl font-medium tabular-nums text-foreground">
+        <PopText value={now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} />
+      </p>
+      <p className="text-sm text-foreground/70 mt-1">
+        {now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
+      </p>
+    </div>
+  );
+}
+
+/** First run: where the person is in setting up their server. */
+function SetupSteps({ step }: { step: 1 | 2 }) {
+  const steps = ["Create your account", "Save your recovery code"];
+  return (
+    <ol className="flex items-center justify-center gap-2 mb-6" aria-label={`Step ${step} of ${steps.length}`}>
+      {steps.map((label, i) => (
+        <li key={label} className="flex items-center gap-2">
+          <span
+            className={`h-1.5 rounded-full transition-all duration-150 ease-out ${i + 1 === step ? "w-6 bg-foreground" : i + 1 < step ? "w-1.5 bg-foreground/60" : "w-1.5 bg-foreground/20"}`}
+            title={label}
+          />
+        </li>
+      ))}
+      <span className="sr-only">{steps[step - 1]}</span>
+    </ol>
   );
 }
 

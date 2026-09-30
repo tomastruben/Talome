@@ -45,12 +45,15 @@ interface NotificationsBellProps {
   triggerClassName?: string;
   iconSize?: number;
   dotClassName?: string;
+  /** Which side of the trigger the panel opens on */
+  side?: "top" | "bottom";
 }
 
 export function NotificationsBell({
   triggerClassName,
   iconSize = 18,
   dotClassName,
+  side = "bottom",
 }: NotificationsBellProps = {}) {
   const [open, setOpen] = useState(false);
   const [detailNotification, setDetailNotification] = useState<(typeof notifications)[number] | null>(null);
@@ -98,8 +101,9 @@ export function NotificationsBell({
       </PopoverTrigger>
 
       <PopoverContent
+        side={side}
         align="end"
-        sideOffset={6}
+        sideOffset={side === "top" ? 12 : 6}
         className="w-80 p-0 overflow-hidden rounded-xl shadow-lg"
       >
         {/* Header */}

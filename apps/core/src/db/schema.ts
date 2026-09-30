@@ -136,6 +136,34 @@ export const mcpTokens = sqliteTable("mcp_tokens", {
   tokenHash: text("token_hash").notNull(),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   lastUsedAt: text("last_used_at"),
+  /** JSON-serialized McpTokenScope — what this token may do. NULL is treated as read-only. */
+  scope: text("scope"),
+  /** ISO timestamp after which the token stops working; NULL = never expires */
+  expiresAt: text("expires_at"),
+});
+
+/**
+ * Server-issued approvals for destructive tool calls from non-interactive callers
+ * (MCP clients, messaging, automations, background loops). Bound to one actor,
+ * one tool and one exact set of arguments, and consumed by a single execution.
+ */
+export const toolApprovals = sqliteTable("tool_approvals", {
+  id: text("id").primaryKey(),
+  /** Short code a human can type to approve over Telegram/Discord */
+  code: text("code").notNull(),
+  toolName: text("tool_name").notNull(),
+  tier: text("tier", { enum: ["read", "modify", "destructive"] }).notNull(),
+  actorKey: text("actor_key").notNull(),
+  actorLabel: text("actor_label").notNull(),
+  argsDigest: text("args_digest").notNull(),
+  /** Redacted, truncated arguments shown to the approver */
+  argsPreview: text("args_preview").notNull().default(""),
+  status: text("status", { enum: ["pending", "approved", "denied", "used", "expired"] }).notNull().default("pending"),
+  createdAt: text("created_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  decidedAt: text("decided_at"),
+  decidedBy: text("decided_by"),
+  usedAt: text("used_at"),
 });
 
 export const memories = sqliteTable("memories", {
@@ -174,6 +202,21 @@ export const automationRuns = sqliteTable("automation_runs", {
   error: text("error"),
   actionsRun: integer("actions_run").notNull().default(0),
   resultSummary: text("result_summary"),
+  /** running → succeeded | failed | waiting_approval | interrupted */
+  status: text("status", { enum: ["running", "succeeded", "failed", "waiting_approval", "interrupted"] }),
+  finishedAt: text("finished_at"),
+  /** Process holding the run; the lease is renewed while it executes */
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: text("lease_expires_at"),
+  workflowVersion: integer("workflow_version"),
+  triggerType: text("trigger_type"),
+  /** JSON trigger payload, so an interrupted run can resume with the same inputs */
+  triggerData: text("trigger_data"),
+  /** JSON steps as they were when the run started — resumes never pick up later edits */
+  stepsSnapshot: text("steps_snapshot"),
+  /** JSON step outputs accumulated so far */
+  context: text("context"),
+  resumeCount: integer("resume_count").notNull().default(0),
 });
 
 export const automationStepRuns = sqliteTable("automation_step_runs", {
@@ -188,6 +231,12 @@ export const automationStepRuns = sqliteTable("automation_step_runs", {
   output: text("output"),
   error: text("error"),
   blocked: integer("blocked", { mode: "boolean" }).notNull().default(false),
+  stepIndex: integer("step_index"),
+  /** running → succeeded | failed | blocked | unknown (interrupted mid-step) | retried */
+  status: text("status", { enum: ["running", "succeeded", "failed", "blocked", "unknown", "retried"] }),
+  finishedAt: text("finished_at"),
+  /** Approval request this step is waiting on */
+  approvalId: text("approval_id"),
 });
 
 export const widgetManifests = sqliteTable("widget_manifests", {

@@ -11,6 +11,7 @@ import {
   LayoutAlignLeftIcon,
   DashboardCircleIcon,
   ArrowLeft01Icon,
+  ArrowRight01Icon,
   Add01Icon,
   CheckmarkCircle02Icon,
   AlertCircleIcon,
@@ -26,6 +27,17 @@ import {
   MessageContent,
 } from "@/components/ai-elements/message";
 import { ChatInputBar } from "@/components/ai-elements/chat-input-bar";
+import { VoiceMode } from "@/components/assistant/voice-mode";
+import { ThinkingIndicator } from "@/components/assistant/thinking-indicator";
+import { ThinkingOrb } from "thinking-orbs";
+import {
+  SourceList,
+  SourceListItem,
+  SourceListSection,
+  WINDOW_SIDEBAR_REPLACES,
+  WindowSidebarLayout,
+} from "@/components/ui/source-list";
+import { pendingActivity } from "@/lib/agent-activity";
 import { ChatMessage } from "@/components/chat/chat-message";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { AssistantChatError } from "@/components/assistant/chat-error";
@@ -95,22 +107,11 @@ function getDateGroup(dateStr: string): string {
   return "Older";
 }
 
-function ThinkingMessage() {
+function ThinkingMessage({ label }: { label: string }) {
   return (
     <Message from="assistant">
       <MessageContent>
-        <div className="flex items-center gap-1.5 py-1">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="h-1.5 w-1.5 rounded-full bg-foreground/40"
-              style={{
-                animation: "thinking-dot 1.4s ease-in-out infinite",
-                animationDelay: `${i * 150}ms`,
-              }}
-            />
-          ))}
-        </div>
+        <ThinkingIndicator label={label} />
       </MessageContent>
     </Message>
   );
@@ -358,6 +359,7 @@ export default function AssistantPage() {
   } | null>(null);
 
   const isActive = status === "streaming" || status === "submitted";
+  const pendingLabel = pendingActivity(messages, status);
   const hasBlueprint = !!blueprint.identity?.name;
 
   // `dismissed` hides the chat view without stopping the stream.
@@ -655,6 +657,36 @@ export default function AssistantPage() {
     return groups;
   }, [conversations]);
 
+  // Voice conversation: speaks the latest assistant reply when it finishes
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const lastAssistant = useMemo(() => {
+    const message = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!message) return null;
+    const text = message.parts
+      .map((part) => (part.type === "text" ? part.text : ""))
+      .join("")
+      .trim();
+    const waiting = message.parts.find((part) => (part as { state?: string }).state === "approval-requested");
+    const pendingApproval = waiting
+      ? (waiting.type === "dynamic-tool" ? (waiting as { toolName: string }).toolName : waiting.type.replace(/^tool-/, "")).replace(/_/g, " ")
+      : undefined;
+    return { id: message.id, text, pendingApproval };
+  }, [messages]);
+  const voiceHistory = useCallback(
+    () =>
+      messages
+        .map((m) => ({
+          role: m.role,
+          content: m.parts.map((part) => (part.type === "text" ? part.text : "")).join("").trim().slice(0, 2000),
+        }))
+        .filter((m): m is { role: "user" | "assistant"; content: string } => (m.role === "user" || m.role === "assistant") && m.content.length > 0),
+    [messages],
+  );
+  const sendVoiceMessage = useCallback((text: string) => {
+    setDismissed(false);
+    handleSubmit(text, `Current page: ${pathname}. The user is speaking in voice mode — answer briefly and conversationally, without tables or code unless asked.`);
+  }, [handleSubmit, pathname]);
+
   const onSubmit = useCallback(
     ({ text, files }: { text: string; files: FileUIPart[] }) => {
       setDismissed(false);
@@ -691,9 +723,7 @@ export default function AssistantPage() {
             isStreaming={isActive && index === messages.length - 1}
           />
         ))}
-        {isActive && messages[messages.length - 1]?.role === "user" && (
-          <ThinkingMessage />
-        )}
+        {pendingLabel && <ThinkingMessage label={pendingLabel} />}
         {error && <AssistantChatError error={error} onDismiss={clearError} />}
       </ConversationContent>
       <ConversationScrollButton />
@@ -707,24 +737,32 @@ export default function AssistantPage() {
               <AssistantChatError error={error} onDismiss={clearError} />
             </div>
           ) : null}
+          <div className="mb-4 flex size-12 items-center justify-center" aria-hidden>
+            <ThinkingOrb state="breathing" size={32} />
+          </div>
           <h2 className="text-xl sm:text-2xl font-medium tracking-tight text-foreground mb-6 sm:mb-8">
             How can I help?
           </h2>
 
-          <div className="grid grid-cols-2 gap-2 w-full max-w-sm mb-8 sm:mb-10">
+          <div className="tm-rise grid grid-cols-2 gap-2 w-full max-w-xl mb-8 sm:mb-10">
             {suggestions.map((s, i) => (
               <button
                 key={`${i}-${s.label}`}
                 onClick={() => handleSuggestion(s.prompt)}
-                className="rounded-2xl px-3 sm:px-4 py-3 text-sm text-left text-muted-foreground bg-foreground/[0.04] active:bg-foreground/[0.08] transition-all duration-150 hover:bg-foreground/[0.07] hover:text-foreground"
+                className="group/suggestion flex items-center gap-2 rounded-2xl px-3 sm:px-4 py-3 text-sm text-left text-muted-foreground bg-foreground/[0.04] transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/[0.07] hover:text-foreground active:scale-[0.98] active:bg-foreground/[0.08]"
               >
-                {s.label}
+                <span className="min-w-0 flex-1 truncate">{s.label}</span>
+                <HugeiconsIcon
+                  icon={ArrowRight01Icon}
+                  size={14}
+                  className="shrink-0 -translate-x-1 opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/suggestion:translate-x-0 group-hover/suggestion:opacity-60"
+                />
               </button>
             ))}
           </div>
 
           {conversations.length > 0 && (
-            <div className="w-full max-w-sm">
+            <div className={`w-full max-w-xl ${WINDOW_SIDEBAR_REPLACES}`}>
               {Object.entries(grouped).map(([group, convs]) => {
                 const isExpanded = !!expandedGroups[group];
                 const visibleConvs = isExpanded ? convs : convs.slice(0, MAX_VISIBLE_HISTORY_PER_GROUP);
@@ -803,6 +841,7 @@ export default function AssistantPage() {
       status={status as ChatStatus}
       onSubmit={onSubmit}
       onStop={stop}
+      onVoiceMode={() => setVoiceOpen(true)}
       placeholder="Ask Talome anything..."
       extraTools={
         <>
@@ -856,9 +895,39 @@ export default function AssistantPage() {
     />
   );
 
+  // In a desktop window, chat history stays one click away in a sidebar
+  const sidebar = (
+    <SourceList label="Chats">
+      <SourceListSection>
+        <SourceListItem icon={Add01Icon} label="New Chat" active={!showingChat} onSelect={() => void handleNew()} />
+      </SourceListSection>
+      {Object.entries(grouped).map(([group, convs]) => (
+        <SourceListSection key={group} title={group}>
+          {convs.map((conv) => (
+            <SourceListItem
+              key={conv.id}
+              label={conv.title}
+              active={showingChat && activeId === conv.id}
+              onSelect={() => { setActiveId(conv.id); setDismissed(false); }}
+            />
+          ))}
+        </SourceListSection>
+      ))}
+    </SourceList>
+  );
+
   return (
+    <WindowSidebarLayout sidebar={sidebar}>
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden overscroll-none">
       <ConfirmDialog />
+      <VoiceMode
+        open={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        onSend={sendVoiceMessage}
+        status={status as ChatStatus}
+        lastAssistant={lastAssistant}
+        history={voiceHistory}
+      />
       {!embeddedFrame && (
         <AssistantHeader showingChat={showingChat} onBack={handleBack} onNew={handleNew} />
       )}
@@ -904,5 +973,6 @@ export default function AssistantPage() {
         </div>
       )}
     </div>
+    </WindowSidebarLayout>
   );
 }

@@ -14,7 +14,21 @@ import { SearchField } from "@/components/ui/search-field";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { ServiceStackList } from "@/components/dashboard/service-stack-list";
 import { useServiceStacks } from "@/hooks/use-service-stacks";
-import { HugeiconsIcon, Package01Icon } from "@/components/icons";
+import {
+  HugeiconsIcon,
+  CloudServerIcon,
+  Layers01Icon,
+  Package01Icon,
+  PlayIcon,
+  StopIcon,
+} from "@/components/icons";
+import {
+  SourceList,
+  SourceListItem,
+  SourceListSection,
+  WINDOW_SIDEBAR_REPLACES,
+  WindowSidebarLayout,
+} from "@/components/ui/source-list";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { Button } from "@/components/ui/button";
 
@@ -85,11 +99,32 @@ export default function ContainersPage() {
     });
   }, [stacks, search, statusFilter, sourceFilter]);
 
+  // In a desktop window the two filter groups become sidebar sections
+  const count = (n: number) => (!isLoading && n > 0 ? n : undefined);
+  const sidebar = (
+    <SourceList label="Services sidebar">
+      <SourceListSection title="Status">
+        <SourceListItem icon={Layers01Icon} label="All Services" active={statusFilter === "all"} trailing={count(stacks.length)} onSelect={() => setStatusFilter("all")} />
+        <SourceListItem icon={PlayIcon} iconClassName="text-status-healthy" label="Running" active={statusFilter === "running"} trailing={count(runningCount)} onSelect={() => setStatusFilter("running")} />
+        <SourceListItem icon={StopIcon} iconClassName="text-status-critical" label="Stopped" active={statusFilter === "stopped"} trailing={count(stoppedCount)} onSelect={() => setStatusFilter("stopped")} />
+      </SourceListSection>
+      {!isLoading && hasExternal && (
+        <SourceListSection title="Source">
+          <SourceListItem icon={Layers01Icon} label="Everywhere" active={sourceFilter === "all"} onSelect={() => setSourceFilter("all")} />
+          <SourceListItem icon={Package01Icon} label="Managed by Talome" active={sourceFilter === "managed"} trailing={count(managedCount)} onSelect={() => setSourceFilter("managed")} />
+          <SourceListItem icon={CloudServerIcon} label="External" active={sourceFilter === "external"} trailing={count(externalCount)} onSelect={() => setSourceFilter("external")} />
+        </SourceListSection>
+      )}
+    </SourceList>
+  );
+
   return (
+    <WindowSidebarLayout sidebar={sidebar}>
     <div className="grid gap-5">
       {/* Controls */}
       <div className="page-controls-row flex-wrap gap-2">
         <Tabs
+          className={WINDOW_SIDEBAR_REPLACES}
           value={statusFilter}
           onValueChange={(v) => setStatusFilter(v as StatusFilter)}
         >
@@ -120,6 +155,7 @@ export default function ContainersPage() {
         {/* Source filter — only visible when external containers exist */}
         {!isLoading && hasExternal && (
           <Tabs
+            className={WINDOW_SIDEBAR_REPLACES}
             value={sourceFilter}
             onValueChange={(v) => setSourceFilter(v as SourceFilter)}
           >
@@ -216,5 +252,6 @@ export default function ContainersPage() {
         <ServiceStackList stacks={filtered} />
       )}
     </div>
+    </WindowSidebarLayout>
   );
 }

@@ -857,6 +857,77 @@ export function runMigrations() {
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_attempts_run_id ON setup_attempts(run_id)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_runs_status ON setup_runs(status)`);
 
+  // ── MCP token scopes + server-issued tool approvals ──────────────────────
+  try {
+    db.run(sql`ALTER TABLE mcp_tokens ADD COLUMN scope TEXT`);
+  } catch {
+    // Column already exists — ignore
+  }
+  try {
+    db.run(sql`ALTER TABLE mcp_tokens ADD COLUMN expires_at TEXT`);
+  } catch {
+    // Column already exists — ignore
+  }
+  // Tokens created before scopes existed had full access; keep them working
+  // unchanged. New tokens are created with an explicit (read-only by default) scope.
+  const scopesMigrated = db.get(sql`SELECT 1 FROM schema_versions WHERE version = 16`);
+  if (!scopesMigrated) {
+    db.run(sql`UPDATE mcp_tokens SET scope = ${JSON.stringify({ maxTier: "destructive", domains: "*", apps: "*" })} WHERE scope IS NULL`);
+  }
+
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS tool_approvals (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      actor_key TEXT NOT NULL,
+      actor_label TEXT NOT NULL,
+      args_digest TEXT NOT NULL,
+      args_preview TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      decided_at TEXT,
+      decided_by TEXT,
+      used_at TEXT
+    )
+  `);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_tool_approvals_lookup ON tool_approvals(actor_key, tool_name, args_digest, status)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_tool_approvals_status ON tool_approvals(status, created_at)`);
+
+  // ── Durable automation runs ──────────────────────────────────────────────
+  for (const column of [
+    "status TEXT",
+    "finished_at TEXT",
+    "lease_owner TEXT",
+    "lease_expires_at TEXT",
+    "workflow_version INTEGER",
+    "trigger_type TEXT",
+    "trigger_data TEXT",
+    "steps_snapshot TEXT",
+    "context TEXT",
+    "resume_count INTEGER NOT NULL DEFAULT 0",
+  ]) {
+    try {
+      db.run(sql.raw(`ALTER TABLE automation_runs ADD COLUMN ${column}`));
+    } catch {
+      // Column already exists — ignore
+    }
+  }
+  for (const column of ["step_index INTEGER", "status TEXT", "finished_at TEXT", "approval_id TEXT"]) {
+    try {
+      db.run(sql.raw(`ALTER TABLE automation_step_runs ADD COLUMN ${column}`));
+    } catch {
+      // Column already exists — ignore
+    }
+  }
+  // Runs recorded before durable execution were written only after they finished
+  db.run(sql`UPDATE automation_runs SET status = CASE WHEN success = 1 THEN 'succeeded' ELSE 'failed' END WHERE status IS NULL`);
+  db.run(sql`UPDATE automation_step_runs SET status = CASE WHEN blocked = 1 THEN 'blocked' WHEN success = 1 THEN 'succeeded' ELSE 'failed' END WHERE status IS NULL`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_automation_runs_status ON automation_runs(status, lease_expires_at)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_automation_step_runs_run ON automation_step_runs(run_id, step_index)`);
+
   // ── Record schema versions ─────────────────────────────────────────────
   recordMigration(1, "Initial schema: users, conversations, messages, settings, audit_log");
   recordMigration(2, "App store: store_sources, app_catalog, installed_apps");
@@ -873,6 +944,8 @@ export function runMigrations() {
   recordMigration(13, "Optimization jobs: ai_diagnosis column for AI-first error handling");
   recordMigration(14, "Installed apps: display_name column for user-defined app names");
   recordMigration(15, "Setup loop: setup_runs and setup_attempts for autonomous app configuration");
+  recordMigration(16, "MCP token scopes and expiry; server-issued tool approvals");
+  recordMigration(17, "Durable automation runs: status, leases, step transitions, resumable approvals");
 
   console.log("Database migrations complete");
 }
