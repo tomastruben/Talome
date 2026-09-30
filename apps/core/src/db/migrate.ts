@@ -896,6 +896,38 @@ export function runMigrations() {
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_tool_approvals_lookup ON tool_approvals(actor_key, tool_name, args_digest, status)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_tool_approvals_status ON tool_approvals(status, created_at)`);
 
+  // ── Durable automation runs ──────────────────────────────────────────────
+  for (const column of [
+    "status TEXT",
+    "finished_at TEXT",
+    "lease_owner TEXT",
+    "lease_expires_at TEXT",
+    "workflow_version INTEGER",
+    "trigger_type TEXT",
+    "trigger_data TEXT",
+    "steps_snapshot TEXT",
+    "context TEXT",
+    "resume_count INTEGER NOT NULL DEFAULT 0",
+  ]) {
+    try {
+      db.run(sql.raw(`ALTER TABLE automation_runs ADD COLUMN ${column}`));
+    } catch {
+      // Column already exists — ignore
+    }
+  }
+  for (const column of ["step_index INTEGER", "status TEXT", "finished_at TEXT", "approval_id TEXT"]) {
+    try {
+      db.run(sql.raw(`ALTER TABLE automation_step_runs ADD COLUMN ${column}`));
+    } catch {
+      // Column already exists — ignore
+    }
+  }
+  // Runs recorded before durable execution were written only after they finished
+  db.run(sql`UPDATE automation_runs SET status = CASE WHEN success = 1 THEN 'succeeded' ELSE 'failed' END WHERE status IS NULL`);
+  db.run(sql`UPDATE automation_step_runs SET status = CASE WHEN blocked = 1 THEN 'blocked' WHEN success = 1 THEN 'succeeded' ELSE 'failed' END WHERE status IS NULL`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_automation_runs_status ON automation_runs(status, lease_expires_at)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_automation_step_runs_run ON automation_step_runs(run_id, step_index)`);
+
   // ── Record schema versions ─────────────────────────────────────────────
   recordMigration(1, "Initial schema: users, conversations, messages, settings, audit_log");
   recordMigration(2, "App store: store_sources, app_catalog, installed_apps");
@@ -913,6 +945,7 @@ export function runMigrations() {
   recordMigration(14, "Installed apps: display_name column for user-defined app names");
   recordMigration(15, "Setup loop: setup_runs and setup_attempts for autonomous app configuration");
   recordMigration(16, "MCP token scopes and expiry; server-issued tool approvals");
+  recordMigration(17, "Durable automation runs: status, leases, step transitions, resumable approvals");
 
   console.log("Database migrations complete");
 }

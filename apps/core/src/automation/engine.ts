@@ -1,6 +1,5 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { randomUUID } from "node:crypto";
 import { db, schema } from "../db/index.js";
 import { eq } from "drizzle-orm";
 import { writeAuditEntry } from "../db/audit.js";
@@ -11,7 +10,9 @@ import { runAutomationPrompt, getToolTier } from "../ai/agent.js";
 import { getAutomationSafeToolNames } from "../ai/automation-safe-tools.js";
 import { getAllRegisteredTools } from "../ai/tool-registry.js";
 import { createLogger } from "../utils/logger.js";
-import { authorizeToolCall } from "../ai/tool-gateway.js";
+import * as runStore from "./run-store.js";
+import { authorizeToolCall, checkToolPolicy, getSecurityMode } from "../ai/tool-gateway.js";
+import { consumeApproval, requestApproval } from "../approval/tool-approvals.js";
 
 const log = createLogger("automation-engine");
 const execAsync = promisify(exec);
@@ -56,6 +57,8 @@ export interface StepRunResult {
   output?: string;
   error?: string;
   blocked?: boolean;
+  /** Approval request this step is waiting on (require_approval steps) */
+  approvalId?: string;
   durationMs: number;
 }
 
@@ -157,6 +160,7 @@ async function runStep(
     output?: string,
     error?: string,
     blocked?: boolean,
+    approvalId?: string,
   ): StepRunResult => ({
     stepId: step.id,
     stepType: step.type,
@@ -164,8 +168,29 @@ async function runStep(
     output,
     error,
     blocked,
+    approvalId,
     durationMs: Date.now() - startedAt,
   });
+
+  const actor = { kind: "automation", name: ctx.automationName, id: ctx.automationId } as const;
+
+  /**
+   * "require_approval" steps wait for a person: the first attempt files an approval
+   * request and blocks; once an admin approves it, the resumed run consumes the
+   * approval (bound to this automation, tool and arguments) and proceeds.
+   */
+  const waitForApproval = (toolName: string, tier: "read" | "modify" | "destructive", args: Record<string, unknown>) => {
+    if (consumeApproval(actor, toolName, args)) return null;
+    const request = requestApproval(actor, toolName, tier, args);
+    writeAuditEntry(`Automation step waiting for approval: ${toolName}`, tier, ctx.automationId, false);
+    return makeResult(
+      false,
+      undefined,
+      `Step "${toolName}" is waiting for approval (request ${request.code}) in Settings > Security`,
+      true,
+      request.id,
+    );
+  };
 
   try {
     switch (step.type) {
@@ -179,9 +204,8 @@ async function runStep(
       case "tool_action": {
         const policy = step.approvalPolicy ?? "require_approval";
         if (policy === "require_approval") {
-          const msg = `Step "${step.toolName}" requires approval before running`;
-          writeAuditEntry(`Automation step blocked: ${step.toolName}`, "destructive", ctx.automationId, false);
-          return makeResult(false, undefined, msg, true);
+          const waiting = waitForApproval(step.toolName, getToolTier(step.toolName), (step.args ?? {}) as Record<string, unknown>);
+          if (waiting) return waiting;
         }
 
         // Validate tool is in the automation-safe list
@@ -200,7 +224,7 @@ async function runStep(
         // Same authorization as every other caller — locked mode applies to automations too
         const stepArgs = (step.args ?? {}) as Record<string, unknown>;
         const tier = getToolTier(step.toolName);
-        const decision = authorizeToolCall(step.toolName, tier, stepArgs, { kind: "automation", name: ctx.automationName });
+        const decision = authorizeToolCall(step.toolName, tier, stepArgs, actor);
         if (!decision.allowed) {
           writeAuditEntry(`Automation ${decision.auditAction}`, tier, ctx.automationId, false);
           return makeResult(false, undefined, decision.reason);
@@ -214,13 +238,12 @@ async function runStep(
 
       case "ai_prompt": {
         const policy = step.approvalPolicy ?? "auto";
+        const interpolatedPrompt = interpolate(step.promptTemplate, ctx);
         if (policy === "require_approval") {
-          const msg = `AI Prompt step requires approval before running`;
-          writeAuditEntry(`Automation step blocked: ai_prompt`, "modify", ctx.automationId, false);
-          return makeResult(false, undefined, msg, true);
+          const waiting = waitForApproval("automation_ai_prompt", "modify", { prompt: interpolatedPrompt, allowedTools: step.allowedTools });
+          if (waiting) return waiting;
         }
 
-        const interpolatedPrompt = interpolate(step.promptTemplate, ctx);
         const safeToolNames = getAutomationSafeToolNames();
         const allowed = step.allowedTools.filter((t) => safeToolNames.has(t));
 
@@ -329,6 +352,14 @@ export async function runActions(
       return { success: false, error: message, actionsRun, results };
     }
 
+    // Locked mode blocks every non-read action, whatever the automation says
+    if (checkToolPolicy(actionTier(action.type), getSecurityMode()) === "block") {
+      const message = `Action "${action.type}" is blocked — security mode is locked`;
+      writeAuditEntry(`Automation blocked (locked mode): ${action.type}`, actionTier(action.type), context.automationId, false);
+      results.push({ stepId, stepType: action.type, success: false, error: message, blocked: true, durationMs: 0 });
+      return { success: false, error: message, actionsRun, results };
+    }
+
     const start = Date.now();
     try {
       switch (action.type) {
@@ -381,33 +412,184 @@ export async function runActions(
   return { success: true, error: null, actionsRun, results };
 }
 
-// ── Per-step run record persistence ───────────────────────────────────────────
+// ── Durable execution ──────────────────────────────────────────────────────────
 
-function persistStepRuns(
-  runId: string,
-  automationId: string,
-  results: StepRunResult[],
-  startedAt: string,
-): void {
-  for (const r of results) {
-    try {
-      db.insert(schema.automationStepRuns).values({
-        id: randomUUID(),
-        runId,
-        automationId,
-        stepId: r.stepId,
-        stepType: r.stepType,
-        startedAt,
-        durationMs: r.durationMs,
-        success: r.success,
-        output: r.output ?? null,
-        error: r.error ?? null,
-        blocked: r.blocked ?? false,
-      }).run();
-    } catch (err) {
-      log.error(`Failed to persist step run for ${r.stepId}`, err);
-    }
+type AutomationRow = typeof schema.automations.$inferSelect;
+
+/** Steps that can safely run twice: no side effects, or harmless ones (deduplicated notifications). */
+function isRetrySafe(step: AutomationStep): boolean {
+  switch (step.type) {
+    case "condition":
+    case "notify":
+      return true;
+    case "tool_action":
+      return getToolTier(step.toolName) === "read";
+    case "ai_prompt":
+      return step.allowedTools.every((name) => getToolTier(name) === "read");
   }
+}
+
+function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Heartbeat that keeps this process's lease alive while a long step runs. */
+function startHeartbeat(runId: string): () => void {
+  const timer = setInterval(() => {
+    try {
+      runStore.renewLease(runId);
+    } catch (err) {
+      log.error(`Lease renewal failed for run ${runId}`, err);
+    }
+  }, runStore.HEARTBEAT_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
+function completedRunResult(stepRows: runStore.StepRunRow[]): StepRunResult[] {
+  return stepRows
+    .filter((r) => r.status !== "retried")
+    .map((r) => ({
+      stepId: r.stepId,
+      stepType: r.stepType,
+      success: r.success,
+      output: r.output ?? undefined,
+      error: r.error ?? undefined,
+      blocked: r.blocked,
+      approvalId: r.approvalId ?? undefined,
+      durationMs: r.durationMs ?? 0,
+    }));
+}
+
+function onRunFinished(runId: string, automationName: string, automationId: string, result: RunResult, status: runStore.RunStatus): void {
+  if (status === "failed" && result.error) {
+    writeNotification("warning", `Automation "${automationName}" failed`, result.error, automationId);
+  }
+  if (status === "waiting_approval") {
+    writeNotification("info", `Automation "${automationName}" is waiting for approval`, result.error ?? "", automationId);
+  }
+  const auto = db.select().from(schema.automations).where(eq(schema.automations.id, automationId)).get();
+  if (auto) {
+    db.update(schema.automations)
+      .set({ lastRunAt: new Date().toISOString(), runCount: auto.runCount + 1 })
+      .where(eq(schema.automations.id, automationId))
+      .run();
+  }
+  writeAuditEntry(`Automation ${status}: ${automationName}`, "modify", `${automationId} · run ${runId}`);
+}
+
+/**
+ * Execute a v2 run from its persisted state. The caller must hold the run's lease
+ * (createRun or acquireRun). Completed steps are skipped; each remaining step is
+ * recorded as running before it executes and finished after.
+ */
+export async function executeDurableRun(runId: string): Promise<RunResult> {
+  const run = runStore.getRun(runId);
+  if (!run) return { success: false, error: "Run not found", actionsRun: 0, results: [] };
+  const auto = db.select().from(schema.automations).where(eq(schema.automations.id, run.automationId)).get();
+  const automationName = auto?.name ?? run.automationId;
+  const steps = parseJson<AutomationStep[]>(run.stepsSnapshot, []);
+
+  const ctx: ExecutionContext = {
+    automationId: run.automationId,
+    automationName,
+    triggerType: run.triggerType ?? "manual",
+    triggerData: parseJson<Record<string, unknown>>(run.triggerData, {}),
+    stepOutputs: parseJson<Record<string, string>>(run.context, {}),
+  };
+
+  const done = runStore.getStepRuns(runId).filter((r) => r.status === "succeeded" || r.status === "failed");
+  const nextIndex = done.length > 0 ? Math.max(...done.map((r) => r.stepIndex ?? -1)) + 1 : 0;
+  let actionsRun = run.actionsRun;
+
+  const finish = (status: Exclude<runStore.RunStatus, "running">, error: string | null): RunResult => {
+    const results = completedRunResult(runStore.getStepRuns(runId));
+    const result: RunResult = { success: status === "succeeded", error, actionsRun, results };
+    runStore.finishRun(runId, status, { error, actionsRun, resultSummary: results });
+    onRunFinished(runId, automationName, run.automationId, result, status);
+    return result;
+  };
+
+  const stopHeartbeat = startHeartbeat(runId);
+  try {
+    for (let index = nextIndex; index < steps.length; index++) {
+      const step = steps[index];
+      const stepRunId = runStore.beginStep(runId, run.automationId, index, step.id, step.type);
+      const result = await runStep(step, ctx);
+      runStore.finishStep(stepRunId, result);
+
+      if (result.blocked) {
+        return finish(result.approvalId ? "waiting_approval" : "failed", result.error ?? "Step blocked");
+      }
+      if (!result.success) {
+        if (step.type === "condition" && (step.onFail ?? "stop") === "continue") {
+          runStore.saveContext(runId, ctx.stepOutputs, actionsRun);
+          continue;
+        }
+        const error = step.type === "condition" ? "Condition failed — automation stopped" : result.error ?? `Step ${step.type} failed`;
+        return finish("failed", error);
+      }
+      actionsRun++;
+      runStore.saveContext(runId, ctx.stepOutputs, actionsRun);
+    }
+    return finish("succeeded", null);
+  } finally {
+    stopHeartbeat();
+  }
+}
+
+/** Run one automation now, durably. Skips if a run of it is already in progress. */
+async function startAutomationRun(auto: AutomationRow, type: string, data: Record<string, unknown>): Promise<RunResult | null> {
+  if (runStore.hasActiveRun(auto.id)) {
+    log.warn(`Automation "${auto.name}" is already running — skipping overlapping trigger`);
+    writeAuditEntry(`Automation skipped (already running): ${auto.name}`, "read", auto.id, false);
+    return null;
+  }
+
+  if (auto.workflowVersion === 2 && auto.steps) {
+    let steps: AutomationStep[];
+    try {
+      steps = JSON.parse(auto.steps) as AutomationStep[];
+    } catch {
+      log.error(`Invalid steps JSON in automation ${auto.id}`);
+      return null;
+    }
+    const runId = runStore.createRun({ automationId: auto.id, workflowVersion: 2, triggerType: type, triggerData: data, steps });
+    return executeDurableRun(runId);
+  }
+
+  // Legacy v1 actions: the run is recorded before it starts so an interruption is
+  // visible, but v1 runs are never resumed (their actions are not step-recorded).
+  let actions: AutomationAction[];
+  try {
+    actions = JSON.parse(auto.actions) as AutomationAction[];
+  } catch {
+    log.error(`Invalid actions JSON in automation ${auto.id}`);
+    return null;
+  }
+  const runId = runStore.createRun({ automationId: auto.id, workflowVersion: 1, triggerType: type, triggerData: data });
+  const stopHeartbeat = startHeartbeat(runId);
+  let result: RunResult;
+  try {
+    result = await runActions(actions, { automationId: auto.id, automationName: auto.name, triggerType: type });
+  } finally {
+    stopHeartbeat();
+  }
+  const startedAt = runStore.getRun(runId)?.triggeredAt ?? new Date().toISOString();
+  result.results.forEach((r, index) => {
+    const stepRunId = runStore.beginStep(runId, auto.id, index, r.stepId, r.stepType);
+    db.update(schema.automationStepRuns).set({ startedAt }).where(eq(schema.automationStepRuns.id, stepRunId)).run();
+    runStore.finishStep(stepRunId, r);
+  });
+  const status = result.success ? "succeeded" : "failed";
+  runStore.finishRun(runId, status, { error: result.error, actionsRun: result.actionsRun, resultSummary: result.results });
+  onRunFinished(runId, auto.name, auto.id, result, status);
+  return result;
 }
 
 // ── Trigger entrypoint ────────────────────────────────────────────────────────
@@ -428,7 +610,6 @@ export async function fireTrigger(
       if (typeof data.automationId === "string" && auto.id !== data.automationId) continue;
 
       let trigger: AutomationTrigger;
-
       try {
         trigger = JSON.parse(auto.trigger) as AutomationTrigger;
       } catch {
@@ -439,81 +620,136 @@ export async function fireTrigger(
       if (trigger.type !== type) continue;
       if (!data.manual && !matchesTrigger(trigger, data)) continue;
 
-      const runId = randomUUID();
-      const triggeredAt = new Date().toISOString();
-      let result: RunResult;
-
-      // Dispatch to v2 step runner or v1 legacy runner
-      if (auto.workflowVersion === 2 && auto.steps) {
-        let steps: AutomationStep[];
-        try {
-          steps = JSON.parse(auto.steps) as AutomationStep[];
-        } catch {
-          log.error(`Invalid steps JSON in automation ${auto.id}`);
-          continue;
-        }
-        result = await runSteps(steps, {
-          automationId: auto.id,
-          automationName: auto.name,
-          triggerType: type,
-          triggerData: data,
-        });
-      } else {
-        let actions: AutomationAction[];
-        try {
-          actions = JSON.parse(auto.actions) as AutomationAction[];
-        } catch {
-          log.error(`Invalid actions JSON in automation ${auto.id}`);
-          continue;
-        }
-        result = await runActions(actions, {
-          automationId: auto.id,
-          automationName: auto.name,
-          triggerType: type,
-        });
-      }
-
-      if (!result.success && result.error) {
-        writeNotification(
-          "warning",
-          `Automation "${auto.name}" failed`,
-          result.error,
-          auto.id,
-        );
-      }
-
       try {
-        db.insert(schema.automationRuns).values({
-          id: runId,
-          automationId: auto.id,
-          triggeredAt,
-          success: result.success,
-          error: result.error,
-          actionsRun: result.actionsRun,
-          resultSummary: JSON.stringify(result.results),
-        }).run();
-
-        persistStepRuns(runId, auto.id, result.results, triggeredAt);
+        const result = await startAutomationRun(auto, type, data);
+        if (result) runResults.push(result);
       } catch (err) {
-        log.error(`Failed to write run record for ${auto.id}`, err);
+        log.error(`Automation ${auto.id} run failed`, err);
       }
-
-      try {
-        db.update(schema.automations)
-          .set({
-            lastRunAt: triggeredAt,
-            runCount: auto.runCount + 1,
-          })
-          .where(eq(schema.automations.id, auto.id))
-          .run();
-        writeAuditEntry(`Automation fired: ${auto.name}`, "modify", auto.id);
-      } catch (err) {
-        log.error(`Failed to update runCount for ${auto.id}`, err);
-      }
-      runResults.push(result);
     }
   } catch (err) {
     log.error("fireTrigger error", err);
   }
   return runResults;
+}
+
+// ── Recovery ──────────────────────────────────────────────────────────────────
+
+export interface ReconcileReport {
+  resumed: string[];
+  interrupted: string[];
+  cancelled: string[];
+}
+
+/**
+ * Find runs whose process stopped (lease expired) or whose approval was decided,
+ * and bring each to a coherent state:
+ * - interrupted between steps, or during a step that is safe to repeat → resume
+ * - interrupted during a step with side effects → mark "interrupted", never repeat it
+ * - waiting on an approval that was approved → resume; denied/expired → failed
+ */
+export async function reconcileAutomationRuns(): Promise<ReconcileReport> {
+  const report: ReconcileReport = { resumed: [], interrupted: [], cancelled: [] };
+
+  const notifyInterrupted = (run: runStore.RunRow, reason: string) => {
+    const auto = db.select().from(schema.automations).where(eq(schema.automations.id, run.automationId)).get();
+    const name = auto?.name ?? run.automationId;
+    runStore.finishRun(run.id, "interrupted", { error: reason, actionsRun: run.actionsRun, resultSummary: completedRunResult(runStore.getStepRuns(run.id)) });
+    writeNotification("warning", `Automation "${name}" was interrupted`, reason, run.automationId);
+    writeAuditEntry(`Automation interrupted: ${name}`, "modify", `${run.automationId} · run ${run.id} · ${reason}`, false);
+    report.interrupted.push(run.id);
+  };
+
+  for (const run of runStore.listAbandonedRuns()) {
+    if (!runStore.acquireRun(run.id, ["running"])) continue; // another process got it
+
+    if (run.workflowVersion !== 2 || !run.stepsSnapshot) {
+      notifyInterrupted(run, "Talome stopped while this automation was running. Legacy automations are not resumed; check its actions and run it again if needed.");
+      continue;
+    }
+    if (runStore.incrementResumeCount(run.id) > runStore.MAX_RESUMES) {
+      notifyInterrupted(run, `Interrupted ${runStore.MAX_RESUMES} times — stopped retrying.`);
+      continue;
+    }
+
+    const steps = parseJson<AutomationStep[]>(run.stepsSnapshot, []);
+    const inFlight = runStore.getStepRuns(run.id).find((r) => r.status === "running");
+    if (inFlight) {
+      const step = steps[inFlight.stepIndex ?? -1];
+      if (!step || !isRetrySafe(step)) {
+        runStore.markStep(inFlight.id, "unknown", "Talome stopped during this step; it was not repeated because it may already have taken effect.");
+        notifyInterrupted(
+          run,
+          `Talome stopped while step ${(inFlight.stepIndex ?? 0) + 1} (${inFlight.stepType}${step?.type === "tool_action" ? `: ${step.toolName}` : ""}) was running. It was not repeated because it may already have taken effect — check the result and run the automation again if needed.`,
+        );
+        continue;
+      }
+      runStore.markStep(inFlight.id, "retried", "Interrupted; safe to repeat, so it ran again.");
+    }
+
+    report.resumed.push(run.id);
+    await executeDurableRun(run.id);
+  }
+
+  for (const run of runStore.listRunsWaitingForApproval()) {
+    const blockedStep = runStore.getStepRuns(run.id).filter((r) => r.status === "blocked").at(-1);
+    const approval = blockedStep?.approvalId
+      ? db.select().from(schema.toolApprovals).where(eq(schema.toolApprovals.id, blockedStep.approvalId)).get()
+      : undefined;
+    const status = approval?.status;
+    if (status === "pending") continue;
+    if (status === "approved") {
+      if (!runStore.acquireRun(run.id, ["waiting_approval"])) continue;
+      // The blocked step re-runs and consumes the approval
+      db.update(schema.automationStepRuns).set({ status: "retried" }).where(eq(schema.automationStepRuns.id, blockedStep!.id)).run();
+      report.resumed.push(run.id);
+      await executeDurableRun(run.id);
+      continue;
+    }
+    // Denied, expired, used elsewhere, or missing
+    if (!runStore.acquireRun(run.id, ["waiting_approval"])) continue;
+    runStore.finishRun(run.id, "failed", {
+      error: `Approval ${status ?? "missing"} — the step did not run`,
+      actionsRun: run.actionsRun,
+      resultSummary: completedRunResult(runStore.getStepRuns(run.id)),
+    });
+    report.cancelled.push(run.id);
+  }
+
+  return report;
+}
+
+let recoveryTimer: ReturnType<typeof setInterval> | null = null;
+let reconciling = false;
+
+async function reconcileSafely(): Promise<void> {
+  if (reconciling) return;
+  reconciling = true;
+  try {
+    const report = await reconcileAutomationRuns();
+    if (report.resumed.length || report.interrupted.length || report.cancelled.length) {
+      log.info(`Automation recovery: resumed ${report.resumed.length}, interrupted ${report.interrupted.length}, cancelled ${report.cancelled.length}`);
+    }
+  } catch (err) {
+    log.error("Automation recovery failed", err);
+  } finally {
+    reconciling = false;
+  }
+}
+
+/** Resume runs as soon as their approval is granted (called after an admin decides). */
+export function resumeAfterApproval(): void {
+  void reconcileSafely();
+}
+
+/**
+ * Periodically recover interrupted runs and runs whose approval was decided.
+ * Only runs whose lease has expired are touched, so a run left by a previous
+ * process is picked up within one lease period (2 min) of it stopping.
+ */
+export function startAutomationRecovery(): void {
+  if (recoveryTimer) return;
+  recoveryTimer = setInterval(() => void reconcileSafely(), 60_000);
+  recoveryTimer.unref?.();
+  setTimeout(() => void reconcileSafely(), 5_000).unref?.();
 }

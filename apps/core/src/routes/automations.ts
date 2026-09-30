@@ -55,7 +55,8 @@ automations.get("/failures", (c) => {
       })
       .from(schema.automationRuns)
       .innerJoin(schema.automations, eq(schema.automationRuns.automationId, schema.automations.id))
-      .where(eq(schema.automationRuns.success, false))
+      // Runs in progress or waiting for approval are not failures
+      .where(inArray(schema.automationRuns.status, ["failed", "interrupted"]))
       .orderBy(desc(schema.automationRuns.triggeredAt))
       .limit(5)
       .all();

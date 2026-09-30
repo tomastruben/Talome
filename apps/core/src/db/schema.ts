@@ -202,6 +202,21 @@ export const automationRuns = sqliteTable("automation_runs", {
   error: text("error"),
   actionsRun: integer("actions_run").notNull().default(0),
   resultSummary: text("result_summary"),
+  /** running → succeeded | failed | waiting_approval | interrupted */
+  status: text("status", { enum: ["running", "succeeded", "failed", "waiting_approval", "interrupted"] }),
+  finishedAt: text("finished_at"),
+  /** Process holding the run; the lease is renewed while it executes */
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: text("lease_expires_at"),
+  workflowVersion: integer("workflow_version"),
+  triggerType: text("trigger_type"),
+  /** JSON trigger payload, so an interrupted run can resume with the same inputs */
+  triggerData: text("trigger_data"),
+  /** JSON steps as they were when the run started — resumes never pick up later edits */
+  stepsSnapshot: text("steps_snapshot"),
+  /** JSON step outputs accumulated so far */
+  context: text("context"),
+  resumeCount: integer("resume_count").notNull().default(0),
 });
 
 export const automationStepRuns = sqliteTable("automation_step_runs", {
@@ -216,6 +231,12 @@ export const automationStepRuns = sqliteTable("automation_step_runs", {
   output: text("output"),
   error: text("error"),
   blocked: integer("blocked", { mode: "boolean" }).notNull().default(false),
+  stepIndex: integer("step_index"),
+  /** running → succeeded | failed | blocked | unknown (interrupted mid-step) | retried */
+  status: text("status", { enum: ["running", "succeeded", "failed", "blocked", "unknown", "retried"] }),
+  finishedAt: text("finished_at"),
+  /** Approval request this step is waiting on */
+  approvalId: text("approval_id"),
 });
 
 export const widgetManifests = sqliteTable("widget_manifests", {

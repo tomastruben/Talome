@@ -18,7 +18,7 @@ export type ExecutionActor =
   /** Telegram / Discord conversation */
   | { kind: "messaging"; platform: "telegram" | "discord"; externalId: string }
   /** Automation step or AI prompt inside an automation */
-  | { kind: "automation"; name: string }
+  | { kind: "automation"; name: string; id?: string }
   /** Autonomous background loops (remediation, setup, digest) */
   | { kind: "background"; loop: string };
 
@@ -34,7 +34,7 @@ export function actorKey(actor: ExecutionActor): string {
     case "messaging":
       return `messaging:${actor.platform}:${actor.externalId}`;
     case "automation":
-      return `automation:${actor.name}`;
+      return `automation:${actor.id ?? actor.name}`;
     case "background":
       return `background:${actor.loop}`;
   }

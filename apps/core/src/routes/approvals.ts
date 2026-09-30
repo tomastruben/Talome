@@ -3,6 +3,7 @@ import { z } from "zod";
 import { decideApproval, listApprovals } from "../approval/tool-approvals.js";
 import { writeAuditEntry } from "../db/audit.js";
 import { serverError } from "../middleware/request-logger.js";
+import { resumeAfterApproval } from "../automation/engine.js";
 
 /**
  * Server-issued tool approvals. Admin-only (guarded in index.ts): approving here
@@ -40,6 +41,8 @@ function decideRoute(approve: boolean) {
         `request ${approval.code} from ${approval.actorLabel} · decided by ${username}`,
         approve,
       );
+      // Automation runs waiting on this request continue (or close) right away
+      resumeAfterApproval();
       return c.json({ ok: true, approval });
     } catch (err) {
       return serverError(c, err, { message: "Failed to decide approval", context: { approvalId: c.req.param("id") } });

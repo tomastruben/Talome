@@ -57,6 +57,7 @@ import { diagnostics as diagnosticsRoute } from "./routes/diagnostics.js";
 import { search as searchRoute } from "./routes/search.js";
 import { supervisor as supervisorRoute } from "./routes/supervisor.js";
 import { startAutomationCron, stopAutomationCron } from "./automation/cron.js";
+import { startAutomationRecovery } from "./automation/engine.js";
 import { startMonitor } from "./monitor.js";
 import { startAgentLoop } from "./agent-loop/index.js";
 import { startDigestScheduler } from "./digest.js";
@@ -582,6 +583,8 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
 
   try {
     startAutomationCron();
+    // Resume or close out automation runs interrupted by a restart
+    startAutomationRecovery();
   } catch (err) {
     startupLog.error("startAutomationCron failed", err);
   }
