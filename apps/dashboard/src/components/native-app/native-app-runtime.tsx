@@ -162,13 +162,21 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
       return;
     }
 
-    const confirmation = "confirmation" in action ? action.confirmation : undefined;
-    if (confirmation) {
+    // Destructive actions always ask, even when the AppSpec declares no
+    // confirmation text (core refuses them unconfirmed as well).
+    const destructive = "destructive" in action && action.destructive === true;
+    const declared = "confirmation" in action ? action.confirmation : undefined;
+    const needsConfirm = Boolean(declared) || destructive;
+    if (needsConfirm) {
       const confirmed = await confirmAction({
-        title: action.label,
-        description: confirmation,
+        title: declared && declared.trim().endsWith("?") ? declared : `${action.label}?`,
+        description: action.description,
+        recovery: destructive
+          ? "This can't be undone."
+          : `${spec.name} keeps its data. You can run this again at any time.`,
+        irreversible: destructive,
         confirmLabel: action.label,
-        variant: "destructive" in action && action.destructive ? "destructive" : "default",
+        variant: destructive ? "destructive" : "default",
       });
       if (!confirmed) return;
     }
@@ -181,7 +189,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirmed: Boolean(confirmation), values }),
+          body: JSON.stringify({ confirmed: needsConfirm, values }),
         },
       );
       const result = await response.json().catch(() => ({})) as {
@@ -190,14 +198,16 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
         prompt?: string;
         error?: string;
       };
-      if (!response.ok || !result.ok) throw new Error(result.error || `${action.label} failed`);
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || `Talome couldn't run "${action.label}". Try again, or ask Talome to check ${spec.name}.`);
+      }
       if (result.kind === "assistant" && result.prompt) openAssistant(result.prompt);
       else {
-        toast.success(`${action.label} completed`);
+        toast.success(`${action.label}: done`);
         await refreshData();
       }
     } catch (error) {
-      toast.error(`${action.label} failed`, {
+      toast.error(`Couldn't run "${action.label}"`, {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {

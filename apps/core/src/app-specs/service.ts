@@ -287,6 +287,22 @@ async function executeTrustedLifecycleAction(action: Extract<TalomeAppAction, { 
   return { ok: true, operation, appId };
 }
 
+/** The access level an AppSpec action needs: assistant prompts only read, destructive ones are marked. */
+export type AppSpecActionTier = "read" | "modify" | "destructive";
+
+export function appSpecActionTier(action: TalomeAppSpec["actions"][number]): AppSpecActionTier {
+  if (action.kind === "assistant") return "read";
+  return "destructive" in action && action.destructive ? "destructive" : "modify";
+}
+
+/** Who ran an action, for the audit log (the session user from the dashboard). */
+export interface AppSpecActionActor {
+  kind: string;
+  id: string;
+  label: string;
+  source: string;
+}
+
 export async function executeAppSpecAction(input: {
   storeId: string;
   appId: string;
@@ -295,6 +311,7 @@ export async function executeAppSpecAction(input: {
   confirmed?: boolean;
   cookie?: string;
   trusted?: boolean;
+  actor?: AppSpecActionActor;
 }) {
   const stored = getStoredAppSpec(input.storeId, input.appId);
   if (!stored) throw new Error("Approved AppSpec not found");
@@ -302,9 +319,13 @@ export async function executeAppSpecAction(input: {
   if (!action) throw new Error("Action not found");
   const values = validateActionInput(action, input.values);
 
-  const confirmation = "confirmation" in action ? action.confirmation : undefined;
+  const tier = appSpecActionTier(action);
+  const declared = "confirmation" in action ? action.confirmation : undefined;
+  // A destructive action always needs a confirmation, even when the spec
+  // didn't write one.
+  const confirmation = declared ?? (tier === "destructive" ? `${action.label}? This can't be undone.` : undefined);
   if (confirmation && !input.confirmed) {
-    return { ok: false as const, requiresConfirmation: true as const, confirmation };
+    return { ok: false as const, requiresConfirmation: true as const, confirmation, tier };
   }
 
   if (action.kind === "assistant") {
@@ -344,10 +365,20 @@ export async function executeAppSpecAction(input: {
 
   writeAuditEntry(
     `app_spec_action:${input.actionId}`,
-    action.destructive ? "destructive" : "modify",
+    tier,
     `${input.storeId}:${input.appId}`,
+    true,
+    input.actor
+      ? {
+          actorKind: input.actor.kind,
+          actorId: input.actor.id,
+          actorLabel: input.actor.label,
+          source: input.actor.source,
+          outcome: "success",
+        }
+      : undefined,
   );
-  return { ok: true as const, kind: "result" as const, data };
+  return { ok: true as const, kind: "result" as const, data, tier };
 }
 
 export function getDataSourceRefreshMs(source: TalomeDataSource) {

@@ -323,6 +323,29 @@ export function getToolMeta(toolName: string, baseTier?: ToolTier): ToolMeta {
   };
 }
 
+/** Whether the AppSpec action a run_native_app_action call names is marked destructive. */
+function nativeAppActionIsDestructive(args: Record<string, unknown>): boolean {
+  const appId = typeof args.appId === "string" ? args.appId : "";
+  const actionId = typeof args.actionId === "string" ? args.actionId : "";
+  const storeId = typeof args.storeId === "string" ? args.storeId : undefined;
+  if (!appId || !actionId) return false;
+  try {
+    const rows = db
+      .select({ storeSourceId: schema.appSpecs.storeSourceId, specJson: schema.appSpecs.specJson })
+      .from(schema.appSpecs)
+      .all()
+      .filter((row) => (!storeId || row.storeSourceId === storeId));
+    for (const row of rows) {
+      const spec = JSON.parse(row.specJson) as { appId?: string; actions?: Array<{ id?: string; destructive?: boolean }> };
+      if (spec.appId !== appId) continue;
+      if (spec.actions?.some((action) => action.id === actionId && action.destructive === true)) return true;
+    }
+  } catch {
+    // Unreadable specs: the tool itself fails to find the action.
+  }
+  return false;
+}
+
 /** Effective tier for a concrete call (arguments can escalate it). */
 export function getEffectiveTier(toolName: string, args: Record<string, unknown>, baseTier?: ToolTier): ToolTier {
   const tier = getToolMeta(toolName, baseTier).tier;
@@ -333,6 +356,9 @@ export function getEffectiveTier(toolName: string, args: Record<string, unknown>
   ) {
     return "destructive";
   }
+  // A native app's action marked destructive (AppSpec `destructive: true`)
+  // is destructive when the agent runs it too: it asks in Cautious mode.
+  if (toolName === "run_native_app_action" && nativeAppActionIsDestructive(args)) return "destructive";
   // Skipping the pre-update backup removes the data-rollback path: treat it
   // like any other destructive action so cautious mode asks the owner first.
   if (toolName === "update_app" && args.force === true) return "destructive";

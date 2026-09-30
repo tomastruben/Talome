@@ -95,6 +95,39 @@ afterEach(() => {
 });
 
 describe("NativeAppRuntime", () => {
+  it("asks before a destructive action even without declared confirmation text, then sends confirmed", async () => {
+    const spec = appSpec("budget-wipe", [{ id: "snapshot", kind: "static", value: { remaining: 1, spent: 1, budget: 2 } }]);
+    spec.actions.push({
+      id: "wipe",
+      label: "Delete all transactions",
+      description: "Erases every recorded transaction.",
+      kind: "talome-api",
+      method: "POST",
+      path: "/api/apps/user-apps/budget-wipe/restart",
+      destructive: true,
+    });
+    spec.surfaces[0].blocks = spec.surfaces[0].blocks.map((block) =>
+      block.id === "actions" ? { ...block, actionIds: ["ask-budget", "wipe"] } : block,
+    );
+    const fetchMock = vi.fn(async (url: string) => (
+      url.includes("/actions/")
+        ? new Response(JSON.stringify({ ok: true, kind: "result", data: {} }), { status: 200, headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify(specResponse(spec)), { status: 200, headers: { "content-type": "application/json" } })
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<NativeAppRuntime storeId="user-apps" appId="budget-wipe" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Delete all transactions" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveAccessibleName("Delete all transactions?");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/actions/"))).toBe(false);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete all transactions" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/actions/wipe"))).toBe(true));
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/actions/wipe"))! as unknown as [string, RequestInit];
+    expect(JSON.parse(String(call[1].body))).toMatchObject({ confirmed: true });
+  });
+
   it("renders Talome-native blocks and hands context to the desktop Assistant", async () => {
     const spec = appSpec("budget-compass", [{
       id: "snapshot",
