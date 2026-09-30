@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
  *
  * - Red, amber and green already mean critical, warning and healthy across
  *   Talome, so coloured dots in every title bar would read as status.
- * - 14px dots are hard to hit on an iPad; these are 28px (36px on touch).
+ * - 14px dots are hard to hit on an iPad; these are 24px (32px on touch).
  * - The green button's meaning (full screen or zoom?) is a guess; Arrange
  *   says exactly what will happen and shows where the window is now.
  */
@@ -50,7 +50,7 @@ const LAYOUT_ICON: Record<DesktopWindowLayout, IconSvgElement> = {
 };
 
 const CONTROL_CLASS =
-  "flex size-7 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/[0.08] hover:text-foreground active:scale-95 disabled:pointer-events-none disabled:opacity-40";
+  "flex size-6 shrink-0 items-center justify-center rounded-md transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/[0.08] hover:text-foreground active:scale-95 disabled:pointer-events-none disabled:opacity-40";
 
 /** Keep presses on a control from starting a title bar drag or a double-click fill. */
 const stopTitlebarGesture = {
@@ -100,7 +100,7 @@ export function WindowControls({
           {...stopTitlebarGesture}
           onClick={onMinimize}
         >
-          <HugeiconsIcon icon={MinusSignIcon} size={15} strokeWidth={1.8} />
+          <HugeiconsIcon icon={MinusSignIcon} size={14} strokeWidth={1.8} />
         </button>
       )}
       {layout && onLayoutChange && (
@@ -112,7 +112,7 @@ export function WindowControls({
               className={cn(CONTROL_CLASS, tone, "data-[state=open]:bg-foreground/[0.08] data-[state=open]:text-foreground")}
               {...stopTitlebarGesture}
             >
-              <HugeiconsIcon icon={LAYOUT_ICON[layout]} size={15} strokeWidth={1.8} />
+              <HugeiconsIcon icon={LAYOUT_ICON[layout]} size={14} strokeWidth={1.8} />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -150,7 +150,7 @@ export function WindowControls({
         {...stopTitlebarGesture}
         onClick={onClose}
       >
-        <HugeiconsIcon icon={Cancel01Icon} size={15} strokeWidth={1.8} />
+        <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.8} />
       </button>
     </div>
   );

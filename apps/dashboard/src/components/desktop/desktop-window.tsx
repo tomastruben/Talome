@@ -334,7 +334,7 @@ export const DesktopWindow = memo(function DesktopWindow({
             <button
               type="button"
               className={cn(
-                "flex h-7 min-w-0 max-w-44 shrink items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+                "flex h-6 min-w-0 max-w-44 shrink items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
                 action.active && "bg-muted/60 text-foreground",
               )}
               disabled={action.disabled}
@@ -376,7 +376,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         <div
           key={action.id}
           className={cn(
-            "flex h-7 shrink-0 select-none items-center gap-1.5 rounded-md px-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground",
+            "flex h-6 shrink-0 select-none items-center gap-1.5 rounded-md px-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground",
             action.disabled && "opacity-40",
           )}
           onPointerDown={stopTitlebarGesture}
@@ -399,8 +399,8 @@ export const DesktopWindow = memo(function DesktopWindow({
         key={action.id}
         type="button"
         className={cn(
-          "flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
-          isLeading ? "size-7 p-0" : "px-2",
+          "flex h-6 shrink-0 items-center justify-center gap-1.5 rounded-md text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+          isLeading ? "size-6 p-0" : "px-2",
           action.active && "bg-muted/60 text-foreground",
         )}
         disabled={action.disabled}
@@ -429,7 +429,7 @@ export const DesktopWindow = memo(function DesktopWindow({
     return (
       <div
         className={cn(
-          "flex h-7 shrink-0 items-center overflow-hidden rounded-md transition-colors",
+          "flex h-6 shrink-0 items-center overflow-hidden rounded-md transition-colors",
           autoAction?.active
             ? "bg-status-warning/10 ring-1 ring-status-warning/20"
             : "bg-muted/30 ring-1 ring-border/50",
@@ -443,7 +443,7 @@ export const DesktopWindow = memo(function DesktopWindow({
             aria-checked={autoAction.active === true}
             aria-label={autoAction.label}
             disabled={autoAction.disabled}
-            className="flex h-7 items-center gap-1.5 rounded-l-md px-2 text-xs transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40"
+            className="flex h-6 items-center gap-1.5 rounded-l-md px-2 text-xs transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40"
             onPointerDown={stopTitlebarGesture}
             onDoubleClick={(event) => event.stopPropagation()}
             onClick={() => onAction?.(autoAction.id)}
@@ -471,7 +471,7 @@ export const DesktopWindow = memo(function DesktopWindow({
             aria-pressed={remoteAction.active === true}
             disabled={remoteAction.disabled}
             className={cn(
-              "relative flex size-7 items-center justify-center transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40",
+              "relative flex size-6 items-center justify-center transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40",
               remoteAction.active ? "text-foreground" : "text-muted-foreground/50",
             )}
             onPointerDown={stopTitlebarGesture}
@@ -490,7 +490,7 @@ export const DesktopWindow = memo(function DesktopWindow({
               <button
                 type="button"
                 className={cn(
-                  "flex h-7 min-w-0 max-w-40 items-center gap-1.5 rounded-r-md px-2.5 text-xs transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40",
+                  "flex h-6 min-w-0 max-w-40 items-center gap-1.5 rounded-r-md px-2.5 text-xs transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40",
                   autoAction?.active ? "text-status-warning/80 hover:text-status-warning" : "text-muted-foreground hover:text-foreground",
                 )}
                 disabled={agentAction.disabled}
@@ -568,7 +568,7 @@ export const DesktopWindow = memo(function DesktopWindow({
     >
       <div
         className={cn(
-          "group/titlebar tm-window-titlebar grid h-11 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center border-b px-3.5",
+          "group/titlebar tm-window-titlebar grid h-10 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b pl-3.5 pr-2",
         )}
         onPointerDown={startDrag}
         onDoubleClick={toggleMaximize}

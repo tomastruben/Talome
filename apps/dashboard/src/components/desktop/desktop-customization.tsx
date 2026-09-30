@@ -485,7 +485,7 @@ function DesktopWallpaperPicker({
     <>
       <header
         data-wallpaper-drag-handle
-        className="tm-window-titlebar grid h-11 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b px-2 active:cursor-grabbing"
+        className="tm-window-titlebar grid h-10 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b px-2 active:cursor-grabbing"
         onPointerDown={onTitlebarPointerDown}
       >
         <span />

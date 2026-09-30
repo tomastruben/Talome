@@ -207,8 +207,6 @@ const DOCK_MAGNIFY_RADIUS = 110;
 const DOCK_MAGNIFY_AMOUNT = 0.3;
 /** Pointer x over the Dock (Infinity when elsewhere) — drives magnification */
 const DockPointerContext = createContext<MotionValue<number> | null>(null);
-const DESKTOP_FROSTED_MATERIAL_CLASS =
-  "border-border bg-card/90 shadow-lg shadow-black/15 backdrop-blur-md";
 const CONTROL_CENTER_PAGE_TRANSITION = {
   duration: 0.3,
   ease: [0.32, 0.72, 0, 1],
@@ -1701,9 +1699,8 @@ export function DesktopExperience() {
           <nav
             aria-label="Desktop applications"
             className={cn(
-              "desktop-dock relative flex max-w-full items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
-              DESKTOP_FROSTED_MATERIAL_CLASS,
-              draggingDockAppId && "border-foreground/20 bg-card/95 shadow-xl shadow-black/25",
+              "desktop-dock tm-glass relative flex max-w-full items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
+              draggingDockAppId && "border-foreground/20",
             )}
             data-dock-dragging={draggingDockAppId || undefined}
             onPointerMove={(event) => {
