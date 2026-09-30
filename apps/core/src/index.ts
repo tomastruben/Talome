@@ -562,8 +562,10 @@ let stopMonitor: (() => void) | undefined;
 let stopAgentLoop: (() => void) | undefined;
 let stopPrune: (() => void) | undefined;
 
+// "::" accepts IPv4 and IPv6 on dual-stack hosts; hosts without IPv6 fall back
+// to 0.0.0.0 in the error handler below.
 const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
-  startupLog.info(`Talome Core running on http://0.0.0.0:${info.port}`);
+  startupLog.info(`Talome Core running on ${info.family === "IPv6" ? `http://[${info.address}]` : `http://${info.address}`}:${info.port}`);
 
   injectWebSocket(server);
 
@@ -716,7 +718,16 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
   }
 });
 
+let triedIpv4Fallback = false;
 server.on("error", (err: NodeJS.ErrnoException) => {
+  // No IPv6 on this host (common in containers): listen on IPv4 instead. The
+  // startup callback passed to serve() is still registered and runs on success.
+  if ((err.code === "EAFNOSUPPORT" || err.code === "EADDRNOTAVAIL") && !triedIpv4Fallback) {
+    triedIpv4Fallback = true;
+    startupLog.warn(`IPv6 unavailable (${err.code}) — listening on 0.0.0.0:${port} instead`);
+    server.listen(port, "0.0.0.0");
+    return;
+  }
   if (err.code === "EADDRINUSE") {
     startupLog.error(`Port ${port} is already in use. Stop the other core process and restart.`);
     return;
