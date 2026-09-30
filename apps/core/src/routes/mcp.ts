@@ -16,8 +16,10 @@ import {
   type ExecuteToolResult,
   type ToolMeta,
 } from "../ai/execution.js";
-import { checkToolGrant } from "../approval/grants.js";
+import { checkToolGrant, toolReachableForAppGrant } from "../approval/grants.js";
 import { getSetting } from "../utils/settings.js";
+import { getAllRegisteredTools } from "../ai/tool-registry.js";
+import { writeAuditEntry } from "../db/audit.js";
 
 // ── Tool view ────────────────────────────────────────────────────────────────
 // The MCP tool list is derived per actor, per evaluation: tools from domains
@@ -50,6 +52,9 @@ export function getMcpToolView(actor: Actor): ToolView[] {
     if (typeof (tool as { execute?: unknown }).execute !== "function") continue;
     const meta = getToolMeta(name);
     if (actor.scopes && !checkToolGrant(actor.scopes, { name, tier: meta.tier, domain: meta.domain }).ok) continue;
+    // App-limited tokens: also hide tools every call would refuse (e.g. a
+    // modify tool with no app argument) instead of listing them.
+    if (actor.scopes && !toolReachableForAppGrant(actor.scopes, meta, Object.keys(inputShape(tool)))) continue;
     view.push({ name, tool, meta });
   }
   return view;
@@ -212,6 +217,8 @@ export interface McpSession {
   server: McpServer;
   /** Re-evaluate the tool view; registers/removes tools (emits tools/list_changed). */
   sync: () => { added: string[]; removed: string[] };
+  /** Names of the tools currently registered (the actor's view). */
+  registeredTools: () => ReadonlySet<string>;
 }
 
 export interface McpSessionOptions {
@@ -282,7 +289,7 @@ export function createMcpSession(actor: Actor, options: McpSessionOptions = {}):
   };
 
   sync();
-  return { server, sync };
+  return { server, sync, registeredTools: () => new Set(registered.keys()) };
 }
 
 export function createMcpServer(actor: Actor): McpServer {
@@ -319,10 +326,51 @@ mcp.use("/*", async (c, next) => {
   await withExecutionContext(actor, "mcp", () => next());
 });
 
+/**
+ * Audit calls to known tools outside the actor's view. Only tools in the view
+ * are registered, so the MCP SDK answers these "Tool X not found" before
+ * executeTool() (and its audit) runs; without this, a token probing tools it
+ * may not use left no trace. Unknown names are not audited.
+ */
+export function auditOutOfViewToolCalls(actor: Actor, message: unknown, visible: ReadonlySet<string>): void {
+  const messages = Array.isArray(message) ? message : [message];
+  let known: Record<string, unknown> | undefined;
+  for (const m of messages) {
+    if (!m || typeof m !== "object") continue;
+    const { method, params } = m as { method?: unknown; params?: { name?: unknown } };
+    if (method !== "tools/call") continue;
+    const name = params?.name;
+    if (typeof name !== "string" || visible.has(name)) continue;
+    known ??= getAllRegisteredTools();
+    if (!Object.hasOwn(known, name)) continue;
+    const meta = getToolMeta(name);
+    const grant = actor.scopes ? checkToolGrant(actor.scopes, { name, tier: meta.tier, domain: meta.domain }) : { ok: true as const };
+    const reason = !grant.ok
+      ? grant.message
+      : actor.scopes && actor.scopes.apps !== "all"
+        ? `This token is limited to specific apps (${actor.scopes.apps.join(", ") || "none"}), and '${name}' can never target one of them.`
+        : `'${name}' is not available (disabled in Settings, or its app is not configured).`;
+    writeAuditEntry(`BLOCKED (not_in_view): ${name}`, meta.tier, reason, false, {
+      actorKind: actor.kind,
+      actorId: actor.id,
+      actorLabel: actor.label,
+      source: "mcp",
+      toolName: name,
+      outcome: "blocked",
+    });
+  }
+}
+
 // Stateless MCP handler — fresh server + transport per request, built for the
 // requesting token (tool view evaluated now, not at process start).
 mcp.all("/", async (c) => {
-  const server = createMcpServer(c.get("mcpActor"));
+  const actor = c.get("mcpActor");
+  const session = createMcpSession(actor);
+  if (c.req.method === "POST") {
+    const body: unknown = await c.req.raw.clone().json().catch(() => null);
+    if (body) auditOutOfViewToolCalls(actor, body, session.registeredTools());
+  }
+  const server = session.server;
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });

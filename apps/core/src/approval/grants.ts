@@ -380,3 +380,29 @@ export function checkCallGrant(
   }
   return { ok: true };
 }
+
+/**
+ * Whether an app-limited token could ever pass checkCallGrant for this tool,
+ * judged from the argument names its input schema accepts. Tools every call
+ * would refuse — a bound app domain the token does not cover, or a
+ * modify/destructive tool with no argument that can name a target — are
+ * hidden from the token's tool list (routes/mcp.ts getMcpToolView). Errs on
+ * the side of listing: checkCallGrant still decides every call.
+ */
+export function toolReachableForAppGrant(
+  scopes: TokenScopes,
+  meta: ToolGrantMeta,
+  argKeys: readonly string[],
+): boolean {
+  if (scopes.apps === "all") return true;
+  const allowed = scopes.apps;
+  const domainApps = DOMAIN_APP_TARGETS[meta.domain];
+  if (domainApps) {
+    return allowed.some((a) => targetMatchesApp(domainApps[0], a, { kind: "app" }));
+  }
+  if (meta.tier === "read") return true;
+  if (APP_ARG_DOMAINS.has(meta.domain)) return true;
+  const keys: readonly string[] = TOOL_TARGET_KEYS[meta.name] ?? GENERIC_TARGET_KEYS;
+  if (keys.some((k) => argKeys.includes(k))) return true;
+  return meta.name === "proxy_add_route" && argKeys.includes("upstream");
+}
