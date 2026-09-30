@@ -195,8 +195,8 @@ export function ClaudeTerminal({
   const statusDotClass = connectionStatus === "disconnected"
     ? "bg-status-critical"
     : connectionStatus === "reconnecting"
-      ? "bg-status-warning animate-pulse"
-      : "bg-status-healthy animate-pulse";
+      ? "bg-status-warning motion-safe:animate-pulse"
+      : "bg-status-healthy motion-safe:animate-pulse";
 
   return (
     <div className="flex flex-col h-full">

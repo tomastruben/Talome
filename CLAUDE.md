@@ -61,51 +61,73 @@ Key frontend paths:
 - **No alternative icon libraries** — see Icons section below
 - **Approved component sources only** — Talome components first, then shadcn/ui primitives/blocks and curated Skiper UI source components. Premium components require a valid Talome license. Imported source must be adapted to Talome tokens, HugeIcons, motion, accessibility, and window responsiveness; never add a competing runtime UI system or expose registry license keys.
 - Match the style of the file you are editing — don't introduce new patterns if existing ones work
+- **No native dialogs.** Never `window.confirm`, `window.prompt` or `alert`; use `useConfirm()`.
+- **Fetchers throw on failure.** Check `res.ok` (and JSON `{error}`) on every request; never render a default as loaded data.
 
 ---
 
 ## Design Principles
 
-These principles apply to all UI work — generated apps, dashboard changes, new components:
+Talome is a server that an agent operates on your behalf, inside boundaries, with receipts. UI should feel like professional tooling you can trust with root: calm, instant, legible and honest. The full spec is `design-system-spec.md` (tokens, motion, components, copy, accessibility). These rules apply to all UI work: generated apps, dashboard changes, desktop mode, new components.
 
-- **Radical reduction** — if it doesn't serve the user's task, remove it
-- **Breathing space** — `p-6` minimum on content areas, `gap-6` between cards
-- **Honest materials** — no decorative gradients, no fake shadows, no visual noise
-- **One primary action per view** — never compete for attention; secondary actions are secondary
-- **Motion restraint** — all animations under 200ms, ease-out only, no bounce, no spring overshoot
-- **Typography discipline** — use only `text-sm`, `text-base`, `text-lg`, `text-2xl`; weight `400` or `500` only
-- **Dark mode is the default** — all UI must look correct without a light-mode override
+- **Every signal is true.** No toast, badge, shortcut hint, status or "Saved" without a verified cause. Show "Couldn't load · Retry" instead of a default value. Success toasts fire on a verified server state, not on an HTTP 200.
+- **Work ends in a receipt.** State-changing actions end in one line: what happened · how it was verified · by whom · Undo/Roll back.
+- **Radical reduction.** If it doesn't serve the user's task, remove it.
+- **Breathing space.** `p-6` on content areas (`p-4` in containers under 480px), `gap-6` between cards.
+- **Honest materials.** Opaque surfaces from the `--surface-*` tokens. Blur only via `.material-island` (desktop menu bar, dock, floating pills, sticky header), which turns opaque under reduced transparency and increased contrast. No decorative gradients, glows, glass badges, stacked or coloured shadows.
+- **One primary action per view.** Secondary actions are secondary.
+- **Motion restraint.** Use `lib/motion.ts` and the CSS `--ease-*`/`--duration-*` tokens; no literal curves. Entrances ≤200ms (180ms default) on `ease-enter`; exits 120–140ms on `ease-exit`; hover/colour 150ms; press 100ms. Opacity finishes before transform. Direction comes from short travel (4–24px), never full-width slides. Progress fills track real data (linear, ≤250ms per update). Loops (spinner, breathe dot, skeleton pulse) only while real work is in flight, always `motion-safe:`. No springs except `DRAG_SETTLE_SPRING` after a drag. No bounce, overshoot, stagger or mount count-ups. `animate-ping` is banned.
+- **Reduced motion is mandatory.** `MotionConfig reducedMotion="user"` wraps the app; CSS transforms and loops use `motion-safe:`. Under reduced motion, moves become a 120ms fade.
+- **Typography discipline.** `text-xs` (metadata only: timestamps, sizes, counts, helper text, badges, hints), `text-sm` (body, controls), `text-base` (card and dialog titles), `text-lg` (section headings), `text-2xl` (page h1, stat values). No arbitrary sizes (`text-[10px]`, `text-[8rem]`). Weights `font-normal` (400) and `font-medium` (500) only. Sentence case everywhere; no uppercase micro-labels. `tabular-nums` on changing numbers.
+- **One status grammar.** Static dot = state; breathing `status-info` dot = work in flight; amber count badge = needs you. Amber (`status-warning`) is reserved for "needs you" and for risk the person chose (Auto mode). Stopped is grey, not red. Colour is never the only signal.
+- **Confirmations have two tiers.** Use `useConfirm()`/`ConfirmDialog`: `soft` for reversible disruption, `destructive` for data loss, irreversible changes or widened privilege. Every confirm states the consequence and the recovery. Destructive confirms are never skipped, not even in Auto mode. Never use `window.confirm`/`prompt`/`alert`.
+- **States are designed.** Skeletons only after 200ms and shaped like the result; empty states say what this is and how to start; errors name the fix and offer Retry (and "Ask Talome" when allowed); stale data stays visible with "Couldn't refresh · Retry". Optimistic updates only for reversible, low-risk, client-known changes; never for security, lifecycle, files, backups or agent actions.
+- **Accessible by default.** WCAG 2.2 AA. Never set `maximumScale`. Focus ring: `focus-visible:ring-2 ring-ring ring-offset-2 ring-offset-background` (inset in tight chrome). Targets ≥24px, ≥44px on coarse pointers (`pointer-coarse:`). Switches use `ui/switch` (`role=switch`), radio cards `RadioCardGroup`, checkboxes `ui/checkbox`. Approvals, job progress and copy announce through the shell's live announcer. Shortcut hints only for shortcuts registered in the keymap.
+- **Both themes.** Dark is the default, light is live: check every change in both. Only token colours; no hex, `rgba()`, Tailwind palette hues or inline colour styles.
+- **Copy.** "agent" for anything that acts; "Assistant" for the built-in chat agent; Approve/Deny; Install/Open/Update/Uninstall; "Move to Trash" vs "Delete permanently"; "…" not "..."; errors say what failed, why, and the fix. Format numbers, bytes, dates and durations only through `lib/format.ts` (Intl-based).
 
 ---
 
-## Colour Palette (OKLCH, dark mode)
+## Colour Palette (OKLCH)
+
+All theming lives in `apps/dashboard/src/app/globals.css`: light in `:root`, dark in `.dark` (default). Never use inline colour overrides or per-component style attributes.
 
 ```css
---background:        oklch(0.145 0 0)     /* very dark */
---foreground:        oklch(0.985 0 0)     /* near white */
---card:              oklch(0.205 0 0)
---border:            oklch(1 0 0 / 10%)
---input:             oklch(1 0 0 / 15%)
---muted:             oklch(0.269 0 0)
---muted-foreground:  oklch(0.708 0 0)
---primary:           oklch(0.922 0 0)
---status-healthy:    oklch(0.723 0.191 149.58)   /* green */
---status-warning:    oklch(0.795 0.184 86.047)   /* amber */
---status-critical:   oklch(0.704 0.191 22.216)   /* red */
+/* role                      light                      dark */
+--background                 oklch(1 0 0)               oklch(0.145 0 0)
+--foreground                 oklch(0.145 0 0)           oklch(0.985 0 0)
+--card                       oklch(1 0 0)               oklch(0.205 0 0)
+--muted                      oklch(0.97 0 0)            oklch(0.269 0 0)
+--muted-foreground           oklch(0.5 0 0)             oklch(0.76 0 0)
+--dim-foreground             oklch(0.56 0 0)            oklch(0.6 0 0)      /* hints only, never on muted */
+--border                     oklch(0.922 0 0)           oklch(1 0 0 / 10%)
+--input                      oklch(0.922 0 0)           oklch(1 0 0 / 15%)
+--ring                       oklch(0.55 0 0)            oklch(0.65 0 0)
+--primary                    oklch(0.205 0 0)           oklch(0.922 0 0)
+--status-healthy             oklch(0.5 0.13 150)        oklch(0.78 0.17 149.58)
+--status-warning             oklch(0.52 0.115 65)       oklch(0.82 0.165 86.047)
+--status-critical            oklch(0.53 0.21 27)        oklch(0.75 0.18 22.216)
+--status-info                oklch(0.5 0.15 255)        oklch(0.75 0.15 250)
+--status-*-foreground        oklch(0.985 0 0)           oklch(0.145 0 0)    /* text on a solid status fill */
+--destructive                var(--status-critical)     var(--status-critical)
+--surface-modal|menu|popover oklch(1 0 0)               oklch(0.205 0 0)
+--surface-toast              oklch(1 0 0)               oklch(0.235 0 0)
+--surface-island             oklch(1 0 0 / 88%)         oklch(0.205 0 0 / 88%)  /* use .material-island */
+--scrim                      oklch(0 0 0 / 40%)         oklch(0 0 0 / 60%)
+--terminal / -foreground     oklch(0.16 0 0) / oklch(0.92 0 0) in both themes
 ```
 
-All theming lives in `apps/dashboard/src/app/globals.css`. Never use inline colour overrides or per-component style attributes.
+Status colours have three recipes only: indicator (`bg-status-X` dot or `text-status-X` icon, with a label), tint (`bg-status-X/12 text-status-X`, body text stays `text-foreground`), and solid (`bg-status-X text-status-X-foreground`, only for the "needs you" count and the destructive button). `--window-close/-minimize/-zoom` exist only for desktop-mode traffic lights.
 
 ---
 
-## Spacing Scale
+## Spacing, Radii, Elevation
 
 ```
-xs   0.25rem    sm   0.5rem    md   0.75rem
-lg   1rem       xl   1.5rem    2xl  2rem     3xl  3rem
+xs 1 (0.25rem)   sm 2 (0.5rem)   md 3 (0.75rem)   lg 4 (1rem)   xl 6 (1.5rem)   2xl 8 (2rem)   3xl 12 (3rem)
 ```
 
-Always use Tailwind utility classes that map to these values. Avoid arbitrary values like `p-[13px]`.
+Use Tailwind steps that map to these values; no arbitrary values like `p-[13px]` or `rounded-[5px]`. Radii: `rounded-md` controls, `rounded-lg` menus/popovers/toasts/dialogs, `rounded-xl` cards and windows, `rounded-2xl` islands (dock, Control Center, Launchpad), `rounded-full` dots/pills/switches. Borders separate; shadows only on floating layers (`shadow-md` menus/popovers, `shadow-lg` dialogs/active windows/islands). Rows are `min-h-10`, `pointer-coarse:min-h-11`.
 
 ---
 
@@ -114,7 +136,9 @@ Always use Tailwind utility classes that map to these values. Avoid arbitrary va
 All of these are already installed in `apps/dashboard/src/components/ui/`. **Never recreate them.** Import and use directly.
 
 **Primitives:**
-`alert` · `avatar` · `badge` · `bento-gallery` · `breadcrumb` · `button` · `button-group` · `card` · `chart` · `collapsible` · `command` · `dialog` · `dropdown-menu` · `empty-state` · `hover-card` · `input` · `input-group` · `label` · `popover` · `progress` · `scroll-area` · `search-field` · `select` · `separator` · `sheet` · `sidebar` · `skeleton` · `sonner` · `spinner` · `switch` · `table` · `tabs` · `textarea` · `tooltip`
+`alert` · `avatar` · `badge` · `breadcrumb` · `button` (with `busy`) · `button-group` · `card` · `chart` · `checkbox` · `collapsible` · `command` · `confirm-dialog` (`useConfirm`) · `context-menu` · `copy-button` · `dialog` · `dropdown-menu` · `empty-state` (`EmptyState`, `ErrorState`) · `hover-card` · `input` · `input-group` · `label` · `live-announcer` · `popover` · `progress` · `radio-card-group` · `resizable` · `scroll-area` · `search-field` · `select` · `separator` · `sheet` · `sidebar` · `skeleton` · `slider` · `sonner` · `spinner` · `status-dot` · `switch` · `table` · `tabs` · `textarea` · `toggle` · `toggle-group` · `tooltip`
+
+Motion comes from `apps/dashboard/src/lib/motion.ts`; formatting from `apps/dashboard/src/lib/format.ts`. Only `motion/react` (not `framer-motion`).
 
 **Dashboard Widgets** (`apps/dashboard/src/components/widgets/`):
 `active-downloads` · `activity` · `arr-status` · `cpu` · `declarative` · `digest` · `disk` · `divider` · `list` · `media-calendar` · `memory` · `network` · `quick-actions` · `services` · `stat-tile` · `storage-mounts` · `system-health` · `system-info` · `system-status`
@@ -138,6 +162,20 @@ import { Home01Icon, Settings01Icon } from "@/components/icons";
 ```
 
 The icon barrel is at `apps/dashboard/src/components/icons.tsx`. If an icon you need isn't re-exported there, add it from `@hugeicons/core-free-icons`.
+
+---
+
+## Desktop Mode
+
+Desktop mode (`/dashboard/desktop`, `components/desktop/*`) is a first-class shell: wallpaper, menu bar, windows with traffic lights, dock, Launchpad, Control Center. Each window is an iframe running the same dashboard shell, so tokens, theme and `MotionConfig` apply inside windows; toasts, the live announcer and the Activity pill exist only in the top-level document.
+
+- **Chrome carries proof.** The menu bar shows the Activity pill (jobs, approvals) and the security-mode pill; a window whose app an agent is acting on shows "{Agent} is {doing} {target} · Stop" in its titlebar.
+- **Materials.** Menu bar, dock and floating pills use `.material-island`; windows, menus, Launchpad and Control Center are opaque `--surface-*`. No other blur.
+- **Windows.** `rounded-xl`, active `border-foreground/20 shadow-lg`, inactive `shadow-md` with a muted title (never lowered opacity). Traffic lights: close, minimize, zoom on the left; 14px circles in 28px buttons; `--window-*` tokens on the active window, neutral on inactive; glyphs on hover/focus; accessible names "Close {App}". Open 180ms, close 120ms, minimize 180ms, restore 200ms, zoom 180ms tween; no springs except after a drag; 120ms fades under reduced motion.
+- **Dock.** Open = dot; focused = `bg-muted` tile; minimized = hollow dot; working = breathing `status-info` dot; needs you = amber count; failed = critical dot. Hover lifts 2px (no magnification); press scales 0.96.
+- **Menus.** Sentence case, `Menubar`/`DropdownMenu` primitives, and only items and shortcuts that work.
+- **Imagery.** Only Talome-owned wallpapers or images whose licence and attribution are recorded; never Umbrel, Apple or other platform assets.
+- **Parity.** Everything reachable in desktop mode is reachable in classic mode.
 
 ---
 

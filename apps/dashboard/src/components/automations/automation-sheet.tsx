@@ -811,7 +811,7 @@ function RunHistory({ automationId }: { automationId: string }) {
     return (
       <div className="space-y-2 p-1">
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="h-10 rounded-lg bg-muted/40 animate-pulse" />
+          <div key={i} className="h-10 rounded-lg bg-muted/40 motion-safe:animate-pulse" />
         ))}
       </div>
     );

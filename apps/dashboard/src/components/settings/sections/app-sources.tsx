@@ -161,7 +161,7 @@ export function AppSourcesSection() {
                   <span className="text-muted-foreground">{store.type}</span>
                   {" · "}{store.appCount} apps
                   {isSyncing ? (
-                    <span className="text-status-info animate-pulse"> · syncing</span>
+                    <span className="text-status-info motion-safe:animate-pulse"> · syncing</span>
                   ) : hasSynced ? (
                     <> · {relativeTime(store.lastSyncedAt!)}</>
                   ) : (

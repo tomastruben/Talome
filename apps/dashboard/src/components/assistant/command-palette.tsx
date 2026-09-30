@@ -162,11 +162,8 @@ function ThinkingDots() {
       {[0, 1, 2].map((i) => (
         <span
           key={i}
-          className="h-1.5 w-1.5 rounded-full bg-foreground/30"
-          style={{
-            animation: "thinking-dot 1.4s ease-in-out infinite",
-            animationDelay: `${i * 150}ms`,
-          }}
+          className="h-1.5 w-1.5 rounded-full bg-foreground/30 motion-safe:animate-thinking-dot"
+          style={{ animationDelay: `${i * 150}ms` }}
         />
       ))}
     </div>
@@ -801,7 +798,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
                       {isActive && (
                         <span className="ml-2 inline-flex items-center gap-1 text-xs text-primary/70">
                           <span className="relative flex size-1.5">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />
+                            <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-primary/60 opacity-75" />
                             <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
                           </span>
                           thinking…

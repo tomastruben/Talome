@@ -9,7 +9,7 @@ import { useAtom } from "jotai";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { toast } from "sonner";
 import useSWR, { mutate as globalMutate } from "swr";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import { HugeiconsIcon, Cancel01Icon, AiChat02Icon, CloudUploadIcon, Edit02Icon, Share04Icon, SystemUpdate01Icon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

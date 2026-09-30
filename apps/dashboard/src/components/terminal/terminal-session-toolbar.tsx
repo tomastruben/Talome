@@ -434,7 +434,7 @@ function SessionToolbar({
         {/* Connection status */}
         {connectionStatus === "reconnecting" && (
           <div className="flex items-center gap-1.5 text-xs text-status-warning">
-            <span className="size-1.5 rounded-full bg-status-warning animate-pulse" />
+            <span className="size-1.5 rounded-full bg-status-warning motion-safe:animate-pulse" />
             reconnecting…
           </div>
         )}

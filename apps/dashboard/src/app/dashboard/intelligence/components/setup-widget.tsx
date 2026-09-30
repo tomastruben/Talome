@@ -252,7 +252,7 @@ export function SetupWidget() {
 
       <div className="px-4 pt-1 pb-4">
         <div className="flex items-center gap-4">
-          <div className={isRunning ? "animate-pulse" : undefined}>
+          <div className={isRunning ? "motion-safe:animate-pulse" : undefined}>
             <HealthRing score={displayScore} />
           </div>
           <div className="flex-1 min-w-0">

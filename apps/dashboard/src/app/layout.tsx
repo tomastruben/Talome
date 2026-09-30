@@ -3,6 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { MotionProvider } from "@/components/motion-provider";
+import { ConfirmDialogHost } from "@/components/ui/confirm-dialog";
+import { LiveAnnouncer } from "@/components/ui/live-announcer";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -36,8 +39,12 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // No maximum scale: people must be able to zoom (WCAG 1.4.4).
   viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+  ],
 };
 
 export default function RootLayout({
@@ -47,9 +54,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        <meta name="theme-color" content="#0a0a0a" />
-      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
@@ -59,8 +63,17 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <TooltipProvider>{children}</TooltipProvider>
-          <Toaster richColors position="bottom-left" offset="1.25rem" />
+          <MotionProvider>
+            <TooltipProvider>
+              {children}
+              {/* One host for useConfirm() and one live announcer per document
+                  (the announcer stays silent inside desktop windows and
+                  forwards to the top-level page). */}
+              <ConfirmDialogHost />
+            </TooltipProvider>
+            <LiveAnnouncer />
+            <Toaster />
+          </MotionProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSetAtom } from "jotai";
 import useSWR from "swr";
-import { motion } from "framer-motion";
+import { motion } from "motion/react";
 import { SearchField } from "@/components/ui/search-field";
 import {
   HugeiconsIcon,

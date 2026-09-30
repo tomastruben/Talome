@@ -835,7 +835,7 @@ export default function ActivityPage() {
   const statusDot = hasProblems
     ? "bg-status-critical"
     : activeCount > 0
-      ? "bg-status-warning animate-pulse"
+      ? "bg-status-warning motion-safe:animate-pulse"
       : pendingCount > 0
         ? "bg-status-warning"
         : "bg-status-healthy";

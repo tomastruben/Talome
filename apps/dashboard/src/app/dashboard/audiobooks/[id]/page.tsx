@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSetAtom } from "jotai";
-import { motion } from "framer-motion";
+import { motion } from "motion/react";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { pageBackAtom } from "@/atoms/page-back";
 import useSWR from "swr";

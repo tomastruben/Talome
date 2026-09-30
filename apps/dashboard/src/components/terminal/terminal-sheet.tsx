@@ -9,6 +9,7 @@ import { CORE_URL } from "@/lib/constants";
 import { useKeyboardMode } from "@/hooks/use-keyboard-mode";
 import { TerminalSessionToolbar } from "./terminal-session-toolbar";
 import { useTerminalSessions } from "./use-terminal-sessions";
+import { Spinner } from "@/components/ui/spinner";
 
 const TerminalInner = dynamic(
   () => import("./terminal-inner").then((m) => ({ default: m.TerminalInner })),
@@ -204,8 +205,8 @@ export function TerminalSheet({ open, onOpenChange, initialCommand }: TerminalSh
             />
           ) : (
             <div className="flex items-center justify-center h-full">
-              <div className="flex items-center gap-2 text-[#8b949e] text-sm">
-                <div className="size-3 rounded-full border-2 border-[#8b949e]/40 border-t-[#8b949e] animate-spin" />
+              <div className="flex items-center gap-2 text-terminal-foreground/70 text-sm">
+                <Spinner decorative className="size-3.5" />
                 Connecting…
               </div>
             </div>

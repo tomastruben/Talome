@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import { useTheme } from "next-themes";
 import {
   HugeiconsIcon,
@@ -147,7 +147,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
                           <span className="absolute -top-1 -right-1 flex size-2">
                             {isActivelyDownloading || showAiDot ? (
                               <>
-                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />
+                                <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-primary/60 opacity-75" />
                                 <span className="relative inline-flex size-2 rounded-full bg-primary" />
                               </>
                             ) : (

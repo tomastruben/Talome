@@ -34,7 +34,7 @@ export function SystemHealthBanner() {
       <div className="flex items-center gap-1.5">
         <span className="relative flex size-1.5 shrink-0">
           <span
-            className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${
+            className={`absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full opacity-75 ${
               isOffline ? "bg-destructive-foreground" : "bg-white"
             }`}
           />

@@ -26,7 +26,7 @@ export function ActiveTasksWidget({
         title="Active Tasks"
         actions={
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="animate-pulse size-1.5 rounded-full bg-status-warning" />
+            <span className="motion-safe:animate-pulse size-1.5 rounded-full bg-status-warning" />
             {tasks.length} running
           </span>
         }

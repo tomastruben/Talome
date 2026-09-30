@@ -33,7 +33,7 @@ import { useTerminalHeaderAction } from "@/components/terminal/use-terminal-head
 import { pageTitleAtom } from "@/atoms/page-title";
 import { pageActionAtom } from "@/atoms/page-action";
 import { pageBackAtom } from "@/atoms/page-back";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";

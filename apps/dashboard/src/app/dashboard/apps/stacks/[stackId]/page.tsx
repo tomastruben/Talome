@@ -72,12 +72,12 @@ export default function StackDetailPage() {
   if (!stack) {
     return (
       <div className="mx-auto w-full max-w-xl grid gap-6 py-12">
-        <div className="h-6 w-48 bg-muted/50 rounded animate-pulse" />
-        <div className="h-4 w-64 bg-muted/30 rounded animate-pulse" />
-        <div className="h-10 w-full bg-muted/30 rounded-lg animate-pulse" />
+        <div className="h-6 w-48 bg-muted/50 rounded motion-safe:animate-pulse" />
+        <div className="h-4 w-64 bg-muted/30 rounded motion-safe:animate-pulse" />
+        <div className="h-10 w-full bg-muted/30 rounded-lg motion-safe:animate-pulse" />
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-14 bg-muted/20 rounded-lg animate-pulse" />
+            <div key={i} className="h-14 bg-muted/20 rounded-lg motion-safe:animate-pulse" />
           ))}
         </div>
       </div>

@@ -13,7 +13,7 @@ vi.mock("@/hooks/use-installed-apps", () => ({
   }),
 }));
 
-vi.mock("framer-motion", () => ({
+vi.mock("motion/react", () => ({
   AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
   motion: {
     div: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,

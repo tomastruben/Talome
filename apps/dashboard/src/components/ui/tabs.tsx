@@ -47,7 +47,7 @@ function TabsList({
       {children}
       <TabsPrimitive.Indicator
         className={cn(
-          "-translate-y-(--active-tab-bottom) absolute bottom-0 left-0 h-(--active-tab-height) w-(--active-tab-width) translate-x-(--active-tab-left) transition-[width,translate] duration-200 ease-in-out",
+          "-translate-y-(--active-tab-bottom) absolute bottom-0 left-0 h-(--active-tab-height) w-(--active-tab-width) translate-x-(--active-tab-left) transition-[width,height,translate] duration-150 ease-out motion-reduce:transition-none",
           variant === "underline"
             ? "data-[orientation=vertical]:-translate-x-px z-10 bg-primary data-[orientation=horizontal]:h-0.5 data-[orientation=vertical]:w-0.5 data-[orientation=horizontal]:translate-y-px"
             : "-z-1 rounded-md bg-background shadow-sm/5 dark:bg-input",
@@ -64,7 +64,7 @@ function TabsTab({ className, ...props }: TabsPrimitive.Tab.Props) {
   return (
     <TabsPrimitive.Tab
       className={cn(
-        "[&_svg]:-mx-0.5 relative flex h-[30px] shrink-0 grow cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-[5px] border border-transparent px-2.5 text-sm font-medium outline-none transition-[color,background-color,box-shadow] hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring data-disabled:pointer-events-none data-[orientation=vertical]:w-full data-[orientation=vertical]:justify-start data-active:text-foreground data-disabled:opacity-64 [&_svg:not([class*='size-'])]:size-3.5 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        "[&_svg]:-mx-0.5 relative flex h-8 shrink-0 grow cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent px-2.5 text-sm font-medium outline-none transition-[color,background-color,box-shadow] duration-150 ease-out hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-disabled:pointer-events-none data-[orientation=vertical]:w-full data-[orientation=vertical]:justify-start data-active:text-foreground data-disabled:opacity-64 [&_svg:not([class*='size-'])]:size-3.5 [&_svg]:pointer-events-none [&_svg]:shrink-0",
         className,
       )}
       data-slot="tabs-tab"
@@ -112,6 +112,8 @@ function TabsBadge({
 
 // ── TabsDot — colored status dot inside a tab trigger ────────────────────────
 // Usage: <TabsTab value="running"><TabsDot color="emerald" />Running</TabsTab>
+// `pulse` marks work in flight: the dot breathes (opacity only) while motion
+// is allowed and is static under reduced motion. No ping.
 
 type DotColor = "emerald" | "red" | "amber" | "sky" | "blue" | "muted";
 
@@ -135,15 +137,14 @@ function TabsDot({
 }) {
   return (
     <span className={cn("relative flex size-1.5 shrink-0", className)}>
-      {pulse && (
-        <span
-          className={cn(
-            "absolute inline-flex h-full w-full animate-ping rounded-full opacity-60",
-            dotColorMap[color],
-          )}
-        />
-      )}
-      <span className={cn("relative inline-flex size-1.5 rounded-full", dotColorMap[color])} />
+      <span
+        data-pulse={pulse ? "true" : undefined}
+        className={cn(
+          "relative inline-flex size-1.5 rounded-full",
+          dotColorMap[color],
+          pulse && "motion-safe:animate-breathe",
+        )}
+      />
     </span>
   );
 }

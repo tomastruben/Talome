@@ -42,6 +42,7 @@ import { SettingsGroup, ToggleRow, InfoRow } from "@/components/settings/setting
 import { Badge } from "@/components/ui/badge";
 import { usePendingApprovals } from "@/components/trust/api";
 import type { IconSvgElement } from "@/components/icons";
+import { Spinner } from "@/components/ui/spinner";
 
 interface SettingsLink {
   slug: string;
@@ -199,7 +200,7 @@ function ServerModeToggle() {
       <div className="flex items-center gap-2 mb-3">
         <p className="text-sm font-medium">Server Mode</p>
         {switching && (
-          <span className="text-xs text-muted-foreground animate-pulse">
+          <span className="text-xs text-muted-foreground motion-safe:animate-pulse">
             {currentMode === "dev" ? "Building and restarting…" : "Switching to dev…"}
           </span>
         )}
@@ -224,7 +225,7 @@ function ServerModeToggle() {
               } disabled:opacity-60`}
             >
               {active && switching && (
-                <span className="absolute top-2.5 right-2.5 size-3 rounded-full border-[1.5px] border-muted-foreground/40 border-t-muted-foreground animate-spin" />
+                <Spinner label="Switching mode" className="absolute top-2.5 right-2.5 size-3.5 text-muted-foreground" />
               )}
               <p className={`text-sm font-medium ${active ? "text-foreground" : "text-muted-foreground"}`}>{m.label}</p>
               <p className="text-xs text-muted-foreground mt-0.5">{m.desc}</p>
@@ -309,7 +310,7 @@ function ServicesSection() {
                 <HugeiconsIcon
                   icon={s.icon}
                   size={16}
-                  className={isRestarting ? "text-status-warning animate-pulse" : isUp ? "text-status-healthy" : "text-status-critical"}
+                  className={isRestarting ? "text-status-warning motion-safe:animate-pulse" : isUp ? "text-status-healthy" : "text-status-critical"}
                 />
               </div>
               <div className="flex-1 min-w-0">

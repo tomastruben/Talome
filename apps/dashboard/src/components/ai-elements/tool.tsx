@@ -182,7 +182,7 @@ export const getStatusBadge = (status: ToolPart["state"]) => {
         className={cn(
           "inline-block size-1.5 rounded-full",
           dot,
-          pulse && "animate-pulse"
+          pulse && "motion-safe:animate-pulse"
         )}
       />
       <span className="text-xs text-muted-foreground">{label}</span>
@@ -826,7 +826,7 @@ function AudiobookDownloadsCard({ output }: { output: unknown }) {
         const isComplete = progress === "100%";
         return (
           <div key={String(d.hash ?? i)} className={cn("flex items-center gap-2.5 px-3 py-2", i > 0 && "border-t border-border/30")}>
-            <span className={cn("size-1.5 rounded-full shrink-0", isComplete ? "bg-status-healthy" : "bg-status-info animate-pulse")} />
+            <span className={cn("size-1.5 rounded-full shrink-0", isComplete ? "bg-status-healthy" : "bg-status-info motion-safe:animate-pulse")} />
             <span className="text-xs font-medium text-foreground flex-1 truncate">{String(d.name ?? "")}</span>
             <span className="text-xs text-muted-foreground shrink-0">{String(d.size ?? "")}</span>
             <span className={cn("text-xs shrink-0 tabular-nums", isComplete ? "text-status-healthy" : "text-muted-foreground")}>

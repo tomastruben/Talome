@@ -15,7 +15,35 @@
   --color-status-warning: var(--status-warning);
   --color-status-critical: var(--status-critical);
   --color-status-info: var(--status-info);
+  --color-status-healthy-foreground: var(--status-healthy-foreground);
+  --color-status-warning-foreground: var(--status-warning-foreground);
+  --color-status-critical-foreground: var(--status-critical-foreground);
+  --color-status-info-foreground: var(--status-info-foreground);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-dim-foreground: var(--dim-foreground);
+  /* Surface roles (opaque, except the island material) */
+  --color-surface-modal: var(--surface-modal);
+  --color-surface-menu: var(--surface-menu);
+  --color-surface-popover: var(--surface-popover);
+  --color-surface-toast: var(--surface-toast);
+  --color-surface-island: var(--surface-island);
+  --color-surface-island-solid: var(--surface-island-solid);
+  --color-scrim: var(--scrim);
+  /* Device surface: the terminal stays dark in both themes */
+  --color-terminal: var(--terminal);
+  --color-terminal-foreground: var(--terminal-foreground);
+  /* Desktop-mode traffic lights only */
+  --color-window-close: var(--window-close);
+  --color-window-minimize: var(--window-minimize);
+  --color-window-zoom: var(--window-zoom);
+  --color-window-control-edge: var(--window-control-edge);
+  /* Motion: ease-enter / ease-exit utilities */
+  --ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  /* Loops, only while real work is in flight; always used with motion-safe: */
+  --animate-spin: spin 0.8s linear infinite;
+  --animate-breathe: breathe 1.5s ease-in-out infinite;
+  --animate-thinking-dot: thinking-dot 1.4s ease-in-out infinite;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -72,11 +100,20 @@
   --space-2xl: 2rem;
   --space-3xl: 3rem;
 
-  /* ── Transitions (subtle, purposeful, 120-200ms) ── */
-  --ease-default: cubic-bezier(0.25, 0.1, 0.25, 1);
-  --duration-fast: 100ms;
-  --duration-normal: 150ms;
-  --duration-slow: 200ms;
+  /* ── Motion (mirrors lib/motion.ts) ──
+     Entrances <=200ms on --ease-enter; exits 120-140ms on --ease-exit;
+     hover/colour 150ms; press 100ms. */
+  --ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-default: var(--ease-enter);
+  --duration-press: 100ms;
+  --duration-fast: 150ms;
+  --duration-base: 180ms;
+  --duration-exit: 140ms;
+  --duration-exit-fast: 120ms;
+  /* legacy aliases, removed once unused: */
+  --duration-normal: var(--duration-fast);
+  --duration-slow: var(--duration-base);
 
   /* ── Elevation (subtle depth instead of hard borders) ── */
   --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 4%);
@@ -98,10 +135,11 @@
   --muted-foreground: oklch(0.5 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  --destructive: var(--status-critical);
+  --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --ring: oklch(0.55 0 0);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -114,12 +152,41 @@
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-  --status-healthy: oklch(0.723 0.191 149.58);
-  --status-warning: oklch(0.795 0.184 86.047);
-  --status-critical: oklch(0.577 0.245 27.325);
-  --status-info: oklch(0.7 0.17 250);
-  --dim-foreground: oklch(0.62 0 0);
+  --sidebar-ring: oklch(0.55 0 0);
+  /* Status: darkened in light so one token works as dot, icon and short text
+     on background, card and muted, and inside a 12% tint of itself. */
+  --status-healthy: oklch(0.5 0.13 150);
+  --status-warning: oklch(0.52 0.115 65);
+  --status-critical: oklch(0.53 0.21 27);
+  --status-info: oklch(0.5 0.15 255);
+  --status-healthy-foreground: oklch(0.985 0 0);
+  --status-warning-foreground: oklch(0.985 0 0);
+  --status-critical-foreground: oklch(0.985 0 0);
+  --status-info-foreground: oklch(0.985 0 0);
+  --dim-foreground: oklch(0.56 0 0);
+
+  /* Surface roles. Modals, menus, popovers and toasts are opaque.
+     Blur only via .material-island, which falls back to the solid value. */
+  --surface-modal: oklch(1 0 0);
+  --surface-menu: oklch(1 0 0);
+  --surface-popover: oklch(1 0 0);
+  --surface-toast: oklch(1 0 0);
+  --surface-island: oklch(1 0 0 / 88%);
+  --surface-island-solid: oklch(1 0 0);
+  --scrim: oklch(0 0 0 / 40%);
+
+  /* Terminal is a device surface and stays dark in both themes. */
+  --terminal: oklch(0.16 0 0);
+  --terminal-foreground: oklch(0.92 0 0);
+  --terminal-scrollbar: oklch(0.66 0.01 250 / 65%);
+  --terminal-scrollbar-hover: oklch(0.93 0.01 250 / 80%);
+  --terminal-scrollbar-track: oklch(1 0 0 / 4%);
+
+  /* Desktop-mode traffic lights only. Chrome, not status. */
+  --window-close: oklch(0.62 0.2 25);
+  --window-minimize: oklch(0.74 0.15 75);
+  --window-zoom: oklch(0.64 0.17 150);
+  --window-control-edge: oklch(0 0 0 / 14%);
 }
 
 .dark {
@@ -137,7 +204,8 @@
   --muted-foreground: oklch(0.76 0 0);
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
+  --destructive: var(--status-critical);
+  --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.65 0 0);
@@ -148,8 +216,8 @@
   --chart-5: oklch(0.645 0.246 16.439);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
@@ -158,7 +226,52 @@
   --status-warning: oklch(0.82 0.165 86.047);
   --status-critical: oklch(0.75 0.18 22.216);
   --status-info: oklch(0.75 0.15 250);
-  --dim-foreground: oklch(0.55 0 0);
+  --status-healthy-foreground: oklch(0.145 0 0);
+  --status-warning-foreground: oklch(0.145 0 0);
+  --status-critical-foreground: oklch(0.145 0 0);
+  --status-info-foreground: oklch(0.145 0 0);
+  --dim-foreground: oklch(0.6 0 0);
+
+  --surface-modal: oklch(0.205 0 0);
+  --surface-menu: oklch(0.205 0 0);
+  --surface-popover: oklch(0.205 0 0);
+  --surface-toast: oklch(0.235 0 0);
+  --surface-island: oklch(0.205 0 0 / 88%);
+  --surface-island-solid: oklch(0.205 0 0);
+  --scrim: oklch(0 0 0 / 60%);
+
+  --window-close: oklch(0.68 0.19 25);
+  --window-minimize: oklch(0.8 0.15 80);
+  --window-zoom: oklch(0.72 0.17 150);
+  --window-control-edge: oklch(0 0 0 / 0%);
+}
+
+/* ── Increased contrast ──────────────────────────────────────────────────────
+   Stronger boundaries and secondary text; surface materials become opaque
+   (see .material-island). */
+@media (prefers-contrast: more) {
+  :root {
+    --border: oklch(0.6 0 0);
+    --input: oklch(0.6 0 0);
+    --muted-foreground: oklch(0.4 0 0);
+  }
+  .dark {
+    --border: oklch(1 0 0 / 35%);
+    --input: oklch(1 0 0 / 40%);
+    --muted-foreground: oklch(0.85 0 0);
+  }
+}
+
+/* Opaque materials under reduced transparency or increased contrast.
+   Safari has no prefers-reduced-transparency, so contrast: more is the
+   fallback path there. Usage: solid-materials:bg-card */
+@custom-variant solid-materials {
+  @media (prefers-reduced-transparency: reduce) {
+    @slot;
+  }
+  @media (prefers-contrast: more) {
+    @slot;
+  }
 }
 
 @layer base {
@@ -209,7 +322,7 @@
   .terminal-host .xterm-viewport {
     overflow-y: auto !important;
     scrollbar-width: thin;
-    scrollbar-color: rgba(139, 148, 158, 0.65) rgba(255, 255, 255, 0.04);
+    scrollbar-color: var(--terminal-scrollbar) var(--terminal-scrollbar-track);
   }
 
   .terminal-host .xterm-viewport::-webkit-scrollbar {
@@ -217,18 +330,18 @@
   }
 
   .terminal-host .xterm-viewport::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--terminal-scrollbar-track);
   }
 
   .terminal-host .xterm-viewport::-webkit-scrollbar-thumb {
-    background: rgba(139, 148, 158, 0.65);
+    background: var(--terminal-scrollbar);
     border-radius: 9999px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
 
   .terminal-host .xterm-viewport::-webkit-scrollbar-thumb:hover {
-    background: rgba(230, 237, 243, 0.8);
+    background: var(--terminal-scrollbar-hover);
     background-clip: padding-box;
   }
 
@@ -243,14 +356,24 @@
   .status-dot[data-status="running"] {
     background-color: var(--status-healthy);
   }
+  /* Work in flight: the breathing info dot (static under reduced motion). */
   .status-dot[data-status="restarting"] {
-    background-color: var(--status-warning);
-    animation: status-pulse 1.4s ease-in-out infinite;
+    background-color: var(--status-info);
   }
+  @media (prefers-reduced-motion: no-preference) {
+    .status-dot[data-status="restarting"] {
+      animation: breathe 1.5s ease-in-out infinite;
+    }
+  }
+  /* Stopped is not a failure: grey, not red. Docker reports a container
+     stopped on purpose as "exited", so it is grey too. */
   .status-dot[data-status="exited"],
   .status-dot[data-status="stopped"] {
+    background-color: color-mix(in oklch, var(--muted-foreground) 40%, transparent);
+  }
+  /* A container Docker could not stop or remove cleanly is a failure. */
+  .status-dot[data-status="dead"] {
     background-color: var(--status-critical);
-    opacity: 0.5;
   }
 
   /* ── Port chips ───────────────────────────────────── */
@@ -602,6 +725,12 @@
   50%       { opacity: 0.25; }
 }
 
+/* The "working" dot: opacity only, never scale. Use motion-safe:animate-breathe. */
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
 @keyframes folder-highlight {
   0% { background-color: oklch(0.922 0 0 / 0.08); }
   100% { background-color: transparent; }
@@ -617,7 +746,12 @@
   to   { opacity: 1; transform: scale(1); }
 }
 .animate-widget-enter {
-  animation: widget-enter 300ms cubic-bezier(0.2, 0, 0, 1) both;
+  animation: widget-enter 150ms var(--ease-enter) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-widget-enter {
+    animation: none;
+  }
 }
 
 /* ── Audiobook detail cover glow ───────────────── */
@@ -1076,7 +1210,7 @@
 
   .app-card-name {
     font-size: var(--text-base);
-    font-weight: 550;
+    font-weight: 500;
     line-height: 1.25;
     white-space: nowrap;
     overflow: hidden;
@@ -1598,7 +1732,7 @@
 .chat-response h2,
 .chat-response h3,
 .chat-response h4 {
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.3;
   margin-top: 1.1em;
   margin-bottom: 0.15em;
@@ -1730,7 +1864,7 @@
 }
 
 /* Strong / em / links */
-.chat-response strong { font-weight: 600; }
+.chat-response strong { font-weight: 500; }
 .chat-response em { font-style: italic; }
 .chat-response a {
   text-decoration: underline;
@@ -1792,42 +1926,63 @@
   }
 }
 
-/* ── Sonner Toast Close Button ───────────────────────────────────────────── */
-/* Override Sonner defaults: move inside toast (top-right), reveal on hover */
+/* ── Sonner toasts ───────────────────────────────────────────────────────────
+   Neutral surface (--surface-toast); only the icon carries status colour.
+   Timing follows lib/motion.ts: 180ms in on --ease-enter, 120ms out. */
+[data-sonner-toast][data-styled='true'] {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  transition:
+    transform var(--duration-base) var(--ease-enter),
+    opacity var(--duration-base) var(--ease-enter),
+    height var(--duration-base) var(--ease-enter),
+    box-shadow var(--duration-fast) ease-out;
+}
+[data-sonner-toast][data-styled='true'][data-removed='true'] {
+  transition:
+    transform var(--duration-exit-fast) var(--ease-exit),
+    opacity var(--duration-exit-fast) var(--ease-exit),
+    height var(--duration-exit-fast) var(--ease-exit);
+}
+
+/* Close button: inside the toast (top-right), revealed on hover or focus,
+   always visible on touch. The hit area is 24px. */
 [data-sonner-toast][data-styled='true'] [data-close-button] {
   right: 0.375rem;
   left: unset;
   top: 0.375rem;
+  width: 1.5rem;
+  height: 1.5rem;
   transform: none;
   border: none;
-  background: oklch(0 0 0 / 0.06);
-  color: currentColor;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted-foreground);
   opacity: 0;
-  transition: opacity 150ms ease-out, background 150ms ease-out;
+  transition: opacity var(--duration-fast) ease-out, background-color var(--duration-fast) ease-out,
+    color var(--duration-fast) ease-out;
 }
 
-[data-sonner-toast][data-styled='true']:hover [data-close-button] {
-  opacity: 0.6;
+[data-sonner-toast][data-styled='true']:hover [data-close-button],
+[data-sonner-toast][data-styled='true']:focus-within [data-close-button] {
+  opacity: 1;
 }
 
 [data-sonner-toast][data-styled='true'] [data-close-button]:hover {
-  opacity: 1;
-  background: oklch(0 0 0 / 0.12);
+  background: var(--muted);
+  color: var(--foreground);
 }
 
 [data-sonner-toast][data-styled='true'] [data-close-button]:focus-visible {
   opacity: 1;
-  box-shadow: 0 0 0 2px currentColor;
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--ring);
 }
 
-/* Rich-color overrides: keep close button borderless */
-[data-rich-colors='true'][data-sonner-toast] [data-close-button] {
-  background: oklch(0 0 0 / 0.06);
-  border: none;
-}
-
-[data-rich-colors='true'][data-sonner-toast] [data-close-button]:hover {
-  background: oklch(0 0 0 / 0.12);
+@media (hover: none) {
+  [data-sonner-toast][data-styled='true'] [data-close-button] {
+    opacity: 1;
+  }
 }
 
 [data-sonner-toast][data-styled='true'] [data-close-button] svg {
@@ -1912,5 +2067,99 @@
     animation: none;
     background-image: none;
     -webkit-text-fill-color: currentColor;
+  }
+}
+
+/* ── Materials (P2-17) ────────────────────────────────────────────────────────
+   Blur is allowed only on floating chrome over live content: desktop menu bar,
+   dock, Activity pill, selection bar, widget-edit toolbar, sticky header.
+   Opaque under reduced transparency and increased contrast. */
+@layer components {
+  .material-island {
+    background-color: var(--surface-island);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .material-island {
+      background-color: var(--surface-island-solid);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
+  /* ── Press feedback (P1-25) ─────────────────────────────────────────────
+     Colours 150ms, press scale 0.98 over 100ms. The scale is removed under
+     reduced motion; colour transitions stay. Button applies this by default. */
+  .pressable {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-duration: var(--duration-fast), var(--duration-fast), var(--duration-fast),
+      var(--duration-fast), var(--duration-fast), var(--duration-press);
+    transition-timing-function: ease-out;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .pressable:not(:disabled):not([aria-disabled="true"]):active {
+      transform: scale(0.98);
+    }
+  }
+
+  /* ── Edge fades (P1-25) ─────────────────────────────────────────────────
+     A 16px mask on the edge that has more content, set by ScrollArea's
+     data-fade-top / data-fade-bottom (and -left / -right). */
+  .edge-fade {
+    --edge-fade-size: 1rem;
+    --edge-fade-top: 0px;
+    --edge-fade-bottom: 0px;
+    --edge-fade-left: 0px;
+    --edge-fade-right: 0px;
+    -webkit-mask-image:
+      linear-gradient(to bottom, transparent 0, black var(--edge-fade-top), black calc(100% - var(--edge-fade-bottom)), transparent 100%),
+      linear-gradient(to right, transparent 0, black var(--edge-fade-left), black calc(100% - var(--edge-fade-right)), transparent 100%);
+    -webkit-mask-composite: source-in;
+    mask-image:
+      linear-gradient(to bottom, transparent 0, black var(--edge-fade-top), black calc(100% - var(--edge-fade-bottom)), transparent 100%),
+      linear-gradient(to right, transparent 0, black var(--edge-fade-left), black calc(100% - var(--edge-fade-right)), transparent 100%);
+    mask-composite: intersect;
+  }
+  .edge-fade[data-fade-top="true"] { --edge-fade-top: var(--edge-fade-size); }
+  .edge-fade[data-fade-bottom="true"] { --edge-fade-bottom: var(--edge-fade-size); }
+  .edge-fade[data-fade-left="true"] { --edge-fade-left: var(--edge-fade-size); }
+  .edge-fade[data-fade-right="true"] { --edge-fade-right: var(--edge-fade-size); }
+  @media (prefers-reduced-motion: no-preference) {
+    .edge-fade {
+      transition: --edge-fade-top var(--duration-press) ease-out, --edge-fade-bottom var(--duration-press) ease-out,
+        --edge-fade-left var(--duration-press) ease-out, --edge-fade-right var(--duration-press) ease-out;
+    }
+  }
+}
+
+/* Registered so the mask edges can transition. */
+@property --edge-fade-top { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --edge-fade-bottom { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --edge-fade-left { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --edge-fade-right { syntax: "<length>"; inherits: false; initial-value: 0px; }
+
+/* ── Reduced motion safety net (P0-1) ────────────────────────────────────────
+   Components write loops with motion-safe:. This catches anything that
+   slipped through: tw-animate enter/exit keep their fade but lose travel,
+   scale and rotation, and CSS loops stop. */
+@media (prefers-reduced-motion: reduce) {
+  [class*="animate-in"],
+  [class*="animate-out"] {
+    --tw-enter-scale: 1 !important;
+    --tw-enter-rotate: 0 !important;
+    --tw-enter-translate-x: 0 !important;
+    --tw-enter-translate-y: 0 !important;
+    --tw-exit-scale: 1 !important;
+    --tw-exit-rotate: 0 !important;
+    --tw-exit-translate-x: 0 !important;
+    --tw-exit-translate-y: 0 !important;
+  }
+  .animate-ping,
+  .animate-pulse,
+  .animate-bounce,
+  .animate-breathe,
+  .animate-thinking-dot {
+    animation: none !important;
   }
 }

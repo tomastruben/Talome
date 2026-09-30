@@ -188,4 +188,8 @@ export {
   BarChartHorizontalIcon,
   Analytics01Icon,
   MoreVerticalIcon,
+  // Design-system primitives (spinner, copy/confirm ticks, warning toasts)
+  Loading03Icon,
+  Tick02Icon,
+  Alert02Icon,
 } from "@hugeicons/core-free-icons";

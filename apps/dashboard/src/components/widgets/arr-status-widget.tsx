@@ -93,8 +93,8 @@ export function ArrStatusWidget({ mode = "full" }: { mode?: "compact" | "full" }
         <div className="divide-y divide-border/40">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="flex items-center gap-3 px-4 py-3">
-              <span className="size-2 rounded-full bg-muted animate-pulse" />
-              <span className="h-3 w-20 rounded bg-muted animate-pulse" />
+              <span className="size-2 rounded-full bg-muted motion-safe:animate-pulse" />
+              <span className="h-3 w-20 rounded bg-muted motion-safe:animate-pulse" />
             </div>
           ))}
         </div>
