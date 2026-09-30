@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { CORE_URL } from "@/lib/constants";
@@ -25,8 +26,16 @@ import { Banner, BannerIcon, BannerTitle, BannerClose } from "@/components/kibo-
 import { AutomationSheet } from "@/components/automations/automation-sheet";
 import { useAutomation } from "@/components/automations/automation-context";
 import { relativeTime } from "@/lib/format";
+import { ErrorState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+/** Throws on failure, so a failed load never shows "No automations yet". */
+async function fetcher<T = unknown>(url: string): Promise<T> {
+  const res = await fetch(url, { credentials: "include" });
+  const body = await res.json().catch(() => null) as { error?: unknown } | null;
+  if (!res.ok) throw new Error(typeof body?.error === "string" ? body.error : `Couldn't load automations (${res.status}).`);
+  return body as T;
+}
 
 interface AutomationRow {
   id: string;
@@ -41,6 +50,8 @@ interface AutomationRow {
   createdAt: string;
   lastRunSuccess?: boolean;
   lastRunError?: string | null;
+  /** "succeeded" | "failed" | "blocked_approval" | "blocked" … (runs recorded before statuses may have none). */
+  lastRunStatus?: string | null;
   lastRunTriggeredAt?: string;
 }
 
@@ -104,7 +115,7 @@ function stepSummary(row: AutomationRow): string {
 export default function AutomationsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { data, mutate } = useSWR<{ automations: AutomationRow[] }>(
+  const { data, error: loadError, mutate } = useSWR<{ automations: AutomationRow[] }>(
     `${CORE_URL}/api/automations`,
     fetcher,
     { refreshInterval: 10_000 },
@@ -198,7 +209,17 @@ export default function AutomationsPage() {
       )}
 
       {/* List */}
-      {rows.length === 0 ? (
+      {!data && loadError ? (
+        <ErrorState
+          title="Couldn't load automations"
+          description={loadError instanceof Error ? loadError.message : "Check that the Talome server is reachable, then retry."}
+          onRetry={() => void mutate()}
+        />
+      ) : !data ? (
+        <div className="grid gap-3" aria-hidden="true">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+        </div>
+      ) : rows.length === 0 ? (
         <div className="rounded-xl border border-dashed p-12 flex flex-col items-center gap-3 text-center">
           <HugeiconsIcon icon={FlashIcon} size={32} className="text-dim-foreground" />
           <div>
@@ -296,7 +317,14 @@ export default function AutomationsPage() {
                     {isRunning ? (
                       <span>Running…</span>
                     ) : hasRun ? (
-                      row.lastRunSuccess ? (
+                      row.lastRunStatus === "blocked_approval" ? (
+                        <span className="text-status-warning">
+                          Waiting for approval since {relativeTime(row.lastRunTriggeredAt!)} ·{" "}
+                          <Link href="/dashboard/settings/approvals" className="rounded-sm underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            Review
+                          </Link>
+                        </span>
+                      ) : row.lastRunSuccess ? (
                         <span>Succeeded {relativeTime(row.lastRunTriggeredAt!)}</span>
                       ) : row.lastRunError ? (
                         <Tooltip>

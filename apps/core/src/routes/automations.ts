@@ -83,8 +83,9 @@ automations.get("/", (c) => {
           triggered_at: string;
           success: number;
           error: string | null;
+          status: string | null;
         }>(sql`
-          SELECT r.automation_id, r.triggered_at, r.success, r.error
+          SELECT r.automation_id, r.triggered_at, r.success, r.error, r.status
           FROM automation_runs r
           INNER JOIN (
             SELECT automation_id, MAX(triggered_at) AS max_t
@@ -98,6 +99,8 @@ automations.get("/", (c) => {
       latestRuns.map((r) => [r.automation_id, {
         lastRunSuccess: !!r.success,
         lastRunError: r.error,
+        // "blocked_approval" is waiting for the owner, not a failure.
+        lastRunStatus: r.status,
         lastRunTriggeredAt: r.triggered_at,
       }]),
     );

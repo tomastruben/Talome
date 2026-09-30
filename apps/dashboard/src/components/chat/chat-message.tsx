@@ -469,8 +469,8 @@ export function ChatMessage({
                 <Confirmation approval={approval} state={p.state}>
                   <ConfirmationRequest>
                     <ConfirmationTitle>
-                      Allow Talome to run{" "}
-                      <strong>{formatToolName(name)}</strong>?
+                      The Assistant wants to run{" "}
+                      <strong>{formatToolName(name)}</strong>.
                     </ConfirmationTitle>
                     <ConfirmationActions>
                       <ConfirmationAction
@@ -493,7 +493,7 @@ export function ChatMessage({
                           })
                         }
                       >
-                        Allow
+                        Approve
                       </ConfirmationAction>
                     </ConfirmationActions>
                   </ConfirmationRequest>
