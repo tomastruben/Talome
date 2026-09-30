@@ -2007,3 +2007,34 @@
   .animate-out,
   .animate-widget-enter { animation-duration: 1ms !important; }
 }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   iPad and other touch screens
+───────────────────────────────────────────────────────────────────────────── */
+
+/* Full screen from the Home Screen: the status bar and home indicator sit over
+   the page, so the sidebar and the content card keep clear of them. */
+@media (display-mode: standalone) and (min-width: 768px) {
+  [data-slot="sidebar-container"] {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 0.5rem);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+  }
+  [data-slot="sidebar-inset"] {
+    margin-top: calc(env(safe-area-inset-top, 0px) + 0.5rem);
+    margin-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+  }
+}
+
+/* No hover on a touch screen: whatever would appear on hover is simply shown,
+   so selection, copy, drag handles and row actions stay reachable. */
+@media (hover: none) and (pointer: coarse) {
+  [class*="group-hover"][class*="opacity-0"] { opacity: 1 !important; }
+
+  /* Long-press opens Talome's own menu, not Safari's callout or a text selection */
+  [data-slot="context-menu-trigger"] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}

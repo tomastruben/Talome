@@ -30,6 +30,7 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { VoiceDictationButton } from "@/components/assistant/voice-dictation-button";
 import type { VoiceStatus } from "@/hooks/use-voice-input";
+import { unlockAudio } from "@/lib/audio-session";
 import { AudioWave01Icon } from "@/components/icons";
 
 // ── Attachment preview ──────────────────────────────────────────────────────
@@ -202,7 +203,15 @@ export function ChatInputBar({
             <div className="flex items-center gap-1">
               <VoiceDictationButton onStatusChange={handleDictationStatus} onTranscript={handleTranscript} />
               {onVoiceMode && (
-                <PromptInputButton tooltip="Voice conversation" aria-label="Start voice conversation" onClick={onVoiceMode}>
+                <PromptInputButton
+                  tooltip="Voice conversation"
+                  aria-label="Start voice conversation"
+                  onClick={() => {
+                    // Unlock audio inside the tap, before the session starts (iPad)
+                    unlockAudio();
+                    onVoiceMode();
+                  }}
+                >
                   <HugeiconsIcon icon={AudioWave01Icon} size={16} />
                 </PromptInputButton>
               )}

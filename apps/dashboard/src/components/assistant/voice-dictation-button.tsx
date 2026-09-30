@@ -7,6 +7,7 @@ import { HugeiconsIcon, Mic01Icon } from "@/components/icons";
 import { PromptInputButton, usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { Spinner } from "@/components/ui/spinner";
 import { useVoiceInput, type VoiceStatus } from "@/hooks/use-voice-input";
+import { unlockAudio } from "@/lib/audio-session";
 
 /** Three bars that follow the microphone level. */
 function LevelBars({ level }: { level: MotionValue<number> }) {
@@ -61,6 +62,8 @@ export function VoiceDictationButton({ onStatusChange, onTranscript }: VoiceDict
   }, [active, voice, controller.textInput]);
 
   const toggle = async () => {
+    // Still inside the tap: iPad only lets audio start here
+    unlockAudio();
     if (active) {
       const text = await voice.stop();
       if (text) {

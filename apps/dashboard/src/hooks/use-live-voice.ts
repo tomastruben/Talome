@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMotionValue, type MotionValue } from "motion/react";
 import { getWsUrl } from "@/lib/constants";
+import { sharedAudioContext } from "@/lib/audio-session";
 
 /**
  * Full-duplex voice with OpenAI GPT-Live, relayed through Talome
@@ -77,6 +78,9 @@ class TalomePcmCapture extends AudioWorkletProcessor {
 registerProcessor("talome-pcm-capture", TalomePcmCapture);
 `;
 
+/** Contexts that already have the capture worklet (it can be registered once per context) */
+const workletContexts = new WeakSet<BaseAudioContext>();
+
 function toBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -139,6 +143,7 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     ws: WebSocket;
     ctx: AudioContext;
     stream: MediaStream;
+    nodes: AudioNode[];
     capture: AudioWorkletNode | null;
     output: GainNode;
     sources: Set<AudioBufferSourceNode>;
@@ -174,7 +179,8 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
       }
     });
     s.stream.getTracks().forEach((t) => t.stop());
-    void s.ctx.close().catch(() => undefined);
+    // The context is shared (and unlocked by a tap on iPad) — unplug this session's nodes
+    s.nodes.forEach((node) => node.disconnect());
     userLevel.set(0);
     agentLevel.set(0);
   }, [userLevel, agentLevel]);
@@ -206,7 +212,8 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
       return;
     }
 
-    const ctx = new AudioContext();
+    const ctx = sharedAudioContext();
+    if (ctx.state === "suspended") await ctx.resume().catch(() => undefined);
     const output = ctx.createGain();
     const outAnalyser = ctx.createAnalyser();
     outAnalyser.fftSize = 512;
@@ -223,6 +230,7 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
       ws,
       ctx,
       stream,
+      nodes: [output, outAnalyser, micSource, micAnalyser] as AudioNode[],
       capture: null as AudioWorkletNode | null,
       output,
       sources: new Set<AudioBufferSourceNode>(),
@@ -239,9 +247,12 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     session.current = s;
 
     try {
-      const url = URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: "application/javascript" }));
-      await ctx.audioWorklet.addModule(url);
-      URL.revokeObjectURL(url);
+      if (!workletContexts.has(ctx)) {
+        const url = URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: "application/javascript" }));
+        await ctx.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+        workletContexts.add(ctx);
+      }
       const capture = new AudioWorkletNode(ctx, "talome-pcm-capture");
       capture.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
         if (s.started && ws.readyState === 1) {
@@ -254,6 +265,7 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
       mute.gain.value = 0;
       capture.connect(mute).connect(ctx.destination);
       s.capture = capture;
+      s.nodes.push(capture, mute);
     } catch {
       setError("This browser can't stream audio.");
       stop();

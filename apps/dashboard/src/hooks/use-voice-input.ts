@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import useSWR from "swr";
 import { useMotionValue, type MotionValue } from "motion/react";
 import { CORE_URL } from "@/lib/constants";
+import { sharedAudioContext } from "@/lib/audio-session";
 
 /**
  * Voice input for the assistant.
@@ -136,6 +137,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): VoiceInput {
   const session = useRef<{
     stream: MediaStream;
     audioContext: AudioContext;
+    source: MediaStreamAudioSourceNode;
     frame: number;
     recorder?: MediaRecorder;
     chunks: Blob[];
@@ -150,7 +152,8 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): VoiceInput {
     if (!current) return;
     cancelAnimationFrame(current.frame);
     current.stream.getTracks().forEach((track) => track.stop());
-    void current.audioContext.close().catch(() => undefined);
+    // The context is shared (and unlocked by a tap on iPad) — just unplug the mic
+    current.source.disconnect();
     session.current = null;
     level.set(0);
   }, [level]);
@@ -174,10 +177,12 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): VoiceInput {
       return;
     }
 
-    const audioContext = new AudioContext();
+    const audioContext = sharedAudioContext();
+    if (audioContext.state === "suspended") await audioContext.resume().catch(() => undefined);
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 512;
-    audioContext.createMediaStreamSource(stream).connect(analyser);
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(analyser);
     const samples = new Float32Array(analyser.fftSize);
     let heardSpeech = false;
     let lastVoiceAt = performance.now();
@@ -200,7 +205,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): VoiceInput {
       if (session.current) session.current.frame = requestAnimationFrame(tick);
     };
 
-    session.current = { stream, audioContext, frame: 0, chunks: [], finalText: "", interimText: "" };
+    session.current = { stream, audioContext, source, frame: 0, chunks: [], finalText: "", interimText: "" };
 
     if (engine === "server") {
       const mimeType = pickMimeType();
