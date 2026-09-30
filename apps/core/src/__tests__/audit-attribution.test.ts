@@ -1,7 +1,9 @@
 /**
  * E2E bug 8: audit rows for settings changes and tool-internal writes had no
  * actor (NULL actor_kind/actor_id/actor_label/source/outcome), and MCP-driven
- * tool-internal rows were labelled "AI: ...".
+ * tool-internal rows were labelled "AI: ..." with nothing saying an MCP token
+ * made the call. The actor/source columns now say who acted; the action text
+ * is left as written (the dashboard humanizes "AI: <tool>" rows).
  */
 import { describe, it, expect, beforeAll, vi } from "vitest";
 
@@ -54,18 +56,19 @@ describe("writeAuditEntry attribution defaults", () => {
     });
   });
 
-  it("names the real source instead of the hard-coded 'AI:' prefix", () => {
-    runInActorContext(TOKEN_ACTOR, "mcp", () => writeAuditEntry("AI: delete_file", "destructive", "/tmp/x"));
-    expect(lastRow("MCP: delete_file")?.actorId).toBe("tok-audit");
-    expect(lastRow("AI: delete_file")).toBeUndefined();
+  it("keeps the action text (the dashboard parses it) and names the real source in the source column", () => {
+    runInActorContext(TOKEN_ACTOR, "mcp", () => writeAuditEntry("AI: set_app_env (sonarr)", "modify", "X=1"));
+    expect(lastRow("AI: set_app_env (sonarr)")).toMatchObject({ actorKind: "mcp_token", actorId: "tok-audit", source: "mcp" });
+    expect(lastRow("MCP: set_app_env (sonarr)")).toBeUndefined();
 
     const chatUser: Actor = { kind: "user", id: "u1", label: "alice (chat)" };
     runInActorContext(chatUser, "chat", () => writeAuditEntry("AI: rename_file", "modify", "a -> b"));
-    expect(lastRow("AI: rename_file")?.actorId).toBe("u1");
+    expect(lastRow("AI: rename_file")).toMatchObject({ actorId: "u1", source: "chat" });
 
     const automation: Actor = { kind: "automation", id: "a1", label: "Automation: Nightly" };
     runInActorContext(automation, "automation", () => writeAuditEntry("AI: create_directory", "modify", "/d"));
-    expect(lastRow("Automation: create_directory")?.source).toBe("automation");
+    expect(lastRow("AI: create_directory")).toMatchObject({ actorKind: "automation", actorId: "a1", source: "automation" });
+    expect(lastRow("Automation: create_directory")).toBeUndefined();
   });
 
   it("lets explicit extras win and fills only the fields they leave out", () => {
@@ -111,7 +114,7 @@ describe("writeAuditEntry attribution defaults", () => {
       .from(schema.auditLog)
       .where(eq(schema.auditLog.details, "/srv/old.txt"))
       .all()
-      .find((x) => x.action === "MCP: delete_file");
+      .find((x) => x.action === "AI: delete_file");
     expect(row).toMatchObject({ actorKind: "mcp_token", actorId: "tok-audit", source: "mcp" });
   });
 });
