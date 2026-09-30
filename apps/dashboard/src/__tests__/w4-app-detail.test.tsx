@@ -62,8 +62,13 @@ import { ConfirmDialogHost, confirmStore } from "@/components/ui/confirm-dialog"
 
 type Route = { status: number; body: unknown };
 let routes: Record<string, Route>;
+/** Milliseconds a GET of the app waits before answering (skeleton timing). */
+let appDelayMs = 0;
 const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
+  if (appDelayMs && url.endsWith("/api/apps/talome-store/jellyfin") && (init?.method ?? "GET") === "GET") {
+    await new Promise((r) => setTimeout(r, appDelayMs));
+  }
   const method = init?.method ?? "GET";
   const key = Object.keys(routes).find((k) => {
     const [m, path] = k.includes(" ") ? k.split(" ") : ["GET", k];
@@ -124,6 +129,12 @@ beforeEach(() => {
   fetchMock.mockClear();
   Object.values(toastFns).forEach((fn) => fn.mockClear());
   ops.state = { live: null, isActive: false, history: [] };
+  appDelayMs = 0;
+  try {
+    window.localStorage.clear();
+  } catch {
+    // no storage
+  }
   routes = {
     "/api/containers?grouped=true": { status: 200, body: [] },
     "/api/updates/jellyfin": { status: 200, body: { hasUpdate: false, currentVersion: "10.9.0", availableVersion: "10.9.0", releaseNotes: null } },
@@ -197,22 +208,8 @@ describe("app detail lifecycle", () => {
 
   it("keeps a failed install in the primary slot with Retry, Ask Talome and View log (regression)", async () => {
     routes["/api/apps/talome-store/jellyfin"] = { status: 200, body: app() };
-    ops.state.history = [
-      {
-        id: "op-7",
-        appId: "jellyfin",
-        kind: "install",
-        actor: "user:abc",
-        status: "failed",
-        step: "pulling",
-        progress: 35,
-        detail: null,
-        error: "pull access denied",
-        startedAt: "2026-09-30T11:50:00.000Z",
-        updatedAt: "2026-09-30T11:51:00.000Z",
-        finishedAt: "2026-09-30T11:51:00.000Z",
-      },
-    ];
+    // Relative times: failures older than a few days age out of the slot.
+    ops.state.history = [opRecord({ id: "op-7" })];
     renderPage();
     expect(await screen.findByText("Couldn't install Jellyfin")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
@@ -250,4 +247,90 @@ describe("app detail lifecycle", () => {
     expect(screen.getByText(/Installed from Umbrel/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
   });
+
+  it("keeps Open when the newest operation is a failed scheduled backup (regression: it took over the slot)", async () => {
+    routes["/api/apps/talome-store/jellyfin"] = { status: 200, body: app({ installed, webPort: 8096 }) };
+    ops.state.history = [
+      opRecord({ id: "op-b", kind: "backup", actor: "system", error: "disk full" }),
+    ];
+    renderPage();
+    expect(await screen.findByRole("link", { name: "Open Jellyfin" })).toBeInTheDocument();
+    expect(screen.getByText("Couldn't back up Jellyfin")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "See Backups" })).toHaveAttribute("href", "/dashboard/backups");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("shows a rolled-back update above Open, quietly, with Retry (regression: replaced Open, 'Try again', role=alert)", async () => {
+    routes["/api/apps/talome-store/jellyfin"] = { status: 200, body: app({ installed, webPort: 8096 }) };
+    ops.state.history = [opRecord({ id: "op-u", kind: "update", status: "rolled_back", error: "health check failed" })];
+    renderPage();
+    const title = await screen.findByText(/Update rolled back/);
+    expect(screen.getByRole("link", { name: "Open Jellyfin" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    // Found on arrival: a status, not an alert announced on every visit.
+    expect(title.closest("[role]")).toHaveAttribute("role", "status");
+  });
+
+  it("remembers a dismissal across sessions (localStorage)", async () => {
+    routes["/api/apps/talome-store/jellyfin"] = { status: 200, body: app() };
+    ops.state.history = [opRecord({ id: "op-7" })];
+    const { unmount } = renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    unmount();
+    expect(JSON.parse(window.localStorage.getItem("talome.app-detail.dismissed-operations") ?? "[]")).toContain("op-7");
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Install" })).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't install Jellyfin")).toBeNull();
+  });
+
+  it("asks before restarting, like Stop (regression: Restart ran at once)", async () => {
+    routes["/api/apps/talome-store/jellyfin"] = { status: 200, body: app({ installed }) };
+    routes["POST /api/apps/talome-store/jellyfin/restart"] = { status: 200, body: { ok: true } };
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /^Restart/ }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText("Restart Jellyfin?")).toBeInTheDocument();
+    expect(within(dialog).getByText("Jellyfin is unavailable for a moment.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).includes("/restart"))).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restart Jellyfin" }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).includes("/restart"))).toBe(true),
+    );
+  });
+
+  it("uses sentence case for What's new", async () => {
+    routes["/api/apps/talome-store/jellyfin"] = { status: 200, body: app({ releaseNotes: "Faster scans" }) };
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "What's new" })).toBeInTheDocument();
+  });
+
+  it("keeps a shown skeleton its minimum time even when the app arrives (regression: 20ms flash)", async () => {
+    routes["/api/apps/talome-store/jellyfin"] = { status: 200, body: app() };
+    appDelayMs = 250;
+    const { container } = renderPage();
+    await new Promise((r) => setTimeout(r, 400));
+    // The load finished at ~250ms; the skeleton, shown at 200ms, stays until ~500ms.
+    expect(container.querySelector('[aria-busy="true"] [data-slot="skeleton"]')).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "Jellyfin" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Jellyfin" })).toBeInTheDocument();
+  });
 });
+
+function opRecord(overrides: Partial<OperationRecord> = {}): OperationRecord {
+  return {
+    id: "op-7",
+    appId: "jellyfin",
+    kind: "install",
+    actor: "user:abc",
+    status: "failed",
+    step: "pulling",
+    progress: 35,
+    detail: null,
+    error: "pull access denied",
+    startedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    updatedAt: new Date(Date.now() - 9 * 60_000).toISOString(),
+    finishedAt: new Date(Date.now() - 9 * 60_000).toISOString(),
+    ...overrides,
+  };
+}

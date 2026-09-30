@@ -36,11 +36,13 @@ import {
   describeUpdateResponse,
   runningFromConflictBody,
   settledFailureFrom,
+  operationFailureCopy,
   updateOutcomeFromOperation,
   parseOperationConflict,
   summarizeUpdateOperation,
   type LifecycleOutcome,
   type OperationEvent,
+  type OperationKind,
   type OperationRecord,
 } from "@/lib/app-operations";
 import {
@@ -254,12 +256,20 @@ function statusLabel(status: string | undefined): { label: string; state: Status
   return STATUS_LABELS[status] ?? { label: status.charAt(0).toUpperCase() + status.slice(1), state: "unknown" };
 }
 
-/** Failures the person dismissed stay dismissed for this browser session. */
+/**
+ * Failures the person dismissed stay dismissed in this browser (localStorage,
+ * so a new tab or session doesn't bring them back). Failures older than
+ * FAILURE_MAX_AGE_MS age out of the primary slot on their own; Activity keeps
+ * the record.
+ */
 const DISMISSED_KEY = "talome.app-detail.dismissed-operations";
+const FAILURE_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+/** Background operations whose failure gets a quiet notice, never the primary slot. */
+const BACKGROUND_KINDS: ReadonlySet<OperationKind> = new Set(["backup", "restore", "configure"]);
 
 function readDismissed(): Set<string> {
   try {
-    const raw = window.sessionStorage.getItem(DISMISSED_KEY);
+    const raw = window.localStorage.getItem(DISMISSED_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : []);
   } catch {
@@ -269,7 +279,7 @@ function readDismissed(): Set<string> {
 
 function writeDismissed(ids: Set<string>) {
   try {
-    window.sessionStorage.setItem(DISMISSED_KEY, JSON.stringify([...ids].slice(-50)));
+    window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...ids].slice(-100)));
   } catch {
     // Private mode or blocked storage: dismissal lasts until reload.
   }
@@ -354,9 +364,23 @@ export default function AppDetailPage() {
   // Live operation (SSE) + recent history from the operations journal.
   const operations = useAppOperations(appId, { busy: !!actionLoading, onSettled: onOperationSettled });
   const liveOperation = operations.isActive ? operations.live : null;
-  // A failed / interrupted / rolled-back operation stays in the primary slot
-  // until it is retried, dismissed, or superseded by a newer operation.
-  const settledFailure = operations.isActive ? null : settledFailureFrom(operations.live, operations.history, dismissedOps);
+  // A failed / interrupted / rolled-back lifecycle operation stays in the
+  // primary slot until it is retried, dismissed, superseded by a newer
+  // lifecycle operation, or ages out. Background kinds (backup, restore,
+  // configure) only get a quiet notice below the primary action.
+  const settledFailure = operations.isActive
+    ? null
+    : settledFailureFrom(operations.live, operations.history, dismissedOps, { maxAgeMs: FAILURE_MAX_AGE_MS });
+  const backgroundFailure = operations.isActive
+    ? null
+    : settledFailureFrom(operations.live, operations.history, dismissedOps, { kinds: BACKGROUND_KINDS, maxAgeMs: FAILURE_MAX_AGE_MS });
+  // Only a failure that arrives while the page is open is announced as an
+  // alert; one found on arrival is shown quietly (role="status").
+  const activeOperationId = operations.isActive ? operations.live?.operationId ?? null : null;
+  const [seenActiveOps, setSeenActiveOps] = useState<ReadonlySet<string>>(() => new Set());
+  if (activeOperationId && !seenActiveOps.has(activeOperationId)) {
+    setSeenActiveOps(new Set([...seenActiveOps, activeOperationId]));
+  }
   const dismissFailure = useCallback((operationId: string) => {
     setDismissedOps((prev) => {
       const next = new Set(prev);
@@ -490,6 +514,7 @@ export default function AppDetailPage() {
     const copy = describeOperationConflict(
       app.installed?.displayName || app.name,
       adopted ? { kind: adopted.kind, actor: adopted.actor, startedAt: adopted.startedAt } : runningFromConflictBody(err.body),
+      { progressShown: !!adopted },
     );
     toast.info(copy.title, { description: copy.description });
     return true;
@@ -628,6 +653,20 @@ export default function AppDetailPage() {
     if (confirmed) void runAction("stop");
   };
 
+  /** Restart is the same reversible disruption as Stop: a soft confirmation. */
+  const confirmRestart = async () => {
+    if (!app) return;
+    const name = app.installed?.displayName || app.name;
+    const { confirmed } = await confirm({
+      tier: "soft",
+      title: `Restart ${name}?`,
+      consequence: `${name} is unavailable for a moment.`,
+      recovery: "Nothing is deleted.",
+      confirmLabel: `Restart ${name}`,
+    });
+    if (confirmed) void runAction("restart");
+  };
+
   const confirmUmbrelInstall = async (options: UmbrelInstallOptions | undefined): Promise<string[] | null> => {
     if (options) {
       // Re-plan with the choices so invalid folders/values are reported here,
@@ -700,8 +739,10 @@ export default function AppDetailPage() {
     // the loading state), so attach then — with [] it never attached.
   }, [pageReady]);
 
-  if (!app && !appError) {
-    // Nothing for the first 200ms, so a fast load never flashes a skeleton.
+  // Branch on the phase itself: nothing for the first 200ms (a fast load never
+  // flashes a skeleton), and once shown the skeleton stays its minimum time
+  // even when the app arrives sooner.
+  if (loadingPhase === "skeleton" || (!app && !appError)) {
     if (loadingPhase !== "skeleton") return <div className="mx-auto w-full max-w-xl min-h-96" aria-busy="true" />;
     return (
       <div className="mx-auto w-full max-w-xl grid gap-8 pt-2 pb-12" aria-busy="true">
@@ -778,6 +819,20 @@ export default function AppDetailPage() {
         return undefined;
     }
   })();
+  const failurePanel = (subordinate: boolean) =>
+    settledFailure ? (
+      <OperationFailure
+        className={subordinate ? "pb-2" : undefined}
+        operation={settledFailure}
+        appName={displayName}
+        onRetry={retryFailure}
+        retryBusy={actionInFlight}
+        canAskTalome={canAskTalome}
+        announce={seenActiveOps.has(settledFailure.operationId)}
+        subordinate={subordinate}
+        onDismiss={() => dismissFailure(settledFailure.operationId)}
+      />
+    ) : null;
   const validScreenshots = (app.screenshots || []).filter(
     (s) => !s.startsWith("file://"),
   );
@@ -975,7 +1030,7 @@ export default function AppDetailPage() {
         </div>
 
         {/* Update available banner */}
-        {updateInfo?.hasUpdate && status !== "updating" && !liveOperation && !settledFailure && (
+        {updateInfo?.hasUpdate && status !== "updating" && !liveOperation && settledFailure?.kind !== "update" && (
           <div className="w-full max-w-sm rounded-xl border border-border bg-muted/30 px-4 py-3 grid gap-2">
             <div className="flex items-center gap-2.5">
               <HugeiconsIcon icon={SystemUpdate01Icon} size={16} className="text-muted-foreground shrink-0" />
@@ -1014,23 +1069,22 @@ export default function AppDetailPage() {
             <Button size="lg" className="w-full" busy busyLabel={`Installing ${displayName}…`}>
               Install
             </Button>
-          ) : settledFailure ? (
-            <OperationFailure
-              operation={settledFailure}
-              appName={displayName}
-              onRetry={retryFailure}
-              retryBusy={actionInFlight}
-              canAskTalome={canAskTalome}
-              onDismiss={() => dismissFailure(settledFailure.operationId)}
-            />
+          ) : settledFailure && !isInstalled && !installedFrom ? (
+            // Nothing is installed: the failure (with Retry) is the primary action.
+            failurePanel(false)
           ) : installedFrom ? (
+            <>
+            {settledFailure && failurePanel(true)}
             <Button size="lg" className="w-full" asChild>
               <Link href={`/dashboard/apps/${encodeURIComponent(installedFrom.storeId)}/${encodeURIComponent(appId)}`}>
                 Open installed copy
               </Link>
             </Button>
+            </>
           ) : isInstalled ? (
             <>
+              {/* A failure sits above Open / Start, never in place of them. */}
+              {settledFailure && failurePanel(true)}
               {isRunning && app.nativeSurface ? (
                 <>
                   <Button size="lg" className="w-full" asChild>
@@ -1092,7 +1146,24 @@ export default function AppDetailPage() {
               {app.detectedRunning ? "Reinstall with Talome" : "Install"}
             </Button>
           )}
-          {installedFrom && !liveOperation && !settledFailure && (
+          {isInstalled && backgroundFailure && !liveOperation && (
+            <p className="flex flex-wrap items-center justify-center gap-x-2 text-xs text-muted-foreground text-center" role="status">
+              <span>{operationFailureCopy(backgroundFailure, displayName).title}</span>
+              {(backgroundFailure.kind === "backup" || backgroundFailure.kind === "restore") && (
+                <Link href="/dashboard/backups" className="underline underline-offset-2 hover:text-foreground">
+                  See Backups
+                </Link>
+              )}
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-foreground"
+                onClick={() => dismissFailure(backgroundFailure.operationId)}
+              >
+                Dismiss
+              </button>
+            </p>
+          )}
+          {installedFrom && !liveOperation && (
             <p className="text-xs text-muted-foreground text-center">
               Installed from {installedFrom.storeName}. One copy of an app can be installed at a time.
             </p>
@@ -1170,7 +1241,7 @@ export default function AppDetailPage() {
       {app.releaseNotes && (
         <section className="grid gap-2">
           <h2 className="text-sm font-medium text-muted-foreground">
-            What&apos;s New
+            What&apos;s new
           </h2>
           <Streamdown
             className="text-sm text-muted-foreground leading-relaxed [&_strong]:text-foreground [&_a]:underline [&_a]:underline-offset-2 [&_ul]:list-disc [&_ul]:pl-4 [&_li]:mt-0.5"
@@ -1511,7 +1582,7 @@ export default function AppDetailPage() {
           )}
           <div className="rounded-xl border border-border divide-y divide-border">
             <button
-              onClick={() => runAction("restart")}
+              onClick={() => void confirmRestart()}
               disabled={actionInFlight}
               className="w-full flex justify-between items-center px-4 py-3 text-sm hover:bg-muted/50 transition-colors disabled:opacity-50"
             >

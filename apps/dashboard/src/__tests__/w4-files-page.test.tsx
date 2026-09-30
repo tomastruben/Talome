@@ -144,4 +144,51 @@ describe("files page", () => {
     expect(await screen.findByText("Too large to preview")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/files/read"))).toBe(false);
   });
+
+  it("shows a Move dialog error for any folder, not just the first (regression: silent 403 in a subfolder)", async () => {
+    const sub = {
+      ...listing([]),
+      path: "/root/docs/sub",
+      parent: "/root/docs",
+    };
+    let subFails = true;
+    routes = [
+      {
+        method: "GET",
+        match: "path=%2Froot%2Fdocs%2Fsub",
+        route: () => (subFails ? { status: 403, body: { error: "Access denied" } } : { status: 200, body: sub }),
+      },
+      { method: "GET", match: "/api/files/list", route: { status: 200, body: listing([{ name: "sub", isDirectory: true }, { name: "a.txt" }]) } },
+    ];
+    renderPage();
+    const menu = await openRowMenu("a.txt");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Move to/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^sub$/ }));
+
+    expect(await within(dialog).findByText("Talome can't open sub")).toBeInTheDocument();
+    // "Move here" must not point at the folder still on screen.
+    expect(within(dialog).getByRole("button", { name: "Move here" })).toBeDisabled();
+
+    subFails = false;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(await within(dialog).findByText("No subfolders")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Move here" })).toBeEnabled();
+  });
+
+  it("offers Back to the last folder after a failed click", async () => {
+    routes = [
+      { method: "GET", match: "path=%2Froot%2Fdocs%2Fsub", route: { status: 404, body: { error: "gone" } } },
+      { method: "GET", match: "/api/files/list", route: { status: 200, body: listing([{ name: "sub", isDirectory: true }, { name: "a.txt" }]) } },
+    ];
+    renderPage();
+    const menu = await openRowMenu("a.txt");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Move to/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^sub$/ }));
+    expect(await within(dialog).findByText("sub isn't there any more")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+    expect(await within(dialog).findByRole("button", { name: /^sub$/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Move here" })).toBeEnabled();
+  });
 });

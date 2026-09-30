@@ -54,12 +54,14 @@ export function OperationProgress({ operation, className }: { operation: LiveOpe
 }
 
 /**
- * A failed, interrupted or rolled-back operation, kept in the app's primary
- * slot until the person retries, dismisses it, or the app moves on (design
- * P0-11). Rolled back is a warning: the app runs its previous version.
+ * A failed, interrupted or rolled-back lifecycle operation, kept in the app's
+ * primary slot until the person retries, dismisses it, or the app moves on
+ * (design P0-11). Rolled back is a warning: the app runs its previous version.
+ * For an installed app it sits above Open / Start, never in place of them.
  * The actions are Retry (primary, when the kind can simply run again), Ask
  * Talome (the Assistant, with the step and error), View log (the journal
- * entry) and Dismiss.
+ * entry) and Dismiss. Only a failure that arrived while the page was open is
+ * an alert (`announce`); one found on arrival is a quiet status.
  */
 export function OperationFailure({
   operation,
@@ -67,6 +69,8 @@ export function OperationFailure({
   onRetry,
   retryBusy = false,
   canAskTalome = true,
+  announce = false,
+  subordinate = false,
   onDismiss,
   className,
 }: {
@@ -76,6 +80,10 @@ export function OperationFailure({
   onRetry?: () => void;
   retryBusy?: boolean;
   canAskTalome?: boolean;
+  /** The failure arrived during this visit: announce it as an alert. */
+  announce?: boolean;
+  /** Sits above the app's own primary action (Open / Start): Retry is not the primary button. */
+  subordinate?: boolean;
   onDismiss: () => void;
   className?: string;
 }) {
@@ -89,7 +97,7 @@ export function OperationFailure({
 
   return (
     <div data-slot="operation-failure" data-tone={copy.tone} className={cn("w-full grid gap-2 text-left", className)}>
-      <div role="alert" className="grid gap-2">
+      <div role={announce ? "alert" : "status"} className="grid gap-2">
         <div className="flex items-start justify-between gap-3">
           <p className="flex items-start gap-2 text-sm font-medium">
             <HugeiconsIcon
@@ -123,8 +131,8 @@ export function OperationFailure({
       </div>
       <div className="flex flex-wrap items-center gap-2 pt-1">
         {canRetry && (
-          <Button size="sm" onClick={onRetry} busy={retryBusy} busyLabel={`Retrying ${appName}…`}>
-            {warning ? "Try again" : "Retry"}
+          <Button size="sm" variant={subordinate ? "outline" : "default"} onClick={onRetry} busy={retryBusy} busyLabel={`Retrying ${appName}…`}>
+            Retry
           </Button>
         )}
         {canAskTalome && (

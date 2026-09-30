@@ -22,6 +22,35 @@ export function uniqueName(base: string, existing: Iterable<string>): string {
   return `${base} ${Date.now()}`;
 }
 
+/**
+ * Whether two folder paths name the same folder as far as the URL goes:
+ * ignores trailing slashes and repeated separators ("/a/b/" and "/a//b").
+ * The list route returns a normalized path, so the page's requested path
+ * must be compared this way, never byte for byte.
+ */
+export function samePath(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const norm = (p: string) => p.replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
+  return norm(a) === norm(b);
+}
+
+/**
+ * Whether the list data on screen belongs to the folder requested now.
+ * SWR's keepPreviousData keeps another key's data on screen while the new key
+ * loads; `hasDataForKey` says whether SWR's cache holds data for the current
+ * key itself (so it's this folder's, maybe older). Otherwise the server's
+ * normalized path must match the requested one.
+ */
+export function listDataIsFor(
+  data: { path?: string } | null | undefined,
+  requestedPath: string | null,
+  hasDataForKey: boolean,
+): boolean {
+  if (!data) return false;
+  if (hasDataForKey) return true;
+  return requestedPath !== null && samePath(data.path, requestedPath);
+}
+
 /** The last segment of a path, for copy ("Couldn't open Movies"). */
 export function folderName(path: string | null | undefined, fallback = "this folder"): string {
   if (!path) return fallback;

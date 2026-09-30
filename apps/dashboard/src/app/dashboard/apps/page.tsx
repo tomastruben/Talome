@@ -26,6 +26,8 @@ import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { CORE_URL } from "@/lib/constants";
+import { deleteCreatedAppCopy, emptyCatalogCopy } from "@/lib/app-store-copy";
+import { Button } from "@/components/ui/button";
 import { installedAppsRefreshInterval, installedStateSignature } from "@/lib/polling";
 import type { CatalogApp, StoreSource, StackListItem } from "@talome/types";
 
@@ -155,9 +157,13 @@ function AppsPageContent() {
     if (catalogInstalledSig === null || installedListSig === null) return;
     if (catalogInstalledSig !== installedListSig) void mutateApps();
   }, [catalogInstalledSig, installedListSig, mutateApps]);
-  const { data: stores = [] } = useSWR<StoreSource[]>(
+  const { data: storesData } = useSWR<StoreSource[]>(
     `${CORE_URL}/api/stores`, jsonFetcher, swrOpts,
   );
+  const stores = useMemo(() => storesData ?? [], [storesData]);
+  // Undefined while /api/stores loads or after it failed: then we don't know
+  // whether any sources exist, and the empty state must not claim there are none.
+  const catalogEmpty = emptyCatalogCopy(storesData);
   const { data: categories = [] } = useSWR<string[]>(
     `${CORE_URL}/api/apps/categories`, jsonFetcher, swrOpts,
   );
@@ -223,14 +229,16 @@ function AppsPageContent() {
   const handleDeleteUserApp = useCallback(async (appId: string) => {
     const app = (sourceCache["user-created"] ?? []).find((a) => a.id === appId) ?? apps.find((a) => a.id === appId);
     const name = app?.installed?.displayName || app?.name || appId;
+    // Core uninstalls an installed app first and keeps the source files.
+    const copy = deleteCreatedAppCopy(name, appId, !!app?.installed);
     await confirm({
       tier: "destructive",
-      title: `Delete ${name}?`,
-      consequence: `${name} is removed from My Apps, with the files Claude Code generated for it.`,
-      recovery: app?.installed ? "It stays installed until you uninstall it. This can't be undone." : "This can't be undone.",
+      title: copy.title,
+      consequence: copy.consequence,
+      recovery: copy.recovery,
       irreversible: true,
-      confirmLabel: `Delete ${name}`,
-      busyLabel: `Deleting ${name}…`,
+      confirmLabel: copy.confirmLabel,
+      busyLabel: copy.busyLabel,
       run: async () => {
         const res = await fetch(`${CORE_URL}/api/user-apps/${encodeURIComponent(appId)}`, { method: "DELETE", credentials: "include" });
         if (!res.ok) {
@@ -244,7 +252,7 @@ function AppsPageContent() {
         });
         await mutateApps((prev) => prev?.filter((a) => !(a.id === appId && a.storeId === "user-apps")), false);
       },
-      receipt: `Deleted ${name}`,
+      receipt: copy.receipt,
     });
   }, [apps, confirm, mutateApps, sourceCache]);
 
@@ -426,7 +434,8 @@ function AppsPageContent() {
       )}
 
       {/* ── Results ─────────────────────────────────────── */}
-      {loading || showSourceLoading ? (
+      {loading || showSourceLoading || loadingPhase === "skeleton" ? (
+        // Once shown, the skeleton stays its minimum time even if apps arrived.
         loadingPhase === "skeleton" ? (
           <div className="app-grid" aria-busy="true">
             {Array.from({ length: 12 }).map((_, i) => (
@@ -451,16 +460,12 @@ function AppsPageContent() {
       ) : tab === "all" && apps.length === 0 ? (
         <EmptyState
           icon={Package01Icon}
-          title={stores.length === 0 ? "No app sources yet" : "No apps listed yet"}
-          description={
-            stores.length === 0
-              ? "Add an app source to browse and install apps."
-              : "Your app sources haven't listed any apps yet. Sync them to fetch their catalogs."
-          }
+          title={catalogEmpty.title}
+          description={catalogEmpty.description}
           action={
-            <Link href="/dashboard/settings/app-sources" className="text-sm font-medium underline underline-offset-4">
-              {stores.length === 0 ? "Add an app source" : "Open app sources"}
-            </Link>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/dashboard/settings/app-sources">{catalogEmpty.action}</Link>
+            </Button>
           }
         />
       ) : filtered.length === 0 ? (

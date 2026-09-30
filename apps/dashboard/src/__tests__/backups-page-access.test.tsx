@@ -117,3 +117,39 @@ describe("Backups page access", () => {
     expect(refreshUser).toHaveBeenCalled();
   });
 });
+
+describe("Back up now", () => {
+  it("is busy from the click and reports a failure that wrote no backup row (regression: no toast, fast polling forever)", async () => {
+    userState.isAdmin = true;
+    let resolveTrigger!: (res: Response) => void;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && url.endsWith("/api/backups/trigger")) {
+        return new Promise<Response>((r) => { resolveTrigger = r; });
+      }
+      if (url.includes("/api/operations/op-9")) {
+        return new Response(
+          JSON.stringify({
+            id: "op-9", appId: "sonarr", kind: "backup", actor: "user", status: "failed", step: "preparing", progress: 2,
+            detail: null, error: "Could not resolve the app's compose file", startedAt: "2026-09-30T11:00:00.000Z",
+            updatedAt: "2026-09-30T11:00:01.000Z", finishedAt: "2026-09-30T11:00:01.000Z",
+          }),
+          { status: 200 },
+        );
+      }
+      // The operation ended at once: no running operation, no new backup row.
+      if (url.endsWith("/api/backups/apps")) return new Response(JSON.stringify([APP]), { status: 200 });
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    renderPage();
+    const button = await screen.findByRole("button", { name: /Back up now/ });
+    fireEvent.click(button);
+    // Busy before the server has answered.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Backing up Sonarr…" })).toHaveAttribute("aria-busy", "true"));
+
+    resolveTrigger(new Response(JSON.stringify({ started: true, appId: "sonarr", operationId: "op-9" }), { status: 200 }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Couldn't back up Sonarr", { description: "Could not resolve the app's compose file" }),
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: /Back up now/ })).not.toHaveAttribute("aria-busy"));
+  });
+});

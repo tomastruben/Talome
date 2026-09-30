@@ -551,6 +551,8 @@ export interface UpdateResponseContext {
   outcome?: UpdateOutcome | null;
   /** Version the update targeted, for the success title. */
   toVersion?: string | null;
+  /** The caller shows the running operation's progress on screen (app detail). */
+  progressShown?: boolean;
 }
 
 /** Toast copy for the response of POST /api/apps/:storeId/:appId/update. */
@@ -568,7 +570,7 @@ export function describeUpdateResponse(
   const conflict = parseOperationConflict(status, body);
   if (conflict) {
     // Humane copy from the running operation, never the engine's message.
-    const copy = describeOperationConflict(appName, runningFromConflictBody(body));
+    const copy = describeOperationConflict(appName, runningFromConflictBody(body), { progressShown: context.progressShown });
     return { kind: "conflict", title: copy.title, description: copy.description, operationId: conflict.operationId };
   }
   if (status >= 200 && status < 300) {
@@ -640,25 +642,37 @@ function relativeSince(iso: string, now: number): string {
   return `${Math.floor(diff / 86_400_000)}d ago`;
 }
 
+export interface ConflictCopyOptions {
+  /**
+   * The screen shows the running operation's progress (the app detail page
+   * adopts it into the primary slot). Only then does the copy say so.
+   */
+  progressShown?: boolean;
+  now?: number;
+}
+
 /**
  * Toast copy for "another operation owns this app" (spec §5.5): what is
  * happening, who started it and when, and what to do. Never the engine's
- * message, operation id or ISO timestamp.
+ * message, operation id or ISO timestamp. It only promises visible progress
+ * when the caller shows it (`progressShown`).
  */
 export function describeOperationConflict(
   appName: string,
   running: RunningOperationSummary | null,
-  now: number = Date.now(),
+  options: ConflictCopyOptions | number = {},
 ): { title: string; description: string } {
+  const { progressShown = false, now = Date.now() } = typeof options === "number" ? { now: options } : options;
   if (!running) {
     return {
       title: `${appName} is busy`,
       description: "Another change to this app is still running. Try again when it finishes.",
     };
   }
+  const next = progressShown ? "Its progress is shown here; try again when it finishes." : "Try again when it finishes.";
   return {
     title: `${appName} is already ${ALREADY_LABELS[running.kind]}`,
-    description: `Started ${relativeSince(running.startedAt, now)} by ${operationActorLabel(running.actor)}. Its progress is shown here; try again when it finishes.`,
+    description: `Started ${relativeSince(running.startedAt, now)} by ${operationActorLabel(running.actor)}. ${next}`,
   };
 }
 
@@ -670,28 +684,54 @@ export function isFailedOperationStatus(status: OperationStatus | null | undefin
   return !!status && FAILED_STATUSES.has(status);
 }
 
+/** Lifecycle kinds the page can simply run again. */
+export const RETRYABLE_KINDS: ReadonlySet<OperationKind> = new Set(["install", "update", "uninstall", "start", "stop", "restart"]);
+
 /**
- * The failure to keep in the app's primary slot: the newest operation for the
- * app, when it failed, was interrupted or was rolled back and the person has
- * not dismissed it. A later operation (a retry, a start, anything) replaces
- * it, so a failure never lingers after the app moved on.
+ * Kinds whose failure belongs in the app's primary slot: the lifecycle actions
+ * the app page drives, plus a rollback. Backups, restores and configuration
+ * changes run in the background (often on a schedule) and are reported in
+ * Activity and Backups, never in place of Open or Start.
+ */
+export const PRIMARY_SLOT_KINDS: ReadonlySet<OperationKind> = new Set([...RETRYABLE_KINDS, "rollback"]);
+
+export interface SettledFailureOptions {
+  /** Kinds considered at all (default PRIMARY_SLOT_KINDS). */
+  kinds?: ReadonlySet<OperationKind>;
+  /** A failure that ended longer ago than this is history, not news. */
+  maxAgeMs?: number;
+  now?: number;
+}
+
+/**
+ * The failure to show in the app's primary slot: the newest lifecycle
+ * operation for the app (see PRIMARY_SLOT_KINDS), when it failed, was
+ * interrupted or was rolled back, the person has not dismissed it and it is
+ * not older than `maxAgeMs`. A later lifecycle operation (a retry, a start…)
+ * replaces it, so a failure never lingers after the app moved on.
  */
 export function settledFailureFrom(
   live: LiveOperation | null,
   history: readonly OperationRecord[] | null | undefined,
   dismissed: ReadonlySet<string> = new Set(),
+  options: SettledFailureOptions = {},
 ): LiveOperation | null {
-  let newest: LiveOperation | null = live;
+  const kinds = options.kinds ?? PRIMARY_SLOT_KINDS;
+  let newest: LiveOperation | null = live && kinds.has(live.kind) ? live : null;
   for (const rec of history ?? []) {
+    if (!kinds.has(rec.kind)) continue;
     if (!newest || rec.startedAt > newest.startedAt) newest = operationFromRecord(rec);
     else if (rec.id === newest.operationId && rec.updatedAt > newest.updatedAt) newest = operationFromRecord(rec);
   }
   if (!newest || !isFailedOperationStatus(newest.status)) return null;
-  return dismissed.has(newest.operationId) ? null : newest;
+  if (dismissed.has(newest.operationId)) return null;
+  if (options.maxAgeMs !== undefined) {
+    const ended = new Date(newest.updatedAt || newest.startedAt).getTime();
+    const now = options.now ?? Date.now();
+    if (!Number.isNaN(ended) && now - ended > options.maxAgeMs) return null;
+  }
+  return newest;
 }
-
-/** Lifecycle kinds the page can simply run again. */
-export const RETRYABLE_KINDS: ReadonlySet<OperationKind> = new Set(["install", "update", "uninstall", "start", "stop", "restart"]);
 
 const VERB_INFINITIVE: Record<OperationKind, string> = {
   install: "install",

@@ -77,7 +77,8 @@ export default function StackDetailPage() {
     );
   }, [stack?.name, stackId, setPageTitle]);
 
-  if (!stack && error) {
+  // Once shown, the skeleton stays its minimum time even if the stack arrived.
+  if (!stack && error && loadingPhase !== "skeleton") {
     if (fetchErrorStatus(error) === 404) {
       return (
         <div className="mx-auto w-full max-w-xl pt-8 pb-12">
@@ -105,7 +106,7 @@ export default function StackDetailPage() {
     );
   }
 
-  if (!stack) {
+  if (loadingPhase === "skeleton" || !stack) {
     if (loadingPhase !== "skeleton") return <div className="mx-auto w-full max-w-xl min-h-96" aria-busy="true" />;
     return (
       <div className="mx-auto w-full max-w-xl grid gap-6 py-12" aria-busy="true">

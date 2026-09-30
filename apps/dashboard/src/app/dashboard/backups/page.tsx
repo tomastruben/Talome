@@ -45,6 +45,8 @@ import {
   verificationState,
 } from "./_lib/backup-status";
 import type { AppBackupOverview } from "./_lib/types";
+import { nextPendingBackupStep, operationEndedReceipt, type PendingBackup } from "./_lib/pending-backup";
+import { parseOperationRecord } from "@/lib/app-operations";
 import { VerificationBadge } from "./_components/verification-badge";
 import { RestoreDialog } from "./_components/restore-dialog";
 import { BackupSettingsSheet } from "./_components/backup-settings-sheet";
@@ -52,7 +54,7 @@ import { StorageSheet } from "./_components/storage-sheet";
 
 const fetcher = (url: string) => fetchJson<AppBackupOverview[]>(url);
 
-async function postJson(url: string, body?: unknown): Promise<void> {
+async function postJson(url: string, body?: unknown): Promise<unknown> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -61,6 +63,18 @@ async function postJson(url: string, body?: unknown): Promise<void> {
   if (!res.ok) {
     const data: unknown = await res.json().catch(() => null);
     throw new BackupRequestError(backupErrorMessage(res.status, data, `Request failed (${res.status})`), res.status);
+  }
+  return res.json().catch(() => null);
+}
+
+/** The journal row of one operation, or null when it can't be read. */
+async function fetchOperation(operationId: string) {
+  try {
+    const res = await fetch(`${CORE_URL}/api/operations/${encodeURIComponent(operationId)}`, { credentials: "include" });
+    if (!res.ok) return null;
+    return parseOperationRecord(await res.json());
+  } catch {
+    return null;
   }
 }
 
@@ -136,11 +150,57 @@ export default function BackupsPage() {
   // Backups whose verification this page started: backupId → app name (for the result toast)
   const pendingVerify = useRef(new Map<string, string>());
 
-  // Backups this page started: appId → the last backup id before it (for the receipt toast)
-  const pendingBackup = useRef(new Map<string, string | null>());
+  // Backups this page started, until they settle (for the busy button and the receipt toast)
+  const pendingBackup = useRef(new Map<string, PendingBackup>());
+  // Operations whose journal row is being fetched, so a poll doesn't ask twice.
+  const checkingOperations = useRef(new Set<string>());
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const syncPendingIds = useCallback(() => setPendingIds(new Set(pendingBackup.current.keys())), []);
+  const settlePendingBackups = useCallback(
+    (latest: AppBackupOverview[]) => {
+      const now = Date.now();
+      for (const [appId, pending] of pendingBackup.current) {
+        const step = nextPendingBackupStep(pending, latest.find((a) => a.appId === appId), now);
+        if (step.kind === "wait") continue;
+        if (step.kind === "check-operation") {
+          // The operation ended without a new backup row: the journal says how.
+          if (checkingOperations.current.has(step.operationId)) continue;
+          checkingOperations.current.add(step.operationId);
+          void fetchOperation(step.operationId).then((rec) => {
+            checkingOperations.current.delete(step.operationId);
+            if (pendingBackup.current.get(appId) !== pending) return;
+            const receipt = operationEndedReceipt(pending.name, rec);
+            if (!receipt) return; // still running per the journal: next poll
+            pendingBackup.current.delete(appId);
+            syncPendingIds();
+            if (receipt.kind === "success") toast.success(receipt.title);
+            else toast.error(receipt.title, { description: receipt.description });
+          });
+          continue;
+        }
+        pendingBackup.current.delete(appId);
+        if (step.kind === "row") {
+          if (step.backup.status === "completed") {
+            toast.success(`Backed up ${pending.name} · checksums recorded`, {
+              description: step.backup.sizeBytes != null ? formatBytes(step.backup.sizeBytes) : undefined,
+            });
+          } else {
+            toast.error(`Couldn't back up ${pending.name}`, { description: step.backup.error ?? "Check the notifications for details." });
+          }
+        } else if (step.kind === "expire") {
+          toast.error(`Couldn't confirm the backup of ${pending.name}`, { description: "Check its row below or the notifications." });
+        }
+      }
+      syncPendingIds();
+    },
+    [syncPendingIds],
+  );
   const { loadedAt, markLoaded } = useLoadedAt();
   const { data, error, isLoading, isValidating, mutate } = useSWR<AppBackupOverview[]>(`${CORE_URL}/api/backups/apps`, fetcher, {
-    onSuccess: markLoaded,
+    onSuccess: (latest) => {
+      markLoaded();
+      settlePendingBackups(latest);
+    },
     // Poll quickly while anything is running, slowly otherwise
     refreshInterval: (latest?: AppBackupOverview[]) =>
       (latest ?? []).some((a) => a.operation !== null || a.lastSuccessfulBackup?.verifyStatus === "running") ||
@@ -153,28 +213,6 @@ export default function BackupsPage() {
   // Nothing for the first 200ms of the first load, then a skeleton.
   const loadingPhase = useLoadingPhase(isLoading && !data);
   const showSkeleton = isLoading && !data;
-
-  // A backup this page started finished: say so, with what was recorded.
-  useEffect(() => {
-    for (const [appId, previousId] of pendingBackup.current) {
-      const app = apps.find((a) => a.appId === appId);
-      if (!app) {
-        pendingBackup.current.delete(appId);
-        continue;
-      }
-      if (app.operation) continue;
-      const last = app.lastBackup;
-      if (!last || last.id === previousId || last.status === "running") continue;
-      pendingBackup.current.delete(appId);
-      if (last.status === "completed") {
-        toast.success(`Backed up ${app.name} · checksums recorded`, {
-          description: last.sizeBytes != null ? formatBytes(last.sizeBytes) : undefined,
-        });
-      } else {
-        toast.error(`Couldn't back up ${app.name}`, { description: last.error ?? "Check the notifications for details." });
-      }
-    }
-  }, [apps]);
 
   // Announce verification results once they land
   useEffect(() => {
@@ -202,12 +240,28 @@ export default function BackupsPage() {
   }
 
   async function backupNow(app: AppBackupOverview) {
+    if (pendingBackup.current.has(app.appId)) return;
+    // Busy from the click, not from the next poll.
+    pendingBackup.current.set(app.appId, {
+      name: app.name,
+      previousBackupId: app.lastBackup?.id ?? null,
+      operationId: null,
+      startedAt: Date.now(),
+    });
+    syncPendingIds();
     try {
-      await postJson(`${CORE_URL}/api/backups/trigger`, { appId: app.appId });
-      // Started, not done: the receipt comes when the backup has finished.
-      pendingBackup.current.set(app.appId, app.lastBackup?.id ?? null);
+      const started = await postJson(`${CORE_URL}/api/backups/trigger`, { appId: app.appId });
+      const operationId =
+        started && typeof started === "object" && typeof (started as { operationId?: unknown }).operationId === "string"
+          ? (started as { operationId: string }).operationId
+          : null;
+      // Started, not done: the receipt comes when the backup (or its operation) has finished.
+      const pending = pendingBackup.current.get(app.appId);
+      if (pending) pendingBackup.current.set(app.appId, { ...pending, operationId, startedAt: Date.now() });
       refresh();
     } catch (e) {
+      pendingBackup.current.delete(app.appId);
+      syncPendingIds();
       actionFailed(e, "Backup failed to start");
     }
   }
@@ -301,7 +355,8 @@ export default function BackupsPage() {
                   ? Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} actions={canManage} />)
                   : sorted.map((app) => {
                       const ok = app.lastSuccessfulBackup;
-                      const busyApp = app.operation !== null;
+                      const backingUp = pendingIds.has(app.appId);
+                      const busyApp = app.operation !== null || backingUp;
                       const verifying = verificationState(ok) === "verifying";
                       return (
                         <TableRow key={app.appId} className="group">
@@ -331,7 +386,9 @@ export default function BackupsPage() {
                                   variant="ghost"
                                   size="sm"
                                   className="hidden sm:inline-flex"
-                                  disabled={busyApp}
+                                  disabled={busyApp && !backingUp}
+                                  busy={backingUp}
+                                  busyLabel={`Backing up ${app.name}…`}
                                   onClick={() => void backupNow(app)}
                                 >
                                   <HugeiconsIcon icon={ArchiveIcon} size={16} />

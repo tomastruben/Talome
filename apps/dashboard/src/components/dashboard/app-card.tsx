@@ -44,7 +44,7 @@ export function AppCard({ app, onDelete, priority = false, eager = false, hasUpd
     status === "installing" ? "Installing" :
     "Installed";
 
-  return (
+  const card = (
     <Link
       href={`/dashboard/apps/${app.storeId}/${app.id}`}
       className="app-card group/card"
@@ -83,22 +83,6 @@ export function AppCard({ app, onDelete, priority = false, eager = false, hasUpd
           </span>
         ) : null}
       </div>
-      {onDelete && (
-        <button
-          type="button"
-          className="absolute top-2 left-2 z-10 flex items-center justify-center size-7 pointer-coarse:size-11 rounded-md bg-background border border-border text-muted-foreground hover:text-status-critical hover:border-status-critical/40 transition-[color,border-color,opacity] duration-150 opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDelete(app.id);
-          }}
-          aria-label={`Delete ${app.installed?.displayName || app.name}`}
-          title="Delete app"
-        >
-          <HugeiconsIcon icon={Delete02Icon} size={14} />
-        </button>
-      )}
-
       <div className="app-card-body">
         <div className="flex items-center gap-3.5 min-w-0">
           <div className="app-card-icon">
@@ -128,5 +112,25 @@ export function AppCard({ app, onDelete, priority = false, eager = false, hasUpd
         <p className="app-card-desc">{app.tagline || app.description}</p>
       </div>
     </Link>
+  );
+
+  if (!onDelete) return card;
+
+  // Delete is a sibling of the card link, never inside it (a button in a link
+  // is invalid and merges both names for screen readers). It sits at the
+  // bottom-left of the cover so it never covers the Update or status badges.
+  return (
+    <div className="relative grid min-w-0 group/card">
+      {card}
+      <button
+        type="button"
+        className="absolute left-2 top-[calc(132px-0.5rem)] -translate-y-full z-10 flex items-center justify-center size-7 pointer-coarse:size-11 rounded-md bg-background border border-border text-muted-foreground hover:text-status-critical hover:border-status-critical/40 transition-[color,border-color,opacity] duration-150 opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => onDelete(app.id)}
+        aria-label={`Delete ${app.installed?.displayName || app.name}`}
+        title="Delete app"
+      >
+        <HugeiconsIcon icon={Delete02Icon} size={14} />
+      </button>
+    </div>
   );
 }

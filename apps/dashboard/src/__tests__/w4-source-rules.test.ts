@@ -53,4 +53,13 @@ describe("W4 source rules", () => {
     expect(text).not.toMatch(/text-xs text-white\/15/);
     expect(text).not.toMatch(/text-white\/25 mt-1\.5/);
   });
+
+  it("uses sentence-case headings on app detail, no uppercase micro-labels (regression: Verification, Folders)", () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles(join(SRC, "components/app-detail"))) {
+      if (/uppercase tracking-wider/.test(readFileSync(file, "utf-8"))) offenders.push(relative(SRC, file));
+    }
+    expect(offenders).toEqual([]);
+    expect(readFileSync(join(SRC, "app/dashboard/apps/[storeId]/[appId]/page.tsx"), "utf-8")).not.toContain("What&apos;s New");
+  });
 });

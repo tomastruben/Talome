@@ -32,7 +32,7 @@ const APP_DEFAULT = "__app_default__";
 function FieldGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="grid gap-3">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
+      <p className="text-sm font-medium text-muted-foreground">{title}</p>
       {children}
     </div>
   );

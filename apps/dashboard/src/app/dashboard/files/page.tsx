@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import dynamic from "next/dynamic";
 import { useSetAtom } from "jotai";
 import { AnimatePresence, motion } from "motion/react";
@@ -45,6 +45,7 @@ import { toastWarning } from "@/lib/toast";
 import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
 import {
   folderErrorCopy,
+  listDataIsFor,
   isOverTextPreviewLimit,
   shouldHandleQuickLookKey,
   uniqueName,
@@ -723,12 +724,24 @@ function MoveDialog({
     ? `${CORE_URL}/api/files/list?path=${encodeURIComponent(browsePath)}`
     : `${CORE_URL}/api/files/list`;
 
-  const { data, error: listError, mutate: retryList } = useSWR<ListResponse>(open ? listUrl : null, fetcher, {
+  const { cache } = useSWRConfig();
+  const { data: keptData, error: listError, mutate: retryList, isValidating } = useSWR<ListResponse>(open ? listUrl : null, fetcher, {
     keepPreviousData: true,
   });
+  // keepPreviousData keeps the last folder on screen while the next loads. That
+  // folder must never pass for the one being browsed: its subfolders and "Move
+  // here" would point at the wrong place.
+  const dataIsForBrowsePath = listDataIsFor(keptData, browsePath, cache.get(listUrl)?.data !== undefined);
+  const data = dataIsForBrowsePath ? keptData : undefined;
+  const listFailed = !!listError && !dataIsForBrowsePath;
+  const listErrorCopy = listFailed ? folderErrorCopy(fetchErrorStatus(listError), browsePath) : null;
+  // The last folder that loaded, so Back after a failed click returns there.
+  const [lastLoaded, setLastLoaded] = useState<{ path: string | null } | null>(null);
+  if (open && dataIsForBrowsePath && lastLoaded?.path !== browsePath) setLastLoaded({ path: browsePath });
+  const backTarget = lastLoaded && lastLoaded.path !== browsePath ? lastLoaded : null;
 
   const folders = data?.items?.filter((i) => i.isDirectory) ?? [];
-  const hasMultipleRoots = (data?.allowedRoots?.length ?? 0) > 1;
+  const hasMultipleRoots = ((data ?? keptData)?.allowedRoots?.length ?? 0) > 1;
   const isAtRoot = !browsePath && hasMultipleRoots;
 
   const handleConfirm = async () => {
@@ -749,8 +762,8 @@ function MoveDialog({
     }
   };
 
-  // Current folder name for the header
-  const folderName = data?.path?.split("/").filter(Boolean).pop() ?? "Files";
+  // Current folder name for the header (the requested one while it loads or failed)
+  const folderName = (data?.path ?? browsePath)?.split("/").filter(Boolean).pop() ?? "Files";
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -765,7 +778,7 @@ function MoveDialog({
         </DialogHeader>
 
         {/* Breadcrumb bar */}
-        {!isAtRoot && data?.path && (
+        {!isAtRoot && (data?.path || browsePath) && (
           <div className="flex items-center gap-1 px-4 pb-2">
             {hasMultipleRoots && (
               <button
@@ -786,7 +799,7 @@ function MoveDialog({
 
         {/* Folder list */}
         <ScrollArea className="h-64 border-t border-border/40">
-          {isAtRoot && data?.allowedRoots ? (
+          {isAtRoot && data?.allowedRoots && !listFailed ? (
             <div className="py-1">
               {data.allowedRoots.map((root: string) => {
                 const { label, icon } = rootLabel(root);
@@ -813,11 +826,21 @@ function MoveDialog({
                   <span className="text-sm text-muted-foreground">Back</span>
                 </button>
               )}
-              {listError && !data ? (
-                <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
-                  <p className="text-xs text-muted-foreground">Couldn&apos;t load this folder.</p>
-                  <Button variant="ghost" size="xs" onClick={() => void retryList()}>Retry</Button>
+              {listErrorCopy ? (
+                <div role="alert" className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+                  <p className="text-sm font-medium">{listErrorCopy.title}</p>
+                  <p className="text-xs text-muted-foreground">{listErrorCopy.description}</p>
+                  <div className="flex items-center gap-2 pt-1">
+                    {backTarget ? (
+                      <Button variant="ghost" size="xs" onClick={() => setBrowsePath(backTarget.path)}>Back</Button>
+                    ) : null}
+                    <Button variant="outline" size="xs" onClick={() => void retryList()} busy={isValidating} busyLabel="Retrying…">
+                      Retry
+                    </Button>
+                  </div>
                 </div>
+              ) : !data ? (
+                <div className="h-24" aria-busy="true" />
               ) : folders.length === 0 ? (
                 <p className="px-4 py-8 text-center text-xs text-muted-foreground">No subfolders</p>
               ) : null}
@@ -886,6 +909,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     : `${CORE_URL}/api/files/list?showHidden=${showHidden}`;
 
   const { loadedAt: listLoadedAt, markLoaded } = useLoadedAt();
+  const { cache: swrCache } = useSWRConfig();
   const { data, error, mutate, isLoading, isValidating } = useSWR<ListResponse>(listUrl, fetcher, {
     keepPreviousData: true,
     onSuccess: markLoaded,
@@ -896,9 +920,13 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     },
   });
   // keepPreviousData shows the last folder while the next one loads. When the
-  // next one fails, that old listing must not pass for this folder's.
-  const dataIsForThisFolder = !!data && (!currentPath || data.path === currentPath);
-  const loadingPhase = useLoadingPhase(isLoading && !data);
+  // next one fails, that old listing must not pass for this folder's. The
+  // server returns a normalized path, so compare by SWR key (the cache holds
+  // data for this exact request) or by normalized path, never byte for byte.
+  const dataIsForThisFolder = listDataIsFor(data, currentPath, swrCache.get(listUrl)?.data !== undefined);
+  // Driven by "this folder's data isn't here yet", so opening a folder with the
+  // previous one still on screen gets the delayed skeleton too (spec §4.8).
+  const loadingPhase = useLoadingPhase(!dataIsForThisFolder && !error && (isLoading || isValidating));
 
   // Only auto-enter a root when there's exactly one
   const hasMultipleRoots = (data?.allowedRoots?.length ?? 0) > 1;
@@ -1437,7 +1465,9 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
               {error && dataIsForThisFolder && (
                 <StaleRow loadedAt={listLoadedAt} subject="files" onRetry={() => void mutate()} retrying={isValidating} className="px-3 pt-2" />
               )}
-              {isLoading && !data ? (
+              {loadingPhase === "skeleton" || !data ? (
+                // Branch on the phase itself: once shown, the skeleton stays its
+                // minimum time even if the data arrived (no flash).
                 loadingPhase !== "skeleton" ? (
                   <div className="min-h-64" aria-busy="true" />
                 ) : currentPath ? (
@@ -1470,7 +1500,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                   onSelect={(root) => navigate(root)}
                 />
               ) : !data?.items ? (
-                loadingPhase === "skeleton" ? <FilesTableSkeleton /> : <div className="min-h-64" aria-busy="true" />
+                <div className="min-h-64" aria-busy="true" />
               ) : data.items.length === 0 ? (
                 <EmptyState
                   icon={FolderOpenIcon}
@@ -1640,12 +1670,13 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
               transition={enter()}
               className="absolute bottom-14 inset-x-0 z-20 flex justify-center pointer-events-none"
             >
+              {/* Inverted surface: status text uses the -inverse token (both themes checked in design-contrast.test). */}
               <div className="flex items-center gap-1 rounded-full bg-foreground text-background px-4 py-2 shadow-lg pointer-events-auto">
                 <span className="text-sm font-medium tabular-nums whitespace-nowrap">{selectedPaths.size} selected</span>
                 <div className="w-px h-4 bg-background/15 mx-1" />
                 <button
                   type="button"
-                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-black/[0.06] rounded-full transition-colors"
+                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-background/10 rounded-full transition-colors"
                   onClick={() => setMovingPaths(Array.from(selectedPaths))}
                 >
                   <HugeiconsIcon icon={FolderExportIcon} size={14} />
@@ -1653,7 +1684,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                 </button>
                 <button
                   type="button"
-                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-black/[0.06] rounded-full transition-colors"
+                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-background/10 rounded-full transition-colors"
                   onClick={handleBulkDownload}
                 >
                   <HugeiconsIcon icon={Download01Icon} size={14} />
@@ -1661,7 +1692,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                 </button>
                 <button
                   type="button"
-                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-red-700 hover:text-red-800 hover:bg-red-500/[0.08] rounded-full transition-colors"
+                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-status-critical-inverse hover:bg-background/10 rounded-full transition-colors"
                   onClick={() => void confirmBulkDelete()}
                 >
                   <HugeiconsIcon icon={Delete01Icon} size={14} />

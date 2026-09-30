@@ -138,3 +138,18 @@ describe("container status dots", () => {
     expect(contrast(faint, color(light, "--background"))).toBeLessThan(3);
   });
 });
+
+describe("critical text on an inverted surface (Files selection bar)", () => {
+  it("reads at 4.5:1 on bg-foreground in both themes (regression: text-red-700 on near-black, ~3:1)", () => {
+    for (const [name, tokens] of Object.entries(themes)) {
+      const text = color(tokens, "--status-critical-inverse");
+      expect(contrast(text, color(tokens, "--foreground")), name).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("the selection bar uses the token, not a palette hue", () => {
+    const files = read("app/dashboard/files/page.tsx");
+    expect(files).toContain("text-status-critical-inverse");
+    expect(files).not.toMatch(/text-red-\d|bg-red-\d|hover:bg-black\//);
+  });
+});
