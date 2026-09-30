@@ -1,11 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
+import { HugeiconsIcon, AlertCircleIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
-import { SettingsGroup, SettingsRow, SecretRow, TextRow, ToggleRow } from "@/components/settings/settings-primitives";
+import {
+  SectionLabel,
+  SettingsApprovalRequiredError,
+  SettingsGroup,
+  SettingsRow,
+  SecretRow,
+  TextRow,
+  ToggleRow,
+  settingsFetcher,
+  settingsRequest,
+} from "@/components/settings/settings-primitives";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { approvalHref } from "@/components/trust/format";
 import { CORE_URL } from "@/lib/constants";
+import { toastWarning } from "@/lib/toast";
+
+const SAVE_FALLBACK = "Couldn't save the voice settings. Check that the Talome server is reachable, then try again.";
 
 /**
  * Speech-to-text for voice input. Any OpenAI-compatible transcription endpoint
@@ -22,29 +38,42 @@ export function VoiceSettings() {
   const [liveModel, setLiveModel] = useState("");
   const [hasOpenAiKey, setHasOpenAiKey] = useState(false);
   const [voices, setVoices] = useState<string[]>(["marin"]);
+  // Save stays off until the stored values are on screen: saving the defaults
+  // over settings that failed to load would overwrite them.
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // A save the server held for approval: nothing is stored until it's approved.
+  const [heldApprovalId, setHeldApprovalId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch(`${CORE_URL}/api/settings`)
-      .then((r) => r.json())
-      .then((data: Record<string, string>) => {
-        if (data.voice_stt_url) setUrl(data.voice_stt_url);
-        if (data.voice_stt_model) setModel(data.voice_stt_model);
-        if (data.voice_stt_key) setKey(data.voice_stt_key);
+  const load = useCallback(() => {
+    setLoadError(null);
+    settingsFetcher<Record<string, string>>(`${CORE_URL}/api/settings`)
+      .then((data) => {
+        setUrl(data.voice_stt_url ?? "");
+        setModel(data.voice_stt_model ?? "");
+        setKey(data.voice_stt_key ?? "");
+        setKeyEditing(false);
         setLiveEnabled(data.voice_live_enabled !== "false");
         if (data.voice_live_voice) setLiveVoice(data.voice_live_voice);
-        if (data.voice_live_model) setLiveModel(data.voice_live_model);
+        setLiveModel(data.voice_live_model ?? "");
         setHasOpenAiKey(Boolean(data.openai_key));
+        setLoaded(true);
       })
-      .catch(() => {});
-    fetch(`${CORE_URL}/api/voice/status`)
-      .then((r) => r.json())
-      .then((data: { liveVoices?: string[] }) => {
+      .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : "Couldn't load the voice settings."));
+    // The voice list is optional: without it the select offers the stored voice.
+    settingsFetcher<{ liveVoices?: string[] }>(`${CORE_URL}/api/voice/status`)
+      .then((data) => {
         if (data.liveVoices?.length) setVoices(data.liveVoices);
       })
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    load();
+  }, [load]);
+
   const save = async () => {
+    if (!loaded) return;
     setSaving(true);
     try {
       const body: Record<string, string> = {
@@ -55,24 +84,38 @@ export function VoiceSettings() {
         voice_live_model: liveModel.trim(),
       };
       if (keyEditing || !key) body.voice_stt_key = key;
-      const res = await fetch(`${CORE_URL}/api/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error();
+      await settingsRequest(`${CORE_URL}/api/settings`, { method: "POST", body }, SAVE_FALLBACK);
       setKeyEditing(false);
+      setHeldApprovalId(null);
       toast.success("Voice settings saved");
-    } catch {
-      toast.error("Failed to save voice settings");
+    } catch (err) {
+      if (err instanceof SettingsApprovalRequiredError) {
+        // Re-pointing the speech-to-text server while an API key is stored
+        // would send that key to the new host: the owner approves it first.
+        setHeldApprovalId(err.approval.approvalId);
+        toastWarning("Waiting for approval", {
+          description: "Nothing is saved until the change is approved in Approvals.",
+        });
+      } else {
+        toast.error(err instanceof Error ? err.message : SAVE_FALLBACK);
+      }
     } finally {
       setSaving(false);
     }
   };
 
+  const voiceOptions = voices.includes(liveVoice) ? voices : [liveVoice, ...voices];
+
   return (
     <div className="grid gap-2">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground px-1">Voice</p>
+      <SectionLabel>Voice</SectionLabel>
+      {loadError ? (
+        <p role="alert" className="flex flex-wrap items-center gap-2 px-1 text-sm text-status-critical">
+          <HugeiconsIcon icon={AlertCircleIcon} size={14} aria-hidden="true" />
+          Couldn&apos;t load the voice settings.
+          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={load}>Retry</Button>
+        </p>
+      ) : null}
       <SettingsGroup>
         <ToggleRow
           label="Full-duplex conversations"
@@ -96,7 +139,7 @@ export function VoiceSettings() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {voices.map((v) => (
+                  {voiceOptions.map((v) => (
                     <SelectItem key={v} value={v} className="text-xs capitalize">
                       {v}
                     </SelectItem>
@@ -149,8 +192,19 @@ export function VoiceSettings() {
           }}
         />
         <SettingsRow className="justify-end py-3">
-          <Button size="sm" className="h-7 text-xs px-4" disabled={saving} onClick={() => void save()}>
-            {saving ? "Saving…" : "Save"}
+          {heldApprovalId ? (
+            <p role="status" className="mr-auto text-xs text-status-warning">
+              Waiting for approval: the speech-to-text server receives your stored API key, so this change is saved only once it&apos;s approved.{" "}
+              <Link
+                href={approvalHref(heldApprovalId)}
+                className="rounded-sm underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Review
+              </Link>
+            </p>
+          ) : null}
+          <Button size="sm" className="h-7 text-xs px-4" busy={saving} busyLabel="Saving…" disabled={!loaded} onClick={() => void save()}>
+            Save
           </Button>
         </SettingsRow>
       </SettingsGroup>

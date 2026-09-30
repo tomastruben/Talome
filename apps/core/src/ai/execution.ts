@@ -312,16 +312,36 @@ export interface ToolMeta {
   tier: ToolTier;
 }
 
-/** Domain + args-independent effective tier. Unknown (custom) tools are "custom"/read. */
+/**
+ * Tier of a user-created custom tool (`~/.talome/custom-tools/`, loaded as
+ * `custom_*`). Custom tools run arbitrary code and declare no tier, so they
+ * count as writes: locked mode blocks them, read-only grants exclude them and
+ * every call is audited. It is a floor — a caller's fallback tier (the chat
+ * gateway passes "read" for names the registry doesn't list) cannot lower it,
+ * and an explicit higher tier still wins.
+ */
+export const CUSTOM_TOOL_DEFAULT_TIER: ToolTier = "modify";
+
+/** A user-created custom tool: not in the registry, and loaded (or named) as one. */
+function isCustomTool(toolName: string, inRegistry: boolean): boolean {
+  if (inRegistry) return false;
+  return toolName.startsWith("custom_") || Object.prototype.hasOwnProperty.call(getCustomTools(), toolName);
+}
+
+/**
+ * Domain + args-independent effective tier. Custom tools are domain "custom"
+ * and at least `modify`; other unknown names (internal pseudo-tools) keep the
+ * tier their caller passes, else read.
+ */
 export function getToolMeta(toolName: string, baseTier?: ToolTier): ToolMeta {
   const loc = toolLocations().get(toolName);
   const registryTier = baseTier ?? loc?.registryTier ?? "read";
-  const override = TIER_OVERRIDES[toolName];
+  const floor = isCustomTool(toolName, loc !== undefined) ? CUSTOM_TOOL_DEFAULT_TIER : TIER_OVERRIDES[toolName];
   return {
     name: toolName,
     domain: loc?.domain ?? "custom",
     category: loc?.category,
-    tier: override ? maxTier(registryTier, override) : registryTier,
+    tier: floor ? maxTier(registryTier, floor) : registryTier,
   };
 }
 

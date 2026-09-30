@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { DURATION, enter, exit } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 /**
@@ -67,21 +68,32 @@ export function SelectMark({ selected, size = 16, className }: { selected: boole
   );
 }
 
-/** Two icons in one slot: the outgoing one shrinks away through a blur as the other arrives. */
+/**
+ * Two icons in one slot: the outgoing one shrinks away through a blur as the
+ * other arrives (entrance DURATION.base, exit DURATION.exitFast). Under reduced
+ * motion the icons swap in place, with no animation at all.
+ */
 export function IconSwap({ active, a, b, className }: { active: "a" | "b"; a: ReactNode; b: ReactNode; className?: string }) {
   const reduceMotion = useReducedMotion();
+  const icon = active === "a" ? a : b;
+  if (reduceMotion) {
+    return (
+      <span className={cn("relative inline-grid place-items-center", className)}>
+        <span className="col-start-1 row-start-1 inline-flex">{icon}</span>
+      </span>
+    );
+  }
   return (
     <span className={cn("relative inline-grid place-items-center", className)}>
       <AnimatePresence initial={false} mode="popLayout">
         <motion.span
           key={active}
           className="col-start-1 row-start-1 inline-flex"
-          initial={reduceMotion ? false : { opacity: 0, scale: 0.25, filter: "blur(2px)" }}
-          animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.25, filter: "blur(2px)" }}
-          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+          initial={{ opacity: 0, scale: 0.25, filter: "blur(2px)" }}
+          animate={{ opacity: 1, scale: 1, filter: "blur(0px)", transition: enter(DURATION.base) }}
+          exit={{ opacity: 0, scale: 0.25, filter: "blur(2px)", transition: exit(DURATION.exitFast) }}
         >
-          {active === "a" ? a : b}
+          {icon}
         </motion.span>
       </AnimatePresence>
     </span>
@@ -123,26 +135,5 @@ export const tiltHandlers = {
   },
 };
 
-/** Copy-to-clipboard state: true for a moment after `copy()` succeeds. */
-export function useCopied(timeout = 1600) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
-  const copy = useCallback(
-    async (text: string) => {
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        return false;
-      }
-      setCopied(true);
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), timeout);
-      return true;
-    },
-    [timeout],
-  );
-  return { copied, copy };
-}
+// Copy feedback: use `CopyButton` (ui/copy-button — COPY_REVERT_MS, the
+// plain-http clipboard fallback and the live announcer), not a hook here.

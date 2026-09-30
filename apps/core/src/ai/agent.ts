@@ -337,7 +337,7 @@ import {
   rememberTurnNote,
 } from "./chat-context-cache.js";
 import { gateToolExecution, getSecurityMode } from "./tool-gateway.js";
-import { automationActor, isApprovalRequiredResult, withExecutionContext, type Actor, type ApprovalRequired } from "./execution.js";
+import { automationActor, getToolMeta, isApprovalRequiredResult, withExecutionContext, type Actor, type ApprovalRequired } from "./execution.js";
 
 // getSetting imported from ../utils/settings.js
 
@@ -1667,8 +1667,8 @@ Security mode is "${securityMode}". ${securityMode === "cautious" ? "Destructive
       if (!toolCalls) return;
       let changedState = false;
       for (const call of toolCalls) {
-        const tier = TOOL_TIERS[call.toolName] ?? "read";
-        if (tier !== "read") changedState = true;
+        // getToolMeta: custom tools count as writes (CUSTOM_TOOL_DEFAULT_TIER).
+        if (getToolMeta(call.toolName).tier !== "read") changedState = true;
         if (MEMORY_EDIT_TOOLS.has(call.toolName)) invalidateConversationMemories(conversationKey);
       }
       // Installs, config and wiring change setup status and configured domains:

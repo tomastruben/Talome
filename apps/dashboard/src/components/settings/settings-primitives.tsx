@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { CORE_URL } from "@/lib/constants";
 import { copyText } from "@/components/ui/copy-button";
+import { parseApprovalRequest, type ApprovalRequest } from "@/components/trust/format";
 
 // ── Utility helpers ──────────────────────────────────────────────────────────
 
@@ -35,9 +36,24 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 }
 
 /**
+ * A settings write the server held for the owner's approval
+ * (`approval_required`, e.g. re-pointing an endpoint a stored credential is
+ * sent to): nothing is saved until an admin approves it in Approvals.
+ */
+export class SettingsApprovalRequiredError extends Error {
+  readonly approval: ApprovalRequest;
+  constructor(approval: ApprovalRequest) {
+    super("This change needs an approval before it's saved. Review it in Approvals.");
+    this.name = "SettingsApprovalRequiredError";
+    this.approval = approval;
+  }
+}
+
+/**
  * A settings write that throws with the server's message when it fails
  * (`!res.ok`, or a JSON `{ ok: false }` / `{ error }`), so no caller can
- * show "Saved" for a write that didn't happen.
+ * show "Saved" for a write that didn't happen. A write held for approval
+ * throws `SettingsApprovalRequiredError`, whatever the HTTP status.
  */
 export async function settingsRequest<T = unknown>(
   url: string,
@@ -56,7 +72,9 @@ export async function settingsRequest<T = unknown>(
     throw new Error("Couldn't reach the Talome server. Check that it's running, then try again.");
   }
   const data = (await res.json().catch(() => null)) as unknown;
-  const record = data && typeof data === "object" ? (data as { ok?: unknown; error?: unknown }) : null;
+  const record = data && typeof data === "object" ? (data as { ok?: unknown; error?: unknown; approval?: unknown }) : null;
+  const approval = parseApprovalRequest(data) ?? parseApprovalRequest(record?.approval);
+  if (approval) throw new SettingsApprovalRequiredError(approval);
   if (!res.ok || record?.ok === false || (record && typeof record.error === "string" && record.error)) {
     const message = typeof record?.error === "string" && record.error ? record.error : fallback;
     throw new Error(message);

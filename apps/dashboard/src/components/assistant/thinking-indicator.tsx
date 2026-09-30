@@ -3,6 +3,7 @@
 import { motion } from "motion/react";
 import { ThinkingOrb, type OrbState } from "thinking-orbs";
 import { Shimmer } from "@/components/ai-elements/shimmer";
+import { DURATION, enter } from "@/lib/motion";
 
 export interface ThinkingIndicatorProps {
   label?: string;
@@ -10,13 +11,17 @@ export interface ThinkingIndicatorProps {
   className?: string;
 }
 
-/** A small dotted orb and a shimmering label: the assistant is working on it. */
+/**
+ * A small dotted orb and a shimmering label: the assistant is working on it.
+ * Under reduced motion the orb draws one still frame (thinking-orbs reads
+ * prefers-reduced-motion) and the shimmer stops (globals.css).
+ */
 export function ThinkingIndicator({ label = "Thinking", state = "breathing", className }: ThinkingIndicatorProps) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
+      transition={enter(DURATION.base)}
       className={className ?? "flex items-center gap-2 py-1"}
       role="status"
       aria-live="polite"

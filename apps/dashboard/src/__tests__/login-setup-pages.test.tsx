@@ -135,6 +135,15 @@ describe("sign-in and setup integrity (P0-3)", () => {
     await waitFor(() => expect(screen.getByLabelText("Username")).toHaveFocus());
   });
 
+  it("first-run setup uses the same sign-in frame as the login (wallpaper, glass card)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ passwordConfigured: false }));
+    const { container } = render(<SetupPage />);
+    const heading = await screen.findByRole("heading", { name: "Set up Talome" });
+    expect(heading.closest(".tm-glass-dense")).not.toBeNull();
+    // The wallpaper backdrop (the device's stored wallpaper, or Talome's default).
+    expect(container.querySelector("main img")).not.toBeNull();
+  });
+
   it("setup sends people to sign in when an account already exists", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ passwordConfigured: true }));
     render(<SetupPage />);

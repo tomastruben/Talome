@@ -12,8 +12,9 @@
  * Both are off unless an admin turns them on in Settings (the settings route
  * is admin-only, and the agent's own settings tool treats these keys as
  * protected, so a model can't switch its own prompts off). Headless runs
- * never use the flag either way (ai/claude-process.ts). Chat auto-approve is
- * not a server setting: it lives in the browser tab's session only.
+ * never use the flag either way (ai/claude-process.ts). The Assistant has no
+ * auto-approve: its calls go through the security mode and server-issued
+ * approvals (ai/execution.ts) like every other caller.
  */
 import { getSetting } from "../utils/settings.js";
 

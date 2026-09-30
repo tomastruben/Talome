@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AuthError, AuthField, AuthShell } from "@/components/trust/auth-shell";
+import { AuthError, AuthField, SignInFrame } from "@/components/trust/auth-shell";
 import { RecoveryCodeReveal } from "@/components/trust/recovery-code";
 import { useAuthStatus } from "@/hooks/use-setup-status";
 import { safeRedirectPath } from "@/lib/safe-redirect";
@@ -104,7 +104,7 @@ function SetupContent() {
 
   if (created) {
     return (
-      <AuthShell
+      <SignInFrame
         title="Save your recovery code"
         subtitle="If you forget your password, this code lets you set a new one. Nobody else can reset it for you."
       >
@@ -116,36 +116,36 @@ function SetupContent() {
             router.refresh();
           }}
         />
-      </AuthShell>
+      </SignInFrame>
     );
   }
 
   if (status.state === "error") {
     return (
-      <AuthShell title="Can't reach Talome" subtitle={status.message}>
+      <SignInFrame title="Can't reach Talome" subtitle={status.message}>
         <Button className="h-10 w-full" onClick={retry}>
           Retry
         </Button>
-      </AuthShell>
+      </SignInFrame>
     );
   }
 
   if (status.state === "loading" || accountExists) {
     return (
-      <AuthShell title="Set up Talome" subtitle="Checking your server…" footer={null}>
+      <SignInFrame title="Set up Talome" subtitle="Checking your server…" footer={null}>
         <div className="flex flex-col gap-4" aria-hidden="true">
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
         </div>
-      </AuthShell>
+      </SignInFrame>
     );
   }
 
   const errorFor = (field: string) => (fieldError?.field === field ? fieldError.message : null);
 
   return (
-    <AuthShell
+    <SignInFrame
       title="Set up Talome"
       subtitle="Create the owner account. You'll use it to sign in and to approve what agents do on this server."
     >
@@ -189,6 +189,6 @@ function SetupContent() {
           Create account
         </Button>
       </form>
-    </AuthShell>
+    </SignInFrame>
   );
 }

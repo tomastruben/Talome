@@ -6,6 +6,7 @@ import { isToolUIPart, getToolName } from "ai";
 import Image from "next/image";
 import useSWR from "swr";
 import { useTheme } from "next-themes";
+import { useReducedMotion } from "motion/react";
 import { BorderBeam } from "border-beam";
 import {
   HugeiconsIcon,
@@ -33,6 +34,8 @@ import {
 } from "@/components/ai-elements/tool";
 import { ReasoningSummary } from "@/components/ai-elements/reasoning";
 import { IconSwap } from "@/components/ui/micro";
+import { copyText } from "@/components/ui/copy-button";
+import { COPY_REVERT_MS } from "@/lib/motion";
 import { extractAssistantEntityReferences } from "@/lib/assistant-entity-references";
 import { ApprovalCard } from "@/components/trust/approval-card";
 import { APPROVALS_URL, trustFetcher, useNowAtDeadline } from "@/components/trust/api";
@@ -111,8 +114,8 @@ function MessageAttachment({ part }: { part: FileUIPart }) {
  * AI SDK `needsApproval` / `addToolApprovalResponse` path here.
  *
  * The status comes from the same SWR key the card polls, so this adds no
- * extra polling. border-beam drops its animation under reduced motion,
- * leaving a static border.
+ * extra polling. Under reduced motion there is no beam: the card's own status
+ * line says it is waiting.
  */
 function BeamedApprovalCard({ output }: { output: unknown }) {
   const request = parseApprovalRequest(output);
@@ -122,6 +125,7 @@ function BeamedApprovalCard({ output }: { output: unknown }) {
 
 function BeamedApprovalCardInner({ output, request }: { output: unknown; request: ApprovalRequest }) {
   const { resolvedTheme } = useTheme();
+  const reduceMotion = useReducedMotion();
   const { isAdmin } = useUser();
   const { data: live } = useSWR<ApprovalItem>(
     isAdmin ? `${APPROVALS_URL}/${encodeURIComponent(request.approvalId)}` : null,
@@ -136,7 +140,7 @@ function BeamedApprovalCardInner({ output, request }: { output: unknown; request
       size="pulse-inner"
       colorVariant="sunset"
       staticColors
-      active={waiting}
+      active={waiting && !reduceMotion}
       theme={resolvedTheme === "light" ? "light" : "dark"}
       strength={0.8}
     >
@@ -322,9 +326,10 @@ export function ChatMessage({
 
   const handleCopy = useCallback(async () => {
     if (!textContent) return;
-    await navigator.clipboard.writeText(textContent);
+    // copyText falls back where the Clipboard API is missing (plain-http LAN).
+    if (!(await copyText(textContent))) return;
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), COPY_REVERT_MS);
   }, [textContent]);
 
   // Group consecutive text parts

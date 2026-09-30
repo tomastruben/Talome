@@ -31,6 +31,14 @@ const DEFAULT_HEALTH: HealthState = { status: "online", checks: {}, uptime: 0, c
 
 export { failingChecksLabel, parseDegradedBody } from "@/lib/health";
 
+/**
+ * False until a health check has set the state: the initial "online" is a
+ * placeholder, not a verified answer, so nothing may show it as healthy.
+ */
+export function healthChecked(health: Pick<HealthState, "checkedAt">): boolean {
+  return health.checkedAt !== DEFAULT_HEALTH.checkedAt;
+}
+
 // Network-level failures required before declaring full offline mode.
 const OFFLINE_THRESHOLD = 5;
 // Consecutive degraded signals required before surfacing degraded state.

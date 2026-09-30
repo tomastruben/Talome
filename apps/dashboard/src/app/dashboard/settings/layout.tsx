@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
+import { DURATION, TRAVEL, enter } from "@/lib/motion";
 import { StackLayout } from "@/components/layout/stack-layout";
 import { SettingsSidebar } from "@/components/settings/settings-sidebar";
 import { SettingsLayoutContext } from "@/components/settings/settings-layout-context";
@@ -40,12 +41,12 @@ export default function SettingsLayout({
             <aside className="sticky top-0 self-start max-h-dvh overflow-y-auto border-r border-border/60 pb-6 pr-4">
               <SettingsSidebar />
             </aside>
-            {/* The detail settles in as you move between sections */}
+            {/* The detail settles in as you move between sections; static under reduced motion */}
             <motion.div
               key={pathname}
-              initial={reduceMotion ? false : { opacity: 0, y: 6, filter: "blur(2px)" }}
+              initial={reduceMotion ? false : { opacity: 0, y: TRAVEL.lift, filter: "blur(2px)" }}
               animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              transition={enter(DURATION.base)}
               className="min-w-0 pl-8"
             >
               {children}

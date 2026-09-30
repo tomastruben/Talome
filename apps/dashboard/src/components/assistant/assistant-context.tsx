@@ -8,7 +8,6 @@ import {
   useRef,
   useEffect,
   useMemo,
-  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { useChat } from "@ai-sdk/react";
@@ -65,7 +64,6 @@ export interface AssistantContextValue {
   clearError: () => void;
   stop: () => void;
   setMessages: (messages: UIMessage[]) => void;
-  addToolApprovalResponse: (params: { id: string; approved: boolean; reason?: string }) => void;
   regenerate: () => void;
 
   // Model selection
@@ -84,15 +82,9 @@ export interface AssistantContextValue {
   ) => Promise<void>;
   startNew: () => void;
 
-  /**
-   * Chat auto-approve: tool requests the Assistant asks this browser to
-   * confirm are approved automatically. It lasts for this tab's session only
-   * (sessionStorage) and never skips a confirmation dialog or a server-issued
-   * approval (Cautious mode). App builds and evolution runs have their own
-   * server-side settings (Settings › Security).
-   */
-  chatAutoApprove: boolean;
-  setChatAutoApprove: (enabled: boolean) => void;
+  // Tool approvals are never decided here: core returns `approval_required`
+  // (ai/execution.ts), the approval card shows it, and an admin decides it
+  // through the approvals API. There is no client-side auto-approve.
 
   // Submission state — true while a send is in progress (prevents double-sends)
   isSubmitting: boolean;
@@ -201,44 +193,6 @@ function buildModelOptions(config: AiModelsResponse): ModelOption[] {
   return allOptions;
 }
 
-// ── Chat auto-approve (this tab's session only) ─────────────────────────────
-
-/**
- * sessionStorage, not localStorage: the choice ends when the tab closes and
- * never reaches other tabs, the terminal, builds or evolution (the old shared
- * "talome-auto-mode" key did all of those at once).
- */
-export const CHAT_AUTO_APPROVE_KEY = "talome-chat-auto-approve";
-const chatAutoApproveListeners = new Set<() => void>();
-let chatAutoApproveFallback = false;
-
-export function readChatAutoApprove(): boolean {
-  try {
-    return sessionStorage.getItem(CHAT_AUTO_APPROVE_KEY) === "true";
-  } catch {
-    return chatAutoApproveFallback;
-  }
-}
-
-export function writeChatAutoApprove(enabled: boolean): void {
-  chatAutoApproveFallback = enabled;
-  try {
-    if (enabled) sessionStorage.setItem(CHAT_AUTO_APPROVE_KEY, "true");
-    else sessionStorage.removeItem(CHAT_AUTO_APPROVE_KEY);
-  } catch { /* noop */ }
-  for (const listener of chatAutoApproveListeners) listener();
-}
-
-function subscribeChatAutoApprove(listener: () => void): () => void {
-  chatAutoApproveListeners.add(listener);
-  return () => {
-    chatAutoApproveListeners.delete(listener);
-  };
-}
-
-// Server render and hydration see `false`; the session value applies right after.
-const getChatAutoApproveServerSnapshot = () => false;
-
 interface ChatRequestBody {
   model: ChatModel;
   provider: string;
@@ -282,16 +236,6 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const [chatRequest] = useState(() =>
     createChatRequest({ model: "", provider: "anthropic" })
   );
-
-  // Chat auto-approve (this tab's session only)
-  const chatAutoApprove = useSyncExternalStore(
-    subscribeChatAutoApprove,
-    readChatAutoApprove,
-    getChatAutoApproveServerSnapshot,
-  );
-  const setChatAutoApprove = useCallback((enabled: boolean) => {
-    writeChatAutoApprove(enabled);
-  }, []);
 
   // Submission mutex — prevents double-sends during network latency
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -374,7 +318,6 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     setMessages,
     stop,
     regenerate,
-    addToolApprovalResponse,
     error,
     clearError,
   } = useChat({
@@ -419,47 +362,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       submittingRef.current = false;
       setIsSubmitting(false);
     },
-    sendAutomaticallyWhen: ({ messages: currentMessages }) => {
-      const lastMessage = currentMessages.at(-1);
-      return (
-        lastMessage?.parts?.some(
-          (part) =>
-            part != null &&
-            typeof part === "object" &&
-            "state" in part &&
-            part.state === "approval-responded" &&
-            "approval" in part &&
-            (part.approval as { approved?: boolean })?.approved === true
-        ) ?? false
-      );
-    },
+    // No `sendAutomaticallyWhen`: core never marks a tool `needsApproval`, so
+    // there are no AI SDK approval responses to resend. A call held for the
+    // owner comes back as an `approval_required` tool result instead.
   });
-
-  // Auto-approve client-side tool approval requests while chat auto-approve is on.
-  // Scans the last assistant message for pending approvals and approves them.
-  const autoApprovedRef = useRef(new Set<string>());
-  useEffect(() => {
-    if (!chatAutoApprove) return;
-    const lastMsg = messages.at(-1);
-    if (!lastMsg || lastMsg.role !== "assistant") return;
-    for (const part of lastMsg.parts) {
-      if (
-        part != null &&
-        typeof part === "object" &&
-        "state" in part &&
-        part.state === "approval-requested" &&
-        "approval" in part
-      ) {
-        const approval = (part as Record<string, unknown>).approval as
-          | { id: string }
-          | undefined;
-        if (approval?.id && !autoApprovedRef.current.has(approval.id)) {
-          autoApprovedRef.current.add(approval.id);
-          addToolApprovalResponse({ id: approval.id, approved: true });
-        }
-      }
-    }
-  }, [chatAutoApprove, messages, addToolApprovalResponse]);
 
   // Auto-retry on network error (e.g. server restarted mid-stream while a
   // tool was running). Wait for the server to come back up, then regenerate.
@@ -645,7 +551,6 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       clearError,
       stop,
       setMessages,
-      addToolApprovalResponse,
       regenerate,
       model,
       setModel,
@@ -654,8 +559,6 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       modelReady,
       handleSubmit,
       startNew,
-      chatAutoApprove,
-      setChatAutoApprove,
       isSubmitting,
       openPaletteInChatMode,
       registerOpenPalette,
@@ -663,10 +566,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     [
       conversations, activeId, setActiveId, deleteConversation,
       messages, status, error, clearError, stop, setMessages,
-      addToolApprovalResponse, regenerate, model, setModel,
+      regenerate, model, setModel,
       modelOptions, activeProvider, modelReady,
       handleSubmit, startNew,
-      chatAutoApprove, setChatAutoApprove, isSubmitting,
+      isSubmitting,
       openPaletteInChatMode, registerOpenPalette,
     ]
   );

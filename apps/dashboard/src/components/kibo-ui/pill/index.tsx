@@ -73,7 +73,7 @@ export const PillStatus = ({
 );
 
 export type PillIndicatorProps = {
-  variant?: "success" | "error" | "warning" | "info";
+  variant?: "success" | "error" | "warning" | "info" | "neutral";
   pulse?: boolean;
 };
 
@@ -99,7 +99,8 @@ export const PillIndicator = ({
         variant === "success" && "bg-status-healthy",
         variant === "error" && "bg-status-critical",
         variant === "warning" && "bg-status-warning",
-        variant === "info" && "bg-status-info"
+        variant === "info" && "bg-status-info",
+        variant === "neutral" && "bg-muted-foreground"
       )}
     />
   </span>

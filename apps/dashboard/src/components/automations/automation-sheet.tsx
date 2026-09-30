@@ -62,6 +62,7 @@ import {
 } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { relativeTime } from "@/lib/format";
+import { automationStatus, automationStatusMeta, type AutomationStatus, type AutomationStatusTone } from "@/lib/automation-status";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Streamdown } from "streamdown";
@@ -110,6 +111,8 @@ interface StepRun {
   output: string | null;
   error: string | null;
   blocked: boolean;
+  /** The run journal's step status; legacy rows have none (see lib/automation-status). */
+  status?: AutomationStatus | (string & {}) | null;
 }
 
 export interface AutomationRun {
@@ -117,25 +120,22 @@ export interface AutomationRun {
   automationId: string;
   triggeredAt: string;
   success: boolean;
-  /** Older runs predate durable execution and have no status */
-  status?: "running" | "succeeded" | "failed" | "waiting_approval" | "interrupted" | null;
+  /** The run journal's status; older runs predate durable execution and have none. */
+  status?: AutomationStatus | (string & {}) | null;
   error: string | null;
   actionsRun: number;
   resultSummary?: string | null;
   stepRuns?: StepRun[];
 }
 
-const RUN_STATUS: Record<NonNullable<AutomationRun["status"]>, { label: string; variant: "success" | "error" | "warning" | "info" }> = {
-  running: { label: "Running", variant: "info" },
-  succeeded: { label: "Success", variant: "success" },
-  failed: { label: "Failed", variant: "error" },
-  waiting_approval: { label: "Waiting for approval", variant: "warning" },
-  interrupted: { label: "Interrupted", variant: "warning" },
+/** Step badges: the tint recipe for each tone. */
+const STEP_TONE_CLASS: Record<AutomationStatusTone, string> = {
+  success: "text-status-healthy border-status-healthy/30 bg-status-healthy/5",
+  error: "text-status-critical border-status-critical/30 bg-status-critical/5",
+  warning: "text-status-warning border-status-warning/30 bg-status-warning/5",
+  info: "text-status-info border-status-info/30 bg-status-info/5",
+  neutral: "text-muted-foreground",
 };
-
-function runStatus(run: AutomationRun) {
-  return RUN_STATUS[run.status ?? (run.success ? "succeeded" : "failed")];
-}
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -842,13 +842,15 @@ function RunHistory({ automationId }: { automationId: string }) {
 
   return (
     <div className="space-y-3">
-      {runs.map((run) => (
+      {runs.map((run) => {
+        const runMeta = automationStatusMeta(automationStatus(run));
+        return (
         <div key={run.id} className="rounded-xl border overflow-hidden">
           {/* Run header */}
           <div className="flex items-center gap-3 px-4 py-2.5 bg-muted/20 border-b">
             <Pill variant="secondary" className="text-xs gap-1.5 py-0.5 px-2">
-              <PillIndicator variant={runStatus(run).variant} />
-              {runStatus(run).label}
+              <PillIndicator variant={runMeta.tone} />
+              {runMeta.label}
             </Pill>
             <span
               className="text-xs text-muted-foreground tabular-nums"
@@ -866,25 +868,17 @@ function RunHistory({ automationId }: { automationId: string }) {
           {/* Per-step run detail */}
           {run.stepRuns && run.stepRuns.length > 0 ? (
             <div className="divide-y">
-              {run.stepRuns.map((sr, i) => (
+              {run.stepRuns.map((sr, i) => {
+                const stepMeta = automationStatusMeta(automationStatus(sr));
+                return (
                 <div key={sr.id} className="flex items-start gap-3 px-4 py-2">
                   <span className="text-xs text-muted-foreground tabular-nums pt-0.5 w-4">{i + 1}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-mono text-muted-foreground truncate">{sr.stepType}</span>
-                      {sr.blocked && (
-                        <Badge variant="outline" className="text-xs text-status-warning border-status-warning/30 bg-status-warning/5">
-                          Blocked
-                        </Badge>
-                      )}
-                      {!sr.blocked && (
-                        <Badge variant="outline" className={cn(
-                          "text-xs",
-                          sr.success ? "text-status-healthy border-status-healthy/30 bg-status-healthy/5" : "text-status-critical border-status-critical/30 bg-status-critical/5",
-                        )}>
-                          {sr.success ? "✓" : "✗"}
-                        </Badge>
-                      )}
+                      <Badge variant="outline" className={cn("text-xs", STEP_TONE_CLASS[stepMeta.tone])}>
+                        {stepMeta.label}
+                      </Badge>
                       {sr.durationMs != null && (
                         <span className="text-xs text-muted-foreground">{sr.durationMs}ms</span>
                       )}
@@ -901,7 +895,8 @@ function RunHistory({ automationId }: { automationId: string }) {
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             run.resultSummary && (
@@ -918,7 +913,8 @@ function RunHistory({ automationId }: { automationId: string }) {
             )
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion, useAnimationFrame, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
+import { AnimatePresence, motion, useAnimationFrame, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import type { ChatStatus } from "ai";
 import useSWR from "swr";
 import { useTheme } from "next-themes";
@@ -12,6 +12,7 @@ import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useSpeechOutput } from "@/hooks/use-speech-output";
 import { useLiveVoice, type LiveHistoryItem } from "@/hooks/use-live-voice";
 import { CORE_URL } from "@/lib/constants";
+import { DURATION, TRAVEL, enter, exit } from "@/lib/motion";
 
 export interface LastAssistant {
   id: string;
@@ -66,9 +67,8 @@ export function VoiceMode(props: VoiceModeProps) {
           aria-modal="true"
           aria-label="Voice conversation"
           initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.18, ease: "easeOut" }}
+          animate={{ opacity: 1, transition: enter(DURATION.base) }}
+          exit={{ opacity: 0, transition: exit() }}
           className="fixed inset-0 z-[1300] flex flex-col items-center justify-center gap-8 bg-background/85 p-6 backdrop-blur-xl"
         >
           {data.live ? <LiveSession {...props} model={data.live.model} /> : <ClassicSession {...props} />}
@@ -93,13 +93,25 @@ interface StageProps {
   onClose: () => void;
 }
 
+/** Share of the gap to the live voice level the orb closes each frame: smoothing, not a spring. */
+const LEVEL_SMOOTHING = 0.25;
+
 function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onClose }: StageProps) {
   const reduceMotion = useReducedMotion();
   const { resolvedTheme } = useTheme();
-  const sampled = useMotionValue(0);
-  useAnimationFrame(() => sampled.set(level()));
-  const target = useTransform(sampled, (v) => (reduceMotion ? 1 : 1 + v * 0.12));
-  const scale = useSpring(target, { stiffness: 380, damping: 36, mass: 0.5 });
+  // The orb swells with the voice level, eased toward it frame by frame. It
+  // tracks live data, so it is not a spring (CLAUDE.md: DRAG_SETTLE_SPRING only)
+  // and it stays still under reduced motion.
+  const smoothed = useMotionValue(0);
+  useAnimationFrame(() => {
+    if (reduceMotion) {
+      if (smoothed.get() !== 0) smoothed.set(0);
+      return;
+    }
+    const current = smoothed.get();
+    smoothed.set(current + (level() - current) * LEVEL_SMOOTHING);
+  });
+  const scale = useTransform(smoothed, (v) => (reduceMotion ? 1 : 1 + v * 0.12));
 
   return (
     <>
@@ -133,10 +145,9 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.p
             key={label}
-            initial={{ opacity: 0, y: 6, filter: "blur(2px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            exit={{ opacity: 0, y: -6, filter: "blur(2px)" }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: TRAVEL.lift, filter: "blur(2px)" }}
+            animate={{ opacity: 1, y: 0, filter: "blur(0px)", transition: reduceMotion ? { duration: DURATION.exitFast } : enter(DURATION.fast) }}
+            exit={reduceMotion ? { opacity: 0, transition: { duration: DURATION.exitFast } } : { opacity: 0, y: -TRAVEL.lift, filter: "blur(2px)", transition: exit(DURATION.exitFast) }}
             className="text-lg font-medium"
             aria-live="polite"
           >
@@ -151,7 +162,7 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
           type="button"
           onClick={onClose}
           aria-label="End voice conversation"
-          className="flex size-12 items-center justify-center rounded-full bg-muted text-foreground transition-[background-color,transform] duration-150 hover:bg-muted/70 active:scale-95"
+          className="flex size-12 items-center justify-center rounded-full bg-muted text-foreground transition-[background-color,transform] duration-150 hover:bg-muted/70 motion-safe:active:scale-95"
         >
           <HugeiconsIcon icon={Cancel01Icon} size={18} />
         </button>

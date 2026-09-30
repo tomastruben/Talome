@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import type { ChatStatus, FileUIPart, UIMessage } from "ai";
-import { isToolUIPart } from "ai";
+import type { ChatStatus, FileUIPart } from "ai";
 import { useAtom, useSetAtom } from "jotai";
 import {
   HugeiconsIcon,
@@ -38,8 +37,8 @@ import {
   WINDOW_SIDEBAR_REPLACES,
   WindowSidebarLayout,
 } from "@/components/ui/source-list";
-import { pendingActivity } from "@/lib/agent-activity";
-import { humanToolName, parseApprovalRequest } from "@/components/trust/format";
+import { pendingActivity, pendingApprovalRequest } from "@/lib/agent-activity";
+import { humanToolName } from "@/components/trust/format";
 import { ChatMessage } from "@/components/chat/chat-message";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { AssistantModelSelector } from "@/components/assistant/assistant-model-selector";
@@ -60,7 +59,6 @@ import { CORE_URL } from "@/lib/constants";
 import type { BlueprintState } from "@/components/creator/blueprint-draft-bar";
 import { BlueprintDraftBar } from "@/components/creator/blueprint-draft-bar";
 import { ClaudeTerminal } from "@/components/terminal/claude-terminal";
-import { Switch } from "@/components/ui/switch";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useUndoableDelete } from "@/components/chat/use-undoable-delete";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
@@ -125,23 +123,6 @@ function ThinkingMessage({ label }: { label: string }) {
   );
 }
 
-/**
- * The latest tool call in an assistant message that is held for a
- * server-issued approval (`approval_required`, see core ai/execution.ts), if
- * its request was still pending when the result was written. The approval
- * card under that tool call is where it is decided.
- */
-function pendingApprovalRequest(message: UIMessage | undefined) {
-  if (!message || message.role !== "assistant") return null;
-  for (let i = message.parts.length - 1; i >= 0; i--) {
-    const part = message.parts[i];
-    if (!isToolUIPart(part) || part.state !== "output-available") continue;
-    const request = parseApprovalRequest(part.output);
-    if (request) return request.approvalStatus === "pending" ? request : null;
-  }
-  return null;
-}
-
 /** Extract blueprint section update from a design_app_blueprint tool input. */
 function applyBlueprintUpdate(prev: BlueprintState, input: Record<string, unknown>): BlueprintState {
   const next = { ...prev };
@@ -202,7 +183,7 @@ function AssistantHeader({
 }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
-  const { conversations, activeId, chatAutoApprove, setChatAutoApprove } = useAssistant();
+  const { conversations, activeId } = useAssistant();
 
   const title = activeId ? conversations.find((c) => c.id === activeId)?.title : undefined;
 
@@ -247,29 +228,6 @@ function AssistantHeader({
       </span>
 
       <div className="ml-auto shrink-0 flex items-center gap-2">
-        {/* Chat auto-approve: this tab's session only */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <label className="flex items-center gap-1.5 cursor-pointer select-none">
-              <span className={`text-xs font-medium ${chatAutoApprove ? "text-status-warning" : "text-muted-foreground"}`}>
-                Auto-approve
-              </span>
-              <Switch
-                size="sm"
-                checked={chatAutoApprove}
-                onCheckedChange={setChatAutoApprove}
-                aria-label="Auto-approve tool requests in this chat session"
-                className="data-[state=checked]:bg-status-warning"
-              />
-            </label>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-64 text-xs">
-            {chatAutoApprove
-              ? "On until you close this tab: the Assistant's tool requests are approved without asking you. Cautious-mode approvals and confirmation dialogs still appear."
-              : "Off. The Assistant asks before running tools that need your OK."}
-          </TooltipContent>
-        </Tooltip>
-
         {showingChat && (
           <Button
             variant="ghost"
@@ -358,11 +316,10 @@ export default function AssistantPage() {
     messages, status, error, clearError, stop,
     conversations, activeId, setActiveId, deleteConversation,
     handleSubmit, regenerate,
-    model, setModel, modelOptions, activeProvider, modelReady, startNew, chatAutoApprove, setChatAutoApprove,
+    model, setModel, modelOptions, activeProvider, modelReady, startNew,
   } = useAssistant();
   const embeddedFrame = useIsEmbeddedFrame();
   const keyboard = useKeyboardMode();
-  // Confirmations never depend on chat auto-approve.
   const confirm = useConfirm();
   const { pending: pendingDeletes, request: requestDelete } = useUndoableDelete(deleteConversation);
   const suggestions = useSuggestions();
@@ -391,8 +348,8 @@ export default function AssistantPage() {
   } | null>(null);
 
   const isActive = status === "streaming" || status === "submitted";
-  // A tool held for approval shows its approval card, not "Thinking".
-  const pendingLabel = pendingApprovalRequest(messages[messages.length - 1]) ? null : pendingActivity(messages, status);
+  // A tool held for approval shows its approval card, not "Thinking" (pendingActivity).
+  const pendingLabel = pendingActivity(messages, status);
   const hasBlueprint = !!blueprint.identity?.name;
 
   // `dismissed` hides the chat view without stopping the stream.
@@ -448,13 +405,6 @@ export default function AssistantPage() {
     if (showingChat) setPageBack(() => handleBack);
     else setPageBack(null);
     setDesktopAppActions([
-      {
-        id: "chat-auto-approve",
-        label: "Auto-approve",
-        kind: "toggle",
-        active: chatAutoApprove,
-        onSelect: () => setChatAutoApprove(!chatAutoApprove),
-      },
       ...(showingChat ? [{
         id: "new-conversation",
         label: "New",
@@ -470,11 +420,9 @@ export default function AssistantPage() {
     };
   }, [
     activeConversationTitle,
-    chatAutoApprove,
     embeddedFrame,
     handleBack,
     handleNew,
-    setChatAutoApprove,
     setDesktopAppActions,
     setPageBack,
     setPageTitle,

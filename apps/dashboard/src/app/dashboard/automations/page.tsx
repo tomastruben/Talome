@@ -26,6 +26,7 @@ import { Banner, BannerIcon, BannerTitle, BannerClose } from "@/components/kibo-
 import { AutomationSheet } from "@/components/automations/automation-sheet";
 import { useAutomation } from "@/components/automations/automation-context";
 import { relativeTime } from "@/lib/format";
+import { automationStatus, automationStatusMeta, type AutomationStatus, type AutomationStatusTone } from "@/lib/automation-status";
 import { ErrorState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -51,11 +52,10 @@ interface AutomationRow {
   lastRunSuccess?: boolean;
   lastRunError?: string | null;
   /**
-   * The release run journal's status (runs recorded before statuses may have
-   * none). "interrupted" = the server restarted mid-run; Talome never re-runs it
-   * on its own. "blocked_approval" = a step is waiting for an owner approval.
+   * The run journal's status (runs recorded before statuses may have none);
+   * labels and tones live in lib/automation-status.
    */
-  lastRunStatus?: "running" | "succeeded" | "failed" | "blocked_approval" | "blocked" | "interrupted" | (string & {}) | null;
+  lastRunStatus?: AutomationStatus | (string & {}) | null;
   lastRunTriggeredAt?: string;
 }
 
@@ -71,6 +71,15 @@ interface StepConfig {
   command?: string;
   approved?: boolean;
 }
+
+/** Last-run line colour per status tone (lib/automation-status). */
+const STATUS_TEXT_CLASS: Record<AutomationStatusTone, string> = {
+  success: "",
+  error: "text-status-critical",
+  warning: "text-status-warning",
+  info: "",
+  neutral: "",
+};
 
 const TRIGGER_TYPES = [
   { value: "container_stopped",  label: "Container stopped",  icon: Package01Icon },
@@ -248,12 +257,9 @@ export default function AutomationsPage() {
 
             // Derive status from enriched data
             const hasRun = row.lastRunTriggeredAt != null;
-            const lastStatus = row.lastRunStatus ?? (row.lastRunSuccess ? "succeeded" : "failed");
-            const statusVariant: "success" | "error" | "warning" | "info" =
-              lastStatus === "succeeded" ? "success"
-                : lastStatus === "failed" ? "error"
-                : lastStatus === "running" ? "info"
-                : "warning";
+            const lastStatus = automationStatus({ status: row.lastRunStatus, success: row.lastRunSuccess });
+            const lastMeta = automationStatusMeta(lastStatus);
+            const statusVariant = lastMeta.tone;
 
             return (
               <div
@@ -331,16 +337,14 @@ export default function AutomationsPage() {
                           Review
                         </Link>
                       </span>
-                    ) : hasRun && lastStatus === "interrupted" ? (
-                      <span className="text-status-warning">Interrupted {relativeTime(row.lastRunTriggeredAt!)}</span>
                     ) : hasRun ? (
                       lastStatus === "succeeded" ? (
                         <span>Succeeded {relativeTime(row.lastRunTriggeredAt!)}</span>
                       ) : row.lastRunError ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className="text-status-critical truncate max-w-xs cursor-default">
-                              Failed {relativeTime(row.lastRunTriggeredAt!)}
+                            <span className={`${STATUS_TEXT_CLASS[lastMeta.tone]} truncate max-w-xs cursor-default`}>
+                              {lastMeta.label} {relativeTime(row.lastRunTriggeredAt!)}
                             </span>
                           </TooltipTrigger>
                           <TooltipContent className="max-w-sm text-xs">
@@ -348,8 +352,8 @@ export default function AutomationsPage() {
                           </TooltipContent>
                         </Tooltip>
                       ) : (
-                        <span className="text-status-critical">
-                          Failed {relativeTime(row.lastRunTriggeredAt!)}
+                        <span className={STATUS_TEXT_CLASS[lastMeta.tone]}>
+                          {lastMeta.label} {relativeTime(row.lastRunTriggeredAt!)}
                         </span>
                       )
                     ) : (

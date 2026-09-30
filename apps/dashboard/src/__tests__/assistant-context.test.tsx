@@ -15,18 +15,23 @@ vi.mock("ai", () => ({
   },
 }));
 
+const useChatOptions = vi.hoisted(() => ({ current: undefined as Record<string, unknown> | undefined }));
+
 vi.mock("@ai-sdk/react", () => ({
-  useChat: () => ({
-    messages: [],
-    sendMessage: vi.fn(),
-    status: "ready",
-    setMessages: vi.fn(),
-    stop: vi.fn(),
-    regenerate: vi.fn(),
-    addToolApprovalResponse: vi.fn(),
-    error: undefined,
-    clearError: vi.fn(),
-  }),
+  useChat: (options: Record<string, unknown>) => {
+    useChatOptions.current = options;
+    return {
+      messages: [],
+      sendMessage: vi.fn(),
+      status: "ready",
+      setMessages: vi.fn(),
+      stop: vi.fn(),
+      regenerate: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
+      error: undefined,
+      clearError: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("swr", () => ({
@@ -56,7 +61,6 @@ function Probe() {
       <span data-testid="model">{ctx.model}</span>
       <span data-testid="provider">{ctx.activeProvider}</span>
       <span data-testid="options">{ctx.modelOptions.map((o) => o.name).join("|")}</span>
-      <span data-testid="auto">{String(ctx.chatAutoApprove)}</span>
     </div>
   );
 }
@@ -158,27 +162,22 @@ describe("AssistantProvider", () => {
     expect(screen.getByTestId("model").textContent).toBe("gpt-a");
   });
 
-  it("keeps chat auto-approve to this tab's session, separate from the old shared Auto key (P0-5)", () => {
-    // The legacy key also drove the terminal, builds and evolution: it no longer turns chat auto-approve on.
-    localStorage.setItem("talome-auto-mode", "true");
-    sessionStorage.removeItem("talome-chat-auto-approve");
+  it("never decides tool approvals in the browser (approvals are server-issued)", () => {
+    // Old sessions may still hold the removed chat auto-approve key; it does nothing now.
+    sessionStorage.setItem("talome-chat-auto-approve", "true");
     render(
       <AssistantProvider>
         <Probe />
       </AssistantProvider>,
     );
-    expect(screen.getByTestId("auto").textContent).toBe("false");
-
-    act(() => api!.setChatAutoApprove(true));
-    expect(screen.getByTestId("auto").textContent).toBe("true");
-    expect(sessionStorage.getItem("talome-chat-auto-approve")).toBe("true");
-    // Nothing else changes: the terminal's key is untouched.
-    expect(localStorage.getItem("talome-auto-mode")).toBe("true");
-
-    act(() => api!.setChatAutoApprove(false));
-    expect(screen.getByTestId("auto").textContent).toBe("false");
-    expect(sessionStorage.getItem("talome-chat-auto-approve")).toBeNull();
-    localStorage.removeItem("talome-auto-mode");
+    expect(api).not.toBeNull();
+    expect(api).not.toHaveProperty("chatAutoApprove");
+    expect(api).not.toHaveProperty("setChatAutoApprove");
+    expect(api).not.toHaveProperty("addToolApprovalResponse");
+    // No AI SDK approval round-trip: nothing resends a conversation on its own.
+    expect(useChatOptions.current).toBeDefined();
+    expect(useChatOptions.current).not.toHaveProperty("sendAutomaticallyWhen");
+    sessionStorage.removeItem("talome-chat-auto-approve");
   });
 
   it("asks the browser to keep a delete alive when it is sent as the page goes away", async () => {

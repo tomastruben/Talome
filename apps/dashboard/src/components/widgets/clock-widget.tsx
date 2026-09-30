@@ -4,8 +4,11 @@ import { useEffect, useState } from "react";
 import { HugeiconsIcon, Moon02Icon, Sun01Icon } from "@/components/icons";
 import { PopText } from "@/components/ui/micro";
 import { msUntilNextMinute } from "@/components/desktop/desktop-clock";
+import { healthBannerCopy } from "@/components/system-health-banner";
+import { healthChecked, useIsOnline, type HealthState } from "@/hooks/use-is-online";
 import { useSystemStats } from "@/hooks/use-system-stats";
 import { useUser } from "@/hooks/use-user";
+import { cn } from "@/lib/utils";
 import { Widget, WidgetHeader } from "./widget";
 
 export function greetingFor(hour: number): string {
@@ -23,6 +26,32 @@ export function formatUptime(seconds: number): string {
   if (days > 0) return `${days}d ${hours % 24}h`;
   if (hours > 0) return `${hours}h ${minutes % 60}m`;
   return `${Math.max(minutes, 1)}m`;
+}
+
+export type ClockHealthTone = "healthy" | "warning" | "critical";
+
+const HEALTH_DOT: Record<ClockHealthTone, string> = {
+  healthy: "bg-status-healthy",
+  warning: "bg-status-warning",
+  critical: "bg-status-critical",
+};
+
+/**
+ * The footer's status line. The dot is core's health (`GET /api/health` via
+ * useIsOnline, the same source as the desktop's Talome menu), never "the
+ * stats loaded": green only after a check says the server is up, amber when
+ * it reports a problem, red when it can't be reached. Before the first check
+ * there is no dot, only the uptime the stats report.
+ */
+export function clockFooterStatus(
+  health: Pick<HealthState, "status" | "checks" | "reachable" | "checkedAt">,
+  uptimeSeconds: number | undefined,
+): { tone: ClockHealthTone | null; label: string | null } {
+  const uptime = uptimeSeconds !== undefined ? `Up ${formatUptime(uptimeSeconds)}` : null;
+  if (!healthChecked(health)) return { tone: null, label: uptime };
+  if (health.status === "online" && health.reachable) return { tone: "healthy", label: uptime ?? "Server is up" };
+  const copy = healthBannerCopy(health.status === "online" ? "degraded" : health.status, health.checks, null, health.reachable);
+  return { tone: copy.unreachable ? "critical" : "warning", label: copy.title };
 }
 
 /**
@@ -61,12 +90,14 @@ function useNow(): Date | null {
 /**
  * Built like the stat tiles beside it: a header, the time as the value with
  * its icon, the day underneath, and a footer where the charts sit, here the
- * server's name and how long it has been up.
+ * server's health, how long it has been up and its name.
  */
 export function ClockWidget({ compact = false }: { compact?: boolean }) {
   const now = useNow();
   const { user } = useUser();
   const { stats } = useSystemStats();
+  const health = useIsOnline();
+  const footer = clockFooterStatus(health, stats?.uptime);
   const name = user?.username ? user.username.charAt(0).toUpperCase() + user.username.slice(1) : undefined;
   const daytime = now ? now.getHours() >= 6 && now.getHours() < 18 : true;
 
@@ -96,13 +127,15 @@ export function ClockWidget({ compact = false }: { compact?: boolean }) {
         </p>
       </div>
       <div className="mt-auto flex items-center justify-between gap-3 border-t border-border/60 px-4 py-2.5 text-xs text-muted-foreground">
-        {stats ? (
+        {footer.label ? (
           <>
             <span className="flex min-w-0 items-center gap-1.5">
-              <span className="size-1.5 shrink-0 rounded-full bg-status-healthy" aria-hidden />
-              <span className="truncate">Up {formatUptime(stats.uptime)}</span>
+              {footer.tone ? (
+                <span data-clock-health={footer.tone} className={cn("size-1.5 shrink-0 rounded-full", HEALTH_DOT[footer.tone])} aria-hidden />
+              ) : null}
+              <span className="truncate">{footer.label}</span>
             </span>
-            {!compact && <span className="truncate">{stats.hostname}</span>}
+            {!compact && stats ? <span className="truncate">{stats.hostname}</span> : null}
           </>
         ) : (
           <span>&nbsp;</span>
