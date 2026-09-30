@@ -36,7 +36,7 @@ const { db, schema } = await import("../db/index.js");
 const { eq } = await import("drizzle-orm");
 const { createAppBackup } = await import("../backup/engine.js");
 const { restoreAppBackup } = await import("../backup/restore.js");
-const { getRestoreRow, insertRestore, listRecoveryRecords, saveRecoveryRecord } = await import("../backup/store.js");
+const { finishRestore, getRestoreRow, insertRestore, listRecoveryRecords, saveRecoveryRecord, updateRestoreStage } = await import("../backup/store.js");
 const { recoverPendingOperations } = await import("../backup/recovery.js");
 
 afterAll(() => env.cleanup());
@@ -106,6 +106,37 @@ describe("restore rollback", () => {
     expect(readFileSync(join(dataDir, "items.json"), "utf-8")).toBe("[1,2]");
     const installed = db.select().from(schema.installedApps).where(eq(schema.installedApps.appId, "inplaceversion")).get();
     expect(installed?.version).toBe("2.0.0");
+  });
+
+  it("keeps backup_restores.safety_backup_id when the rollback restores the safety backup", async () => {
+    const { appDir, backup } = await prepare("inplacesafetyid");
+    const dataDir = join(appDir, "data");
+    fsHooks.failRename = (from) => from === dataDir; // in place → the rollback restores the safety backup
+    dockerState.containers[0].crashOnStart = true;
+
+    const r = await restoreAppBackup(backup.backupId, FAST);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.safetyBackupId).toBeTruthy();
+    // The nested restore of the safety backup has no safety backup of its own:
+    // its stage updates must not clear the column the dashboard reads
+    expect(getRestoreRow(r.restoreId!)!.safety_backup_id).toBe(r.safetyBackupId);
+  });
+
+  it("never overwrites a recorded safety backup id with null", () => {
+    insertRestore("stage-null-id", "some-backup", "stagenull");
+    updateRestoreStage("stage-null-id", "stopping", "safety-1");
+    updateRestoreStage("stage-null-id", "stopping", null);
+    updateRestoreStage("stage-null-id", "extracting");
+    expect(getRestoreRow("stage-null-id")!.safety_backup_id).toBe("safety-1");
+    finishRestore("stage-null-id", "rolled_back", "x", { safetyBackupId: null });
+    expect(getRestoreRow("stage-null-id")!.safety_backup_id).toBe("safety-1");
+  });
+
+  it("records the safety backup id from the final detail when no stage carried it", () => {
+    insertRestore("finish-id", "some-backup", "finishid");
+    finishRestore("finish-id", "failed", "x", { safetyBackupId: "safety-2" });
+    expect(getRestoreRow("finish-id")!.safety_backup_id).toBe("safety-2");
   });
 });
 
