@@ -411,7 +411,7 @@ export function ChatMessage({
               return (
                 <div key={p.toolCallId} className="flex items-center gap-2 py-1 my-1">
                   <HugeiconsIcon icon={PackageOpenIcon} size={12} className="text-status-warning/60 motion-safe:animate-pulse shrink-0" />
-                  <span className="text-xs text-muted-foreground">Updating blueprint...</span>
+                  <span className="text-xs text-muted-foreground">Updating blueprint…</span>
                 </div>
               );
             }
@@ -457,7 +457,7 @@ export function ChatMessage({
                 />
                 <ToolContent>
                   <ToolInput input={p.input} />
-                  <ToolOutput output={p.output} errorText={p.errorText} toolName={name} />
+                  <ToolOutput output={p.output} errorText={p.errorText} toolName={name} stale={!isLast} />
                 </ToolContent>
                 {name && STREAMING_TOOLS.has(name) && (
                   <LiveToolOutput isRunning={p.state === "input-available"} />

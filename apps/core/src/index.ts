@@ -25,6 +25,7 @@ import { approvals } from "./routes/approvals.js";
 import { setupTerminal } from "./routes/terminal.js";
 import { automations } from "./routes/automations.js";
 import { auth } from "./routes/auth.js";
+import { toolActions } from "./routes/tool-actions.js";
 import { users } from "./routes/users.js";
 import { stacks } from "./routes/stacks.js";
 import { creator } from "./routes/creator.js";
@@ -433,6 +434,8 @@ app.route("/api/stores", stores);
 
 // Rate-limit the AI chat route: 20 requests per 60 seconds per IP
 app.use("/api/chat/*", rateLimit(20, 60_000));
+// Tool-card buttons run through executeTool() (mode, approvals, audit).
+app.route("/api/chat/actions", toolActions);
 app.route("/api/chat", chat);
 
 // Rate-limit auth endpoints: 10 requests per 60 seconds per IP (brute-force protection)
