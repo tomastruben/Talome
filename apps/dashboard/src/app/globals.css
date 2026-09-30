@@ -2027,31 +2027,69 @@
 }
 
 /* Desktop mode full screen on iPad (a trackpad makes it available): the
-   menu bar grows by the status bar's height and lays out beneath it, the
-   wallpaper runs to every edge, and the dock sits above the home indicator. */
+   wallpaper runs to every edge while windows and the dock stay clear of the
+   status bar and the home indicator. */
 @media (display-mode: standalone) {
   [data-desktop-root] {
     position: fixed;
     inset: 0;
     height: auto;
-  }
-  [data-desktop-menubar] {
-    height: calc(2.5rem + env(safe-area-inset-top, 0px));
     padding-top: env(safe-area-inset-top, 0px);
-    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
-    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
   }
-  .desktop-dock {
-    bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  [data-desktop-dock-band] {
+    height: calc(5.75rem + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
   }
-  /* The iPad's status bar already shows the time */
-  [data-desktop-clock] { display: none; }
 }
+
+/* The desktop greeting sits straight on the wallpaper */
+.desktop-greeting {
+  color: oklch(0.985 0 0);
+  text-shadow: 0 1px 12px oklch(0 0 0 / 35%);
+}
+
+/* Desktop windows: a hairline catches the light along the top edge, and
+   layered shadows lift the window you're working in above the rest. */
+.tm-window {
+  border-color: oklch(1 0 0 / 8%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 5%),
+    0 12px 32px -12px oklch(0 0 0 / 45%),
+    0 2px 8px -2px oklch(0 0 0 / 30%);
+}
+.tm-window[data-active] {
+  border-color: oklch(1 0 0 / 14%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 8%),
+    0 32px 80px -16px oklch(0 0 0 / 65%),
+    0 12px 28px -8px oklch(0 0 0 / 45%);
+}
+.tm-window-titlebar {
+  border-color: oklch(1 0 0 / 5%);
+  background: color-mix(in oklch, var(--card) 88%, transparent);
+  backdrop-filter: blur(20px) saturate(1.4);
+}
+.tm-window:not([data-active]) .tm-window-titlebar {
+  background: color-mix(in oklch, var(--card) 72%, transparent);
+}
+.tm-window:not([data-active]) .tm-window-titlebar [data-title-placement] { opacity: 0.7; }
+:root:not(.dark) .tm-window { border-color: oklch(0 0 0 / 10%); box-shadow: 0 12px 32px -12px oklch(0 0 0 / 20%), 0 2px 8px -2px oklch(0 0 0 / 12%); }
+:root:not(.dark) .tm-window[data-active] { border-color: oklch(0 0 0 / 14%); box-shadow: 0 28px 64px -16px oklch(0 0 0 / 28%), 0 10px 24px -8px oklch(0 0 0 / 16%); }
 
 /* No hover on a touch screen: whatever would appear on hover is simply shown,
    so selection, copy, drag handles and row actions stay reachable. */
 @media (hover: none) and (pointer: coarse) {
   [class*="group-hover"][class*="opacity-0"] { opacity: 1 !important; }
+
+  /* Window controls and edges sized for a finger */
+  [data-window-controls] { gap: 0.75rem; }
+  [data-window-controls] > button { width: 1.25rem; height: 1.25rem; }
+  [data-window-controls] > button svg { opacity: 1 !important; }
+  [data-resize-edge="n"], [data-resize-edge="s"] { height: 0.875rem; }
+  [data-resize-edge="e"], [data-resize-edge="w"] { width: 0.875rem; }
+  [data-resize-edge="nw"], [data-resize-edge="ne"], [data-resize-edge="sw"], [data-resize-edge="se"] { width: 1.75rem; height: 1.75rem; }
 
   /* Long-press opens Talome's own menu, not Safari's callout or a text selection */
   [data-slot="context-menu-trigger"] {

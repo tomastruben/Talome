@@ -11,6 +11,7 @@ import {
   LayoutAlignLeftIcon,
   DashboardCircleIcon,
   ArrowLeft01Icon,
+  ArrowRight01Icon,
   Add01Icon,
   CheckmarkCircle02Icon,
   AlertCircleIcon,
@@ -28,6 +29,7 @@ import {
 import { ChatInputBar } from "@/components/ai-elements/chat-input-bar";
 import { VoiceMode } from "@/components/assistant/voice-mode";
 import { ThinkingIndicator } from "@/components/assistant/thinking-indicator";
+import { ThinkingOrb } from "thinking-orbs";
 import { pendingActivity } from "@/lib/agent-activity";
 import { ChatMessage } from "@/components/chat/chat-message";
 import { useAssistant } from "@/components/assistant/assistant-context";
@@ -728,24 +730,32 @@ export default function AssistantPage() {
               <AssistantChatError error={error} onDismiss={clearError} />
             </div>
           ) : null}
+          <div className="mb-4 flex size-12 items-center justify-center" aria-hidden>
+            <ThinkingOrb state="breathing" size={32} />
+          </div>
           <h2 className="text-xl sm:text-2xl font-medium tracking-tight text-foreground mb-6 sm:mb-8">
             How can I help?
           </h2>
 
-          <div className="grid grid-cols-2 gap-2 w-full max-w-sm mb-8 sm:mb-10">
+          <div className="tm-rise grid grid-cols-2 gap-2 w-full max-w-xl mb-8 sm:mb-10">
             {suggestions.map((s, i) => (
               <button
                 key={`${i}-${s.label}`}
                 onClick={() => handleSuggestion(s.prompt)}
-                className="rounded-2xl px-3 sm:px-4 py-3 text-sm text-left text-muted-foreground bg-foreground/[0.04] active:bg-foreground/[0.08] transition-all duration-150 hover:bg-foreground/[0.07] hover:text-foreground"
+                className="group/suggestion flex items-center gap-2 rounded-2xl px-3 sm:px-4 py-3 text-sm text-left text-muted-foreground bg-foreground/[0.04] transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/[0.07] hover:text-foreground active:scale-[0.98] active:bg-foreground/[0.08]"
               >
-                {s.label}
+                <span className="min-w-0 flex-1 truncate">{s.label}</span>
+                <HugeiconsIcon
+                  icon={ArrowRight01Icon}
+                  size={14}
+                  className="shrink-0 -translate-x-1 opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/suggestion:translate-x-0 group-hover/suggestion:opacity-60"
+                />
               </button>
             ))}
           </div>
 
           {conversations.length > 0 && (
-            <div className="w-full max-w-sm">
+            <div className="w-full max-w-xl">
               {Object.entries(grouped).map(([group, convs]) => {
                 const isExpanded = !!expandedGroups[group];
                 const visibleConvs = isExpanded ? convs : convs.slice(0, MAX_VISIBLE_HISTORY_PER_GROUP);

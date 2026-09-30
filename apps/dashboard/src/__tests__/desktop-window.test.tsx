@@ -138,7 +138,7 @@ describe("DesktopWindow", () => {
     expect(screen.getByText("Files")).toHaveAttribute("data-title-placement", "leading");
   });
 
-  it("removes inset window chrome when maximized", () => {
+  it("fills the area edge to edge when maximized, rounding only the corners above the Dock", () => {
     render(
       <DesktopWindow
         {...defaultProps}
@@ -150,8 +150,8 @@ describe("DesktopWindow", () => {
     );
 
     const windowRegion = screen.getByRole("region", { name: "Files window" });
-    expect(windowRegion).toHaveClass("rounded-none", "border-0");
-    expect(windowRegion).not.toHaveClass("rounded-xl");
+    expect(windowRegion).toHaveClass("rounded-t-none", "rounded-b-2xl", "border-x-0", "border-t-0");
+    expect(windowRegion).not.toHaveClass("rounded-2xl");
     expect(document.querySelector("[data-resize-edge]")).toBeNull();
   });
 

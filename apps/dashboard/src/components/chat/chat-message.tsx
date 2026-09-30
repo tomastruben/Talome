@@ -25,6 +25,7 @@ import {
 import {
   Tool,
   ToolHeader,
+  sentenceCaseToolName,
   ToolContent,
   ToolInput,
   ToolOutput,
@@ -105,10 +106,7 @@ function MessageAttachment({ part }: { part: FileUIPart }) {
 }
 
 function formatToolName(name: string): string {
-  return name
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  return sentenceCaseToolName(name);
 }
 
 const STREAMING_TOOLS = new Set(["plan_change", "apply_change"]);

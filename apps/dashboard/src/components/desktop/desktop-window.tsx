@@ -518,16 +518,11 @@ export const DesktopWindow = memo(function DesktopWindow({
       aria-label={`${title} window`}
       aria-hidden={disabled || undefined}
       inert={disabled}
+      data-active={active || undefined}
       className={cn(
-        "absolute flex min-h-0 flex-col overflow-hidden bg-card",
-        "transition-[border-color,opacity] duration-150 ease-out",
-        maximized
-          ? "rounded-none border-0"
-          : "rounded-xl border",
-        // Depth tells which window is in front; the active one sits higher
-        !maximized && (active
-          ? "border-foreground/25 shadow-2xl shadow-black/50"
-          : "border-border shadow-xl shadow-black/30"),
+        "tm-window absolute flex min-h-0 flex-col overflow-hidden bg-card",
+        "transition-[border-color,opacity,box-shadow] duration-150 ease-out",
+        maximized ? "rounded-t-none rounded-b-2xl border-x-0 border-t-0 border-b" : "rounded-2xl border",
         disabled && "pointer-events-none",
       )}
       style={{
@@ -541,14 +536,13 @@ export const DesktopWindow = memo(function DesktopWindow({
     >
       <div
         className={cn(
-          "group/titlebar grid h-11 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center border-b border-border/70 px-3",
-          active ? "bg-card" : "bg-card/80",
+          "group/titlebar tm-window-titlebar grid h-11 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center border-b px-3.5",
         )}
         onPointerDown={startDrag}
         onDoubleClick={toggleMaximize}
       >
         <div className="flex min-w-0 items-center gap-2">
-          <div className="flex shrink-0 items-center gap-2" aria-label="Window controls">
+          <div data-window-controls="" className="group/controls flex shrink-0 items-center gap-2" aria-label="Window controls">
             <button
               type="button"
               aria-label={`Close ${title}`}
@@ -565,7 +559,7 @@ export const DesktopWindow = memo(function DesktopWindow({
                 icon={Cancel01Icon}
                 size={8}
                 strokeWidth={2}
-                className="text-background opacity-0 transition-opacity duration-150 group-hover/control:opacity-100"
+                className="text-black/70 opacity-0 transition-opacity duration-150 group-hover/controls:opacity-100 group-focus-visible/control:opacity-100"
               />
             </button>
             <button
@@ -584,7 +578,7 @@ export const DesktopWindow = memo(function DesktopWindow({
                 icon={MinimizeScreenIcon}
                 size={8}
                 strokeWidth={2}
-                className="text-background opacity-0 transition-opacity duration-150 group-hover/control:opacity-100"
+                className="text-black/70 opacity-0 transition-opacity duration-150 group-hover/controls:opacity-100 group-focus-visible/control:opacity-100"
               />
             </button>
             <button
@@ -603,7 +597,7 @@ export const DesktopWindow = memo(function DesktopWindow({
                 icon={MaximizeScreenIcon}
                 size={8}
                 strokeWidth={2}
-                className="text-background opacity-0 transition-opacity duration-150 group-hover/control:opacity-100"
+                className="text-black/70 opacity-0 transition-opacity duration-150 group-hover/controls:opacity-100 group-focus-visible/control:opacity-100"
               />
             </button>
           </div>

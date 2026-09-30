@@ -81,6 +81,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { IconSwap, PopText } from "@/components/ui/micro";
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -197,6 +198,8 @@ const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
 const DESKTOP_WINDOW_MOTION_SECONDS = 0.19;
 const DESKTOP_WINDOW_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const DESKTOP_DOCK_MOTION_SECONDS = 0.16;
+const DOCK_TRAY_BUTTON_CLASS =
+  "relative flex size-10 items-center justify-center rounded-xl text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-95";
 const DESKTOP_DOCK_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 const DESKTOP_DOCK_POINTER_CONSTRAINT = { distance: 6 } as const;
 /** Dock magnification: icons within this distance (px) of the pointer grow, peaking at 1 + amount */
@@ -548,39 +551,41 @@ function readPersistedDock(): {
   }
 }
 
-function TalomeMark() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="12" cy="4.5" r="1.7" />
-      <circle cx="17.1" cy="7" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="9.5" r="0.72" opacity="0.12" />
-      <circle cx="6.5" cy="12" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="14.5" r="1.7" />
-      <circle cx="17.5" cy="17" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="19.5" r="0.72" opacity="0.12" />
-      <circle cx="12" cy="4.5" r="0.72" opacity="0.12" />
-      <circle cx="6.5" cy="7" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="9.5" r="1.7" />
-      <circle cx="17.5" cy="12" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="14.5" r="0.72" opacity="0.12" />
-      <circle cx="6.5" cy="17" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="19.5" r="1.7" />
-    </svg>
-  );
+function greetingFor(hour: number): string {
+  if (hour < 5) return "Good night";
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
 }
 
-function DesktopClock() {
-  const [now, setNow] = useState(() => new Date());
+/** A quiet hello over the wallpaper: who's here, and what time it is. */
+function DesktopGreeting({ name }: { name?: string }) {
+  const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(timer);
+    const tick = () => setNow(new Date());
+    const first = window.setTimeout(tick, 0);
+    const timer = window.setInterval(tick, 15_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+    };
   }, []);
 
+  if (!now) return <div data-desktop-greeting="" className="h-16" aria-hidden="true" />;
+  const displayName = name ? name.charAt(0).toUpperCase() + name.slice(1) : undefined;
+
   return (
-    <time data-desktop-clock="" className="text-xs tabular-nums text-muted-foreground" suppressHydrationWarning>
-      {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-    </time>
+    <header data-desktop-greeting="" className="desktop-greeting tm-rise flex flex-col gap-1 px-1 pb-5">
+      <h1 className="text-2xl font-medium tracking-tight">
+        {greetingFor(now.getHours())}{displayName ? `, ${displayName}` : ""}
+      </h1>
+      <p className="flex items-center gap-2 text-sm opacity-75">
+        <span>{now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</span>
+        <span aria-hidden="true">·</span>
+        <PopText value={now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} />
+      </p>
+    </header>
   );
 }
 
@@ -792,11 +797,6 @@ export function DesktopExperience() {
     () => new Map(windows.map((windowModel) => [windowModel.appId, windowModel])),
     [windows],
   );
-  const activeWindowMaximized = windows.some((windowModel) => (
-    windowModel.id === activeWindowId
-    && windowModel.maximized
-    && !windowModel.minimized
-  ));
 
   useEffect(() => {
     if (
@@ -1298,10 +1298,6 @@ export function DesktopExperience() {
     ));
   }, []);
 
-  const activeWindow = windows.find((windowModel) => windowModel.id === activeWindowId);
-  const activeTitle = appChromeByWindow[activeWindowId]?.title
-    ?? activeWindow?.title
-    ?? "Desktop";
 
   const openSearch = () => {
     setControlCenterOpen(false);
@@ -1484,275 +1480,6 @@ export function DesktopExperience() {
           </a>
         </p>
       ) : null}
-      <header
-        data-desktop-menubar=""
-        aria-hidden={desktopWidgetsEditing || undefined}
-        aria-disabled={desktopWidgetsEditing || undefined}
-        inert={desktopWidgetsEditing}
-        className={cn(
-          "relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b px-3 transition-[background-color,border-color,box-shadow,opacity] duration-150",
-          DESKTOP_FROSTED_MATERIAL_CLASS,
-          desktopWidgetsEditing && "pointer-events-none select-none opacity-35 saturate-0",
-        )}
-      >
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="flex h-8 items-center gap-2 rounded-md px-2 text-sm font-medium transition-colors duration-150 hover:bg-muted/40"
-              aria-label="Talome menu"
-            >
-              <TalomeMark />
-              <span>Talome</span>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-48">
-            <DropdownMenuLabel>Talome</DropdownMenuLabel>
-            <DropdownMenuItem asChild>
-              <Link href="/dashboard">
-                Classic mode
-                <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="ml-auto" />
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => openApp(appById.get("settings")!)}>
-              <HugeiconsIcon icon={Settings01Icon} size={14} />
-              Settings
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger className="h-8 rounded-md px-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground">
-            File
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-48">
-            <DropdownMenuItem onSelect={() => openApp(appById.get("files")!)}>
-              Open Files
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setLaunchpadOpen(true)}>
-              Open Launchpad
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={!activeWindow}
-              onSelect={() => activeWindow && closeWindow(activeWindow.id)}
-            >
-              Close Window
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger className="h-8 rounded-md px-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground">
-            Window
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-52">
-            {windows.length === 0 ? (
-              <DropdownMenuItem disabled>No open windows</DropdownMenuItem>
-            ) : windows.map((windowModel) => (
-              <DropdownMenuItem
-                key={windowModel.id}
-                onSelect={() => focusWindow(windowModel.id)}
-              >
-                {windowModel.title}
-                {windowModel.id === activeWindowId && (
-                  <span className="ml-auto size-1.5 rounded-full bg-foreground" />
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <span className="mx-2 h-4 w-px bg-border" />
-        <span className="truncate text-sm font-medium">{activeTitle}</span>
-
-        <div className="ml-auto flex items-center gap-1">
-          <AnimatePresence initial={false}>
-            {desktopAudiobookPlayer.book ? (
-              <motion.div
-                key={desktopAudiobookPlayer.book.bookId}
-                role="group"
-                aria-label={`Now playing ${desktopAudiobookPlayer.book.title}`}
-                className="relative mr-1 flex h-7 max-w-56 items-center overflow-hidden rounded-md bg-muted/45 text-xs"
-                initial={reduceMotion ? false : { opacity: 0, scale: 0.94, x: 6 }}
-                animate={{ opacity: 1, scale: 1, x: 0 }}
-                exit={reduceMotion ? undefined : { opacity: 0, scale: 0.94, x: 6 }}
-                transition={reduceMotion ? { duration: 0 } : { duration: 0.16, ease: "easeOut" }}
-              >
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch px-2 text-left transition-colors hover:bg-muted/55"
-                  aria-label={`Open now playing audiobook: ${desktopAudiobookPlayer.book.title}`}
-                  onClick={openNowPlayingAudiobook}
-                >
-                  <HugeiconsIcon icon={HeadphonesIcon} size={14} className="shrink-0 text-muted-foreground" />
-                  <span className="truncate font-medium">
-                    {desktopAudiobookPlayer.book.title}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-[background-color,color,transform] hover:bg-muted/70 hover:text-foreground active:scale-90"
-                  aria-label={desktopAudiobookPlayer.state.isPlaying
-                    ? "Pause audiobook from status bar"
-                    : "Play audiobook from status bar"}
-                  onClick={desktopAudiobookPlayer.togglePlay}
-                >
-                  <HugeiconsIcon
-                    icon={desktopAudiobookPlayer.state.isPlaying ? PauseIcon : PlayIcon}
-                    size={13}
-                  />
-                </button>
-                <span
-                  className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-foreground/10"
-                  aria-hidden="true"
-                >
-                  <span
-                    className="block h-full bg-foreground/55 transition-[width] duration-1000 ease-linear"
-                    style={{ width: `${desktopAudiobookProgress}%` }}
-                  />
-                </span>
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground"
-                aria-label="Search Talome"
-                aria-haspopup="dialog"
-                onClick={openSearch}
-              >
-                <HugeiconsIcon icon={Search01Icon} size={15} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={8}>
-              Search <span className="ml-2 text-dim-foreground">⌘K</span>
-            </TooltipContent>
-          </Tooltip>
-          <Popover
-            open={controlCenterOpen}
-            onOpenChange={(open) => {
-              if (open) {
-                setControlCenterNavigationDirection("push");
-                setControlCenterView("main");
-              }
-              setControlCenterOpen(open);
-            }}
-          >
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                className={cn(
-                  "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground",
-                  controlCenterOpen && "bg-muted/60 text-foreground",
-                )}
-                aria-label="Control Center"
-                aria-haspopup="dialog"
-              >
-                <HugeiconsIcon icon={SlidersHorizontalIcon} size={15} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              side="bottom"
-              sideOffset={8}
-              className={cn(
-                "z-[1300] w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border-border/80 bg-background/95 p-0 shadow-xl backdrop-blur-md",
-              )}
-              aria-label="Control Center"
-            >
-              <motion.div
-                layout={!reduceMotion}
-                className="relative overflow-hidden"
-                transition={{
-                  layout: reduceMotion
-                    ? { duration: 0 }
-                    : CONTROL_CENTER_PAGE_TRANSITION,
-                }}
-              >
-                <AnimatePresence
-                  initial={false}
-                  custom={controlCenterNavigationDirection}
-                  mode="popLayout"
-                >
-                  <motion.div
-                    key={controlCenterView}
-                    data-control-center-view={controlCenterView}
-                    className="relative w-full bg-background"
-                    custom={controlCenterNavigationDirection}
-                    variants={CONTROL_CENTER_PAGE_VARIANTS}
-                    initial={reduceMotion ? false : "enter"}
-                    animate="center"
-                    exit={reduceMotion ? undefined : "exit"}
-                    transition={reduceMotion
-                      ? { duration: 0 }
-                      : CONTROL_CENTER_PAGE_TRANSITION}
-                  >
-                    {controlCenterView === "dashboard" ? (
-                      <DesktopWidgetsPanel
-                        controller={dashboardWidgetLayoutController}
-                        title="Widgets"
-                        subtitle={`${dashboardWidgetLayoutController.layout.filter((widget) => widget.visible).length} widgets`}
-                        editing={dashboardEditing}
-                        onEditingChange={setDashboardEditing}
-                        onBack={popControlCenterView}
-                      />
-                    ) : controlCenterView === "audiobooks" ? (
-                      <DesktopAudiobooksControlCenter
-                        audiobookPlayer={desktopAudiobookPlayer}
-                        onBack={popControlCenterView}
-                        onOpenApp={() => openControlCenterApp("/dashboard/audiobooks")}
-                      />
-                    ) : controlCenterView === "downloads" ? (
-                      <DesktopDownloadsControlCenter
-                        onBack={popControlCenterView}
-                        onOpenApp={() => openControlCenterApp("/dashboard/media?tab=downloads")}
-                      />
-                    ) : (
-                      <DesktopControlCenter
-                        audiobookPlayer={desktopAudiobookPlayer}
-                        onOpenAudiobooks={() => pushControlCenterView("audiobooks")}
-                        onOpenDownloads={() => pushControlCenterView("downloads")}
-                        onOpenDashboard={() => pushControlCenterView("dashboard")}
-                        onOpenWallpaper={openWallpaperEditor}
-                      />
-                    )}
-                  </motion.div>
-                </AnimatePresence>
-              </motion.div>
-            </PopoverContent>
-          </Popover>
-          <NotificationsBell triggerClassName="size-7" iconSize={15} />
-          <DesktopClock />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="ml-1 flex size-7 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors duration-150 hover:text-foreground"
-                aria-label="Account menu"
-              >
-                <HugeiconsIcon icon={UserIcon} size={14} />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuLabel className="flex items-center justify-between gap-3">
-                <span className="truncate">{user?.username ?? "Account"}</span>
-                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {user?.role === "admin" ? "Administrator" : "Member"}
-                </span>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => void logOut()}>
-                <HugeiconsIcon icon={Logout01Icon} size={14} />
-                Log out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </header>
 
       <div ref={workspaceRef} className="relative z-[1] flex-1 min-h-0 overflow-hidden">
         <ContextMenu>
@@ -1823,6 +1550,7 @@ export function DesktopExperience() {
                   : "min(44rem, calc(100% - 3rem))",
               }}
             >
+              {!desktopWidgetsEditing ? <DesktopGreeting name={user?.username} /> : null}
               <ControlledWidgetGrid
                 controller={desktopWidgetLayoutController}
                 editMode={desktopWidgetsEditing}
@@ -1963,12 +1691,17 @@ export function DesktopExperience() {
           onLaunch={launchNavItem}
           onLaunchService={launchService}
         />
+      </div>
 
-        {!activeWindowMaximized && !desktopWidgetsEditing ? (
+      <div
+        data-desktop-dock-band=""
+        className="relative z-[2] flex h-[5.75rem] shrink-0 items-end justify-center px-4 pb-4"
+      >
+        {!desktopWidgetsEditing ? (
           <nav
             aria-label="Desktop applications"
             className={cn(
-              "desktop-dock absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
+              "desktop-dock relative flex max-w-full items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
               DESKTOP_FROSTED_MATERIAL_CLASS,
               draggingDockAppId && "border-foreground/20 bg-card/95 shadow-xl shadow-black/25",
             )}
@@ -2082,6 +1815,195 @@ export function DesktopExperience() {
               </SortableContext>
             </DndContext>
             </DockPointerContext.Provider>
+            <span className="mx-1 h-9 w-px self-center bg-border" aria-hidden="true" />
+            <div role="group" aria-label="Status" className="flex items-center gap-0.5 self-center">
+              <AnimatePresence initial={false}>
+                {desktopAudiobookPlayer.book ? (
+                  <motion.div
+                    key={desktopAudiobookPlayer.book.bookId}
+                    role="group"
+                    aria-label={`Now playing ${desktopAudiobookPlayer.book.title}`}
+                    className="relative mr-1 flex h-10 max-w-48 items-center overflow-hidden rounded-xl bg-muted/45 text-sm"
+                    initial={reduceMotion ? false : { opacity: 0, scale: 0.94 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={reduceMotion ? undefined : { opacity: 0, scale: 0.94 }}
+                    transition={reduceMotion ? { duration: 0 } : { duration: 0.16, ease: "easeOut" }}
+                  >
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 self-stretch pl-3 pr-1 text-left transition-colors hover:bg-muted/55"
+                      aria-label={`Open now playing audiobook: ${desktopAudiobookPlayer.book.title}`}
+                      onClick={openNowPlayingAudiobook}
+                    >
+                      <HugeiconsIcon icon={HeadphonesIcon} size={16} className="shrink-0 text-muted-foreground" />
+                      <span className="truncate">{desktopAudiobookPlayer.book.title}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="flex size-10 shrink-0 items-center justify-center text-muted-foreground transition-[background-color,color,transform] hover:bg-muted/70 hover:text-foreground active:scale-90"
+                      aria-label={desktopAudiobookPlayer.state.isPlaying ? "Pause audiobook" : "Play audiobook"}
+                      onClick={desktopAudiobookPlayer.togglePlay}
+                    >
+                      <IconSwap
+                        active={desktopAudiobookPlayer.state.isPlaying ? "a" : "b"}
+                        a={<HugeiconsIcon icon={PauseIcon} size={15} />}
+                        b={<HugeiconsIcon icon={PlayIcon} size={15} />}
+                      />
+                    </button>
+                    <span className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-foreground/10" aria-hidden="true">
+                      <span
+                        className="block h-full bg-foreground/55 transition-[width] duration-1000 ease-linear"
+                        style={{ width: `${desktopAudiobookProgress}%` }}
+                      />
+                    </span>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className={DOCK_TRAY_BUTTON_CLASS}
+                    aria-label="Search Talome"
+                    aria-haspopup="dialog"
+                    onClick={openSearch}
+                  >
+                    <HugeiconsIcon icon={Search01Icon} size={19} strokeWidth={1.6} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={14}>
+                  Search <span className="ml-2 text-dim-foreground">⌘K</span>
+                </TooltipContent>
+              </Tooltip>
+              <Popover
+                open={controlCenterOpen}
+                onOpenChange={(open) => {
+                  if (open) {
+                    setControlCenterNavigationDirection("push");
+                    setControlCenterView("main");
+                  }
+                  setControlCenterOpen(open);
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(DOCK_TRAY_BUTTON_CLASS, controlCenterOpen && "bg-muted/60 text-foreground")}
+                    aria-label="Control Center"
+                    aria-haspopup="dialog"
+                  >
+                    <HugeiconsIcon icon={SlidersHorizontalIcon} size={19} strokeWidth={1.6} />
+                  </button>
+                </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                side="top"
+                sideOffset={12}
+                className={cn(
+                  "z-[1300] w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border-border/80 bg-background/95 p-0 shadow-xl backdrop-blur-md",
+                )}
+                aria-label="Control Center"
+              >
+                <motion.div
+                  layout={!reduceMotion}
+                  className="relative overflow-hidden"
+                  transition={{
+                    layout: reduceMotion
+                      ? { duration: 0 }
+                      : CONTROL_CENTER_PAGE_TRANSITION,
+                  }}
+                >
+                  <AnimatePresence
+                    initial={false}
+                    custom={controlCenterNavigationDirection}
+                    mode="popLayout"
+                  >
+                    <motion.div
+                      key={controlCenterView}
+                      data-control-center-view={controlCenterView}
+                      className="relative w-full bg-background"
+                      custom={controlCenterNavigationDirection}
+                      variants={CONTROL_CENTER_PAGE_VARIANTS}
+                      initial={reduceMotion ? false : "enter"}
+                      animate="center"
+                      exit={reduceMotion ? undefined : "exit"}
+                      transition={reduceMotion
+                        ? { duration: 0 }
+                        : CONTROL_CENTER_PAGE_TRANSITION}
+                    >
+                      {controlCenterView === "dashboard" ? (
+                        <DesktopWidgetsPanel
+                          controller={dashboardWidgetLayoutController}
+                          title="Widgets"
+                          subtitle={`${dashboardWidgetLayoutController.layout.filter((widget) => widget.visible).length} widgets`}
+                          editing={dashboardEditing}
+                          onEditingChange={setDashboardEditing}
+                          onBack={popControlCenterView}
+                        />
+                      ) : controlCenterView === "audiobooks" ? (
+                        <DesktopAudiobooksControlCenter
+                          audiobookPlayer={desktopAudiobookPlayer}
+                          onBack={popControlCenterView}
+                          onOpenApp={() => openControlCenterApp("/dashboard/audiobooks")}
+                        />
+                      ) : controlCenterView === "downloads" ? (
+                        <DesktopDownloadsControlCenter
+                          onBack={popControlCenterView}
+                          onOpenApp={() => openControlCenterApp("/dashboard/media?tab=downloads")}
+                        />
+                      ) : (
+                        <DesktopControlCenter
+                          audiobookPlayer={desktopAudiobookPlayer}
+                          onOpenAudiobooks={() => pushControlCenterView("audiobooks")}
+                          onOpenDownloads={() => pushControlCenterView("downloads")}
+                          onOpenDashboard={() => pushControlCenterView("dashboard")}
+                          onOpenWallpaper={openWallpaperEditor}
+                        />
+                      )}
+                    </motion.div>
+                  </AnimatePresence>
+                </motion.div>
+              </PopoverContent>
+              </Popover>
+              <NotificationsBell side="top" triggerClassName={DOCK_TRAY_BUTTON_CLASS} iconSize={19} dotClassName="top-2 right-2" />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className={DOCK_TRAY_BUTTON_CLASS}
+                    aria-label="Talome menu"
+                  >
+                    <span className="flex size-7 items-center justify-center rounded-full border border-border bg-card">
+                      <HugeiconsIcon icon={UserIcon} size={14} />
+                    </span>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="end" sideOffset={12} className="w-56">
+                  <DropdownMenuLabel className="flex items-center justify-between gap-3">
+                    <span className="truncate">{user?.username ?? "Account"}</span>
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                      {user?.role === "admin" ? "Administrator" : "Member"}
+                    </span>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => openApp(appById.get("settings")!)}>
+                    <HugeiconsIcon icon={Settings01Icon} size={14} />
+                    Settings
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href="/dashboard">
+                      <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+                      Classic mode
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => void logOut()}>
+                    <HugeiconsIcon icon={Logout01Icon} size={14} />
+                    Log out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </nav>
         ) : null}
       </div>
