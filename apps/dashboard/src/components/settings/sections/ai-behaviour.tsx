@@ -103,7 +103,7 @@ export function AiBehaviourSection() {
     return (
       <SettingsRow className="flex-col items-stretch gap-2.5 py-3.5">
         <div className="flex items-center gap-2">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
+          <p className="text-xs font-medium text-muted-foreground">{label}</p>
           {offCount > 0 && (
             <span className="text-xs text-muted-foreground tabular-nums">({offCount} off)</span>
           )}
@@ -111,7 +111,7 @@ export function AiBehaviourSection() {
         <div className="flex flex-col gap-3">
           {[...groups.entries()].map(([category, names]) => (
             <div key={category} className="flex flex-col gap-1.5">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{category}</p>
+              <p className="text-xs font-medium text-muted-foreground">{category}</p>
               <div className="flex flex-wrap gap-1.5">
                 {names.map((name) => (
                   <ToolChip key={name} name={name} />

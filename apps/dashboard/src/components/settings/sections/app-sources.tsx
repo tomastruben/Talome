@@ -108,7 +108,7 @@ export function AppSourcesSection() {
       {/* Sources list */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Sources</p>
+          <p className="text-sm font-medium text-foreground">Sources</p>
           {storeSources.length > 0 && (
             <span className="ml-auto text-xs text-muted-foreground tabular-nums">
               {storeSources.length}
@@ -197,7 +197,7 @@ export function AppSourcesSection() {
       {/* Add source */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Add Source</p>
+          <p className="text-sm font-medium text-foreground">Add source</p>
         </SettingsRow>
         <SettingsRow className="flex-col items-stretch gap-4 py-4">
           <div className="grid gap-3">

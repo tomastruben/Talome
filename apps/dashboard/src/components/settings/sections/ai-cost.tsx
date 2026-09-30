@@ -297,9 +297,7 @@ export function AiCostSection() {
       <section>
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="px-6 pt-6 pb-5">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4">
-              Today
-            </p>
+            <p className="text-sm font-medium text-foreground mb-4">Today</p>
 
             {/* Cost + cap on one line */}
             <div className="flex items-baseline gap-2">

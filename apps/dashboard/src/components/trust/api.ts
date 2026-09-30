@@ -139,3 +139,34 @@ export function useNowAtDeadline(deadline: string, active: boolean): number {
   }, [deadline, active, now]);
   return now;
 }
+
+// ── MCP server address ───────────────────────────────────────────────────────
+
+/**
+ * The address agents use for Talome's MCP server. A configured core URL
+ * (NEXT_PUBLIC_CORE_URL, set for reverse proxies and remapped ports) wins;
+ * otherwise it is this page's own origin, which forwards /api to core. That
+ * keeps the scheme and host the person actually reached Talome on (HTTPS
+ * behind a proxy, a custom domain, Tailscale) instead of assuming :4000.
+ */
+export function mcpServerUrl(
+  origin: string | undefined = typeof window !== "undefined" ? window.location.origin : undefined,
+  configuredCoreUrl: string | undefined = process.env.NEXT_PUBLIC_CORE_URL,
+): string {
+  const base = (configuredCoreUrl || origin || "http://localhost:3000").replace(/\/+$/, "");
+  return `${base}/api/mcp`;
+}
+
+/** Shorten a secret for display: the first and last 4 characters around dots. */
+export function maskSecret(secret: string): string {
+  if (secret.length <= 12) return "•".repeat(Math.max(secret.length, 8));
+  return `${secret.slice(0, 4)}${"•".repeat(12)}${secret.slice(-4)}`;
+}
+
+/** Connection snippets with the token embedded, per client. */
+export function mcpClientConfig(client: "cursor" | "claude-desktop", url: string, token: string): string {
+  const server = client === "claude-desktop"
+    ? { type: "http", url, headers: { Authorization: `Bearer ${token}` } }
+    : { url, headers: { Authorization: `Bearer ${token}` } };
+  return JSON.stringify({ mcpServers: { talome: server } }, null, 2);
+}

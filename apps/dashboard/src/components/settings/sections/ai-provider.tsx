@@ -11,10 +11,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { HugeiconsIcon, Delete01Icon, LinkSquare01Icon, CheckmarkCircle02Icon, AlertCircleIcon, ArrowRight01Icon } from "@/components/icons";
+import { HugeiconsIcon, Delete01Icon, LinkSquare01Icon, CheckmarkCircle02Icon, AlertCircleIcon } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
-import { SettingsGroup, SettingsRow, SecretRow, TextRow } from "@/components/settings/settings-primitives";
+import { SettingsGroup, SettingsRow, SecretRow, TextRow, settingsFetcher, settingsRequest } from "@/components/settings/settings-primitives";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { formatBytes } from "@/lib/format";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 
 /* ── Types ───────────────────────────────────────────────────────────────── */
@@ -54,13 +56,22 @@ const PROVIDER_META: Record<AiProvider, { label: string; hint: string; badge?: s
   ollama: { label: "Ollama", hint: "Local models" },
 };
 
-function formatSize(bytes: number): string {
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
-  return `${bytes} B`;
-}
+const fetcher = settingsFetcher;
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+/** Provider-aware wording for a failed test: what failed and the fix. */
+export function describeTestFailure(provider: AiProvider, error?: string): string {
+  const label = PROVIDER_META[provider].label;
+  const detail = error?.trim();
+  if (!detail) return `Couldn't reach ${label}. Check the settings above, then test again.`;
+  if (/no (api key|.*key) configured/i.test(detail)) {
+    return `Add ${/^[AEIOU]/.test(label) ? "an" : "a"} ${label} API key above, then test again.`;
+  }
+  if (/no ollama url/i.test(detail)) return "Add the Ollama server URL above, then test again.";
+  if (/HTTP 401|HTTP 403|invalid.*key|authentication/i.test(detail)) {
+    return `${label} rejected the API key. Paste a new key above, then test again.`;
+  }
+  return `${label}: ${detail}`;
+}
 
 /* ── Provider card ────────────────────────────────────────────────────────── */
 
@@ -68,59 +79,52 @@ function ProviderCard({
   provider,
   configured,
   isActive,
+  isSelected,
   onClick,
 }: {
   provider: AiProvider;
   configured: boolean;
+  /** The provider the Assistant uses now (server state). */
   isActive: boolean;
+  /** The provider whose settings are shown below. Selecting never switches. */
+  isSelected: boolean;
   onClick: () => void;
 }) {
   const meta = PROVIDER_META[provider];
 
-  // Three states: active, configured (ready), unconfigured
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`group relative rounded-xl border p-4 text-left transition-all duration-150 ${
-        isActive
-          ? "border-foreground/25 bg-foreground/[0.05] ring-1 ring-foreground/10"
-          : configured
-            ? "border-border/50 hover:border-foreground/20 hover:bg-foreground/[0.02]"
-            : "border-border/30 opacity-70 hover:opacity-100 hover:border-border/50"
+      aria-pressed={isSelected}
+      className={`group relative rounded-xl border p-4 text-left transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+        isSelected
+          ? "border-foreground/60 bg-muted/40"
+          : "border-border hover:bg-muted/30"
       }`}
     >
       <div className="flex items-center gap-2">
-        <p className={`text-sm font-medium ${isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"}`}>
+        <p className="text-sm font-medium text-foreground">
           {meta.label}
         </p>
 
         {/* Status indicator: single source of truth */}
         {isActive ? (
-          <span className="flex items-center gap-1 rounded-full bg-status-healthy/15 text-status-healthy px-1.5 py-0.5 text-[10px] font-medium">
-            <span className="size-1 rounded-full bg-current" />
-            Active
+          <span className="flex items-center gap-1 rounded-full bg-status-healthy/12 text-status-healthy px-1.5 py-0.5 text-xs font-medium">
+            <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
+            In use
           </span>
         ) : configured ? (
-          <span className="flex items-center gap-1 rounded-full bg-foreground/5 text-muted-foreground px-1.5 py-0.5 text-[10px] font-medium">
-            <span className="size-1 rounded-full bg-status-healthy" />
-            Ready
+          <span className="rounded-full bg-muted text-muted-foreground px-1.5 py-0.5 text-xs font-medium">
+            Set up
           </span>
         ) : meta.badge ? (
-          <span className="rounded-full bg-foreground/5 text-muted-foreground px-1.5 py-0.5 text-[10px] font-medium">{meta.badge}</span>
+          <span className="rounded-full bg-muted text-muted-foreground px-1.5 py-0.5 text-xs font-medium">{meta.badge}</span>
         ) : null}
       </div>
 
       <p className="text-xs text-muted-foreground mt-1">{meta.hint}</p>
 
-      {/* Subtle arrow for non-active cards */}
-      {!isActive && configured && (
-        <HugeiconsIcon
-          icon={ArrowRight01Icon}
-          size={12}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/0 group-hover:text-muted-foreground/60 transition-all duration-150"
-        />
-      )}
     </button>
   );
 }
@@ -137,13 +141,15 @@ export function AiProviderSection() {
   const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434");
   const [saving, setSaving] = useState(false);
 
-  // Active model selection
-  const [activeProvider, setActiveProvider] = useState<AiProvider>("anthropic");
-  const [activeModel, setActiveModel] = useState("");
+  // `selectedProvider` is the card being looked at; the server's
+  // activeProvider only changes through "Use {provider}" after a passing test.
+  const [selectedProvider, setSelectedProvider] = useState<AiProvider | null>(null);
+  const [stagedModel, setStagedModel] = useState("");
   const [savingModel, setSavingModel] = useState(false);
+  const confirm = useConfirm();
 
   // Fetch available models from API
-  const { data: modelsData, mutate: mutateModels } = useSWR<AiModelsResponse>(
+  const { data: modelsData, error: modelsError, mutate: mutateModels } = useSWR<AiModelsResponse>(
     `${CORE_URL}/api/ai/models`,
     fetcher,
     { revalidateOnFocus: false },
@@ -159,25 +165,27 @@ export function AiProviderSection() {
   const [pulling, setPulling] = useState(false);
   const ollamaModels = ollamaData?.models ?? [];
 
-  // Sync from server state
-  useEffect(() => {
-    if (modelsData) {
-      setActiveProvider(modelsData.activeProvider);
-      setActiveModel(modelsData.activeModel);
-    }
-  }, [modelsData]);
+  const serverProvider = modelsData?.activeProvider;
+  const activeProvider: AiProvider = selectedProvider ?? serverProvider ?? "anthropic";
+  const isServerActive = activeProvider === serverProvider;
+  const activeModel = isServerActive && !stagedModel ? (modelsData?.activeModel ?? "") : stagedModel;
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch(`${CORE_URL}/api/settings`)
-      .then((r) => r.json())
-      .then((data: Record<string, string>) => {
+  const loadStoredSettings = useCallback(() => {
+    setSettingsError(null);
+    settingsFetcher<Record<string, string>>(`${CORE_URL}/api/settings`)
+      .then((data) => {
         if (data.anthropic_key) setAnthropicKey(data.anthropic_key);
         if (data.openai_key) setOpenaiKey(data.openai_key);
         if (data.kimi_key) setKimiKey(data.kimi_key);
         if (data.ollama_url) setOllamaUrl(data.ollama_url);
       })
-      .catch(() => {});
+      .catch((err: unknown) => setSettingsError(err instanceof Error ? err.message : "Couldn't load the saved keys."));
   }, []);
+
+  useEffect(() => {
+    loadStoredSettings();
+  }, [loadStoredSettings]);
 
   // Get models for the selected provider
   const providerData = modelsData?.providers.find((p) => p.provider === activeProvider);
@@ -204,84 +212,87 @@ export function AiProviderSection() {
         setSaving(false);
         return;
       }
-      await fetch(`${CORE_URL}/api/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      await settingsRequest(`${CORE_URL}/api/settings`, { method: "POST", body }, "Couldn't save. Check the value, then try again.");
       if (providerScope === "anthropic" || !providerScope) setAnthropicEditing(false);
       if (providerScope === "openai" || !providerScope) setOpenaiEditing(false);
       if (providerScope === "kimi" || !providerScope) setKimiEditing(false);
-      toast.success("Saved");
-      mutateModels();
-    } catch {
-      toast.error("Failed to save");
+      setTestResult(null);
+      toast.success(providerScope ? `Saved ${PROVIDER_META[providerScope].label} settings. Test them next.` : "Saved");
+      await mutateModels();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save. Try again.");
     } finally {
       setSaving(false);
     }
   };
 
-  const saveModelSelection = useCallback(async (provider: AiProvider, model: string) => {
+  const saveModelSelection = useCallback(async (provider: AiProvider, model: string, message: string) => {
     setSavingModel(true);
     try {
-      await fetch(`${CORE_URL}/api/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ai_provider: provider, ai_model: model }),
-      });
-      toast.success(`Switched to ${PROVIDER_META[provider].label}`);
-      mutateModels();
-    } catch {
-      toast.error("Failed to save model selection");
+      await settingsRequest(
+        `${CORE_URL}/api/settings`,
+        { method: "POST", body: { ai_provider: provider, ai_model: model } },
+        "Couldn't switch the model. Try again.",
+      );
+      const fresh = await mutateModels();
+      if (fresh && (fresh.activeProvider !== provider || (model && fresh.activeModel !== model))) {
+        throw new Error("The server didn't keep the new selection. Try again.");
+      }
+      setStagedModel("");
+      toast.success(message);
+      return true;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't switch the model. Try again.");
+      return false;
     } finally {
       setSavingModel(false);
     }
   }, [mutateModels]);
 
+  /** Selecting a card only shows its settings; the Assistant keeps its provider until "Use …". */
   const handleProviderChange = useCallback((provider: AiProvider) => {
-    setActiveProvider(provider);
-    const models = modelsData?.providers.find((p) => p.provider === provider)?.models ?? [];
-    const firstModel = models[0]?.id ?? "";
-    setActiveModel(firstModel);
-    saveModelSelection(provider, firstModel);
-  }, [modelsData, saveModelSelection]);
+    setSelectedProvider(provider === serverProvider ? null : provider);
+    setStagedModel("");
+  }, [serverProvider]);
 
   const handleModelChange = useCallback((model: string) => {
-    setActiveModel(model);
-    saveModelSelection(activeProvider, model);
-  }, [activeProvider, saveModelSelection]);
+    if (isServerActive) {
+      void saveModelSelection(activeProvider, model, `The Assistant now uses ${model}.`);
+    } else {
+      setStagedModel(model);
+    }
+  }, [activeProvider, isServerActive, saveModelSelection]);
 
   async function pullModel() {
     if (!pullName.trim()) return;
     setPulling(true);
     try {
-      const res = await fetch(`${CORE_URL}/api/ollama/pull`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: pullName.trim() }),
-      });
-      const d = await res.json();
-      if (d.error) throw new Error(d.error);
+      await settingsRequest(`${CORE_URL}/api/ollama/pull`, { method: "POST", body: { name: pullName.trim() } }, `Couldn't pull ${pullName.trim()}. Check the name and that Ollama is running.`);
       toast.success(`Pulled ${pullName.trim()}`);
       setPullName("");
       mutateOllamaModels();
       mutateModels();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Pull failed");
+      toast.error(err instanceof Error ? err.message : "Couldn't pull the model. Try again.");
     } finally {
       setPulling(false);
     }
   }
 
   async function removeModel(name: string) {
-    try {
-      await fetch(`${CORE_URL}/api/ollama/models/${encodeURIComponent(name)}`, { method: "DELETE" });
-      toast.success(`Removed ${name}`);
-      mutateOllamaModels();
-      mutateModels();
-    } catch {
-      toast.error("Failed to remove model");
-    }
+    const { confirmed } = await confirm({
+      tier: "destructive",
+      title: `Remove ${name}?`,
+      consequence: `Ollama deletes ${name} from this server's disk.`,
+      recovery: "You can pull it again later, which downloads it again.",
+      confirmLabel: "Remove model",
+      busyLabel: `Removing ${name}…`,
+      run: () => settingsRequest(`${CORE_URL}/api/ollama/models/${encodeURIComponent(name)}`, { method: "DELETE" }, `Couldn't remove ${name}. Check that Ollama is running.`),
+      receipt: `Removed ${name}`,
+    });
+    if (!confirmed) return;
+    await mutateOllamaModels();
+    await mutateModels();
   }
 
   // ── Test connection ─────────────────────────────────────────────────────
@@ -297,14 +308,35 @@ export function AiProviderSection() {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await fetch(`${CORE_URL}/api/ai/test`, { method: "POST" });
-      const data = await res.json();
-      setTestResult(data as { ok: boolean; error?: string });
+      const res = await fetch(`${CORE_URL}/api/ai/test`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: activeProvider }),
+      });
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (res.ok && data?.ok === true) setTestResult({ ok: true });
+      else setTestResult({ ok: false, error: describeTestFailure(activeProvider, data?.error) });
     } catch {
-      setTestResult({ ok: false, error: "Could not reach the server" });
+      setTestResult({ ok: false, error: "Couldn't reach the Talome server. Check that it's running, then test again." });
     } finally {
       setTesting(false);
     }
+  };
+
+  const switchToSelectedProvider = async () => {
+    const model = stagedModel || availableModels[0]?.id || "";
+    const label = PROVIDER_META[activeProvider].label;
+    const { confirmed } = await confirm({
+      tier: "soft",
+      title: `Switch the Assistant to ${label}?`,
+      consequence: `New messages, automations and Intelligence use ${label}${model ? ` (${model})` : ""}. Open conversations switch on their next message.`,
+      recovery: `Your ${serverProvider ? PROVIDER_META[serverProvider].label : "current"} settings are kept, so you can switch back here at any time.`,
+      confirmLabel: `Use ${label}`,
+    });
+    if (!confirmed) return;
+    const ok = await saveModelSelection(activeProvider, model, `The Assistant now uses ${label}.`);
+    if (ok) setSelectedProvider(null);
   };
 
   // Helper: which providers are configured
@@ -317,8 +349,22 @@ export function AiProviderSection() {
       {/* ── Step 1: Choose provider ────────────────────────── */}
       <section className="grid gap-3">
         <p className="text-sm text-muted-foreground">
-          Choose an AI provider. You can configure multiple and switch anytime.
+          Choose a provider to set it up. The Assistant keeps using its current provider until you test the new one and choose to use it.
         </p>
+        {modelsError && !modelsData ? (
+          <p role="alert" className="flex items-center gap-2 text-sm text-status-critical">
+            <HugeiconsIcon icon={AlertCircleIcon} size={14} aria-hidden="true" />
+            Couldn&apos;t load AI providers.
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void mutateModels()}>Retry</Button>
+          </p>
+        ) : null}
+        {settingsError ? (
+          <p role="alert" className="flex items-center gap-2 text-sm text-status-critical">
+            <HugeiconsIcon icon={AlertCircleIcon} size={14} aria-hidden="true" />
+            Couldn&apos;t load the saved keys.
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={loadStoredSettings}>Retry</Button>
+          </p>
+        ) : null}
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {(["anthropic", "openai", "kimi", "ollama"] as const).map((p) => (
@@ -326,7 +372,8 @@ export function AiProviderSection() {
               key={p}
               provider={p}
               configured={getConfigured(p)}
-              isActive={activeProvider === p}
+              isActive={serverProvider === p}
+              isSelected={activeProvider === p}
               onClick={() => handleProviderChange(p)}
             />
           ))}
@@ -339,11 +386,10 @@ export function AiProviderSection() {
           <SettingsGroup>
             <SettingsRow className="py-2.5">
               <div className="flex items-center gap-2 flex-1">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Anthropic</p>
+                <p className="text-sm font-medium text-foreground">Anthropic</p>
                 {getConfigured("anthropic") && (
-                  <span className="flex items-center gap-1 text-[10px] text-status-healthy font-medium">
-                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={10} />
-                    Connected
+                  <span className="text-xs text-muted-foreground">
+                    Key saved
                   </span>
                 )}
               </div>
@@ -358,15 +404,15 @@ export function AiProviderSection() {
               </a>
             </SettingsRow>
             <SecretRow
-              label="API Key" hint="Required for Claude models"
+              label="API key" hint="Required for Claude models"
               id="anthropic-key" placeholder="sk-ant-..."
               storedValue={anthropicKey} isEditing={anthropicEditing}
               onEdit={() => { setAnthropicEditing(true); setAnthropicKey(""); }}
               onChange={setAnthropicKey}
             />
             <SettingsRow className="bg-muted/30 justify-end py-3">
-              <Button size="sm" onClick={() => saveKeys("anthropic")} disabled={saving} className="h-7 text-xs px-4">
-                {saving ? "Saving..." : "Save"}
+              <Button size="sm" onClick={() => saveKeys("anthropic")} busy={saving} busyLabel="Saving…" className="h-7 text-xs px-4">
+                Save
               </Button>
             </SettingsRow>
           </SettingsGroup>
@@ -376,11 +422,10 @@ export function AiProviderSection() {
           <SettingsGroup>
             <SettingsRow className="py-2.5">
               <div className="flex items-center gap-2 flex-1">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">OpenAI</p>
+                <p className="text-sm font-medium text-foreground">OpenAI</p>
                 {getConfigured("openai") && (
-                  <span className="flex items-center gap-1 text-[10px] text-status-healthy font-medium">
-                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={10} />
-                    Connected
+                  <span className="text-xs text-muted-foreground">
+                    Key saved
                   </span>
                 )}
               </div>
@@ -395,15 +440,15 @@ export function AiProviderSection() {
               </a>
             </SettingsRow>
             <SecretRow
-              label="API Key" hint="Required for GPT models"
+              label="API key" hint="Required for GPT models"
               id="openai-key" placeholder="sk-..."
               storedValue={openaiKey} isEditing={openaiEditing}
               onEdit={() => { setOpenaiEditing(true); setOpenaiKey(""); }}
               onChange={setOpenaiKey}
             />
             <SettingsRow className="bg-muted/30 justify-end py-3">
-              <Button size="sm" onClick={() => saveKeys("openai")} disabled={saving} className="h-7 text-xs px-4">
-                {saving ? "Saving..." : "Save"}
+              <Button size="sm" onClick={() => saveKeys("openai")} busy={saving} busyLabel="Saving…" className="h-7 text-xs px-4">
+                Save
               </Button>
             </SettingsRow>
           </SettingsGroup>
@@ -413,11 +458,10 @@ export function AiProviderSection() {
           <SettingsGroup>
             <SettingsRow className="py-2.5">
               <div className="flex items-center gap-2 flex-1">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Kimi</p>
+                <p className="text-sm font-medium text-foreground">Kimi</p>
                 {getConfigured("kimi") && (
-                  <span className="flex items-center gap-1 text-[10px] text-status-healthy font-medium">
-                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={10} />
-                    Connected
+                  <span className="text-xs text-muted-foreground">
+                    Key saved
                   </span>
                 )}
               </div>
@@ -432,7 +476,7 @@ export function AiProviderSection() {
               </a>
             </SettingsRow>
             <SecretRow
-              label="API Key" hint="Required for Kimi models in Assistant and Intelligence"
+              label="API key" hint="Required for Kimi models in the Assistant and Intelligence"
               id="kimi-key" placeholder="sk-..."
               storedValue={kimiKey} isEditing={kimiEditing}
               onEdit={() => { setKimiEditing(true); setKimiKey(""); }}
@@ -442,8 +486,8 @@ export function AiProviderSection() {
               <p className="min-w-0 flex-1 text-xs text-muted-foreground">
                 API usage is billed by Moonshot. Terminal uses the native Kimi Code login separately.
               </p>
-              <Button size="sm" onClick={() => saveKeys("kimi")} disabled={saving} className="h-7 text-xs px-4">
-                {saving ? "Saving..." : "Save"}
+              <Button size="sm" onClick={() => saveKeys("kimi")} busy={saving} busyLabel="Saving…" className="h-7 text-xs px-4">
+                Save
               </Button>
             </SettingsRow>
           </SettingsGroup>
@@ -453,15 +497,14 @@ export function AiProviderSection() {
           <SettingsGroup>
             <SettingsRow className="py-2.5">
               <div className="flex items-center gap-2 flex-1">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Ollama</p>
+                <p className="text-sm font-medium text-foreground">Ollama</p>
                 {getConfigured("ollama") && (
-                  <span className="flex items-center gap-1 text-[10px] text-status-healthy font-medium">
-                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={10} />
-                    Connected
+                  <span className="text-xs text-muted-foreground">
+                    Reachable
                   </span>
                 )}
                 {ollamaModels.length > 0 && (
-                  <span className="text-[10px] text-muted-foreground font-medium tabular-nums">
+                  <span className="text-xs text-muted-foreground tabular-nums">
                     {ollamaModels.length} model{ollamaModels.length !== 1 ? "s" : ""}
                   </span>
                 )}
@@ -488,25 +531,28 @@ export function AiProviderSection() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium font-mono truncate">{m.name}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {formatSize(m.size)}
+                    {formatBytes(m.size)}
                     {m.details?.parameter_size && ` · ${m.details.parameter_size}`}
                     {m.details?.quantization_level && ` · ${m.details.quantization_level}`}
                   </p>
                 </div>
                 <Button
                   variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                  onClick={() => removeModel(m.name)}
+                  size="icon-sm"
+                  aria-label={`Remove ${m.name}`}
+                  title={`Remove ${m.name}`}
+                  className="text-muted-foreground hover:text-status-critical shrink-0"
+                  onClick={() => void removeModel(m.name)}
                 >
-                  <HugeiconsIcon icon={Delete01Icon} size={14} />
+                  <HugeiconsIcon icon={Delete01Icon} size={14} aria-hidden="true" />
                 </Button>
               </SettingsRow>
             ))}
 
             <SettingsRow className="gap-2">
               <Input
-                placeholder="Pull a model — e.g. llama3.2, mistral, gemma2"
+                placeholder="Model to pull, like llama3.2 or gemma2"
+                aria-label="Model to pull"
                 value={pullName}
                 onChange={(e) => setPullName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") void pullModel(); }}
@@ -516,16 +562,18 @@ export function AiProviderSection() {
                 size="sm"
                 variant="secondary"
                 className="h-8 text-xs px-3 shrink-0"
-                disabled={pulling || !pullName.trim()}
+                busy={pulling}
+                busyLabel={`Pulling ${pullName.trim()}…`}
+                disabled={!pullName.trim()}
                 onClick={() => void pullModel()}
               >
-                {pulling ? "Pulling..." : "Pull"}
+                Pull
               </Button>
             </SettingsRow>
 
             <SettingsRow className="bg-muted/30 justify-end py-3">
-              <Button size="sm" onClick={() => saveKeys("ollama")} disabled={saving} className="h-7 text-xs px-4">
-                {saving ? "Saving..." : "Save"}
+              <Button size="sm" onClick={() => saveKeys("ollama")} busy={saving} busyLabel="Saving…" className="h-7 text-xs px-4">
+                Save
               </Button>
             </SettingsRow>
           </SettingsGroup>
@@ -537,7 +585,7 @@ export function AiProviderSection() {
         <section className="grid gap-3">
           <SettingsGroup>
             <SettingsRow className="py-2.5">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Model</p>
+              <p className="text-sm font-medium text-foreground">Model</p>
             </SettingsRow>
             <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-3">
               <div className="flex-1 min-w-0">
@@ -545,7 +593,7 @@ export function AiProviderSection() {
                   {PROVIDER_META[activeProvider].label} model
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {activeProvider === "ollama" ? "Locally installed models" : "Choose which model powers the assistant"}
+                  {activeProvider === "ollama" ? "Models installed on your Ollama server" : isServerActive ? "The model the Assistant uses" : "The model to use after you switch"}
                 </p>
               </div>
               <Select
@@ -574,37 +622,58 @@ export function AiProviderSection() {
 
       {/* ── Not configured hint ────────────────────────────── */}
       {!isConfigured && (
-        <p className="text-xs text-status-warning px-1">
+        <p className="text-xs text-muted-foreground px-1">
           {activeProvider === "ollama"
             ? "Add the Ollama server URL above and pull a model to get started."
             : `Add your ${PROVIDER_META[activeProvider].label} API key above to get started.`}
         </p>
       )}
 
-      {/* ── Test connection ────────────────────────────────── */}
+      {/* ── Test, then use ────────────────────────────────── */}
       {isConfigured && (
-        <div className="flex items-center gap-3 px-1">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs px-3 shrink-0 gap-1.5"
-            onClick={testConnection}
-            disabled={testing}
-          >
-            {testing ? "Testing..." : testResult?.ok ? (
-              <>
-                <HugeiconsIcon icon={CheckmarkCircle02Icon} size={12} className="text-status-healthy" />
-                Connected
-              </>
-            ) : testResult && !testResult.ok ? (
-              <>
-                <HugeiconsIcon icon={AlertCircleIcon} size={12} className="text-destructive" />
-                Failed
-              </>
-            ) : "Test connection"}
-          </Button>
+        <div className="grid gap-2 px-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              size="sm"
+              variant={isServerActive || testResult?.ok ? "outline" : "default"}
+              className="h-8 text-xs px-3 shrink-0"
+              onClick={() => void testConnection()}
+              busy={testing}
+              busyLabel={`Testing ${PROVIDER_META[activeProvider].label}…`}
+            >
+              {testResult ? "Test again" : `Test ${PROVIDER_META[activeProvider].label}`}
+            </Button>
+            {!isServerActive && (
+              <Button
+                size="sm"
+                className="h-8 text-xs px-3 shrink-0"
+                disabled={!testResult?.ok}
+                busy={savingModel}
+                busyLabel={`Switching to ${PROVIDER_META[activeProvider].label}…`}
+                onClick={() => void switchToSelectedProvider()}
+              >
+                Use {PROVIDER_META[activeProvider].label}
+              </Button>
+            )}
+            <span role="status" aria-live="polite" className="text-xs">
+              {testResult?.ok ? (
+                <span className="flex items-center gap-1.5 text-status-healthy">
+                  <HugeiconsIcon icon={CheckmarkCircle02Icon} size={12} aria-hidden="true" />
+                  {PROVIDER_META[activeProvider].label} replied
+                </span>
+              ) : null}
+            </span>
+          </div>
           {testResult && !testResult.ok && (
-            <p className="text-xs text-destructive/70 truncate">{testResult.error}</p>
+            <p role="alert" className="flex items-start gap-1.5 text-xs text-status-critical">
+              <HugeiconsIcon icon={AlertCircleIcon} size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
+              {testResult.error}
+            </p>
+          )}
+          {!isServerActive && !testResult?.ok && (
+            <p className="text-xs text-muted-foreground">
+              Test {PROVIDER_META[activeProvider].label} before the Assistant switches to it. It keeps using {serverProvider ? PROVIDER_META[serverProvider].label : "its current provider"} until then.
+            </p>
           )}
         </div>
       )}

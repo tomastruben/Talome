@@ -129,7 +129,7 @@ function AlertThresholdsSection() {
   return (
     <SettingsGroup>
       <div className="flex items-center justify-between px-4 py-2.5">
-        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Alert thresholds</span>
+        <span className="text-xs font-medium text-muted-foreground">Alert thresholds</span>
         <div className="flex items-center gap-2">
           <span className="w-16 text-center text-xs text-muted-foreground">warn</span>
           <span className="w-16 text-center text-xs text-muted-foreground">crit</span>
@@ -336,7 +336,7 @@ function NotificationChannelsSection() {
       {adding ? (
         <SettingsGroup>
           <div className="px-4 py-2.5">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">New channel</span>
+            <span className="text-xs font-medium text-muted-foreground">New channel</span>
           </div>
           <SettingsRow className="flex-wrap gap-y-2">
             <div className="flex-1 min-w-0">

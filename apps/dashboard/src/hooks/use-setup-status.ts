@@ -6,10 +6,16 @@ import { useSearchParams } from "next/navigation";
 import { CORE_URL } from "@/lib/constants";
 import type { StackStatusResult } from "@/hooks/use-feature-stacks";
 
+/** Throws on failure: a failed load must never read as "nothing configured". */
 async function fetcher(url: string) {
-  const res = await fetch(url);
-  if (!res.ok) return {};
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) throw new Error(`Request failed (${res.status})`);
   return res.json();
+}
+
+interface AiModelsSummary {
+  activeProvider: string;
+  providers: { provider: string; configured: boolean }[];
 }
 
 async function appsFetcher(url: string): Promise<unknown[]> {
@@ -93,6 +99,15 @@ export function useSetupStatus(): SetupStatus {
     { revalidateOnFocus: true, dedupingInterval: 30000 }
   );
 
+  // "AI configured" means the active provider is usable (a key for hosted
+  // providers, a reachable server with a model for Ollama), not that some
+  // key exists somewhere.
+  const { data: aiModels } = useSWR<AiModelsSummary>(
+    `${CORE_URL}/api/ai/models`,
+    fetcher,
+    { revalidateOnFocus: true, dedupingInterval: 30000 }
+  );
+
   const { data: apps } = useSWR<unknown[]>(
     `${CORE_URL}/api/apps/installed`,
     appsFetcher,
@@ -111,9 +126,12 @@ export function useSetupStatus(): SetupStatus {
     .filter(s => s.readiness > 0 && s.readiness < 1.0)
     .sort((a, b) => b.readiness - a.readiness);
 
-  const hasAiKey = !!(data?.anthropic_key || data?.openai_key || data?.ollama_url);
+  const hasAiKey = !!(data?.anthropic_key || data?.openai_key || data?.kimi_key || data?.ollama_url);
+  const activeProviderReady = aiModels
+    ? aiModels.providers.find((p) => p.provider === aiModels.activeProvider)?.configured === true
+    : undefined;
   const appCount = apps?.length ?? 0;
-  const realConfigured = hasAiKey;
+  const realConfigured = activeProviderReady ?? hasAiKey;
   const realHasApps = appCount > 0;
 
   // Detect configured integrations

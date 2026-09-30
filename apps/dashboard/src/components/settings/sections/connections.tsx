@@ -332,7 +332,7 @@ export function ConnectionsSection() {
 
               {/* Service header */}
               <SettingsRow className="py-2.5">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <p className="text-xs font-medium text-muted-foreground">
                   {meta.label}
                 </p>
                 {container && (

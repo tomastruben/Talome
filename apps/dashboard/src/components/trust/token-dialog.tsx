@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -14,10 +14,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { HugeiconsIcon, Copy01Icon, CheckmarkCircle01Icon } from "@/components/icons";
-import { copyToClipboard } from "@/components/settings/settings-primitives";
+import { CopyButton } from "@/components/ui/copy-button";
+import { CheckboxField } from "@/components/ui/checkbox";
 import { GrantEditor } from "@/components/trust/grant-editor";
-import { createMcpToken, updateMcpToken, type CreatedToken } from "@/components/trust/api";
+import { createMcpToken, maskSecret, mcpClientConfig, mcpServerUrl, updateMcpToken, type CreatedToken } from "@/components/trust/api";
 import {
   EXPIRY_OPTIONS,
   expiryPresetDays,
@@ -50,7 +50,7 @@ function ExpiryPicker({
     : EXPIRY_OPTIONS;
   return (
     <div className="grid gap-2">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Expires after</p>
+      <p className="text-sm font-medium text-foreground">Expires after</p>
       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Expiry">
         {options.map((opt) => {
           const active = value === opt.value;
@@ -77,41 +77,121 @@ function ExpiryPicker({
   );
 }
 
-function TokenReveal({ created, onDone }: { created: CreatedToken; onDone: () => void }) {
-  const [copied, setCopied] = useState(false);
+/**
+ * The one time the access token is shown. It is masked on screen (Show
+ * reveals it), and the dialog can't be closed until it was copied or the
+ * person confirms they saved it another way: losing it to Esc or a stray
+ * click would mean creating new access.
+ */
+function TokenReveal({
+  created,
+  serverUrl,
+  saved,
+  onSaved,
+  onDone,
+}: {
+  created: CreatedToken;
+  serverUrl: string;
+  saved: boolean;
+  onSaved: () => void;
+  onDone: () => void;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const [manual, setManual] = useState(false);
+  const [nudge, setNudge] = useState(false);
+  const tokenRef = useRef<HTMLElement>(null);
+
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Token created</DialogTitle>
+        <DialogTitle>Connect {created.name}</DialogTitle>
         <DialogDescription>
-          Copy it now and paste it into {created.name} as a Bearer token. It won&apos;t be shown again.
+          Copy the access token or a ready-made config for {created.name}. Talome shows the token only once.
         </DialogDescription>
       </DialogHeader>
-      <div className="flex items-center gap-2">
-        <code className="flex-1 min-w-0 break-all rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs font-mono">
-          {created.token}
-        </code>
+      <div className="grid gap-2">
+        <p className="text-sm font-medium text-foreground">Access token</p>
+        <div className="flex items-start gap-2">
+          <code
+            ref={tokenRef}
+            aria-label={revealed ? "Access token" : "Access token, hidden"}
+            className="flex-1 min-w-0 break-all rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs font-mono select-all"
+          >
+            {revealed ? created.token : maskSecret(created.token)}
+          </code>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="shrink-0"
+            aria-pressed={revealed}
+            onClick={() => setRevealed((value) => !value)}
+          >
+            {revealed ? "Hide" : "Show"}
+          </Button>
+          <CopyButton
+            value={created.token}
+            label="Copy access token"
+            size="sm"
+            variant="secondary"
+            className="shrink-0"
+            onCopied={onSaved}
+            // A failed copy reveals and selects the token so it can be copied by hand.
+            selectOnFailRef={tokenRef}
+            onCopyFailed={() => setRevealed(true)}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">{formatExpiry(created.expiresAt)}</p>
+      </div>
+      <div className="grid gap-2">
+        <p className="text-sm font-medium text-foreground">Or copy a config with the token filled in</p>
+        <div className="flex flex-wrap gap-2">
+          <CopyButton
+            value={() => mcpClientConfig("claude-desktop", serverUrl, created.token)}
+            label="Copy Claude Desktop config"
+            text="Claude Desktop"
+            size="sm"
+            variant="outline"
+            onCopied={onSaved}
+          />
+          <CopyButton
+            value={() => mcpClientConfig("cursor", serverUrl, created.token)}
+            label="Copy Cursor config"
+            text="Cursor"
+            size="sm"
+            variant="outline"
+            onCopied={onSaved}
+          />
+        </div>
+      </div>
+      {!saved && revealed ? (
+        <CheckboxField
+          label="I saved the token somewhere else"
+          checked={manual}
+          onCheckedChange={(checked) => {
+            setManual(checked === true);
+            if (checked === true) onSaved();
+          }}
+        />
+      ) : null}
+      <DialogFooter className="items-center">
+        {nudge && !saved ? (
+          <p role="alert" className="text-xs text-status-critical sm:mr-auto">
+            Copy the token first. Talome can&apos;t show it again.
+          </p>
+        ) : null}
         <Button
-          size="sm"
-          variant="secondary"
-          className="shrink-0"
-          onClick={async () => {
-            const ok = await copyToClipboard(created.token);
-            if (!ok) {
-              toast.error("Clipboard unavailable");
+          aria-disabled={!saved || undefined}
+          onClick={() => {
+            if (!saved) {
+              setNudge(true);
               return;
             }
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+            onDone();
           }}
         >
-          <HugeiconsIcon icon={copied ? CheckmarkCircle01Icon : Copy01Icon} size={14} />
-          {copied ? "Copied" : "Copy"}
+          Done
         </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">{formatExpiry(created.expiresAt)}</p>
-      <DialogFooter>
-        <Button onClick={onDone}>Done</Button>
       </DialogFooter>
     </>
   );
@@ -139,7 +219,7 @@ function TokenForm({
   const [expiry, setExpiry] = useState<ExpiryChoice>(editing ? "keep" : "30d");
   const [saving, setSaving] = useState(false);
 
-  const invalid = validateScopes(scopes) ?? (!editing && !name.trim() ? "Name the client this token is for." : null);
+  const invalid = validateScopes(scopes) ?? (!editing && !name.trim() ? "Name the agent this access is for." : null);
 
   const submit = async () => {
     if (invalid || saving) return;
@@ -162,7 +242,7 @@ function TokenForm({
         onCreated(created);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not save token");
+      toast.error(err instanceof Error ? err.message : "Couldn't save the access. Try again.");
     } finally {
       setSaving(false);
     }
@@ -177,24 +257,24 @@ function TokenForm({
       }}
     >
       <DialogHeader>
-        <DialogTitle>{editing ? `Edit access · ${editing.name}` : "New agent token"}</DialogTitle>
+        <DialogTitle>{editing ? `Edit ${editing.name}'s access` : "Connect an agent"}</DialogTitle>
         <DialogDescription>
           {editing?.legacy
-            ? "This token predates access controls and has full access. Choose what it should be allowed to do."
-            : "Give each AI client its own token with only the access it needs."}
+            ? "This access predates access controls and can do anything. Choose what it should be allowed to do."
+            : "Give each agent its own access with only what it needs."}
         </DialogDescription>
       </DialogHeader>
 
       {!editing && (
         <div className="grid gap-2">
-          <Label htmlFor="mcp-token-name" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Client
+          <Label htmlFor="mcp-token-name" className="text-sm font-medium text-foreground">
+            Agent name
           </Label>
           <Input
             id="mcp-token-name"
             autoFocus
             maxLength={100}
-            placeholder="e.g. Claude Desktop, Cursor"
+            placeholder="Claude Desktop, Cursor, Codex…"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
@@ -214,8 +294,8 @@ function TokenForm({
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="submit" disabled={!!invalid || saving}>
-          {saving ? "Saving…" : editing ? "Save access" : "Create token"}
+        <Button type="submit" disabled={!!invalid} busy={saving} busyLabel="Saving…">
+          {editing ? "Save access" : "Create access"}
         </Button>
       </DialogFooter>
     </form>
@@ -232,23 +312,34 @@ export function TokenDialog({
   mode,
   catalog,
   onSaved,
+  serverUrl = mcpServerUrl(),
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: TokenDialogMode;
   catalog: GrantCatalog | undefined;
   onSaved: () => void;
+  /** The MCP server address for the ready-made configs. */
+  serverUrl?: string;
 }) {
   const [created, setCreated] = useState<CreatedToken | null>(null);
+  const [tokenSaved, setTokenSaved] = useState(false);
   // Reset the one-time reveal when the dialog re-opens (not on close, so the
   // exit animation keeps showing what the user was looking at).
   const [prevOpen, setPrevOpen] = useState(open);
   if (open !== prevOpen) {
     setPrevOpen(open);
-    if (open) setCreated(null);
+    if (open) {
+      setCreated(null);
+      setTokenSaved(false);
+    }
   }
 
   const close = () => onOpenChange(false);
+  // While an unsaved token is on screen, Esc and outside clicks don't close.
+  const guard = (event: Event) => {
+    if (created && !tokenSaved) event.preventDefault();
+  };
 
   return (
     <Dialog
@@ -258,9 +349,20 @@ export function TokenDialog({
         else onOpenChange(true);
       }}
     >
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
+        onEscapeKeyDown={guard}
+        onPointerDownOutside={guard}
+        onInteractOutside={guard}
+      >
         {created ? (
-          <TokenReveal created={created} onDone={close} />
+          <TokenReveal
+            created={created}
+            serverUrl={serverUrl}
+            saved={tokenSaved}
+            onSaved={() => setTokenSaved(true)}
+            onDone={close}
+          />
         ) : (
           <TokenForm
             key={mode.kind === "edit" ? mode.token.id : "create"}

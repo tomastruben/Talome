@@ -11,7 +11,8 @@ import {
 } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
-import { SettingsGroup, SettingsRow, SecretRow } from "@/components/settings/settings-primitives";
+import { SettingsGroup, SettingsRow, SecretRow, settingsRequest } from "@/components/settings/settings-primitives";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Banner, BannerIcon, BannerTitle, BannerAction } from "@/components/kibo-ui/banner";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 import { LevelPicker } from "@/components/settings/sections/notifications";
@@ -20,6 +21,7 @@ import { ChatBotSenders } from "@/components/settings/sections/chat-bot-senders"
 // ── Main integrations section (chat bots only) ──────────────────────────────
 
 export function IntegrationsSection() {
+  const confirm = useConfirm();
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramTokenEditing, setTelegramTokenEditing] = useState(false);
   const [telegramSaving, setTelegramSaving] = useState(false);
@@ -60,13 +62,12 @@ export function IntegrationsSection() {
     const key = `${platform}_notification_levels`;
     const value = levels.join(",");
     try {
-      await fetch(`${CORE_URL}/api/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [key]: value }),
-      });
-    } catch {
-      // best-effort
+      // An empty list is stored as "none": the settings API skips empty values.
+      await settingsRequest(`${CORE_URL}/api/settings`, { method: "POST", body: { [key]: value || "none" } }, "Couldn't save the notification levels. Try again.");
+      return true;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save the notification levels. Try again.");
+      return false;
     }
   }, []);
 
@@ -111,7 +112,7 @@ export function IntegrationsSection() {
         <SettingsGroup>
           <SettingsRow className="py-2.5">
             <HugeiconsIcon icon={TelegramIcon} size={14} className="text-muted-foreground" />
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Telegram</p>
+            <p className="text-sm font-medium text-foreground">Telegram</p>
           </SettingsRow>
           <SecretRow
             label="Bot Token"
@@ -145,14 +146,22 @@ export function IntegrationsSection() {
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 text-xs text-destructive/70 hover:text-destructive"
+                className="h-7 text-xs text-status-critical hover:text-status-critical"
                 onClick={async () => {
-                  await fetch(`${CORE_URL}/api/integrations/telegram/stop`, { method: "POST" });
-                  mutateTelegramStatus();
-                  toast.success("Telegram bot stopped");
+                  const { confirmed } = await confirm({
+                    tier: "soft",
+                    title: "Disconnect the Telegram bot?",
+                    consequence: "The bot stops answering messages until you connect it again.",
+                    recovery: "The bot token and allowed senders are kept, so reconnecting takes one click.",
+                    confirmLabel: "Disconnect",
+                    busyLabel: "Disconnecting…",
+                    run: () => settingsRequest(`${CORE_URL}/api/integrations/telegram/stop`, { method: "POST" }, "Couldn't disconnect the Telegram bot. Try again."),
+                    receipt: "Disconnected the Telegram bot",
+                  });
+                  if (confirmed) mutateTelegramStatus();
                 }}
               >
-                Disconnect
+                Disconnect…
               </Button>
             )}
             <Button
@@ -214,7 +223,7 @@ export function IntegrationsSection() {
         <SettingsGroup>
           <SettingsRow className="py-2.5">
             <HugeiconsIcon icon={DiscordIcon} size={14} className="text-muted-foreground" />
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Discord</p>
+            <p className="text-sm font-medium text-foreground">Discord</p>
           </SettingsRow>
           <SecretRow
             label="Bot Token"
@@ -248,14 +257,22 @@ export function IntegrationsSection() {
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 text-xs text-destructive/70 hover:text-destructive"
+                className="h-7 text-xs text-status-critical hover:text-status-critical"
                 onClick={async () => {
-                  await fetch(`${CORE_URL}/api/integrations/discord/stop`, { method: "POST" });
-                  mutateDiscordStatus();
-                  toast.success("Discord bot stopped");
+                  const { confirmed } = await confirm({
+                    tier: "soft",
+                    title: "Disconnect the Discord bot?",
+                    consequence: "The bot stops answering messages until you connect it again.",
+                    recovery: "The bot token and allowed senders are kept, so reconnecting takes one click.",
+                    confirmLabel: "Disconnect",
+                    busyLabel: "Disconnecting…",
+                    run: () => settingsRequest(`${CORE_URL}/api/integrations/discord/stop`, { method: "POST" }, "Couldn't disconnect the Discord bot. Try again."),
+                    receipt: "Disconnected the Discord bot",
+                  });
+                  if (confirmed) mutateDiscordStatus();
                 }}
               >
-                Disconnect
+                Disconnect…
               </Button>
             )}
             <Button

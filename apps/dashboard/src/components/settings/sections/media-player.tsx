@@ -232,9 +232,7 @@ export function MediaPlayerSection() {
       {/* ── Library Optimization ─────────────────────────────────── */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Library Health
-          </p>
+          <p className="text-sm font-medium text-foreground">Library health</p>
         </SettingsRow>
 
         {/* ── Health bar + summary line ── */}
@@ -416,9 +414,7 @@ export function MediaPlayerSection() {
       {/* ── Cinema Mode ─────────────────────────────────────────────── */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Cinema Mode
-          </p>
+          <p className="text-sm font-medium text-foreground">Cinema mode</p>
         </SettingsRow>
         <SettingsRow>
           <div className="w-full space-y-3">
@@ -489,9 +485,7 @@ export function MediaPlayerSection() {
       {/* ── Transcoding ──────────────────────────────────────────── */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Transcoding
-          </p>
+          <p className="text-sm font-medium text-foreground">Transcoding</p>
         </SettingsRow>
 
         {configLoading ? (
@@ -609,9 +603,7 @@ export function MediaPlayerSection() {
       {/* ── HLS Cache ─────────────────────────────────────────────── */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            HLS Cache
-          </p>
+          <p className="text-sm font-medium text-foreground">HLS cache</p>
         </SettingsRow>
 
         {loading ? (

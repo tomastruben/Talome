@@ -79,6 +79,11 @@ export interface CopyButtonProps
   /** The element whose text is selected if copying fails, so the person can copy by hand. */
   selectOnFailRef?: React.RefObject<HTMLElement | null>
   onCopied?: () => void
+  /**
+   * Called when both copy paths failed, before the text is selected (the
+   * selection waits a frame, so a caller can first reveal masked text).
+   */
+  onCopyFailed?: () => void
 }
 
 /**
@@ -95,6 +100,7 @@ function CopyButton({
   variant = "ghost",
   selectOnFailRef,
   onCopied,
+  onCopyFailed,
   className,
   ...props
 }: CopyButtonProps) {
@@ -116,7 +122,12 @@ function CopyButton({
       timer.current = setTimeout(() => setState("idle"), COPY_REVERT_MS)
     } else {
       setState("failed")
-      selectContents(selectOnFailRef?.current)
+      if (onCopyFailed) {
+        onCopyFailed()
+        requestAnimationFrame(() => selectContents(selectOnFailRef?.current))
+      } else {
+        selectContents(selectOnFailRef?.current)
+      }
     }
   }
 

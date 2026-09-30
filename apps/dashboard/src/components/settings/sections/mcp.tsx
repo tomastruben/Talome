@@ -5,21 +5,15 @@ import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { HugeiconsIcon, ArrowDown01Icon, ArrowRight01Icon, Add01Icon, Plug02Icon } from "@/components/icons";
-import { toast } from "sonner";
-import { SettingsGroup, SettingsRow, relativeTime, copyToClipboard } from "@/components/settings/settings-primitives";
+import { SettingsGroup, SettingsRow, relativeTime } from "@/components/settings/settings-primitives";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 import { TokenDialog, type TokenDialogMode } from "@/components/trust/token-dialog";
-import { MCP_CATALOG_URL, MCP_TOKENS_URL, revokeMcpToken, trustFetcher } from "@/components/trust/api";
+import { MCP_CATALOG_URL, MCP_TOKENS_URL, mcpServerUrl, revokeMcpToken, trustFetcher } from "@/components/trust/api";
+import { CopyButton } from "@/components/ui/copy-button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { AlertCircleIcon } from "@/components/icons";
 import {
   formatExpiry,
   isExpired,
@@ -28,9 +22,9 @@ import {
   type McpToken,
 } from "@/components/trust/format";
 
-const DEFAULT_SERVER_URL = "http://localhost:4000/api/mcp";
 const subscribeNoop = () => () => {};
-const clientServerUrl = () => `http://${window.location.hostname}:4000/api/mcp`;
+const clientServerUrl = () => mcpServerUrl();
+const serverSnapshotUrl = () => mcpServerUrl("http://localhost:3000");
 
 function TokenRow({
   token,
@@ -71,71 +65,35 @@ function TokenRow({
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 text-xs text-destructive/70 hover:text-destructive"
+          className="h-7 text-xs text-status-critical hover:text-status-critical"
           onClick={onRevoke}
         >
-          Revoke
+          Revoke…
         </Button>
       </div>
     </SettingsRow>
   );
 }
 
-function RevokeDialog({
-  token,
-  onOpenChange,
-  onRevoked,
-}: {
-  token: McpToken | null;
-  onOpenChange: (open: boolean) => void;
-  onRevoked: () => void;
-}) {
-  const [revoking, setRevoking] = useState(false);
-  return (
-    <Dialog open={token !== null} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Revoke {token?.name}?</DialogTitle>
-          <DialogDescription>
-            The client stops working immediately. Its past actions stay in the audit log.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            variant="destructive"
-            disabled={revoking}
-            onClick={async () => {
-              if (!token) return;
-              setRevoking(true);
-              try {
-                await revokeMcpToken(token.id);
-                toast.success(`${token.name} revoked`);
-                onRevoked();
-                onOpenChange(false);
-              } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Could not revoke token");
-              } finally {
-                setRevoking(false);
-              }
-            }}
-          >
-            {revoking ? "Revoking…" : "Revoke"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 export function McpSection() {
-  const [mcpUrlCopied, setMcpUrlCopied] = useState(false);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState<TokenDialogMode>({ kind: "create" });
-  const [revoking, setRevoking] = useState<McpToken | null>(null);
+  const confirm = useConfirm();
+
+  const revoke = async (token: McpToken) => {
+    const { confirmed } = await confirm({
+      tier: "destructive",
+      title: `Revoke ${token.name}'s access?`,
+      consequence: `${token.name} can't call Talome any more, and automations it created stop running.`,
+      recovery: "Its past actions stay in the audit log. To reconnect it, create new access.",
+      confirmLabel: "Revoke access",
+      busyLabel: `Revoking ${token.name}'s access…`,
+      run: () => revokeMcpToken(token.id),
+      receipt: `Revoked ${token.name}'s access`,
+    });
+    if (confirmed) void mutateMcpTokens();
+  };
 
   const {
     data: mcpTokens,
@@ -145,7 +103,7 @@ export function McpSection() {
   } = useSWR<McpToken[]>(MCP_TOKENS_URL, trustFetcher, { revalidateOnFocus: false });
   const { data: catalog } = useSWR<GrantCatalog>(MCP_CATALOG_URL, trustFetcher, { revalidateOnFocus: false });
 
-  const mcpServerUrl = useSyncExternalStore(subscribeNoop, clientServerUrl, () => DEFAULT_SERVER_URL);
+  const serverUrl = useSyncExternalStore(subscribeNoop, clientServerUrl, serverSnapshotUrl);
 
   const tokens = Array.isArray(mcpTokens) ? mcpTokens : [];
   const hasLegacy = tokens.some((t) => t.legacy);
@@ -168,26 +126,15 @@ export function McpSection() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium">Server URL</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Uses your current hostname — works with Tailscale, LAN IPs, or custom domains
+              The address you opened Talome on, so it works over HTTPS, custom domains and Tailscale. On your
+              local network, agents can also use port 4000 on the server directly.
             </p>
           </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <span className="flex-1 sm:flex-none text-xs font-mono text-muted-foreground bg-muted/40 px-2.5 py-1.5 rounded-lg truncate max-w-[240px] sm:max-w-none">
-              {mcpServerUrl}
+          <div className="flex items-start gap-2 w-full sm:w-auto">
+            <span className="flex-1 sm:flex-none text-xs font-mono text-muted-foreground bg-muted/40 px-2.5 py-1.5 rounded-lg truncate max-w-60 sm:max-w-none">
+              {serverUrl}
             </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs shrink-0"
-              onClick={async () => {
-                const copied = await copyToClipboard(mcpServerUrl);
-                if (!copied) { toast.error("Clipboard unavailable"); return; }
-                setMcpUrlCopied(true);
-                setTimeout(() => setMcpUrlCopied(false), 2000);
-              }}
-            >
-              {mcpUrlCopied ? "Copied" : "Copy"}
-            </Button>
+            <CopyButton value={serverUrl} label="Copy MCP server URL" size="sm" className="h-7 text-xs shrink-0" />
           </div>
         </SettingsRow>
       </SettingsGroup>
@@ -195,11 +142,11 @@ export function McpSection() {
       {/* Tokens */}
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="flex-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tokens</p>
+          <p className="flex-1 text-sm font-medium text-foreground">Connected agents</p>
           {tokens.length > 0 && (
             <Button size="sm" className="h-7 text-xs" onClick={openCreate}>
               <HugeiconsIcon icon={Add01Icon} size={14} />
-              New token
+              Connect an agent
             </Button>
           )}
         </SettingsRow>
@@ -224,9 +171,15 @@ export function McpSection() {
 
         {tokensError && (
           <SettingsRow>
-            <p className="text-xs text-muted-foreground">
-              {tokensError instanceof Error ? tokensError.message : "Could not load tokens"}
+            <HugeiconsIcon icon={AlertCircleIcon} size={14} strokeWidth={1.5} className="shrink-0 text-status-critical" aria-hidden="true" />
+            <p role="alert" className="flex-1 text-xs text-muted-foreground">
+              {tokens.length > 0
+                ? "Couldn't refresh the agent list. Showing what was loaded last."
+                : `Couldn't load connected agents${tokensError instanceof Error ? `: ${tokensError.message}` : "."}`}
             </p>
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void mutateMcpTokens()}>
+              Retry
+            </Button>
           </SettingsRow>
         )}
 
@@ -235,11 +188,11 @@ export function McpSection() {
             <HugeiconsIcon icon={Plug02Icon} size={24} className="text-dim-foreground" />
             <div className="grid gap-1">
               <p className="text-sm font-medium">No agents connected</p>
-              <p className="text-xs text-muted-foreground">New tokens are read-only unless you grant more.</p>
+              <p className="text-xs text-muted-foreground">New access is read-only unless you grant more.</p>
             </div>
             <Button size="sm" onClick={openCreate}>
               <HugeiconsIcon icon={Add01Icon} size={14} />
-              New token
+              Connect an agent
             </Button>
           </SettingsRow>
         )}
@@ -252,7 +205,7 @@ export function McpSection() {
               setDialogMode({ kind: "edit", token });
               setDialogOpen(true);
             }}
-            onRevoke={() => setRevoking(token)}
+            onRevoke={() => void revoke(token)}
           />
         ))}
       </SettingsGroup>
@@ -275,7 +228,7 @@ export function McpSection() {
               <pre className="text-xs font-mono bg-muted/40 rounded-xl border border-border px-4 py-3 overflow-x-auto max-w-full">{JSON.stringify({
                 mcpServers: {
                   talome: {
-                    url: mcpServerUrl,
+                    url: serverUrl,
                     headers: { Authorization: "Bearer YOUR_TOKEN" },
                   },
                 },
@@ -287,15 +240,16 @@ export function McpSection() {
                 mcpServers: {
                   talome: {
                     type: "http",
-                    url: mcpServerUrl,
+                    url: serverUrl,
                     headers: { Authorization: "Bearer YOUR_TOKEN" },
                   },
                 },
               }, null, 2)}</pre>
             </div>
             <p className="text-xs text-muted-foreground px-1">
-              Replace <span className="font-mono">YOUR_TOKEN</span> with the token you created. Claude Code running in
-              the Talome repo on this machine connects over stdio and needs no token.
+              Replace <span className="font-mono">YOUR_TOKEN</span> with the access token. When you connect a new agent,
+              Talome offers these snippets with the token already filled in. Claude Code running in the Talome repo on
+              this machine connects over stdio and needs no token.
             </p>
           </div>
         </CollapsibleContent>
@@ -309,11 +263,7 @@ export function McpSection() {
         mode={dialogMode}
         catalog={catalog}
         onSaved={() => void mutateMcpTokens()}
-      />
-      <RevokeDialog
-        token={revoking}
-        onOpenChange={(open) => { if (!open) setRevoking(null); }}
-        onRevoked={() => void mutateMcpTokens()}
+        serverUrl={serverUrl}
       />
     </div>
   );

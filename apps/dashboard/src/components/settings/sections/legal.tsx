@@ -12,9 +12,7 @@ export function LegalSection() {
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            User Responsibility
-          </p>
+          <p className="text-sm font-medium text-foreground">User responsibility</p>
         </SettingsRow>
 
         <SettingsRow>
@@ -43,9 +41,7 @@ export function LegalSection() {
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Download Services
-          </p>
+          <p className="text-sm font-medium text-foreground">Download services</p>
         </SettingsRow>
 
         <SettingsRow>
@@ -68,9 +64,7 @@ export function LegalSection() {
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Content Import & DRM
-          </p>
+          <p className="text-sm font-medium text-foreground">Content import & DRM</p>
         </SettingsRow>
 
         <SettingsRow>
@@ -93,9 +87,7 @@ export function LegalSection() {
 
       <SettingsGroup>
         <SettingsRow className="py-2.5">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Disclaimer
-          </p>
+          <p className="text-sm font-medium text-foreground">Disclaimer</p>
         </SettingsRow>
 
         <SettingsRow>
