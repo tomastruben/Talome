@@ -520,6 +520,64 @@ describe("updates carry catalog configuration changes", () => {
     expect(result.changes.map((c) => c.variable).sort()).toEqual(["A", "NEW"]);
   });
 
+  describe("a no_change update records the catalog version only when the app provably follows it", () => {
+    beforeEach(() => {
+      // Nothing is recreated in these cases.
+      m.captureServiceImages.mockReset();
+      m.captureServiceImages.mockResolvedValue(baseline);
+    });
+
+    function expectNotRecorded(result: Awaited<ReturnType<typeof updateApp>>, reason: string): void {
+      expect(result).toMatchObject({ success: true, outcome: "no_change" });
+      expect(installedRow(PROBE)!.version).toBe("1.3.0");
+      expect(result.warning).toContain("1.5.0 was not applied");
+      expect(result.warning).toContain(reason);
+      expect(result.warning).not.toContain("is recorded");
+    }
+
+    it("not when the catalog renamed (or added) the service carrying the change", async () => {
+      const renamed = { services: { frontend: { ...OVERRIDE.services.web, environment: { A: "1", B: "mine", PROBE: "v2" } } } };
+      writeFileSync(catalogPath, yaml.dump(renamed));
+      recordCatalogBase(overridePath, yaml.dump(OVERRIDE));
+
+      const result = await updateApp(PROBE);
+
+      expectNotRecorded(result, "frontend");
+      expect(readCatalogBase(overridePath)).toBe(yaml.dump(OVERRIDE));
+    });
+
+    it("not for a source whose configuration is never merged (an env-only Umbrel release)", async () => {
+      db.update(schema.appCatalog).set({ source: "umbrel" }).where(eq(schema.appCatalog.appId, PROBE)).run();
+      writeFileSync(catalogPath, yaml.dump({ services: { web: { ...OVERRIDE.services.web, environment: { A: "1", B: "mine", NEW: "x" } } } }));
+
+      const result = await updateApp(PROBE);
+
+      expectNotRecorded(result, "not applied to umbrel apps");
+      expect(overrideWeb().environment).toEqual({ A: "1", B: "mine" });
+    });
+
+    it("not when the app's compose cannot be merged, and the catalog base is left alone", async () => {
+      writeFileSync(catalogPath, yaml.dump(OVERRIDE));
+      writeFileSync(overridePath, "services: [unclosed\n");
+
+      const result = await updateApp(PROBE);
+
+      expectNotRecorded(result, "could not be merged");
+      expect(existsSync(join(APP_DATA_DIR, PROBE, ".talome-catalog-base.yml"))).toBe(false);
+    });
+
+    it("not when a catalog change was kept because the app's compose has its own value", async () => {
+      recordCatalogBase(overridePath, yaml.dump({ services: { web: { ...OVERRIDE.services.web, environment: { A: "1", B: "orig" } } } }));
+      writeFileSync(catalogPath, yaml.dump({ services: { web: { ...OVERRIDE.services.web, environment: { A: "1", B: "catalog" } } } }));
+
+      const result = await updateApp(PROBE);
+
+      expect(result).toMatchObject({ success: true, outcome: "no_change" });
+      expect(installedRow(PROBE)!.version).toBe("1.3.0");
+      expect(result.warning).toContain("web.environment.B");
+    });
+  });
+
   it("the REST route returns the outcome, so no_change is not shown as an update", async () => {
     // Same catalog as the override, same container: nothing to do.
     writeFileSync(catalogPath, yaml.dump(OVERRIDE));

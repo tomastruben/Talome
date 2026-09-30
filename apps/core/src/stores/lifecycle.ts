@@ -1386,6 +1386,35 @@ async function putBackPulledTags(appId: string, targets: ServiceImageState[]): P
   }
 }
 
+/**
+ * Catalog services the planned override does not follow: services it does not
+ * have (added or renamed in the catalog — never added by an update) and image
+ * refs that still differ (other than refs deliberately kept, see imagesKept).
+ */
+function describeUnsyncedServices(override: OverrideDoc, catalog: OverrideDoc | null, kept: KeptImageRef[]): string[] {
+  const catalogServices = catalog?.services;
+  if (!catalogServices || typeof catalogServices !== "object") return ["the catalog compose has no services"];
+  const overrideServices = override.services ?? {};
+  const keptServices = new Set(kept.map((k) => k.service));
+  const missing: string[] = [];
+  const differing: string[] = [];
+  for (const [name, svc] of Object.entries(catalogServices)) {
+    const own = overrideServices[name];
+    if (!own || typeof own !== "object") {
+      missing.push(name);
+      continue;
+    }
+    const catalogImage = svc && typeof svc === "object" ? svc.image : undefined;
+    if (typeof catalogImage === "string" && catalogImage.trim() && own.image !== catalogImage && !keptServices.has(name)) {
+      differing.push(name);
+    }
+  }
+  const notes: string[] = [];
+  if (missing.length > 0) notes.push(`the catalog's service(s) ${missing.join(", ")} are not in the app's compose (updates do not add or rename services)`);
+  if (differing.length > 0) notes.push(`the image of ${differing.join(", ")} could not be moved to the catalog's`);
+  return notes;
+}
+
 /** Services whose previous image could not be put back ("" when all were). */
 function describeUnrestoredImages(
   baseline: ServiceImageState[],
@@ -1715,31 +1744,51 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   let configKept: ConfigConflict[] = [];
   let pendingCompose: string | null = null;
   let catalogContent: string | null = null;
+  /**
+   * Catalog changes the planned override does not carry (besides imagesKept
+   * and configKept). A version whose changes did not all reach the app is not
+   * recorded as installed when nothing was recreated (outcome no_change).
+   */
+  const notAdopted: string[] = [];
+  /** The override was merged with this catalog compose (so it may become the recorded base). */
+  let merged = false;
   const hasOverride = effectiveCompose !== app.composePath;
   if (hasOverride) {
     try {
       catalogContent = readFileSync(app.composePath, "utf-8");
       const override = yaml.load(readFileSync(effectiveCompose, "utf-8")) as OverrideDoc | null;
-      if (override && typeof override === "object") {
-        const refState = readImageRefState(appId);
-        imageRefChanges = planOverrideImageRefs(override, yaml.load(catalogContent) as OverrideDoc | null, {
-          decide: (service, from, to) => decideImageRef(refState, service, from, to, { adoptCatalog: runOpts.useCatalogImages }),
-          kept: imagesKept,
-        });
-        if (isConfigSyncSource(app.source)) {
-          const sync = mergeCatalogConfig(override, catalogContent, readCatalogBase(effectiveCompose));
-          configChanges = sync.changes;
-          configKept = sync.kept;
-        } else {
-          ctx.setDetail({ configSync: { applied: false, reason: `not applied to ${app.source} apps` } });
-        }
-        if (imageRefChanges.length > 0 || configChanges.length > 0) {
-          pendingCompose = yaml.dump(override, { lineWidth: -1 });
-        }
+      if (!override || typeof override !== "object") throw new Error("the app's compose file is empty or not a mapping");
+      const catalogDoc = yaml.load(catalogContent) as OverrideDoc | null;
+      const refState = readImageRefState(appId);
+      imageRefChanges = planOverrideImageRefs(override, catalogDoc, {
+        decide: (service, from, to) => decideImageRef(refState, service, from, to, { adoptCatalog: runOpts.useCatalogImages }),
+        kept: imagesKept,
+      });
+      if (isConfigSyncSource(app.source)) {
+        const sync = mergeCatalogConfig(override, catalogContent, readCatalogBase(effectiveCompose));
+        configChanges = sync.changes;
+        configKept = sync.kept;
+        merged = true;
+      } else {
+        // Not merged for this source, so a configuration-only release cannot be told apart from an identical one.
+        notAdopted.push(`catalog configuration changes are not applied to ${app.source} apps automatically`);
+        ctx.setDetail({ configSync: { applied: false, reason: `not applied to ${app.source} apps` } });
+      }
+      notAdopted.push(...describeUnsyncedServices(override, catalogDoc, imagesKept));
+      if (imageRefChanges.length > 0 || configChanges.length > 0) {
+        pendingCompose = yaml.dump(override, { lineWidth: -1 });
       }
     } catch (err: unknown) {
       log.warn(`Could not sync the override compose of ${appId} with the catalog compose`, err);
+      const reason = err instanceof Error ? err.message : String(err);
+      notAdopted.push(`the app's compose could not be merged with the catalog's (${reason.slice(0, 200)})`);
+      imageRefChanges = [];
+      configChanges = [];
+      configKept = [];
+      pendingCompose = null;
+      merged = false;
     }
+    if (notAdopted.length > 0) ctx.setDetail({ notAdopted });
     if (imageRefChanges.length > 0) ctx.setDetail({ imageRefChanges });
     if (imagesKept.length > 0) ctx.setDetail({ imagesKept });
     if (configChanges.length > 0 || configKept.length > 0) {
@@ -1985,10 +2034,14 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
 
     if (!appChanged) {
       // Same images and same configuration: nothing was recreated, so do not
-      // claim an update. The catalog's version does describe what runs now,
-      // though — record it (unless the user held images back), or the update
-      // would be offered forever.
-      const recordVersion = app.version !== installed.version && imagesKept.length === 0;
+      // claim an update. When the catalog version provably describes what
+      // runs now — every catalog service, image and configuration value is
+      // what the app has — record it, or the update would be offered forever.
+      // A release whose changes did not reach the app (images held back,
+      // config kept, services the app lacks, a source whose config is not
+      // merged, a merge that failed) stays offered, with the reason.
+      const adoptionGaps = [...notAdopted, ...(configKept.length > 0 ? [describeKeptConfig(configKept)] : [])];
+      const recordVersion = app.version !== installed.version && imagesKept.length === 0 && adoptionGaps.length === 0;
       db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
       db.update(schema.installedApps)
         .set({
@@ -1999,20 +2052,23 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
         })
         .where(eq(schema.installedApps.appId, appId))
         .run();
-      if (hasOverride && catalogContent !== null && isConfigSyncSource(app.source)) {
+      if (recordVersion && merged && catalogContent !== null) {
         recordCatalogBase(effectiveCompose, catalogContent, { previous: "keep" });
       }
       ctx.setDetail({ outcome: "no_change", snapshotId: null, ...(recordVersion ? { versionRecorded: app.version } : {}) });
+      const gapLine = notAdopted.length > 0 ? ` Not applied: ${notAdopted.join("; ")}.` : "";
       const note = (imagesKept.length > 0 && imageRefChanges.length === 0
         ? `${app.name} still runs version ${installed.version}.`
         : recordVersion
           ? `${app.name} ${app.version} uses the same images and configuration as ${installed.version}, so nothing was recreated; version ${app.version} is recorded.`
-          : `${app.name} is already on the latest image.`) + keptLine;
+          : app.version !== installed.version
+            ? `${app.name} ${app.version} was not applied, so nothing was recreated and version ${installed.version} stays recorded.`
+            : `${app.name} is already on the latest image.`) + gapLine + keptLine;
       writeNotification("info", `${app.name} unchanged`, note, appId);
       return { success: true, verified: verification?.healthy ?? false, outcome: "no_change", warning: note, ...keptResult };
     }
 
-    if (hasOverride && catalogContent !== null && isConfigSyncSource(app.source)) {
+    if (merged && catalogContent !== null) {
       // The override now derives from this catalog compose (the previous base is kept for a rollback).
       recordCatalogBase(effectiveCompose, catalogContent, { previous: "rotate" });
     }
