@@ -1334,6 +1334,58 @@ function planOverrideImageRefs(
   return changes;
 }
 
+// Image refs interpolated into `docker image inspect` (quoted): no shell or compose syntax.
+const PLAIN_IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9_.\/:@-]{0,510}$/;
+
+/**
+ * What each image ref of the running version points at locally, recorded
+ * before an update pulls: `docker compose pull` moves floating tags (`:latest`,
+ * `:16`, …) to the new images, and a plain `up -d` (start) or restart would
+ * then run the new version. Services with a container use the image that
+ * container runs; refs of the compose without one use the tag's current
+ * target. Never throws — refs Docker cannot resolve are skipped (nothing to put back).
+ */
+async function recordTagTargets(composePath: string, baseline: ServiceImageState[]): Promise<ServiceImageState[]> {
+  const targets: ServiceImageState[] = baseline.filter((s) => s.imageId);
+  const covered = new Set(targets.map((s) => s.imageRef));
+  for (const [service, ref] of Object.entries(composeServiceImages(composePath))) {
+    if (covered.has(ref) || ref.includes("@") || !PLAIN_IMAGE_REF.test(ref)) continue;
+    covered.add(ref);
+    try {
+      const { stdout } = await run(`docker image inspect --format "{{.Id}}" "${ref}"`, { timeout: 30_000 });
+      const imageId = stdout.trim();
+      if (/^sha256:[a-f0-9]{64}$/.test(imageId)) {
+        targets.push({ service, containerId: "", containerName: "", imageRef: ref, imageId, repoDigest: null, status: "none" });
+      }
+    } catch {
+      // Not present locally: a pull adds the tag, it does not move one the app used
+    }
+  }
+  return targets;
+}
+
+/**
+ * An update that stops after pulling: point the running version's tags back
+ * at the images recorded before the pull, so the app's next start does not
+ * silently switch versions without the update's backup, snapshot and checks.
+ * Returns a sentence for the result ("" when every tag was put back).
+ */
+async function putBackPulledTags(appId: string, targets: ServiceImageState[]): Promise<string> {
+  if (targets.length === 0) return "";
+  try {
+    const results = await restoreServiceImages(targets);
+    const failed = results.filter((r) => !r.restored);
+    if (failed.length === 0) return "";
+    const which = failed.map((r) => `${r.service} (${r.error ?? "not restored"})`).join(", ");
+    log.warn(`Update of ${appId} stopped after the pull; could not put back the image tags of ${which}`);
+    return ` The image tags of ${which} could not be pointed back at the running version's images, ` +
+      `so the next start or restart may run the newer images without a pre-update backup.`;
+  } catch (err: unknown) {
+    log.warn(`Update of ${appId} stopped after the pull; could not put back its image tags`, err);
+    return " The running version's image tags could not be put back, so the next start or restart may run the newer images without a pre-update backup.";
+  }
+}
+
 /** Services whose previous image could not be put back ("" when all were). */
 function describeUnrestoredImages(
   baseline: ServiceImageState[],
@@ -1699,6 +1751,9 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   // Before the backup: a backup may stop the app, and a pull that fails (a
   // bad tag, no network) must leave the app completely untouched.
   ctx.step("pull", 10, "Downloading new images (app keeps running)");
+  // The pull moves floating tags the running version uses; an update that
+  // stops before recreating points them back (putBackPulledTags).
+  const tagTargets = await recordTagTargets(effectiveCompose, baselineImages);
   const pullCompose = pendingCompose ? join(dirname(effectiveCompose), ".talome-update-pull.yml") : effectiveCompose;
   try {
     if (pendingCompose) atomicWriteFileSync(pullCompose, pendingCompose, "utf-8");
@@ -1709,6 +1764,8 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
     });
   } catch (err: any) {
     const errorDetail = String(err?.stderr || err?.message || err);
+    // A multi-service pull can fail after some tags already moved.
+    const tagsNote = await putBackPulledTags(appId, tagTargets);
     db.update(schema.installedApps)
       .set({ status: previousStatus, updatedAt: new Date().toISOString() })
       .where(eq(schema.installedApps.appId, appId))
@@ -1716,14 +1773,19 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
     // The update never touched the app — drop the snapshot so a later
     // "rollback" does not target a state that was never left.
     db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
-    ctx.setDetail({ snapshotId: null, appTouched: false });
+    ctx.setDetail({ snapshotId: null, appTouched: false, ...(tagsNote ? { tagsNotRestored: true } : {}) });
+    const unchanged = tagsNote ? "the app kept running." : "nothing was changed and the app kept running.";
     writeNotification(
       "warning",
       `Update of ${app.name} failed`,
-      `Could not download the new images, so nothing was changed and the app kept running. ${errorDetail.slice(0, 500)}`,
+      `Could not download the new images, so ${unchanged}${tagsNote} ${errorDetail.slice(0, 500)}`,
       appId,
     );
-    return { success: false, error: `Image pull failed; app left unchanged: ${errorDetail}`, outcome: "failed" };
+    return {
+      success: false,
+      error: `Image pull failed; ${tagsNote ? `app kept running.${tagsNote}` : "app left unchanged"}: ${errorDetail}`,
+      outcome: "failed",
+    };
   } finally {
     if (pendingCompose) rmSync(pullCompose, { force: true });
   }
@@ -1751,16 +1813,19 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   if (backup.attempted && !backup.success && !backup.skipped) {
     const backupError = backup.error ?? "unknown error";
     if (!runOpts.force) {
-      // Nothing was changed yet (the new images were only downloaded).
+      // Nothing was changed yet: the new images were only downloaded, and the
+      // tags the pull moved go back to the running version's images — or the
+      // next start would upgrade without the backup that just failed.
+      const tagsNote = await putBackPulledTags(appId, tagTargets);
       db.update(schema.installedApps)
         .set({ status: previousStatus, updatedAt: new Date().toISOString() })
         .where(eq(schema.installedApps.appId, appId))
         .run();
       db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
-      ctx.setDetail({ snapshotId: null, appTouched: false, outcome: "failed", backupFailed: true });
+      ctx.setDetail({ snapshotId: null, appTouched: false, outcome: "failed", backupFailed: true, ...(tagsNote ? { tagsNotRestored: true } : {}) });
       const error =
-        `Pre-update backup failed: ${backupError}. The update was aborted before anything changed — ` +
-        `${app.name} keeps running version ${installed.version}. Fix the backup, or update with force to proceed without one.`;
+        `Pre-update backup failed: ${backupError}. The update was aborted before ${tagsNote ? "the app was recreated" : "anything changed"} — ` +
+        `${app.name} keeps running version ${installed.version}.${tagsNote} Fix the backup, or update with force to proceed without one.`;
       writeNotification("warning", `Update of ${app.name} aborted`, error, appId);
       return { success: false, error, outcome: "failed", backupFailed: true };
     }

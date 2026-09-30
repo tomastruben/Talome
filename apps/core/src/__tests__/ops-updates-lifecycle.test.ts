@@ -196,7 +196,9 @@ describe("safe update pipeline", () => {
     expect(cmds.some((c) => /\b(up|down|stop|restart|rm)\b/.test(c))).toBe(false);
     // The pull comes first: a failed pull never stops the app for a pre-update backup
     expect(m.takePreUpdateBackup).not.toHaveBeenCalled();
-    expect(m.restoreServiceImages).not.toHaveBeenCalled();
+    // Tags a partial pull may have moved are pointed back at the running images (a re-tag, no recreate)
+    expect(m.restoreServiceImages).toHaveBeenCalledTimes(1);
+    expect(m.restoreServiceImages.mock.calls[0][0].every((s: { imageId: string | null }) => Boolean(s.imageId))).toBe(true);
 
     const row = installedRow()!;
     expect(row.status).toBe("running");
