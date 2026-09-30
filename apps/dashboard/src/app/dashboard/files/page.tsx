@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, Suspense } from "react";
+import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR from "swr";
 import dynamic from "next/dynamic";
@@ -37,6 +37,13 @@ import {
   ArrowRight02Icon,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { UploadPanel } from "@/components/files/upload-panel";
 import { useUploadQueue, filesFromDrop, filesFromInput, type PendingFile } from "@/components/files/use-upload-queue";
 import { Input } from "@/components/ui/input";
@@ -790,6 +797,58 @@ function MoveDialog({
   );
 }
 
+// ── Row actions (shared by the "…" menu and the right-click menu) ─────────
+
+function FileRowActionItems({
+  menu,
+  item,
+  onOpen,
+  onRename,
+  onMove,
+  onDownload,
+  onDelete,
+}: {
+  menu: "dropdown" | "context";
+  item: FileItem;
+  onOpen: (item: FileItem) => void;
+  onRename: (item: FileItem) => void;
+  onMove: (item: FileItem) => void;
+  onDownload: (path: string, name: string) => void;
+  onDelete: (item: FileItem) => void;
+}) {
+  const actions: { id: string; label: string; icon: IconSvgElement; run: () => void; destructive?: boolean; separatorBefore?: boolean }[] = [
+    ...(item.isDirectory || isPreviewable(item.name)
+      ? [{ id: "open", label: item.isDirectory ? "Open" : "Quick Look", icon: item.isDirectory ? FolderOpenIcon : FileAttachmentIcon, run: () => onOpen(item) }]
+      : []),
+    { id: "rename", label: "Rename", icon: Edit02Icon, run: () => onRename(item) },
+    { id: "move", label: "Move to…", icon: FolderExportIcon, run: () => onMove(item) },
+    ...(!item.isDirectory ? [{ id: "download", label: "Download", icon: Download01Icon, run: () => onDownload(item.path, item.name) }] : []),
+    { id: "delete", label: "Delete", icon: Delete01Icon, destructive: true, separatorBefore: true, run: () => onDelete(item) },
+  ];
+  const Item = menu === "dropdown" ? DropdownMenuItem : ContextMenuItem;
+  const Separator = menu === "dropdown" ? DropdownMenuSeparator : ContextMenuSeparator;
+
+  return (
+    <>
+      {actions.map((action) => (
+        <Fragment key={action.id}>
+          {action.separatorBefore && <Separator />}
+          <Item
+            variant={action.destructive ? "destructive" : undefined}
+            onClick={(event: React.MouseEvent) => {
+              event.stopPropagation();
+              action.run();
+            }}
+          >
+            <HugeiconsIcon icon={action.icon} size={14} />
+            {action.label}
+          </Item>
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 // ── Page component ──────────────────────────────────────────────────────
 
 function FilesPageInner({ initialPath }: { initialPath: string | null }) {
@@ -855,13 +914,13 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     setSelectedPaths(new Set());
     lastSelectedIdx.current = null;
     // Update title atomically to prevent blink
-    const isRoot = hasMultipleRoots && data?.allowedRoots?.includes(path);
+    const isRoot = data?.allowedRoots?.includes(path);
     const folderName = isRoot
       ? rootLabel(path).label
       : path.split("/").filter(Boolean).pop() || "Files";
     setPageTitle(folderName);
     router.replace(`/dashboard/files?path=${encodeURIComponent(path)}`, { scroll: false });
-  }, [currentPath, router, hasMultipleRoots, data?.allowedRoots, setPageTitle]);
+  }, [currentPath, router, data?.allowedRoots, setPageTitle]);
 
   const handleDownload = useCallback((filePath: string, fileName: string) => {
     const a = document.createElement("a");
@@ -949,6 +1008,17 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
       setPreviewFile(item.path);
     }
   }, [navigate]);
+
+  const renameItem = useCallback((item: FileItem) => {
+    setRenamingItem(item);
+    setRenameValue(item.name);
+  }, []);
+  const moveItem = useCallback((item: FileItem) => setMovingPaths([item.path]), []);
+  const deleteItem = useCallback((item: FileItem) => {
+    if (item.isDirectory) setDeletingItem(item);
+    else void handleDelete(item.path, item.name);
+  }, [handleDelete]);
+
 
   // ── Multi-select ──────────────────────────────────────────────────────
 
@@ -1140,7 +1210,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   // before paint — prevents the "Files" default label from flashing.
   useLayoutEffect(() => {
     if (currentPath) {
-      const isRoot = hasMultipleRoots && data?.allowedRoots?.includes(currentPath);
+      const isRoot = data?.allowedRoots?.includes(currentPath);
       const folderName = isRoot
         ? rootLabel(currentPath).label
         : currentPath.split("/").filter(Boolean).pop() || "Files";
@@ -1158,11 +1228,17 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
 
   // ── Path segments ───────────────────────────────────────────────────
 
+  // Path bar starts at the root the folder lives in ("Talome / Photos / 2025"),
+  // not at the server's filesystem root
   const segments: { name: string; path: string }[] = [];
   if (data?.path) {
-    const parts = data.path.split("/").filter(Boolean);
-    let accumulated = "";
-    for (const part of parts) {
+    const root = (data.allowedRoots ?? [])
+      .filter((r: string) => data.path === r || data.path.startsWith(r.endsWith("/") ? r : `${r}/`))
+      .sort((a: string, b: string) => b.length - a.length)[0];
+    let accumulated = root ?? "";
+    if (root) segments.push({ name: rootLabel(root).label, path: root });
+    const rest = root ? data.path.slice(root.length) : data.path;
+    for (const part of rest.split("/").filter(Boolean)) {
       accumulated += "/" + part;
       segments.push({ name: part, path: accumulated });
     }
@@ -1279,11 +1355,15 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
               ) : (
                 <Table className="table-fixed" containerClassName="overflow-visible">
                   <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/85">
-                    <TableRow className="hover:bg-transparent border-border/50">
+                    <TableRow className="group/header hover:bg-transparent border-border/50 [&>th]:h-9 [&>th]:text-xs [&>th]:font-normal [&>th]:text-muted-foreground">
                       <TableHead className="w-9 pl-3 pr-0">
                         <div className="flex items-center justify-center">
                           <button
-                            className="flex items-center justify-center transition-all duration-150"
+                            aria-label={allSelected ? "Deselect all" : "Select all"}
+                            className={cn(
+                              "flex items-center justify-center transition-opacity duration-150 focus-visible:opacity-100",
+                              hasSelection ? "opacity-100" : "opacity-0 group-hover/header:opacity-100",
+                            )}
                             onClick={toggleSelectAll}
                           >
                             {allSelected ? (
@@ -1313,113 +1393,95 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                       const isHighlighted = item.name === highlightedFolder;
 
                       return (
-                        <TableRow
-                          key={item.path}
-                          className={cn(
-                            "group border-transparent transition-colors",
-                            clickable && "cursor-pointer",
-                            isSelected && "bg-muted/40",
-                          )}
-                          style={isHighlighted ? { animation: "folder-highlight 2s ease-out" } : undefined}
-                          onClick={() => handleRowClick(item)}
-                        >
-                          <TableCell className="py-1.5 w-9 pl-3 pr-0">
-                            <div className="flex items-center justify-center">
-                              <button
-                                className="flex items-center justify-center transition-all duration-150"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleSelect(item.path, idx, e.shiftKey);
-                                }}
-                              >
-                                {isSelected ? (
-                                  <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} className="text-foreground" />
-                                ) : (
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className={cn(
-                                    "transition-colors duration-150",
-                                    hasSelection ? "text-dim-foreground" : "text-dim-foreground group-hover:text-muted-foreground"
-                                  )}>
-                                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" />
-                                  </svg>
-                                )}
-                              </button>
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-1.5 overflow-hidden">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <HugeiconsIcon icon={icon} size={18} className={cn("shrink-0", color)} />
-                              <span className="truncate text-sm">{item.name}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell py-1.5 text-muted-foreground text-xs">
-                            {formatDate(item.modified)}
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell py-1.5 text-right text-muted-foreground text-xs tabular-nums">
-                            {item.isDirectory ? "\u2014" : formatBytes(item.size)}
-                          </TableCell>
-                          <TableCell className="py-1.5 w-9 pr-1">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-6 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-                                  onClick={(e) => e.stopPropagation()}
-                                  aria-label="File actions"
-                                >
-                                  <HugeiconsIcon icon={MoreHorizontalIcon} size={14} />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-40">
-                                <DropdownMenuItem
+                        <ContextMenu key={item.path}>
+                          <ContextMenuTrigger asChild>
+                          <TableRow
+                            className={cn(
+                              "group border-transparent transition-colors",
+                              clickable && "cursor-pointer",
+                              isSelected && "bg-muted/40",
+                            )}
+                            style={isHighlighted ? { animation: "folder-highlight 2s ease-out" } : undefined}
+                            onClick={() => handleRowClick(item)}
+                          >
+                            <TableCell className="py-1.5 w-9 pl-3 pr-0">
+                              <div className="flex items-center justify-center">
+                                <button
+                                  aria-label={isSelected ? `Deselect ${item.name}` : `Select ${item.name}`}
+                                  className={cn(
+                                    "flex items-center justify-center transition-opacity duration-150 focus-visible:opacity-100",
+                                    hasSelection || isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                                  )}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setRenamingItem(item);
-                                    setRenameValue(item.name);
+                                    toggleSelect(item.path, idx, e.shiftKey);
                                   }}
                                 >
-                                  <HugeiconsIcon icon={Edit02Icon} size={14} />
-                                  Rename
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setMovingPaths([item.path]);
-                                  }}
-                                >
-                                  <HugeiconsIcon icon={FolderExportIcon} size={14} />
-                                  Move to…
-                                </DropdownMenuItem>
-                                {!item.isDirectory && (
-                                  <DropdownMenuItem
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDownload(item.path, item.name);
-                                    }}
+                                  {isSelected ? (
+                                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} className="text-foreground" />
+                                  ) : (
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className={cn(
+                                      "transition-colors duration-150",
+                                      hasSelection ? "text-dim-foreground" : "text-dim-foreground group-hover:text-muted-foreground"
+                                    )}>
+                                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-1.5 overflow-hidden">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <HugeiconsIcon icon={icon} size={18} className={cn("shrink-0", color)} />
+                                <span className="truncate text-sm">{item.name}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="hidden sm:table-cell py-1.5 text-muted-foreground text-xs">
+                              {formatDate(item.modified)}
+                            </TableCell>
+                            <TableCell className="hidden sm:table-cell py-1.5 text-right text-muted-foreground text-xs tabular-nums">
+                              {item.isDirectory ? "\u2014" : formatBytes(item.size)}
+                            </TableCell>
+                            <TableCell className="py-1.5 w-9 pr-1">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-6 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                                    onClick={(e) => e.stopPropagation()}
+                                    aria-label="File actions"
                                   >
-                                    <HugeiconsIcon icon={Download01Icon} size={14} />
-                                    Download
-                                  </DropdownMenuItem>
-                                )}
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  variant="destructive"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (item.isDirectory) {
-                                      setDeletingItem(item);
-                                    } else {
-                                      void handleDelete(item.path, item.name);
-                                    }
-                                  }}
-                                >
-                                  <HugeiconsIcon icon={Delete01Icon} size={14} />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
+                                    <HugeiconsIcon icon={MoreHorizontalIcon} size={14} />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-40">
+                                  <FileRowActionItems
+                                    menu="dropdown"
+                                    item={item}
+                                    onOpen={handleRowClick}
+                                    onRename={renameItem}
+                                    onMove={moveItem}
+                                    onDownload={handleDownload}
+                                    onDelete={deleteItem}
+                                  />
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="w-44">
+                            <FileRowActionItems
+                              menu="context"
+                              item={item}
+                              onOpen={handleRowClick}
+                              onRename={renameItem}
+                              onMove={moveItem}
+                              onDownload={handleDownload}
+                              onDelete={deleteItem}
+                            />
+                          </ContextMenuContent>
+                        </ContextMenu>
                       );
                     })}
                   </TableBody>
