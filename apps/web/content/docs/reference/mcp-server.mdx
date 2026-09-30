@@ -47,7 +47,7 @@ If tools aren't loading, run `pnpm install` in the Talome directory to ensure de
 
 ### Claude Code (Other Projects)
 
-To use Talome MCP tools from a different project, add this to the project's `.mcp.json`. Talome ships a launch script (`apps/core/mcp-launch.sh`) that sources `.env` for `TALOME_SECRET` and invokes the stdio entry point — point at it instead of running `npx tsx` directly so secrets resolve correctly.
+To use Talome MCP tools from a different project, add this to the project's `.mcp.json`. Talome ships a launch script (`apps/core/mcp-launch.sh`) that sources `.env` for `TALOME_SECRET` and invokes the compiled stdio entry point. Build it with `pnpm --filter @talome/core build`, then point clients at the launcher so secrets resolve correctly without a TypeScript runtime.
 
 ```json title=".mcp.json"
 {
@@ -77,8 +77,8 @@ Add to your Cursor MCP settings at `.cursor/mcp.json` in your project root:
 {
   "mcpServers": {
     "talome": {
-      "command": "npx",
-      "args": ["tsx", "/path/to/talome/apps/core/src/mcp-stdio.ts"]
+      "command": "/path/to/talome/apps/core/mcp-launch.sh",
+      "args": []
     }
   }
 }
@@ -98,8 +98,8 @@ Add to your Claude Desktop configuration file:
 {
   "mcpServers": {
     "talome": {
-      "command": "npx",
-      "args": ["tsx", "/path/to/talome/apps/core/src/mcp-stdio.ts"]
+      "command": "/path/to/talome/apps/core/mcp-launch.sh",
+      "args": []
     }
   }
 }
@@ -112,7 +112,7 @@ Restart Claude Desktop after saving. You should see Talome tools available in th
 Any MCP client that supports stdio transports can connect. The entry point is:
 
 ```
-npx tsx /path/to/talome/apps/core/src/mcp-stdio.ts
+/path/to/talome/apps/core/mcp-launch.sh
 ```
 
 No environment variables or auth tokens are required for local stdio connections.

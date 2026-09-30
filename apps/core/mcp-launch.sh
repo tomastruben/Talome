@@ -1,13 +1,17 @@
 #!/bin/sh
-# Wrapper to launch the Talome MCP server with the correct Node.js
+# Wrapper to launch the compiled Talome MCP server with the correct Node.js
 # and environment variables from .env (needed for TALOME_SECRET).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Source .env if it exists (provides TALOME_SECRET, etc.)
-if [ -f "$SCRIPT_DIR/.env" ]; then
-  set -a
-  . "$SCRIPT_DIR/.env"
-  set +a
+MCP_ENTRY="$SCRIPT_DIR/dist/mcp-stdio.js"
+
+if [ ! -f "$MCP_ENTRY" ]; then
+  echo "Talome MCP build missing: run 'pnpm --filter @talome/core build' first." >&2
+  exit 1
 fi
 
-exec /usr/local/bin/node "$SCRIPT_DIR/node_modules/tsx/dist/cli.mjs" "$SCRIPT_DIR/src/mcp-stdio.ts" "$@"
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  exec /usr/local/bin/node --env-file="$SCRIPT_DIR/.env" "$MCP_ENTRY" "$@"
+fi
+
+exec /usr/local/bin/node "$MCP_ENTRY" "$@"

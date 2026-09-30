@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Volumes/Media Hub/dev/Talome/.codex/hooks/typecheck.sh'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
