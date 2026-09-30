@@ -20,7 +20,15 @@ import { lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/pro
 import { basename, dirname, join, relative } from "node:path";
 import { writeAuditEntry } from "../db/audit.js";
 import { writeNotification } from "../db/notifications.js";
-import { bindVolumes, resolveAppContext, type AppContext, type ComposeService, type ComposeVolume } from "./compose.js";
+import {
+  bindVolumes,
+  dbDataIsEphemeral,
+  ephemeralDbWarning,
+  resolveAppContext,
+  type AppContext,
+  type ComposeService,
+  type ComposeVolume,
+} from "./compose.js";
 import {
   execCapture,
   execToFile,
@@ -259,6 +267,11 @@ export async function runBackup(appId: string, backupId: string, opts: InternalB
   let method = resolveMethod(ctx, requested);
   const warnings: string[] = [];
   if (requested === "dump" && method !== "dump") warnings.push("No supported database found — used the stop method instead of dump");
+  for (const svc of ctx.compose.services) {
+    if (dbDataIsEphemeral(svc)) {
+      warnings.push(`${ephemeralDbWarning(svc)} Only a database dump captures it — a backup made with the stop method does not contain it.`);
+    }
+  }
 
   // ── Volume selection ──────────────────────────────────────────────────
   const allBind = bindVolumes(ctx.compose);

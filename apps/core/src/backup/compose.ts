@@ -297,6 +297,31 @@ export function parseCompose(content: string, opts: ParseComposeOptions): Parsed
   return { projectName: typeof doc.name === "string" ? doc.name : null, services };
 }
 
+/**
+ * True when a SQL database service keeps its data neither in a bind mount nor
+ * in a named volume at its data directory — i.e. only in an anonymous volume
+ * (the image's VOLUME) or the container's own layer. That data survives a
+ * stop/start, but not the container being removed (`docker compose down`,
+ * a re-created container without its anonymous volumes).
+ */
+export function dbDataIsEphemeral(svc: ComposeService): boolean {
+  if (svc.dbEngine !== "postgres" && svc.dbEngine !== "mysql") return false;
+  if (svc.dbDataPaths.length > 0) return false;
+  const engine = svc.dbEngine;
+  return !svc.volumes.some((v) => v.kind === "named" && isDbDataTarget(engine, v.target, svc.environment, svc.image));
+}
+
+/** Text every ephemeral-database warning contains (to pick them out of a warning list). */
+export const EPHEMERAL_DB_WARNING_MARK = "keeps its data only in an anonymous Docker volume";
+
+/** Warning for a database whose data lives only in an anonymous volume. */
+export function ephemeralDbWarning(svc: Pick<ComposeService, "name">): string {
+  return (
+    `The ${svc.name} database ${EPHEMERAL_DB_WARNING_MARK}: it is lost whenever the container is removed ` +
+    `(e.g. docker compose down). Add a named volume or a folder for its data directory to the compose file.`
+  );
+}
+
 /** All bind volumes of the app, de-duplicated. */
 export function bindVolumes(compose: ParsedCompose): ComposeVolume[] {
   return compose.services.flatMap((s) => s.volumes.filter((v) => v.kind === "bind" && v.hostPath));

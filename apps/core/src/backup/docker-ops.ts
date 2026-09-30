@@ -112,6 +112,23 @@ export async function getContainerState(id: string): Promise<ContainerState> {
   };
 }
 
+export interface ContainerMount {
+  type: string;
+  /** Volume name (volumes only) */
+  name: string | null;
+  source: string | null;
+  destination: string;
+}
+
+/** The mounts of a container (volumes and bind mounts). */
+export async function getContainerMounts(id: string): Promise<ContainerMount[]> {
+  const info = await docker.getContainer(id).inspect();
+  const mounts = (info as typeof info & { Mounts?: Array<{ Type?: string; Name?: string; Source?: string; Destination?: string }> }).Mounts ?? [];
+  return mounts
+    .filter((m) => typeof m.Destination === "string")
+    .map((m) => ({ type: m.Type ?? "", name: m.Name ?? null, source: m.Source ?? null, destination: m.Destination! }));
+}
+
 export async function getImageDigests(imageId: string): Promise<string[]> {
   try {
     const info = await docker.getImage(imageId).inspect();

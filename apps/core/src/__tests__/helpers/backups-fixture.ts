@@ -60,6 +60,8 @@ export interface FakeContainer {
    * starts run normally. Unset = broken on every start.
    */
   brokenStarts?: number;
+  /** Mounts reported by getContainerMounts (default: none) */
+  mounts?: Array<{ type: string; name: string | null; source: string | null; destination: string }>;
 }
 
 export const dockerState = {
@@ -82,6 +84,8 @@ export const dockerState = {
   execGid: "",
   /** Errors returned by the next lifecycle starts (startAppViaLifecycle), one per start */
   lifecycleStartErrors: [] as string[],
+  /** Called on each successful lifecycle start, before the containers run (e.g. to re-create one) */
+  onLifecycleStart: null as (() => void) | null,
 };
 
 export function resetDocker(containers: Array<Omit<FakeContainer, "status"> & { status?: string }>): void {
@@ -98,6 +102,7 @@ export function resetDocker(containers: Array<Omit<FakeContainer, "status"> & { 
   dockerState.execUid = "";
   dockerState.execGid = "";
   dockerState.lifecycleStartErrors = [];
+  dockerState.onLifecycleStart = null;
 }
 
 function find(id: string): FakeContainer | undefined {
@@ -136,6 +141,11 @@ export function dockerOpsMock() {
         imageId: `sha256:${id}`,
         exitCode: c?.status === "exited" ? (c.oneShotExitCode ?? 137) : null,
       };
+    }),
+    getContainerMounts: vi.fn(async (id: string) => {
+      const c = find(id);
+      if (!c) throw new Error(`no such container: ${id}`);
+      return (c.mounts ?? []).map((m) => ({ ...m }));
     }),
     getImageDigests: vi.fn(async (imageId: string) => [`example/app@${imageId}`]),
     execCapture: vi.fn(async (_id: string, cmd: string[]) => {
@@ -180,6 +190,7 @@ export function dockerOpsMock() {
       dockerState.events.push("startApp");
       const error = dockerState.lifecycleStartErrors.shift();
       if (error !== undefined) return { success: false, error };
+      dockerState.onLifecycleStart?.();
       for (const c of dockerState.containers) {
         if (c.brokenStarts !== undefined) {
           if (c.brokenStarts > 0) c.brokenStarts--;
