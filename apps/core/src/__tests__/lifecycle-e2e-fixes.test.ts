@@ -504,8 +504,60 @@ describe("updates carry catalog configuration changes", () => {
     expect(web.environment).toEqual({ A: "1", B: "mine", PROBE: "v2" });
     expect(web.healthcheck).toEqual(OVERRIDE.services.web.healthcheck);
     expect(installedRow(PROBE)!.version).toBe("1.5.0");
-    // Recorded now: the next update merges three-way.
+    // Recorded now: the next update merges three-way — except the values that
+    // differed without a base, which stay marked unknown.
+    const base = yaml.load(readCatalogBase(overridePath)!) as Record<string, unknown>;
+    expect(base.services).toEqual(CATALOG_V2.services);
+    expect(base["x-talome-unknown"]).toEqual({ web: ["environment.A", "environment.B", "healthcheck"] });
+  });
+
+  it("values kept without a base keep being reported by later updates instead of turning into silent edits", async () => {
+    await updateApp(PROBE);
+    m.captureServiceImages.mockReset();
+    m.captureServiceImages.mockResolvedValue(baseline);
+
+    const again = await updateApp(PROBE);
+
+    expect(again.outcome).toBe("no_change");
+    expect(again.warning).toContain("web.environment.B");
+    expect(again.warning).toContain("web.healthcheck");
+    expect(again.warning).toContain("no record of whether it was edited");
+    expect(overrideWeb().healthcheck).toEqual(OVERRIDE.services.web.healthcheck);
+  });
+
+  it("rolling back a legacy app's first update removes the base, so re-updating adds the catalog's additions again", async () => {
+    await updateApp(PROBE);
+    expect(overrideWeb().environment).toEqual({ A: "1", B: "mine", PROBE: "v2" });
+
+    const rolled = await rollbackUpdate(PROBE);
+    expect(rolled.success).toBe(true);
+    expect(overrideWeb().environment).toEqual({ A: "1", B: "mine" });
+    expect(readCatalogBase(overridePath)).toBeNull();
+
+    m.captureServiceImages.mockReset();
+    m.captureServiceImages.mockResolvedValueOnce(baseline).mockResolvedValue(recreatedSameImage);
+    const again = await updateApp(PROBE);
+    expect(again.outcome).toBe("updated");
+    expect(overrideWeb().environment).toEqual({ A: "1", B: "mine", PROBE: "v2" });
+  });
+
+  it("two consecutive rollbacks restore the base each update replaced", async () => {
+    recordCatalogBase(overridePath, yaml.dump(CATALOG_V1));
+    await updateApp(PROBE);
     expect(readCatalogBase(overridePath)).toBe(yaml.dump(CATALOG_V2));
+
+    const CATALOG_V3 = { services: { web: { ...CATALOG_V2.services.web, healthcheck: { test: ["CMD", "curl", "-f", "localhost"], interval: "5s" } } } };
+    writeFileSync(catalogPath, yaml.dump(CATALOG_V3));
+    db.update(schema.appCatalog).set({ version: "1.6.0" }).where(eq(schema.appCatalog.appId, PROBE)).run();
+    const second = await updateApp(PROBE);
+    expect(second.outcome).toBe("updated");
+    expect(readCatalogBase(overridePath)).toBe(yaml.dump(CATALOG_V3));
+
+    expect((await rollbackUpdate(PROBE)).success).toBe(true);
+    expect(readCatalogBase(overridePath)).toBe(yaml.dump(CATALOG_V2));
+    expect((await rollbackUpdate(PROBE)).success).toBe(true);
+    expect(readCatalogBase(overridePath)).toBe(yaml.dump(CATALOG_V1));
+    expect(overrideWeb().healthcheck).toEqual(CATALOG_V1.services.web.healthcheck);
   });
 
   it("merges list-style environments in their own format", () => {

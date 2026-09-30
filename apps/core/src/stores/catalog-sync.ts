@@ -15,7 +15,15 @@
 //   all three differ            → conflict: keep the override, report it
 // Apps installed before the base was recorded get additive changes only
 // (keys and environment variables the override does not have yet); the base
-// is recorded after their next update.
+// is recorded after their next update. Values that differed then (no base to
+// tell a stale catalog value from an edit) stay marked unknown in the base
+// (`x-talome-unknown`), so they keep being reported instead of turning into
+// silent "edits" once a base exists.
+//
+// Each update that changes the base first saves the one it replaces for its
+// rollback snapshot (`.talome-catalog-base.snapshot-<id>.yml`); rolling that
+// update back restores it — or removes the base when there was none, so the
+// app falls back to additive-only merges instead of a base that is too new.
 //
 // Only an allow-list of keys that cannot widen what the container may do is
 // synced (SYNCED_KEYS: environment, command, healthcheck, restart, …). A
@@ -29,7 +37,7 @@
 // are left as they are without a report. Services the catalog adds or removes
 // are not added or removed.
 
-import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import yaml from "js-yaml";
@@ -113,9 +121,17 @@ function basePath(overridePath: string): string {
   return join(dirname(overridePath), ".talome-catalog-base.yml");
 }
 
-function previousBasePath(overridePath: string): string {
-  return join(dirname(overridePath), ".talome-catalog-base.previous.yml");
+/** The base an update replaced, saved for that update's rollback snapshot. */
+function snapshotBasePath(overridePath: string, snapshotId: number): string {
+  return join(dirname(overridePath), `.talome-catalog-base.snapshot-${snapshotId}.yml`);
 }
+
+const SNAPSHOT_BASE_FILE = /^\.talome-catalog-base\.snapshot-(\d+)\.yml$/;
+/** Written by earlier builds; superseded by the per-snapshot files. */
+const LEGACY_PREVIOUS_BASE = ".talome-catalog-base.previous.yml";
+
+/** Top-level key of the base listing values with no known origin: { service: ["key", "environment.VAR"] }. */
+const UNKNOWN_KEY = "x-talome-unknown";
 
 /** The recorded base for an override, or null (none recorded / unreadable). */
 export function readCatalogBase(overridePath: string): string | null {
@@ -127,40 +143,87 @@ export function readCatalogBase(overridePath: string): string | null {
   }
 }
 
+/** The base content to write: the catalog, plus the values whose origin is unknown. */
+function baseContentFor(catalogContent: string, unknown: ConfigConflict[]): string {
+  const marks = unknown.filter((k) => k.reason === "no_base");
+  if (marks.length === 0) return catalogContent;
+  const doc = loadCompose(catalogContent);
+  if (!doc) return catalogContent;
+  const byService: Record<string, string[]> = {};
+  for (const k of marks) {
+    const entry = k.variable ? `${k.key}.${k.variable}` : k.key;
+    const entries = (byService[k.service] ??= []);
+    if (!entries.includes(entry)) entries.push(entry);
+  }
+  return yaml.dump({ ...doc, [UNKNOWN_KEY]: byService }, { lineWidth: -1 });
+}
+
 /**
  * Record the catalog compose content an override now corresponds to.
- * `previous`: "clear" (install — no earlier base applies), "rotate" (an update
- * — the current base is kept as the previous one, for a rollback), "keep"
- * (leave any previous base alone). Never throws.
+ * `unknown`: the merge's kept values with reason no_base — marked so later
+ * merges still treat them as having no base. `install`: a fresh install (no
+ * earlier update's saved bases apply). Never throws.
  */
 export function recordCatalogBase(
   overridePath: string,
   catalogContent: string,
-  opts: { previous?: "clear" | "rotate" | "keep" } = {},
+  opts: { unknown?: ConfigConflict[]; install?: boolean } = {},
 ): void {
   try {
-    const p = basePath(overridePath);
-    const mode = opts.previous ?? "clear";
-    if (mode === "rotate" && existsSync(p)) {
-      if (readFileSync(p, "utf-8") === catalogContent) return;
-      renameSync(p, previousBasePath(overridePath));
-    } else if (mode === "clear") {
-      rmSync(previousBasePath(overridePath), { force: true });
-    }
-    atomicWriteFileSync(p, catalogContent, "utf-8");
+    if (opts.install) clearSnapshotCatalogBases(overridePath);
+    atomicWriteFileSync(basePath(overridePath), baseContentFor(catalogContent, opts.unknown ?? []), "utf-8");
   } catch (err) {
     log.warn(`Could not record the catalog base of ${overridePath}`, err);
   }
 }
 
-/** After a rollback: the base goes back to the one before the update (if any). Never throws. */
-export function restorePreviousCatalogBase(overridePath: string): void {
+/**
+ * Before an update changes the base: keep the current one (or the fact that
+ * there is none) for that update's rollback snapshot. Never throws.
+ */
+export function saveCatalogBaseForSnapshot(overridePath: string, snapshotId: number): void {
   try {
-    const prev = previousBasePath(overridePath);
-    if (existsSync(prev)) renameSync(prev, basePath(overridePath));
+    const current = readCatalogBase(overridePath);
+    const target = snapshotBasePath(overridePath, snapshotId);
+    if (current === null) rmSync(target, { force: true });
+    else atomicWriteFileSync(target, current, "utf-8");
   } catch (err) {
-    log.warn(`Could not restore the previous catalog base of ${overridePath}`, err);
+    log.warn(`Could not keep the catalog base of ${overridePath} for rollback`, err);
   }
+}
+
+/**
+ * After rolling back the update of `snapshotId`: the base goes back to the one
+ * that update replaced. Without a saved one the base is removed (additive-only
+ * merges) — never left at the newer catalog, whose additions the restored
+ * compose does not have. Never throws.
+ */
+export function restoreCatalogBaseForSnapshot(overridePath: string, snapshotId: number): void {
+  try {
+    const saved = snapshotBasePath(overridePath, snapshotId);
+    if (existsSync(saved)) renameSync(saved, basePath(overridePath));
+    else rmSync(basePath(overridePath), { force: true });
+  } catch (err) {
+    log.warn(`Could not restore the catalog base of ${overridePath} after a rollback`, err);
+  }
+}
+
+/** Drop saved bases of snapshots that no longer exist (pruned or deleted). Never throws. */
+export function pruneSnapshotCatalogBases(overridePath: string, keepSnapshotIds: number[]): void {
+  try {
+    const keep = new Set(keepSnapshotIds);
+    const dir = dirname(overridePath);
+    for (const name of readdirSync(dir)) {
+      const m = SNAPSHOT_BASE_FILE.exec(name);
+      if ((m && !keep.has(Number(m[1]))) || name === LEGACY_PREVIOUS_BASE) rmSync(join(dir, name), { force: true });
+    }
+  } catch (err) {
+    log.warn(`Could not prune saved catalog bases next to ${overridePath}`, err);
+  }
+}
+
+function clearSnapshotCatalogBases(overridePath: string): void {
+  pruneSnapshotCatalogBases(overridePath, []);
 }
 
 // ── Environment helpers ─────────────────────────────────────────────────────────
@@ -212,6 +275,7 @@ function mergeEnvironment(
   catVal: unknown,
   hasBase: boolean,
   result: ConfigSyncResult,
+  unknownVars: ReadonlySet<string>,
 ): void {
   const ov = parseEnv(svc.environment);
   const cat = parseEnv(catVal);
@@ -225,7 +289,7 @@ function mergeEnvironment(
     const ovV = ov.get(name);
     const catV = cat.get(name);
     if (inOv === inCat && ovV === catV) continue;
-    if (!base) {
+    if (!base || unknownVars.has(name)) {
       // No base: only add variables the override does not have yet.
       if (!inOv && inCat) {
         ov.set(name, catV ?? null);
@@ -257,6 +321,17 @@ function mergeEnvironment(
   if (changed) svc.environment = formatEnv(ov, svc.environment ?? catVal);
 }
 
+/** The base's unknown-origin marks: service → entries ("key" or "environment.VAR"). */
+function readUnknownMarks(base: ComposeDoc | null): Map<string, Set<string>> {
+  const marks = new Map<string, Set<string>>();
+  const raw = base?.[UNKNOWN_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return marks;
+  for (const [service, entries] of Object.entries(raw as Record<string, unknown>)) {
+    if (Array.isArray(entries)) marks.set(service, new Set(entries.filter((e): e is string => typeof e === "string")));
+  }
+  return marks;
+}
+
 /**
  * Compute the override compose with the catalog's service-configuration
  * changes applied (see the header). Pure: returns the new document (the input
@@ -271,6 +346,7 @@ export function mergeCatalogConfig(
   const catalog = loadCompose(catalogContent);
   const base = baseContent !== null ? loadCompose(baseContent) : null;
   const hasBase = base !== null;
+  const unknown = readUnknownMarks(base);
   const ovServices = override.services;
   const catServices = catalog?.services;
   if (!ovServices || !catServices) return result;
@@ -281,14 +357,18 @@ export function mergeCatalogConfig(
     const baseSvc = (base?.services?.[service] ?? null) as Record<string, unknown> | null;
     // A service the base did not have (added to the override later) has no three-way history.
     const serviceHasBase = hasBase && baseSvc !== null && typeof baseSvc === "object";
+    const unknownHere = unknown.get(service) ?? new Set<string>();
+    const unknownVars = new Set([...unknownHere].filter((e) => e.startsWith("environment.")).map((e) => e.slice("environment.".length)));
     const keys = new Set([...Object.keys(catSvc), ...(serviceHasBase ? Object.keys(baseSvc!) : [])]);
     for (const key of keys) {
       if (INSTALL_RESOLVED_KEYS.has(key)) continue;
       const catVal = catSvc[key];
-      const baseVal = serviceHasBase ? baseSvc![key] : undefined;
+      // A value recorded as unknown has no base: it is merged like a legacy app's.
+      const keyHasBase = serviceHasBase && !unknownHere.has(key);
+      const baseVal = keyHasBase ? baseSvc![key] : undefined;
       if (!SYNCED_KEYS.has(key)) {
         // Never applied by an update — reported when the catalog changed it.
-        const catalogChanged = serviceHasBase
+        const catalogChanged = keyHasBase
           ? !isDeepStrictEqual(catVal, baseVal)
           : catVal !== undefined && !isDeepStrictEqual(svc[key], catVal);
         if (catalogChanged && !isDeepStrictEqual(svc[key], catVal)) {
@@ -297,12 +377,12 @@ export function mergeCatalogConfig(
         continue;
       }
       if (key === "environment") {
-        mergeEnvironment(service, svc, baseVal, catVal, serviceHasBase, result);
+        mergeEnvironment(service, svc, baseVal, catVal, keyHasBase, result, unknownVars);
         continue;
       }
       const ovVal = svc[key];
       if (isDeepStrictEqual(ovVal, catVal)) continue;
-      if (!serviceHasBase) {
+      if (!keyHasBase) {
         if (ovVal === undefined && catVal !== undefined) {
           svc[key] = catVal;
           result.changes.push({ service, key, change: "set" });

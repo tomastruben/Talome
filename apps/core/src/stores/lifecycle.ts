@@ -42,8 +42,10 @@ import {
   isConfigSyncSource,
   mergeCatalogConfig,
   readCatalogBase,
+  pruneSnapshotCatalogBases,
   recordCatalogBase,
-  restorePreviousCatalogBase,
+  restoreCatalogBaseForSnapshot,
+  saveCatalogBaseForSnapshot,
   type ConfigChange,
   type ConfigConflict,
 } from "./catalog-sync.js";
@@ -609,7 +611,7 @@ async function installAppInner(
     // The catalog compose this override was derived from: updates merge catalog changes against it.
     if (effectiveCompose && effectiveCompose !== app.composePath) {
       try {
-        recordCatalogBase(effectiveCompose, readFileSync(app.composePath, "utf-8"));
+        recordCatalogBase(effectiveCompose, readFileSync(app.composePath, "utf-8"), { install: true });
       } catch (err: unknown) {
         log.warn(`Could not record the catalog base of ${appId}`, err);
       }
@@ -1260,6 +1262,20 @@ export function applyComposeEditToUpdateSnapshots(
   return counts;
 }
 
+/** Ids of the app's update snapshots (after pruning), or null on a database error. */
+function appSnapshotIds(appId: string): number[] | null {
+  try {
+    return db
+      .select({ id: schema.updateSnapshots.id })
+      .from(schema.updateSnapshots)
+      .where(eq(schema.updateSnapshots.appId, appId))
+      .all()
+      .map((r) => r.id);
+  } catch {
+    return null;
+  }
+}
+
 function pruneUpdateSnapshots(appId: string): void {
   try {
     const keep = db
@@ -1585,7 +1601,7 @@ async function rollbackUpdateInner(appId: string, ctx: OperationContext): Promis
       .where(eq(schema.updateSnapshots.id, snapshot.id))
       .run();
     // The compose went back to what the previous catalog compose produced.
-    if (effectiveCompose !== app.composePath) restorePreviousCatalogBase(effectiveCompose);
+    if (effectiveCompose !== app.composePath) restoreCatalogBaseForSnapshot(effectiveCompose, snapshot.id);
 
     if (!verification.healthy) {
       // The rollback ran, but the journal must not say "succeeded" for an app left unhealthy.
@@ -2053,7 +2069,9 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
         .where(eq(schema.installedApps.appId, appId))
         .run();
       if (recordVersion && merged && catalogContent !== null) {
-        recordCatalogBase(effectiveCompose, catalogContent, { previous: "keep" });
+        // No snapshot is kept for a no_change update: a later rollback targets an
+        // earlier update, whose saved base is still the right one to go back to.
+        recordCatalogBase(effectiveCompose, catalogContent);
       }
       ctx.setDetail({ outcome: "no_change", snapshotId: null, ...(recordVersion ? { versionRecorded: app.version } : {}) });
       const gapLine = notAdopted.length > 0 ? ` Not applied: ${notAdopted.join("; ")}.` : "";
@@ -2068,9 +2086,16 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
       return { success: true, verified: verification?.healthy ?? false, outcome: "no_change", warning: note, ...keptResult };
     }
 
-    if (merged && catalogContent !== null) {
-      // The override now derives from this catalog compose (the previous base is kept for a rollback).
-      recordCatalogBase(effectiveCompose, catalogContent, { previous: "rotate" });
+    if (hasOverride) {
+      // The base this update replaces (or its absence) goes with its rollback snapshot.
+      saveCatalogBaseForSnapshot(effectiveCompose, snapshotId);
+      const snapshotIds = appSnapshotIds(appId);
+      if (snapshotIds) pruneSnapshotCatalogBases(effectiveCompose, [...snapshotIds, snapshotId]);
+      if (merged && catalogContent !== null) {
+        // The override now derives from this catalog compose; values it could not
+        // tell from edits (no base) stay marked unknown.
+        recordCatalogBase(effectiveCompose, catalogContent, { unknown: configKept });
+      }
     }
 
     db.update(schema.updateSnapshots)
