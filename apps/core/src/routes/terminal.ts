@@ -20,6 +20,7 @@ import { db, schema } from "../db/index.js";
 import { DAEMON_PORT } from "../terminal-constants.js";
 import { ensureDaemonRunning } from "../terminal-spawn.js";
 import { getSetting } from "../utils/settings.js";
+import { TERMINAL_USER_HEADER } from "../terminal-user-binding.js";
 
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
 
@@ -120,6 +121,9 @@ export function setupTerminal(
             if (k !== "host") h.set(k, v as string);
           }
           if (DAEMON_INTERNAL_KEY) h.set("x-daemon-auth", DAEMON_INTERNAL_KEY);
+          // Who is asking: the daemon binds a new terminal to this admin and
+          // closes it when they lose access. Never taken from the client.
+          h.set(TERMINAL_USER_HEADER, c.get("sessionUser" as never) as string);
           return h;
         })(),
         body: c.req.method !== "GET" && c.req.method !== "HEAD" ? c.req.raw.body : undefined,

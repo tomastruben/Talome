@@ -10,6 +10,7 @@ import { listContainers, execInContainer } from "../docker/client.js";
 import { getUsageSummary, getTodayCostUsd, getDailyCapUsd, getBudgetZone } from "../agent-loop/budget.js";
 import { isClaudeCodeAvailable, getClaudeCodeVersion } from "../ai/claude-process.js";
 import { serverError } from "../middleware/request-logger.js";
+import { sessionAuditActor } from "../middleware/session.js";
 
 const settings = new Hono();
 
@@ -71,7 +72,10 @@ settings.post("/", async (c) => {
           .run();
       }
     });
-    writeAuditEntry("settings_changed", "modify", Object.keys(body).join(", "));
+    writeAuditEntry("settings_changed", "modify", Object.keys(body).join(", "), true, {
+      ...sessionAuditActor(c),
+      outcome: "success",
+    });
     return c.json({ ok: true });
   } catch (err) {
     return serverError(c, err, { message: "Failed to update settings" });

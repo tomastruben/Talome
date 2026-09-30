@@ -6,6 +6,7 @@ import { hash as bcryptHash, compare as bcryptCompare } from "bcryptjs";
 import { db, schema } from "../db/index.js";
 import { eq, sql } from "drizzle-orm";
 import {
+  bumpSessionVersion,
   createSessionToken,
   revokeSession,
   SESSION_COOKIE,
@@ -303,17 +304,8 @@ auth.get("/me", async (c) => {
   }
 
   const user = db.select().from(schema.users).where(eq(schema.users.id, payload.sub)).get();
-  if (!user) {
-    // JWT is valid but user row not found — likely a session from before
-    // the users table existed. Fall back to JWT claims.
-    return c.json({
-      authenticated: true,
-      userId: payload.sub,
-      username: payload.username ?? "admin",
-      role: payload.role ?? "admin",
-      permissions: getDefaultPermissions(),
-    });
-  }
+  // A session without a user row (deleted user) is not a session.
+  if (!user) return c.json({ authenticated: false });
 
   let permissions: UserPermissions = getDefaultPermissions();
   if (user.role !== "admin" && user.permissions) {
@@ -434,6 +426,16 @@ auth.post("/recover", async (c) => {
     })
     .where(eq(schema.users.id, user.id))
     .run();
+  // A password reset ends every existing session; the new one below gets
+  // the new session version.
+  bumpSessionVersion(user.id);
+  writeAuditEntry("user_password_recovered", "modify", `user=${user.username} id=${user.id} (recovery code)`, true, {
+    actorKind: "user",
+    actorId: user.id,
+    actorLabel: user.username,
+    source: "recovery",
+    outcome: "success",
+  });
 
   // Log the user in
   const token = await createSessionToken(user.id, user.role as "admin" | "member", user.username);

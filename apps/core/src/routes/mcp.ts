@@ -16,8 +16,10 @@ import {
   type ExecuteToolResult,
   type ToolMeta,
 } from "../ai/execution.js";
-import { checkToolGrant } from "../approval/grants.js";
+import { checkToolGrant, toolReachableForAppGrant } from "../approval/grants.js";
 import { getSetting } from "../utils/settings.js";
+import { getAllRegisteredTools } from "../ai/tool-registry.js";
+import { writeAuditEntry, type AuditExtras } from "../db/audit.js";
 
 // ── Tool view ────────────────────────────────────────────────────────────────
 // The MCP tool list is derived per actor, per evaluation: tools from domains
@@ -50,6 +52,9 @@ export function getMcpToolView(actor: Actor): ToolView[] {
     if (typeof (tool as { execute?: unknown }).execute !== "function") continue;
     const meta = getToolMeta(name);
     if (actor.scopes && !checkToolGrant(actor.scopes, { name, tier: meta.tier, domain: meta.domain }).ok) continue;
+    // App-limited tokens: also hide tools every call would refuse (e.g. a
+    // modify tool with no app argument) instead of listing them.
+    if (actor.scopes && !toolReachableForAppGrant(actor.scopes, meta, Object.keys(inputShape(tool)))) continue;
     view.push({ name, tool, meta });
   }
   return view;
@@ -212,6 +217,8 @@ export interface McpSession {
   server: McpServer;
   /** Re-evaluate the tool view; registers/removes tools (emits tools/list_changed). */
   sync: () => { added: string[]; removed: string[] };
+  /** Names of the tools currently registered (the actor's view). */
+  registeredTools: () => ReadonlySet<string>;
 }
 
 export interface McpSessionOptions {
@@ -282,7 +289,7 @@ export function createMcpSession(actor: Actor, options: McpSessionOptions = {}):
   };
 
   sync();
-  return { server, sync };
+  return { server, sync, registeredTools: () => new Set(registered.keys()) };
 }
 
 export function createMcpServer(actor: Actor): McpServer {
@@ -319,15 +326,102 @@ mcp.use("/*", async (c, next) => {
   await withExecutionContext(actor, "mcp", () => next());
 });
 
+/** At most this many not_in_view rows per request (one per distinct tool), plus one summary row. */
+const MAX_OUT_OF_VIEW_ROWS = 10;
+const TIER_RANK = { read: 0, modify: 1, destructive: 2 } as const;
+
+/**
+ * Audit calls to known tools outside the actor's view. Only tools in the view
+ * are registered, so the MCP SDK answers these "Tool X not found" before
+ * executeTool() (and its audit) runs; without this, a token probing tools it
+ * may not use left no trace. Unknown names are not audited.
+ *
+ * Only well-formed requests count (JSON-RPC 2.0 with an id — what the
+ * transport dispatches), and a request writes at most one row per distinct
+ * tool (with the call count) and MAX_OUT_OF_VIEW_ROWS rows plus a summary,
+ * so one batched body cannot flood the audit log.
+ */
+export function auditOutOfViewToolCalls(actor: Actor, message: unknown, visible: ReadonlySet<string>): void {
+  const messages = Array.isArray(message) ? message : [message];
+  const counts = new Map<string, number>();
+  let known: Record<string, unknown> | undefined;
+  for (const m of messages) {
+    if (!m || typeof m !== "object") continue;
+    const { jsonrpc, id, method, params } = m as {
+      jsonrpc?: unknown;
+      id?: unknown;
+      method?: unknown;
+      params?: { name?: unknown };
+    };
+    if (jsonrpc !== "2.0" || (typeof id !== "string" && typeof id !== "number")) continue;
+    if (method !== "tools/call") continue;
+    const name = params?.name;
+    if (typeof name !== "string" || visible.has(name)) continue;
+    if (!counts.has(name)) {
+      known ??= getAllRegisteredTools();
+      if (!Object.hasOwn(known, name)) continue;
+    }
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+
+  const actorExtras: AuditExtras = {
+    actorKind: actor.kind,
+    actorId: actor.id,
+    actorLabel: actor.label,
+    source: "mcp",
+    outcome: "blocked",
+  };
+  const names = [...counts.keys()];
+  for (const name of names.slice(0, MAX_OUT_OF_VIEW_ROWS)) {
+    const meta = getToolMeta(name);
+    const grant = actor.scopes ? checkToolGrant(actor.scopes, { name, tier: meta.tier, domain: meta.domain }) : { ok: true as const };
+    const reason = !grant.ok
+      ? grant.message
+      : actor.scopes && actor.scopes.apps !== "all"
+        ? `This token is limited to specific apps (${actor.scopes.apps.join(", ") || "none"}), and '${name}' can never target one of them.`
+        : `'${name}' is not available (disabled in Settings, or its app is not configured).`;
+    const count = counts.get(name) ?? 1;
+    writeAuditEntry(
+      `BLOCKED (not_in_view): ${name}`,
+      meta.tier,
+      count > 1 ? `${reason} (${count} calls in one request)` : reason,
+      false,
+      { ...actorExtras, toolName: name },
+    );
+  }
+  const rest = names.slice(MAX_OUT_OF_VIEW_ROWS);
+  if (rest.length > 0) {
+    const tier = rest
+      .map((name) => getToolMeta(name).tier)
+      .reduce((a, b) => (TIER_RANK[b] > TIER_RANK[a] ? b : a), "read" as keyof typeof TIER_RANK);
+    writeAuditEntry(
+      `BLOCKED (not_in_view): ${rest.length} more tools`,
+      tier,
+      `Same request, also outside this token's view: ${rest.join(", ")}`,
+      false,
+      actorExtras,
+    );
+  }
+}
+
 // Stateless MCP handler — fresh server + transport per request, built for the
 // requesting token (tool view evaluated now, not at process start).
 mcp.all("/", async (c) => {
-  const server = createMcpServer(c.get("mcpActor"));
+  const actor = c.get("mcpActor");
+  const session = createMcpSession(actor);
+  // Out-of-view calls are audited only when the transport accepted the
+  // request (not a 406/400/... rejected before any dispatch).
+  const peek = c.req.method === "POST" ? c.req.raw.clone() : null;
+  const server = session.server;
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
   await server.connect(transport);
   const response = await transport.handleRequest(c.req.raw);
+  if (peek && response.status < 400) {
+    const body: unknown = await peek.json().catch(() => null);
+    if (body) auditOutOfViewToolCalls(actor, body, session.registeredTools());
+  }
   return response;
 });
 

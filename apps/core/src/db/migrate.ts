@@ -9,6 +9,7 @@ import { runStoreCompatMigrations } from "./migrations/store-compat.js";
 import { runAiChatMigrations } from "./migrations/ai-chat.js";
 import { runOutcomeProbesMigrations } from "./migrations/outcome-probes.js";
 import { runWireBackendMigrations } from "./migrations/wire-backend.js";
+import { addColumnIfMissing } from "./migrations/columns.js";
 
 function recordMigration(version: number, description: string) {
   db.run(sql`INSERT OR IGNORE INTO schema_versions (version, applied_at, description) VALUES (${version}, datetime('now'), ${description})`);
@@ -65,6 +66,9 @@ export function runMigrations() {
   } catch {
     // Column already exists — ignore
   }
+
+  // ── Session version: bumped to end a user's existing sessions ─────────────
+  addColumnIfMissing("users", "session_version", "INTEGER NOT NULL DEFAULT 0");
 
   // ── Family invitations ────────────────────────────────────────────────────
   db.run(sql`CREATE TABLE IF NOT EXISTS user_invitations (

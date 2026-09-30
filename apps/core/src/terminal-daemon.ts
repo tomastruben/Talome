@@ -31,6 +31,12 @@ import { allowsTerminalAccess, parseTokenScopes } from "./approval/grants.js";
 import { homedir } from "node:os";
 import { DAEMON_PORT } from "./terminal-constants.js";
 import { hasBackupPassword, PUBLIC_BACKUP_AUTH_PATHS, registerBackupAuthRoutes } from "./terminal-backup-auth.js";
+import {
+  bindTerminalToUser,
+  createTerminalUserGuard,
+  TERMINAL_USER_HEADER,
+  type TerminalUserBinding,
+} from "./terminal-user-binding.js";
 
 /**
  * Bind host — defaults to loopback so a misconfigured LAN exposure can't
@@ -147,24 +153,34 @@ function isSecurityModeLocked(): boolean {
 
 // ── Ephemeral auth tokens (in-memory, 60s TTL) ────────────────────────────────
 
-const ephemeralTokens = new Map<string, number>(); // token → expiresAt (ms)
+// token → expiry and, for tokens the dashboard proxy minted, the admin it
+// was minted for (the terminal closes when that admin loses access).
+const ephemeralTokens = new Map<string, { expiresAt: number; binding: TerminalUserBinding | null }>();
 
-function createEphemeralToken(): string {
+function createEphemeralToken(binding: TerminalUserBinding | null): string {
   const now = Date.now();
-  for (const [token, expiresAt] of ephemeralTokens) {
-    if (expiresAt < now) ephemeralTokens.delete(token);
+  for (const [token, entry] of ephemeralTokens) {
+    if (entry.expiresAt < now) ephemeralTokens.delete(token);
   }
   const token = `eph_${randomUUID().replace(/-/g, "")}`;
-  ephemeralTokens.set(token, now + 60_000);
+  ephemeralTokens.set(token, { expiresAt: now + 60_000, binding });
   return token;
 }
 
-function verifyEphemeralToken(token: string): boolean {
-  const expiresAt = ephemeralTokens.get(token);
-  if (!expiresAt || expiresAt < Date.now()) return false;
+function verifyEphemeralToken(token: string): { binding: TerminalUserBinding | null } | null {
+  const entry = ephemeralTokens.get(token);
+  if (!entry || entry.expiresAt < Date.now()) return null;
   ephemeralTokens.delete(token); // one-time use
-  return true;
+  return { binding: entry.binding };
 }
+
+// Open terminals bound to a dashboard admin: closed as soon as that admin is
+// deleted, demoted or signed out everywhere (terminal-user-binding.ts).
+const terminalUserGuard = createTerminalUserGuard<WSContext>(sqlite, (ws) => {
+  ws.send("\r\n\x1b[31mTerminal closed: your admin access changed. Sign in again.\x1b[0m\r\n");
+  ws.close(1008, "Session ended");
+});
+setInterval(() => terminalUserGuard.sweep(), 10_000).unref();
 
 // ── PTY session registry ──────────────────────────────────────────────────────
 
@@ -856,7 +872,16 @@ app.post("/session", (c) => {
   if (isSecurityModeLocked()) {
     return c.json({ error: 'The terminal is disabled while the security mode is "locked".' }, 423);
   }
-  const token = createEphemeralToken();
+  // The core's proxy names the admin who asked; bind the terminal to them.
+  const userId = constantTimeEq(c.req.header("x-daemon-auth"), DAEMON_INTERNAL_KEY)
+    ? c.req.header(TERMINAL_USER_HEADER)
+    : undefined;
+  let binding: TerminalUserBinding | null = null;
+  if (userId) {
+    binding = bindTerminalToUser(sqlite, userId);
+    if (!binding) return c.json({ error: "Forbidden — the terminal requires an admin account" }, 403);
+  }
+  const token = createEphemeralToken(binding);
   return c.json({ token, expiresAt: Date.now() + 60_000, bootId: BOOT_ID });
 });
 
@@ -1092,7 +1117,8 @@ app.get(
             }
 
             // A token minted just before the mode switched to locked is refused too.
-            const validEphemeral = verifyEphemeralToken(msg.token) && !isSecurityModeLocked();
+            const ephemeral = verifyEphemeralToken(msg.token);
+            const validEphemeral = !!ephemeral && !isSecurityModeLocked();
             const validBackup = !validEphemeral && msg.token ? verifyBackupToken(msg.token) : false;
             const validMcp =
               !validEphemeral && !validBackup && verifyBearerToken(`Bearer ${msg.token}`);
@@ -1106,6 +1132,7 @@ app.get(
 
             clearWsAuthAttempts(clientIp);
             authenticated = true;
+            if (validEphemeral && ephemeral?.binding) terminalUserGuard.track(ws, ephemeral.binding);
 
             if (msg.sessionId) {
               try {
@@ -1142,6 +1169,7 @@ app.get(
           }
 
           if (!session) return;
+          if (!terminalUserGuard.check(ws)) return;
 
           if (msg.type === "input" && msg.data) {
             session.proc.write(msg.data);
@@ -1157,6 +1185,7 @@ app.get(
         }
       },
       onClose(_evt, ws) {
+        terminalUserGuard.untrack(ws);
         if (!session) return;
         session.clients.delete(ws);
         if (session.id.startsWith("eph_") && session.clients.size === 0) {

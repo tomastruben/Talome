@@ -54,6 +54,7 @@ import { isApprovalExemptShellCommand } from "../approval/shell-safety.js";
 import { isSecretSettingKey } from "../utils/crypto.js";
 import { hostMountsNeedApproval } from "../stores/host-mounts.js";
 import {
+  EXECUTION_SOURCE_LABELS,
   getExecutionContext,
   runInActorContext,
   runInToolCallContext,
@@ -371,12 +372,7 @@ export const approvalIdArgSchema = z
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const SOURCE_PREFIX: Record<ExecutionSource, string> = {
-  chat: "AI",
-  mcp: "MCP",
-  automation: "Automation",
-  agent_loop: "Agent loop",
-};
+const SOURCE_PREFIX: Record<ExecutionSource, string> = EXECUTION_SOURCE_LABELS;
 
 type ExecuteFn = (args: unknown, options: unknown) => unknown;
 

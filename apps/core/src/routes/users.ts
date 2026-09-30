@@ -3,12 +3,13 @@ import { z } from "zod";
 import { hash as bcryptHash } from "bcryptjs";
 import { generateRecoveryCode } from "./auth.js";
 import { db, schema } from "../db/index.js";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { UserPermissions } from "@talome/types";
 import { getDefaultPermissions } from "@talome/types";
 import { writeAuditEntry } from "../db/audit.js";
 import { generateInvitationToken, hashInvitationToken } from "../auth/invitations.js";
+import { bumpSessionVersion, sessionAuditActor } from "../middleware/session.js";
 
 const createUserSchema = z.object({
   username: z.string().min(2).max(100),
@@ -43,6 +44,51 @@ function parsePermissions(raw: string | null): UserPermissions | null {
   } catch {
     return null;
   }
+}
+
+/** Live (not revoked) MCP tokens a user created. */
+function liveMcpTokensCreatedBy(userId: string): Array<{ id: string; name: string }> {
+  return db
+    .select({ id: schema.mcpTokens.id, name: schema.mcpTokens.name })
+    .from(schema.mcpTokens)
+    .where(and(eq(schema.mcpTokens.createdBy, userId), isNull(schema.mcpTokens.revokedAt)))
+    .all();
+}
+
+/**
+ * Revoke the (not yet revoked) MCP tokens a DELETED user created. A token is
+ * an owner-level credential minted with admin authority and must not outlive
+ * its creator's account. Revocation is permanent, so it happens only on
+ * delete — a demotion (a single switch in the dashboard, easily undone) never
+ * revokes. Tokens created before mcp_tokens.created_by existed have no
+ * creator and are left alone — review them in Settings -> Integrations.
+ * Returns the revoked tokens and how many enabled automations those tokens
+ * wrote: those stop running (and are disabled) on their next run.
+ */
+function revokeMcpTokensCreatedBy(userId: string): { names: string[]; affectedAutomations: number } {
+  const rows = liveMcpTokensCreatedBy(userId);
+  if (rows.length === 0) return { names: [], affectedAutomations: 0 };
+  const ids = rows.map((r) => r.id);
+  db.update(schema.mcpTokens)
+    .set({ revokedAt: new Date().toISOString() })
+    .where(and(inArray(schema.mcpTokens.id, ids), isNull(schema.mcpTokens.revokedAt)))
+    .run();
+  const affected = db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.automations)
+    .where(and(inArray(schema.automations.actorTokenId, ids), eq(schema.automations.enabled, true)))
+    .get();
+  return { names: rows.map((r) => r.name), affectedAutomations: Number(affected?.n ?? 0) };
+}
+
+/** Admin accounts other than `userId`. */
+function countOtherAdmins(userId: string): number {
+  const row = db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.users)
+    .where(and(eq(schema.users.role, "admin"), sql`${schema.users.id} <> ${userId}`))
+    .get();
+  return Number(row?.n ?? 0);
 }
 
 const users = new Hono();
@@ -103,6 +149,10 @@ users.post("/", async (c) => {
       createdAt: now,
     })
     .run();
+  writeAuditEntry("user_created", "modify", `user=${username} id=${id} role=${userRole}`, true, {
+    ...sessionAuditActor(c),
+    outcome: "success",
+  });
 
   return c.json(
     {
@@ -191,7 +241,7 @@ users.post("/invitations", async (c) => {
     createdAt: nowIso,
   }).run();
 
-  writeAuditEntry("family_invitation_created", "modify", `email=${email} role=${role}`);
+  writeAuditEntry("family_invitation_created", "modify", `email=${email} role=${role}`, true, sessionAuditActor(c));
   return c.json({
     id,
     token,
@@ -217,7 +267,7 @@ users.delete("/invitations/:id", (c) => {
     .set({ revokedAt: new Date().toISOString() })
     .where(eq(schema.userInvitations.id, id))
     .run();
-  writeAuditEntry("family_invitation_revoked", "modify", `email=${invitation.email}`);
+  writeAuditEntry("family_invitation_revoked", "modify", `email=${invitation.email}`, true, sessionAuditActor(c));
   return c.json({ ok: true });
 });
 
@@ -231,6 +281,18 @@ users.put("/:id", async (c) => {
   const user = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
   if (!user) {
     return c.json({ error: "User not found" }, 404);
+  }
+
+  // Removing admin from yourself or from the last admin would leave nobody
+  // able to administer Talome: the session ends at once and
+  // /api/auth/recover resets only the password, not the role.
+  if (body.role === "member" && user.role === "admin") {
+    if (userId === c.get("sessionUser" as never)) {
+      return c.json({ error: "You cannot remove your own admin role. Ask another admin to do it." }, 400);
+    }
+    if (countOtherAdmins(userId) === 0) {
+      return c.json({ error: "Cannot remove the last admin. Make another user an admin first." }, 400);
+    }
   }
 
   const updates: Record<string, string | null> = {};
@@ -260,12 +322,49 @@ users.put("/:id", async (c) => {
     updates.permissions = JSON.stringify(getDefaultPermissions());
   }
 
-  db.update(schema.users)
-    .set(updates)
-    .where(eq(schema.users.id, userId))
-    .run();
+  const roleChanged = body.role !== undefined && body.role !== user.role;
+  const demotedAdmin = roleChanged && user.role === "admin";
+  db.transaction(() => {
+    db.update(schema.users)
+      .set(updates)
+      .where(eq(schema.users.id, userId))
+      .run();
+    // A role change ends the user's existing sessions: they sign in again
+    // and get the new role (requireSession also re-reads the role per request).
+    if (roleChanged) bumpSessionVersion(userId);
+  });
 
-  return c.json({ ok: true });
+  // MCP tokens a demoted admin created keep working: revoking is permanent
+  // (a token's plaintext is shown once, and automations it wrote would be
+  // disabled for good), while a demotion is one easily undone switch. They
+  // are returned so the dashboard can offer to revoke them.
+  const activeMcpTokens = demotedAdmin ? liveMcpTokensCreatedBy(userId).map((t) => t.name) : [];
+
+  const changedFields = [
+    ...(updates.username !== undefined && updates.username !== user.username
+      ? [`username ${user.username} -> ${updates.username}`]
+      : []),
+    ...(updates.email !== undefined && updates.email !== user.email ? ["email"] : []),
+  ];
+  if (changedFields.length > 0) {
+    writeAuditEntry("user_updated", "modify", `user=${user.username} id=${userId} ${changedFields.join(", ")}`, true, {
+      ...sessionAuditActor(c),
+      outcome: "success",
+    });
+  }
+
+  if (roleChanged) {
+    writeAuditEntry(
+      "user_role_changed",
+      "modify",
+      `user=${user.username} id=${userId} ${user.role} -> ${body.role}` +
+        (activeMcpTokens.length > 0 ? `; MCP tokens they created stay active (${activeMcpTokens.join(", ")})` : ""),
+      true,
+      { ...sessionAuditActor(c), outcome: "success" },
+    );
+  }
+
+  return c.json({ ok: true, ...(demotedAdmin ? { activeMcpTokens } : {}) });
 });
 
 /** DELETE /:id — delete user (cannot delete self) */
@@ -281,10 +380,27 @@ users.delete("/:id", (c) => {
   if (!user) {
     return c.json({ error: "User not found" }, 404);
   }
+  if (user.role === "admin" && countOtherAdmins(userId) === 0) {
+    return c.json({ error: "Cannot delete the last admin. Make another user an admin first." }, 400);
+  }
 
-  writeAuditEntry("user_deleted", "destructive", `user=${user.username} id=${userId}`);
-  db.delete(schema.users).where(eq(schema.users.id, userId)).run();
-  return c.json({ ok: true });
+  // Deleting the row ends the user's sessions (requireSession re-reads it).
+  let revoked: { names: string[]; affectedAutomations: number } = { names: [], affectedAutomations: 0 };
+  db.transaction(() => {
+    revoked = revokeMcpTokensCreatedBy(userId);
+    db.delete(schema.users).where(eq(schema.users.id, userId)).run();
+  });
+  writeAuditEntry(
+    "user_deleted",
+    "destructive",
+    `user=${user.username} id=${userId}` +
+      (revoked.names.length > 0
+        ? `; revoked MCP tokens (${revoked.names.join(", ")}); ${revoked.affectedAutomations} automation(s) they wrote will stop`
+        : ""),
+    true,
+    { ...sessionAuditActor(c), outcome: "success" },
+  );
+  return c.json({ ok: true, revokedMcpTokens: revoked.names, affectedAutomations: revoked.affectedAutomations });
 });
 
 /** POST /:id/reset-password — admin resets a user's password */
@@ -300,10 +416,18 @@ users.post("/:id/reset-password", async (c) => {
   }
 
   const passwordHash = await bcryptHash(body.password, BCRYPT_ROUNDS);
-  db.update(schema.users)
-    .set({ passwordHash })
-    .where(eq(schema.users.id, userId))
-    .run();
+  db.transaction(() => {
+    db.update(schema.users)
+      .set({ passwordHash })
+      .where(eq(schema.users.id, userId))
+      .run();
+    // A password reset signs the user out everywhere.
+    bumpSessionVersion(userId);
+  });
+  writeAuditEntry("user_password_reset", "modify", `user=${user.username} id=${userId}`, true, {
+    ...sessionAuditActor(c),
+    outcome: "success",
+  });
 
   return c.json({ ok: true });
 });
@@ -321,6 +445,12 @@ users.post("/:id/recovery-code", async (c) => {
     .set({ recoveryCodeHash })
     .where(eq(schema.users.id, userId))
     .run();
+  // A recovery code resets the password and signs in: record who minted one
+  // (never the code itself).
+  writeAuditEntry("user_recovery_code_regenerated", "modify", `user=${user.username} id=${userId}`, true, {
+    ...sessionAuditActor(c),
+    outcome: "success",
+  });
 
   return c.json({ ok: true, recoveryCode });
 });
@@ -347,6 +477,10 @@ users.put("/:id/permissions", async (c) => {
     .set({ permissions: JSON.stringify(body.permissions) })
     .where(eq(schema.users.id, userId))
     .run();
+  writeAuditEntry("user_permissions_changed", "modify", `user=${user.username} id=${userId}`, true, {
+    ...sessionAuditActor(c),
+    outcome: "success",
+  });
 
   return c.json({ ok: true });
 });
@@ -363,7 +497,7 @@ users.post("/bulk-permissions", async (c) => {
   }
 
   const serialized = JSON.stringify(body.permissions);
-  let updated = 0;
+  const updatedNames: string[] = [];
 
   for (const uid of body.userIds) {
     const user = db.select().from(schema.users).where(eq(schema.users.id, uid)).get();
@@ -372,11 +506,17 @@ users.post("/bulk-permissions", async (c) => {
         .set({ permissions: serialized })
         .where(eq(schema.users.id, uid))
         .run();
-      updated++;
+      updatedNames.push(user.username);
     }
   }
+  if (updatedNames.length > 0) {
+    writeAuditEntry("user_permissions_changed", "modify", `users=${updatedNames.join(", ")} (bulk)`, true, {
+      ...sessionAuditActor(c),
+      outcome: "success",
+    });
+  }
 
-  return c.json({ ok: true, updated });
+  return c.json({ ok: true, updated: updatedNames.length });
 });
 
 export { users };
