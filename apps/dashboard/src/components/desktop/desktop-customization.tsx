@@ -488,18 +488,17 @@ function DesktopWallpaperPicker({
         className="tm-window-titlebar grid h-10 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b px-2 active:cursor-grabbing"
         onPointerDown={onTitlebarPointerDown}
       >
-        <span />
-        <DialogTitle className="pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
+        <WindowControls
+          title="Desktop Wallpaper"
+          onClose={() => onOpenChange(false)}
+        />
+        <DialogTitle className="tm-cap-trim pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
           Desktop Wallpaper
         </DialogTitle>
         <DialogDescription className="sr-only">
           Choose a Talome or online wallpaper, or upload a custom image.
         </DialogDescription>
-        <WindowControls
-          title="Desktop Wallpaper"
-          className="justify-self-end"
-          onClose={() => onOpenChange(false)}
-        />
+        <span />
       </header>
 
       <div className="grid gap-4 p-4">

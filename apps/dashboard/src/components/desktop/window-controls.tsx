@@ -24,8 +24,9 @@ import {
 import { cn } from "@/lib/utils";
 
 /**
- * Talome's window controls: quiet monochrome buttons at the trailing edge of
- * the title bar instead of macOS traffic lights.
+ * Talome's window controls: quiet monochrome buttons at the leading edge of
+ * the title bar (Close, Minimize, Arrange, where people look for them)
+ * instead of macOS traffic lights.
  *
  * - Red, amber and green already mean critical, warning and healthy across
  *   Talome, so coloured dots in every title bar would read as status.
@@ -92,6 +93,15 @@ export function WindowControls({
       aria-label="Window controls"
       className={cn("flex shrink-0 items-center gap-0.5", className)}
     >
+      <button
+        type="button"
+        aria-label={`Close ${title}`}
+        className={cn(CONTROL_CLASS, tone, "hover:bg-status-critical/15 hover:text-status-critical")}
+        {...stopTitlebarGesture}
+        onClick={onClose}
+      >
+        <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.8} />
+      </button>
       {onMinimize && (
         <button
           type="button"
@@ -116,7 +126,7 @@ export function WindowControls({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            align="end"
+            align="start"
             sideOffset={6}
             className="z-[1400] w-48"
             onPointerDown={(event) => event.stopPropagation()}
@@ -143,15 +153,6 @@ export function WindowControls({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-      <button
-        type="button"
-        aria-label={`Close ${title}`}
-        className={cn(CONTROL_CLASS, tone, "hover:bg-status-critical/15 hover:text-status-critical")}
-        {...stopTitlebarGesture}
-        onClick={onClose}
-      >
-        <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.8} />
-      </button>
     </div>
   );
 }

@@ -2044,6 +2044,16 @@
   }
 }
 
+/* Optical centring for a line of text next to icons: trim the text box to the
+   capital letters so flex centring lines caps up with the icon centres in any
+   font. Equal padding above and below keeps room for descenders, so a
+   truncating label (overflow: hidden) never clips a g or a y. */
+.tm-cap-trim {
+  padding-block: 0.25em;
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+}
+
 /* The desktop greeting sits straight on the wallpaper */
 .desktop-greeting {
   color: oklch(0.985 0 0);

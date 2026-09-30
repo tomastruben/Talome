@@ -343,7 +343,7 @@ export const DesktopWindow = memo(function DesktopWindow({
               onDoubleClick={(event) => event.stopPropagation()}
             >
               {icon && <HugeiconsIcon icon={icon} size={14} />}
-              <span className="truncate">{action.label}</span>
+              <span className="tm-cap-trim truncate">{action.label}</span>
               <HugeiconsIcon icon={ArrowDown01Icon} size={11} className="shrink-0" />
             </button>
           </DropdownMenuTrigger>
@@ -382,7 +382,7 @@ export const DesktopWindow = memo(function DesktopWindow({
           onPointerDown={stopTitlebarGesture}
           onDoubleClick={(event) => event.stopPropagation()}
         >
-          {action.label}
+          <span className="tm-cap-trim">{action.label}</span>
           <Switch
             size="sm"
             checked={action.active === true}
@@ -410,7 +410,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         onClick={() => onAction?.(action.id)}
       >
         {icon && <HugeiconsIcon icon={icon} size={14} />}
-        {!isLeading && action.label}
+        {!isLeading && <span className="tm-cap-trim">{action.label}</span>}
       </button>
     );
   };
@@ -461,7 +461,7 @@ export const DesktopWindow = memo(function DesktopWindow({
                 )}
               />
             </span>
-            <span className={cn("font-medium", autoAction.active ? "text-status-warning" : "text-muted-foreground")}>Auto</span>
+            <span className={cn("tm-cap-trim font-medium", autoAction.active ? "text-status-warning" : "text-muted-foreground")}>Auto</span>
           </button>
         )}
         {remoteAction && (
@@ -499,7 +499,7 @@ export const DesktopWindow = memo(function DesktopWindow({
                 onDoubleClick={(event) => event.stopPropagation()}
               >
                 <HugeiconsIcon icon={SourceCodeCircleIcon} size={14} />
-                <span className="truncate">{agentAction.label}</span>
+                <span className="tm-cap-trim truncate">{agentAction.label}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -568,12 +568,23 @@ export const DesktopWindow = memo(function DesktopWindow({
     >
       <div
         className={cn(
-          "group/titlebar tm-window-titlebar grid h-10 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b pl-3.5 pr-2",
+          "group/titlebar tm-window-titlebar grid h-10 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b px-2",
         )}
         onPointerDown={startDrag}
         onDoubleClick={toggleMaximize}
       >
         <div className="flex min-w-0 items-center gap-2">
+          <WindowControls
+            className="mr-1"
+            title={title}
+            active={active}
+            layout={layout}
+            canRestore={canRestore}
+            onLayoutChange={arrange}
+            onRestore={restore}
+            onMinimize={onMinimize}
+            onClose={onClose}
+          />
           {leadingActions.length > 0 && (
             <div className="flex min-w-0 items-center gap-0.5" aria-label={`${title} navigation`}>
               {leadingActions.map(renderAction)}
@@ -582,7 +593,7 @@ export const DesktopWindow = memo(function DesktopWindow({
           <span
             data-title-placement="leading"
             className={cn(
-              "pointer-events-none min-w-0 truncate text-sm font-medium leading-5 transition-colors duration-150",
+              "tm-cap-trim pointer-events-none min-w-0 truncate text-sm font-medium leading-5 transition-colors duration-150",
               !active && "text-muted-foreground",
             )}
           >
@@ -596,19 +607,6 @@ export const DesktopWindow = memo(function DesktopWindow({
         >
           {otherTrailingActions.map(renderAction)}
           {renderTerminalControls()}
-          {trailingActions.length > 0 && (
-            <span className="mx-1.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
-          )}
-          <WindowControls
-            title={title}
-            active={active}
-            layout={layout}
-            canRestore={canRestore}
-            onLayoutChange={arrange}
-            onRestore={restore}
-            onMinimize={onMinimize}
-            onClose={onClose}
-          />
         </div>
       </div>
 
