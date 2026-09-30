@@ -338,15 +338,16 @@ export type DesktopCloseAction =
   | { kind: "hide"; message: string };
 
 /**
- * What Close does (D-P0-5). A window whose audiobook is loaded keeps playing
+ * What Close does (D-P0-5). A window whose audiobook is playing keeps playing
  * when closed, so it hides instead, and the caller must say so (the message
- * goes in a toast with Stop and Show). Every other window really closes.
+ * goes in a toast with Stop and Show). A paused book has nothing to keep
+ * running, so its window really closes, like every other window.
  */
 export function desktopCloseAction(
   windowId: string,
-  playback: { windowId: string; bookTitle?: string | null } | undefined,
+  playback: { windowId: string; bookTitle?: string | null; isPlaying: boolean } | undefined,
 ): DesktopCloseAction {
-  if (playback && playback.windowId === windowId && playback.bookTitle) {
+  if (playback && playback.windowId === windowId && playback.bookTitle && playback.isPlaying) {
     return { kind: "hide", message: `Still playing ${playback.bookTitle} · window hidden` };
   }
   return { kind: "close" };

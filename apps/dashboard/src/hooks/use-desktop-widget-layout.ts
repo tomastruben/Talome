@@ -99,6 +99,15 @@ export function useDesktopWidgetLayout() {
     )));
   }, [updateLayout]);
 
+  /** Show or hide one widget (Undo after Remove sets, never toggles). */
+  const setWidgetVisible = useCallback((instanceId: string, visible: boolean) => {
+    updateLayout((current) => current.map((widget) => (
+      widget.instanceId === instanceId && widget.visible !== visible
+        ? { ...widget, visible }
+        : widget
+    )));
+  }, [updateLayout]);
+
   const addWidget = useCallback((widgetType: WidgetType) => {
     updateLayout((current) => {
       const hidden = current.find((widget) => (
@@ -157,6 +166,7 @@ export function useDesktopWidgetLayout() {
   return {
     layout,
     toggleWidget,
+    setWidgetVisible,
     addWidget,
     reorderLayout,
     resizeWidget,

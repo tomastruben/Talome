@@ -8,6 +8,7 @@ const health = vi.hoisted(() => ({
     status: "online" | "offline" | "degraded";
     checks: Record<string, "ok" | "error">;
     since: string | null;
+    reachable?: boolean;
     recheck: () => void;
   },
 }));
@@ -25,7 +26,7 @@ vi.mock("@/hooks/use-is-online", async (importOriginal) => {
   return { ...actual, useIsOnline: () => (health.mocked ? health.value : actual.useIsOnline()) };
 });
 
-import { SystemHealthBanner, HEALTH_STATUS_HREF } from "@/components/system-health-banner";
+import { SystemHealthBanner, HEALTH_STATUS_HREF, formatHealthSince, healthBannerCopy } from "@/components/system-health-banner";
 import { planNotificationToasts, type ToastBridgeState } from "@/components/notifications/notification-toast-bridge";
 import { NotificationRow, notificationTimeAgo } from "@/components/notifications/notification-row";
 import { failingChecksLabel, parseDegradedBody, useIsOnline } from "@/hooks/use-is-online";
@@ -120,6 +121,19 @@ describe("health checks", () => {
       expect(result.current.since).not.toBeNull();
     });
 
+    it("marks early network failures as unreachable, so nothing offers the Assistant (regression)", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
+      const { result } = renderHook(() => useIsOnline());
+      // Three thrown checks: "degraded" by count, below the offline threshold.
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(result.current.status).toBe("degraded");
+      expect(result.current.reachable).toBe(false);
+      const copy = healthBannerCopy("degraded", result.current.checks, result.current.since, result.current.reachable);
+      expect(copy).toMatchObject({ unreachable: true, title: expect.stringContaining("Talome can't reach its server") });
+    });
+
     it("still goes offline when the server doesn't answer at all", async () => {
       vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
       const { result } = renderHook(() => useIsOnline());
@@ -175,8 +189,36 @@ describe("system health banner (P0-15)", () => {
     viewer.chat = false;
     health.value = { status: "degraded", checks: {}, since: null, recheck: vi.fn() };
     await renderBanner();
-    expect(screen.getByText("Talome is running with problems")).toBeInTheDocument();
+    expect(screen.getByText("Talome's server reported a problem")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "View status" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Diagnose with Talome" })).not.toBeInTheDocument();
+  });
+
+  it("offers Retry and no Diagnose while core is unreachable but not yet counted offline", async () => {
+    const recheck = vi.fn();
+    health.value = { status: "degraded", checks: {}, since: null, reachable: false, recheck };
+    await renderBanner();
+    expect(screen.getByText(/Talome can't reach its server/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Diagnose with Talome" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "View status" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(recheck).toHaveBeenCalledOnce();
+  });
+
+  it("announces only its words, not its buttons", async () => {
+    health.value = { status: "degraded", checks: { docker: "error" }, since: null, recheck: vi.fn() };
+    await renderBanner();
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Docker isn't responding");
+    expect(status.querySelector("button")).toBeNull();
+  });
+
+  it("dates a since-time from another day, and reads naturally", () => {
+    const now = new Date(2026, 8, 30, 9, 0).getTime();
+    const yesterday = new Date(2026, 8, 29, 23, 40).toISOString();
+    expect(formatHealthSince(yesterday, now)).not.toBe(formatHealthSince(new Date(2026, 8, 30, 23, 40).toISOString(), now));
+    expect(formatHealthSince(yesterday, now)).toMatch(/29/);
+    const copy = healthBannerCopy("degraded", { docker: "error" }, new Date(2026, 8, 30, 8, 2).toISOString(), true, now);
+    expect(copy.title).toMatch(/^Docker hasn't responded since /);
   });
 });

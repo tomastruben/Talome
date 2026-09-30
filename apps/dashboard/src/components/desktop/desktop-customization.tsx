@@ -31,6 +31,8 @@ import {
   type WidgetLayoutController,
 } from "@/components/widgets/widget-grid";
 import { cn } from "@/lib/utils";
+import { toastWarning } from "@/lib/toast";
+import { WINDOW_CONTROL_GLYPH_CLASS } from "@/components/desktop/desktop-window";
 
 const MAX_WALLPAPER_BYTES = 2 * 1024 * 1024;
 const WALLPAPER_DIALOG_VIEWPORT_MARGIN = 16;
@@ -558,6 +560,23 @@ export function DesktopWidgetsPanel({
   );
 }
 
+export const WALLPAPER_ACCOUNT_SAVE_FAILED = "Wallpaper saved on this browser only. Couldn't save it to your account.";
+
+/**
+ * A failed account save is shown inside the wallpaper dialog. Choosing a
+ * wallpaper and closing the dialog right away is the common flow, so when
+ * the dialog is already closed the failure goes in a warning toast instead,
+ * with the same Retry. Returns whether a toast was shown.
+ */
+export function reportWallpaperAccountSaveFailure(dialogOpen: boolean, retry: () => void): boolean {
+  if (dialogOpen) return false;
+  toastWarning(WALLPAPER_ACCOUNT_SAVE_FAILED, {
+    id: "desktop-wallpaper-account-save",
+    action: { label: "Retry", onClick: retry },
+  });
+  return true;
+}
+
 /** Whether the wallpaper reached the account (other devices), after it was applied here. */
 export type WallpaperAccountSave =
   | { status: "idle" }
@@ -651,7 +670,7 @@ function DesktopWallpaperPicker({
         <div className="-ml-1.5 flex items-center" role="group" aria-label="Window controls">
           <button
             type="button"
-            aria-label="Close Desktop Wallpaper"
+            aria-label="Close desktop wallpaper"
             className="group/control relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:bg-window-close before:ring-1 before:ring-inset before:ring-window-control-edge focus-visible:ring-2 focus-visible:ring-ring"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => onOpenChange(false)}
@@ -661,12 +680,12 @@ function DesktopWallpaperPicker({
               size={10}
               strokeWidth={2.5}
               aria-hidden="true"
-              className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-black/70 opacity-0 transition-opacity duration-100 group-hover/control:opacity-100 group-focus-visible/control:opacity-100"
+              className={cn(WINDOW_CONTROL_GLYPH_CLASS, "group-hover/control:opacity-100 group-focus-visible/control:opacity-100 contrast-more:opacity-100")}
             />
           </button>
         </div>
         <DialogTitle className="pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
-          Desktop Wallpaper
+          Desktop wallpaper
         </DialogTitle>
         <DialogDescription className="sr-only">
           Choose a Talome wallpaper or upload a custom image.
@@ -746,7 +765,8 @@ function DesktopWallpaperPicker({
         {accountSave?.status === "failed" ? (
           <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground" role="alert">
             <span>Saved on this browser only. Couldn&apos;t save to your account.</span>
-            <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={accountSave.retry}>
+            {/* A 24px target at least (WCAG 2.5.8), not a bare text link. */}
+            <Button type="button" variant="outline" size="xs" onClick={accountSave.retry}>
               Retry
             </Button>
           </p>

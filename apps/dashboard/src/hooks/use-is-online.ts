@@ -13,6 +13,13 @@ export interface HealthState {
   checkedAt: string;
   /** When the current non-online status began (ISO), null while online. */
   since: string | null;
+  /**
+   * False when the last check never reached core (the request failed, or a
+   * proxy answered 502 or a bare 503). While "degraded" is only a count of
+   * network failures below the offline threshold, the server can't be asked
+   * anything, so nothing that runs on it (the Assistant) may be offered.
+   */
+  reachable: boolean;
 }
 
 export interface UseIsOnlineResult extends HealthState {
@@ -20,7 +27,7 @@ export interface UseIsOnlineResult extends HealthState {
   recheck: () => void;
 }
 
-const DEFAULT_HEALTH: HealthState = { status: "online", checks: {}, uptime: 0, checkedAt: new Date(0).toISOString(), since: null };
+const DEFAULT_HEALTH: HealthState = { status: "online", checks: {}, uptime: 0, checkedAt: new Date(0).toISOString(), since: null, reachable: true };
 
 export { failingChecksLabel, parseDegradedBody } from "@/lib/health";
 
@@ -68,7 +75,7 @@ export function useIsOnline(): UseIsOnlineResult {
         if (degraded) {
           networkFailuresRef.current = 0;
           degradedSignalsRef.current += 1;
-          setDegradedIfConfirmed({ status: "degraded", ...degraded });
+          setDegradedIfConfirmed({ status: "degraded", ...degraded, reachable: true });
           return;
         }
       }
@@ -78,9 +85,9 @@ export function useIsOnline(): UseIsOnlineResult {
         networkFailuresRef.current += 1;
         degradedSignalsRef.current += 1;
         if (networkFailuresRef.current >= OFFLINE_THRESHOLD) {
-          setHealthStable({ status: "offline", checks: {}, uptime: 0 });
+          setHealthStable({ status: "offline", checks: {}, uptime: 0, reachable: false });
         } else {
-          setDegradedIfConfirmed({ status: "degraded", checks: {}, uptime: 0 });
+          setDegradedIfConfirmed({ status: "degraded", checks: {}, uptime: 0, reachable: false });
         }
         return;
       }
@@ -100,6 +107,7 @@ export function useIsOnline(): UseIsOnlineResult {
             status: "degraded",
             checks: data?.checks ?? {},
             uptime: data?.uptime ?? 0,
+            reachable: true,
           });
         } else {
           degradedSignalsRef.current = 0;
@@ -107,6 +115,7 @@ export function useIsOnline(): UseIsOnlineResult {
             status: "online",
             checks: data?.checks ?? {},
             uptime: data?.uptime ?? 0,
+            reachable: true,
           });
         }
         return;
@@ -114,14 +123,14 @@ export function useIsOnline(): UseIsOnlineResult {
 
       networkFailuresRef.current = 0;
       degradedSignalsRef.current += 1;
-      setDegradedIfConfirmed({ status: "degraded", checks: {}, uptime: 0 });
+      setDegradedIfConfirmed({ status: "degraded", checks: {}, uptime: 0, reachable: true });
     } catch {
       networkFailuresRef.current += 1;
       degradedSignalsRef.current += 1;
       if (networkFailuresRef.current >= OFFLINE_THRESHOLD) {
-        setHealthStable({ status: "offline", checks: {}, uptime: 0 });
+        setHealthStable({ status: "offline", checks: {}, uptime: 0, reachable: false });
       } else {
-        setDegradedIfConfirmed({ status: "degraded", checks: {}, uptime: 0 });
+        setDegradedIfConfirmed({ status: "degraded", checks: {}, uptime: 0, reachable: false });
       }
     }
   }, [setHealthStable, setDegradedIfConfirmed]);

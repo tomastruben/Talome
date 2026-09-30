@@ -31,36 +31,61 @@ export const HEALTH_BANNER_TONE = {
 /** Where "View status" leads: the server's own processes, with Restart. */
 export const HEALTH_STATUS_HREF = "/dashboard/settings#services";
 
-function formatSince(since: string | null | undefined): string | null {
+/**
+ * "14:02" today, "29 Sep, 23:40" on another day: a bare time after
+ * midnight would point at the wrong day.
+ */
+export function formatHealthSince(since: string | null | undefined, now = Date.now()): string | null {
   if (!since) return null;
   const date = new Date(since);
   if (!Number.isFinite(date.getTime())) return null;
-  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date);
+  const today = new Date(now);
+  const sameDay = date.getFullYear() === today.getFullYear()
+    && date.getMonth() === today.getMonth()
+    && date.getDate() === today.getDate();
+  return new Intl.DateTimeFormat(undefined, sameDay
+    ? { hour: "2-digit", minute: "2-digit" }
+    : { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
 export interface HealthBannerCopy {
   title: string;
   detail: string;
+  /**
+   * The server itself can't be reached (offline, or network failures not yet
+   * counted as offline): offer Retry, never the Assistant, which runs there.
+   */
+  unreachable: boolean;
 }
 
-/** The banner's words: what is wrong, in the person's terms, and since when. */
+/** The words for a server that isn't healthy: what is wrong, in the person's terms, since when, and the fix. */
 export function healthBannerCopy(
   status: Exclude<OnlineStatus, "online">,
   checks: Record<string, "ok" | "error"> = {},
   since?: string | null,
+  reachable = true,
+  now = Date.now(),
 ): HealthBannerCopy {
-  const at = formatSince(since);
-  const sinceText = at ? ` since ${at}` : "";
-  if (status === "offline") {
+  const at = formatHealthSince(since, now);
+  if (status === "offline" || !reachable) {
     return {
-      title: `Talome can't reach its server${sinceText}`,
+      title: `Talome can't reach its server${at ? ` since ${at}` : ""}`,
       detail: "Check that the Talome server is running. Talome keeps retrying.",
+      unreachable: true,
     };
   }
   const failing = failingChecksLabel(checks);
+  if (failing) {
+    return {
+      title: at ? `${capitalize(failing)} hasn't responded since ${at}` : `${capitalize(failing)} isn't responding`,
+      detail: "Apps may not start, stop or update until this is fixed. Check the status, or ask Talome to diagnose it.",
+      unreachable: false,
+    };
+  }
   return {
-    title: failing ? `${capitalize(failing)} isn't responding${sinceText}` : `Talome is running with problems${sinceText}`,
-    detail: "Apps may not start, stop or update until this is fixed.",
+    title: `Talome's server reported a problem${at ? ` at ${at}` : ""}`,
+    detail: "Apps may not start, stop or update until this is fixed. Check the status, or ask Talome to diagnose it.",
+    unreachable: false,
   };
 }
 
@@ -78,21 +103,20 @@ function capitalize(text: string): string {
 }
 
 export function SystemHealthBanner() {
-  const { status, checks, since, recheck } = useIsOnline();
+  const { status, checks, since, reachable, recheck } = useIsOnline();
   const { isAdmin, hasPermission } = useUser();
 
   if (status === "online") return null;
 
-  const isOffline = status === "offline";
-  const tone = isOffline ? HEALTH_BANNER_TONE.offline : HEALTH_BANNER_TONE.degraded;
-  const copy = healthBannerCopy(status, checks, since);
+  const copy = healthBannerCopy(status, checks, since, reachable !== false);
+  const unreachable = copy.unreachable;
+  const tone = unreachable ? HEALTH_BANNER_TONE.offline : HEALTH_BANNER_TONE.degraded;
   // The Assistant runs on the same server: offer it only while that server answers.
-  const canDiagnose = !isOffline && hasPermission("chat");
+  const canDiagnose = !unreachable && hasPermission("chat");
 
   return (
     <Banner
-      key={status}
-      role="status"
+      key={unreachable ? "unreachable" : "degraded"}
       className={cn(
         "text-foreground rounded-none border-b motion-safe:animate-in motion-safe:fade-in-80",
         tone.banner,
@@ -100,17 +124,18 @@ export function SystemHealthBanner() {
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <BannerIcon
-          icon={isOffline ? AlertCircleIcon : Alert02Icon}
+          icon={unreachable ? AlertCircleIcon : Alert02Icon}
           aria-hidden="true"
           className={cn("border-current/20 bg-transparent shadow-none", tone.accent)}
         />
-        <div className="min-w-0">
+        {/* Only the words are announced; the buttons are not part of the live region. */}
+        <div role="status" className="min-w-0">
           <BannerTitle className="text-sm font-medium">{copy.title}</BannerTitle>
           <p className="text-xs text-foreground">{copy.detail}</p>
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {isOffline ? (
+        {unreachable ? (
           <Button variant="ghost" size="sm" className="h-7 text-foreground hover:bg-foreground/10" onClick={() => recheck?.()}>
             Retry
           </Button>
@@ -125,7 +150,7 @@ export function SystemHealthBanner() {
             Diagnose with Talome
           </Button>
         ) : null}
-        {!isOffline && isAdmin ? (
+        {!unreachable && isAdmin ? (
           <Button variant="ghost" size="sm" className="h-7 text-foreground hover:bg-foreground/10" asChild>
             <Link href={HEALTH_STATUS_HREF}>View status</Link>
           </Button>

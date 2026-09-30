@@ -41,6 +41,8 @@ import { usePendingApprovals } from "@/components/trust/api";
 import type { IconSvgElement } from "@/components/icons";
 import { Spinner } from "@/components/ui/spinner";
 import { ServicesSection } from "@/components/system/services-section";
+import { logOut } from "@/lib/session";
+import { toast } from "sonner";
 
 interface SettingsLink {
   slug: string;
@@ -235,7 +237,7 @@ function ServerModeToggle() {
   );
 }
 
-function GeneralInline() {
+function GeneralInline({ isAdmin }: { isAdmin: boolean }) {
   const [mounted, setMounted] = useState(false);
   const { theme, setTheme } = useTheme();
   const { data: system } = useSWR<{ dockerSocket?: string }>(
@@ -255,7 +257,8 @@ function GeneralInline() {
             onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
           />
         )}
-        <ServerModeToggle />
+        {/* Switching the server mode restarts it: administration, like Services below. */}
+        {isAdmin ? <ServerModeToggle /> : null}
         <InfoRow label="Docker Socket" value={system?.dockerSocket ?? "detecting…"} />
       </SettingsGroup>
     </section>
@@ -265,12 +268,14 @@ function GeneralInline() {
 function LogoutButton() {
   const router = useRouter();
 
+  // Navigate only once the server ended the session (D-P0-6); otherwise say so, with Retry.
   const handleLogout = async () => {
-    await fetch(`${CORE_URL}/api/auth/logout`, {
-      method: "POST",
-      credentials: "include",
-    });
-    router.push("/");
+    const result = await logOut();
+    if (result.ok) {
+      router.push("/");
+      return;
+    }
+    toast.error(result.error, { action: { label: "Retry", onClick: () => void handleLogout() } });
   };
 
   return (
@@ -296,8 +301,9 @@ export default function SettingsPage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl min-w-0 grid gap-8 pb-12">
-      <GeneralInline />
-      <ServicesSection heading={<CategoryLabel>Services</CategoryLabel>} />
+      <GeneralInline isAdmin={isAdmin} />
+      {/* Restarting core, the dashboard or the terminal (every shell and Claude Code session) is admin-only. */}
+      {isAdmin ? <ServicesSection heading={<CategoryLabel>Services</CategoryLabel>} /> : null}
       <SettingsCategory label="Access" items={GENERAL_ITEMS} isAdmin={isAdmin} />
       <SettingsCategory label="AI" items={AI_ITEMS} isAdmin={isAdmin} badges={{ approvals: pendingApprovals }} />
       <SettingsCategory label="Infrastructure" items={INFRASTRUCTURE_ITEMS} isAdmin={isAdmin} />

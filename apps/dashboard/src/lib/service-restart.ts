@@ -48,9 +48,17 @@ export function processDotState(proc: SupervisorProcess | undefined): { state: P
   }
 }
 
-/** Which processes a restart request covers. */
-export function restartTargets(service: SupervisedService | "all"): SupervisedService[] {
-  return service === "all" ? [...SUPERVISED_SERVICES] : [service];
+/**
+ * Which processes a restart request covers. "All" means the processes the
+ * supervisor actually runs (a build without the standalone dashboard has no
+ * dashboard entry, and waiting for it would always time out).
+ */
+export function restartTargets(service: SupervisedService | "all", before?: SupervisorState | null): SupervisedService[] {
+  if (service !== "all") return [service];
+  const running = before?.processes
+    ? SUPERVISED_SERVICES.filter((key) => before.processes[key] !== undefined)
+    : [];
+  return running.length > 0 ? running : [...SUPERVISED_SERVICES];
 }
 
 /**
@@ -80,8 +88,35 @@ export interface InFlightWork {
   evolutionRuns: number;
   /** The Assistant is replying in this browser. */
   assistantReplying: boolean;
+  /** Open terminal sessions (shells, Claude Code), which a terminal restart kills. */
+  terminalSessions: string[];
   /** A check failed, so running work could not be ruled out. */
   unknown: boolean;
+}
+
+/** What a restart of each service can interrupt, so only those checks run. */
+export interface InFlightScope {
+  /** App operations, self-improvement runs and Assistant replies run in core. */
+  core: boolean;
+  /** Terminal sessions run in the terminal daemon. */
+  terminal: boolean;
+}
+
+/**
+ * Core restarts interrupt core's work; a terminal restart kills its sessions;
+ * a dashboard restart interrupts nothing (the page reconnects on its own).
+ */
+export function inFlightScope(service: SupervisedService | "all"): InFlightScope {
+  switch (service) {
+    case "core":
+      return { core: true, terminal: false };
+    case "terminal_daemon":
+      return { core: false, terminal: true };
+    case "dashboard":
+      return { core: false, terminal: false };
+    default:
+      return { core: true, terminal: true };
+  }
 }
 
 const KIND_VERBS: Record<string, string> = {
@@ -103,7 +138,11 @@ export function describeOperation(op: { kind: string; appId: string }): string {
 }
 
 export function hasInFlightWork(work: InFlightWork): boolean {
-  return work.operations.length > 0 || work.evolutionRuns > 0 || work.assistantReplying || work.unknown;
+  return work.operations.length > 0
+    || work.evolutionRuns > 0
+    || work.assistantReplying
+    || work.terminalSessions.length > 0
+    || work.unknown;
 }
 
 /**
@@ -122,6 +161,12 @@ export function inFlightConsequence(work: InFlightWork, service: SupervisedServi
     parts.push(work.evolutionRuns === 1 ? "a self-improvement run" : `${work.evolutionRuns} self-improvement runs`);
   }
   if (work.assistantReplying) parts.push("the Assistant's reply");
+  if (work.terminalSessions.length > 0) {
+    const count = work.terminalSessions.length;
+    const named = work.terminalSessions.slice(0, 2).join(", ");
+    const more = count > 2 ? ` and ${count - 2} more` : "";
+    parts.push(`${count === 1 ? "1 terminal session" : `${count} terminal sessions`} (${named}${more})`);
+  }
   const what = service === "all" ? "Restarting every service" : `Restarting ${SERVICE_LABELS[service]}`;
   if (parts.length === 0) {
     return `${what} may interrupt running work: Talome couldn't check what is running.`;
@@ -137,7 +182,8 @@ function joinWords(parts: string[]): string {
 export type RestartOutcome =
   | { ok: true }
   | { ok: false; reason: "request"; error: string }
-  | { ok: false; reason: "timeout" };
+  | { ok: false; reason: "timeout" }
+  | { ok: false; reason: "cancelled" };
 
 export interface RestartDeps {
   /** POST /api/supervisor/restart. */
@@ -146,6 +192,19 @@ export interface RestartDeps {
   readStatus: () => Promise<SupervisorState | null>;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
+  /** Stops polling (the page went away); resolves as `cancelled`. */
+  signal?: AbortSignal;
+}
+
+/**
+ * The dashboard serves this page and proxies the request to core, and core
+ * SIGKILLs the dashboard (and, for "all", itself) before it answers: the
+ * request fails because the restart is happening. For those, a failed
+ * request still goes on to verify under a new pid, which a restart that
+ * never happened can't fake.
+ */
+export function requestMayDieWithRestart(service: SupervisedService | "all"): boolean {
+  return service === "dashboard" || service === "all";
 }
 
 export const RESTART_POLL_MS = 1_000;
@@ -158,22 +217,27 @@ export async function runVerifiedRestart(
   deps: RestartDeps,
   { pollMs = RESTART_POLL_MS, timeoutMs = RESTART_TIMEOUT_MS }: { pollMs?: number; timeoutMs?: number } = {},
 ): Promise<RestartOutcome> {
-  let res: Response;
+  let res: Response | null = null;
   try {
     res = await deps.request(service === "all" ? undefined : service);
   } catch {
-    return { ok: false, reason: "request", error: "Couldn't reach Talome to restart. Check your connection, then retry." };
+    if (!requestMayDieWithRestart(service)) {
+      return { ok: false, reason: "request", error: "Couldn't reach Talome to restart. Check your connection, then retry." };
+    }
   }
-  if (!res.ok) {
+  // A 502 from the dying proxy is the same case as a dropped connection.
+  if (res && !res.ok && !(res.status === 502 && requestMayDieWithRestart(service))) {
     const body = await res.json().catch(() => null) as { error?: unknown } | null;
     const detail = typeof body?.error === "string" && body.error ? body.error : `the server answered ${res.status}`;
     return { ok: false, reason: "request", error: `Couldn't restart: ${detail}.` };
   }
 
-  const targets = restartTargets(service);
+  const targets = restartTargets(service, before);
   const started = deps.now();
   while (deps.now() - started < timeoutMs) {
+    if (deps.signal?.aborted) return { ok: false, reason: "cancelled" };
     await deps.sleep(pollMs);
+    if (deps.signal?.aborted) return { ok: false, reason: "cancelled" };
     let state: SupervisorState | null = null;
     try {
       state = await deps.readStatus();

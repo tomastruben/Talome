@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
+import { Dialog as DialogPrimitive } from "radix-ui";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
@@ -20,7 +20,7 @@ import { usePendingApprovals } from "@/components/trust/api";
 import { Badge } from "@/components/ui/badge";
 import { TalomeMark } from "@/components/talome-mark";
 import { cn } from "@/lib/utils";
-import { DURATION, EASE_ENTER, EASE_EXIT } from "@/lib/motion";
+import { DURATION, EASE_EXIT, enter } from "@/lib/motion";
 import { openPalette } from "@/lib/palette";
 import { logOut, roleLabel } from "@/lib/session";
 import { allNav, approvalsNavItem, visibleNavItems, type NavItem } from "./nav-config";
@@ -30,9 +30,10 @@ import { NotificationsBell } from "@/components/notifications/notifications-bell
 /** Nav download badge: 10s while something is downloading, 30s otherwise. */
 const NAV_DOWNLOADS_INTERVAL = adaptiveDownloadsInterval(10_000);
 
-/** Panel motion (spec §3.2, P1-3): opacity and scale 0.98→1 in 160ms, out in 120ms. No spring, no stagger. */
-const PANEL_ENTER = { duration: 0.16, ease: EASE_ENTER } as const;
-const PANEL_EXIT = { duration: DURATION.exitFast, ease: EASE_EXIT } as const;
+/** A modal panel (spec §3.2): opacity and scale 0.98→1 in 180ms, out in 140ms; scrim fades in 150ms. No spring, no stagger. */
+const PANEL_ENTER = enter(DURATION.base);
+const PANEL_EXIT = { duration: DURATION.exit, ease: EASE_EXIT } as const;
+const SCRIM_ENTER = { duration: DURATION.fast, ease: EASE_EXIT } as const;
 
 interface MobileNavProps {
   open: boolean;
@@ -63,6 +64,8 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
   const [mounted, setMounted] = useState(false);
   const initialMount = useRef(true);
   const panelRef = useRef<HTMLDivElement>(null);
+  /** Where focus was when the panel opened (the menu button); it goes back there on close. */
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const reduceMotion = useReducedMotion();
   const { resolvedTheme, setTheme } = useTheme();
   const isDark = mounted && resolvedTheme === "dark";
@@ -80,22 +83,8 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  // Close on Escape; move focus into the panel and back to the trigger.
-  useEffect(() => {
-    if (!open) return;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const frame = window.requestAnimationFrame(() => panelRef.current?.focus());
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      document.removeEventListener("keydown", handler);
-      previouslyFocused?.focus?.();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  // Escape, the scrim, the focus trap and hiding the page behind from
+  // assistive tech come from the Radix dialog below (spec §6.3).
 
   function isActive(url: string) {
     if (url === "/dashboard") return pathname === "/dashboard";
@@ -127,28 +116,46 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
   const iconButtonClass =
     "flex items-center justify-center size-11 rounded-xl text-muted-foreground hover:bg-muted/60 hover:text-foreground active:bg-muted/80 transition-colors duration-150 select-none cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
-  return createPortal(
-    <AnimatePresence>
-      {open && (
-        <>
-          {/* Scrim */}
-          <motion.div
-            key="backdrop"
-            className="fixed inset-0 z-50 bg-scrim"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1, transition: PANEL_ENTER }}
-            exit={{ opacity: 0, transition: PANEL_EXIT }}
-            onClick={onClose}
-            aria-hidden="true"
-          />
+  return (
+    <DialogPrimitive.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (next) return;
+        onClose();
+      }}
+    >
+      <AnimatePresence>
+        {open && (
+          <DialogPrimitive.Portal forceMount>
+            {/* Scrim */}
+            <DialogPrimitive.Overlay asChild forceMount>
+              <motion.div
+                key="backdrop"
+                className="fixed inset-0 z-50 bg-scrim"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1, transition: SCRIM_ENTER }}
+                exit={{ opacity: 0, transition: PANEL_EXIT }}
+              />
+            </DialogPrimitive.Overlay>
 
-          {/* Floating panel */}
+            {/* Floating panel: a modal dialog, so Tab stays inside and the page behind is hidden. */}
+            <DialogPrimitive.Content
+              asChild
+              forceMount
+              aria-describedby={undefined}
+              onOpenAutoFocus={(event) => {
+                event.preventDefault();
+                returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                panelRef.current?.focus();
+              }}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                returnFocusRef.current?.focus?.();
+              }}
+            >
           <motion.div
             key="panel"
             ref={panelRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Navigation"
             tabIndex={-1}
             className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(340px,calc(100vw-2rem))] outline-none"
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.98 }}
@@ -157,6 +164,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
               ? { opacity: 0, transition: PANEL_EXIT }
               : { opacity: 0, scale: 0.98, transition: PANEL_EXIT }}
           >
+            <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
             <div className="rounded-2xl border border-border bg-surface-modal shadow-lg overflow-hidden">
               <div className="flex items-center justify-center px-4 pt-4 pb-2.5 gap-2.5">
                 <TalomeMark size={16} className="text-muted-foreground" />
@@ -197,7 +205,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
                           />
                         ) : null}
                         {approvals > 0 ? (
-                          <Badge variant="count" className="absolute -top-1.5 -right-2.5" data-nav-indicator="needs-you">
+                          <Badge variant="count" aria-hidden="true" className="absolute -top-1.5 -right-2.5" data-nav-indicator="needs-you">
                             {approvals}
                           </Badge>
                         ) : null}
@@ -256,9 +264,10 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
               </div>
             </div>
           </motion.div>
-        </>
-      )}
-    </AnimatePresence>,
-    document.body
+            </DialogPrimitive.Content>
+          </DialogPrimitive.Portal>
+        )}
+      </AnimatePresence>
+    </DialogPrimitive.Root>
   );
 }

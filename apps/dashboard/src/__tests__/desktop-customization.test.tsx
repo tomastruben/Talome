@@ -1,8 +1,17 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+
+const toastMock = vi.hoisted(() => ({ warning: vi.fn() }));
+vi.mock("sonner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("sonner")>()),
+  toast: Object.assign(vi.fn(), { warning: toastMock.warning, success: vi.fn(), error: vi.fn() }),
+}));
+
 import {
   DesktopWallpaperDialog,
+  WALLPAPER_ACCOUNT_SAVE_FAILED,
   normalizeDesktopWallpaperUrl,
+  reportWallpaperAccountSaveFailure,
 } from "@/components/desktop/desktop-customization";
 
 describe("normalizeDesktopWallpaperUrl", () => {
@@ -39,13 +48,13 @@ describe("DesktopWallpaperDialog", () => {
       />,
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Desktop Wallpaper" });
+    const dialog = screen.getByRole("dialog", { name: "Desktop wallpaper" });
     const titlebar = dialog.querySelector<HTMLElement>("[data-wallpaper-drag-handle]");
     expect(titlebar).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Close Desktop Wallpaper" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close desktop wallpaper" })).toBeVisible();
     // A dialog has only the close light: no disabled minimize/zoom dots posing as controls (D-P1-11).
-    expect(screen.queryByRole("button", { name: "Minimize Desktop Wallpaper" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Maximize Desktop Wallpaper" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Minimize desktop wallpaper" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Maximize desktop wallpaper" })).not.toBeInTheDocument();
 
     vi.spyOn(dialog, "getBoundingClientRect").mockReturnValue({
       bottom: 740,
@@ -196,5 +205,16 @@ describe("DesktopWallpaperDialog account save (D-P0-6)", () => {
     expect(screen.getByText(/Saved on this browser only/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("says so in a toast, with Retry, when the dialog was closed before the save failed (regression)", () => {
+    const retry = vi.fn();
+    toastMock.warning.mockReset();
+    expect(reportWallpaperAccountSaveFailure(true, retry)).toBe(false);
+    expect(toastMock.warning).not.toHaveBeenCalled();
+    expect(reportWallpaperAccountSaveFailure(false, retry)).toBe(true);
+    expect(toastMock.warning).toHaveBeenCalledWith(WALLPAPER_ACCOUNT_SAVE_FAILED, expect.objectContaining({
+      action: expect.objectContaining({ label: "Retry", onClick: retry }),
+    }));
   });
 });

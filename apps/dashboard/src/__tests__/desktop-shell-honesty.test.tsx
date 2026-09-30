@@ -31,12 +31,27 @@ import {
   DESKTOP_MINIMIZE_SCALE,
 } from "@/lib/desktop-window-state";
 import { DESKTOP_LAYER } from "@/lib/desktop-layers";
-import { desktopDockItemName, desktopServiceStatusLookup, isServiceUnavailable } from "@/lib/desktop-service-state";
+import {
+  SERVICE_DOWN_GRACE_MS,
+  advanceServiceWindowGates,
+  desktopDockItemName,
+  desktopServiceStartPath,
+  desktopServiceStatusLookup,
+  isServiceUnavailable,
+  nextServiceWindowGate,
+  showsServiceUnavailable,
+  withActiveOperation,
+} from "@/lib/desktop-service-state";
 import { extractLaunchableApps } from "@/components/widgets/launcher-widget";
 import { DesktopClock, msUntilNextMinute } from "@/components/desktop/desktop-clock";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DesktopServiceUnavailable } from "@/components/desktop/desktop-service-unavailable";
-import { DesktopApprovalsButton, approvalsWaitingLabel } from "@/components/desktop/desktop-approvals-button";
+import {
+  DesktopApprovalsButton,
+  approvalDetailLine,
+  approvalsWaitingLabel,
+  splitApprovalSummary,
+} from "@/components/desktop/desktop-approvals-button";
 import { logOut } from "@/lib/session";
 import { modeSaveFailureMessage, reportModeSave } from "@/lib/dashboard-mode-save";
 import { launchpadMatchRank } from "@/components/desktop/desktop-launchpad";
@@ -89,10 +104,14 @@ describe("window stacking (D-P0-4)", () => {
 
 describe("closing a window that is still playing (D-P0-5)", () => {
   it("hides and announces instead of silently minimizing", () => {
-    expect(desktopCloseAction("audiobooks", { windowId: "audiobooks", bookTitle: "Dune" }))
+    expect(desktopCloseAction("audiobooks", { windowId: "audiobooks", bookTitle: "Dune", isPlaying: true }))
       .toEqual({ kind: "hide", message: "Still playing Dune · window hidden" });
-    expect(desktopCloseAction("files", { windowId: "audiobooks", bookTitle: "Dune" })).toEqual({ kind: "close" });
-    expect(desktopCloseAction("audiobooks", { windowId: "audiobooks", bookTitle: null })).toEqual({ kind: "close" });
+    expect(desktopCloseAction("files", { windowId: "audiobooks", bookTitle: "Dune", isPlaying: true })).toEqual({ kind: "close" });
+    expect(desktopCloseAction("audiobooks", { windowId: "audiobooks", bookTitle: null, isPlaying: false })).toEqual({ kind: "close" });
+  });
+
+  it("really closes a window whose book is paused, instead of claiming it is still playing (regression)", () => {
+    expect(desktopCloseAction("audiobooks", { windowId: "audiobooks", bookTitle: "Dune", isPlaying: false })).toEqual({ kind: "close" });
   });
 });
 
@@ -119,22 +138,90 @@ const stack = (containers: Container[], extra: Partial<ServiceStack> = {}): Serv
   primaryContainer: containers[0], containers, ...extra,
 } as ServiceStack);
 
+describe("menu-bar clock date", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shows the full date to keyboard users, not only on hover", async () => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+    render(<TooltipProvider delayDuration={0}><DesktopClock /></TooltipProvider>);
+    const time = document.querySelector("time")!;
+    expect(time).toHaveAttribute("tabindex", "0");
+    act(() => { time.focus(); });
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(String(new Date().getFullYear()));
+  });
+});
+
 describe("service state in the dock and Launchpad (D-P0-3)", () => {
   it("reads state from the container, and says missing only when the list loaded", () => {
     const lookup = desktopServiceStatusLookup([
       stack([container("jellyfin", "running")]),
-      stack([container("sonarr", "stopped")]),
-      stack([container("radarr", "exited")]),
+      stack([container("sonarr", "exited", { exitCode: 143 })]),
+      stack([container("radarr", "exited", { exitCode: 137 })]),
       stack([container("lidarr", "restarting")]),
+      stack([container("bazarr", "created")]),
     ], true);
     expect(lookup("jellyfin").state).toBe("running");
     expect(lookup("sonarr").state).toBe("stopped");
     expect(lookup("radarr").state).toBe("unhealthy");
-    expect(lookup("lidarr").state).toBe("unhealthy");
+    expect(lookup("lidarr")).toMatchObject({ state: "working", activity: "Restarting" });
+    expect(lookup("bazarr").state).toBe("stopped");
     expect(lookup("gone").state).toBe("missing");
     expect(desktopServiceStatusLookup([], false)("gone").state).toBe("unknown");
     expect(isServiceUnavailable("stopped")).toBe(true);
+    expect(isServiceUnavailable("working")).toBe(false);
     expect(isServiceUnavailable("unknown")).toBe(false);
+  });
+
+  it("shows a deliberately stopped app as stopped, not unhealthy, when the exit code is unknown (regression)", () => {
+    // `docker stop` leaves State "exited"; a core that doesn't report the exit code must not paint it red.
+    const lookup = desktopServiceStatusLookup([stack([container("jellyfin", "exited")])], true);
+    expect(lookup("jellyfin").state).toBe("stopped");
+    expect(desktopDockItemName({ label: "Jellyfin", running: false, serviceState: lookup("jellyfin").state })).toBe("Jellyfin, stopped");
+  });
+
+  it("keeps a loaded page through a restart instead of replacing it (regression)", () => {
+    const lookup = desktopServiceStatusLookup([stack([container("jellyfin", "restarting")])], true);
+    const entry = { windowId: "w1", state: lookup("jellyfin").state, frameLoaded: true };
+    expect(showsServiceUnavailable(entry, nextServiceWindowGate(undefined, { ...entry, now: 0 }))).toBe(false);
+    expect(desktopDockItemName({ label: "Jellyfin", running: true, serviceState: "working", serviceActivity: "Restarting" }))
+      .toBe("Jellyfin, restarting, open");
+  });
+
+  it("replaces a loaded page only after its service stays down, and at once for a window opened while down", () => {
+    const down = { windowId: "w1", state: "stopped" as const, frameLoaded: true };
+    let gates = advanceServiceWindowGates({}, [down], 1_000);
+    expect(showsServiceUnavailable(down, gates.w1)).toBe(false);
+    // One poll later it is still within the grace period.
+    gates = advanceServiceWindowGates(gates, [down], 1_000 + SERVICE_DOWN_GRACE_MS / 2);
+    expect(showsServiceUnavailable(down, gates.w1)).toBe(false);
+    gates = advanceServiceWindowGates(gates, [down], 1_000 + SERVICE_DOWN_GRACE_MS);
+    expect(showsServiceUnavailable(down, gates.w1)).toBe(true);
+    // Back up: the page returns at once, and nothing changes while it stays up.
+    const up = { ...down, state: "running" as const };
+    expect(showsServiceUnavailable(up, gates.w1)).toBe(false);
+    const settled = advanceServiceWindowGates(gates, [up], 99_000);
+    expect(advanceServiceWindowGates(settled, [up], 99_500)).toBe(settled);
+    // Opened while down: no page to keep.
+    expect(showsServiceUnavailable({ ...down, frameLoaded: false }, undefined)).toBe(true);
+  });
+
+  it("reads an app being updated as working, never as not installed", () => {
+    const missing = desktopServiceStatusLookup([], true)("immich_server");
+    expect(missing.state).toBe("missing");
+    const ops = [{ appId: "immich", kind: "update" as const, status: "running" as const }];
+    expect(withActiveOperation(missing, "immich_server", ops)).toMatchObject({ state: "working", activity: "Updating" });
+    expect(withActiveOperation(missing, "immich_server", [{ ...ops[0], status: "succeeded" as const }]).state).toBe("missing");
+    expect(withActiveOperation(missing, "jellyfin", ops).state).toBe("missing");
+  });
+
+  it("starts an app Talome installed through the gated app route, and only unmanaged containers directly", () => {
+    const lookup = desktopServiceStatusLookup([
+      stack([container("immich_server", "exited"), container("immich_redis", "exited")], { storeId: "talome", appId: "immich" }),
+      stack([container("portainer", "exited")], { kind: "standalone" }),
+    ], true);
+    expect(desktopServiceStartPath(lookup("immich_server"))).toBe("/api/apps/talome/immich/start");
+    expect(desktopServiceStartPath(lookup("portainer"))).toBe("/api/containers/portainer-id/start");
+    expect(desktopServiceStartPath(lookup("gone"))).toBeNull();
   });
 
   it("names dock items with their state instead of aria-pressed", () => {
@@ -169,7 +256,7 @@ describe("a window for a service that isn't running", () => {
   it("offers Start and Ask Talome instead of the browser's error page", async () => {
     mocks.post.mockResolvedValue({ ok: true });
     const onStarted = vi.fn();
-    render(<DesktopServiceUnavailable name="Jellyfin" state="stopped" containerId="abc" canStart onStarted={onStarted} />);
+    render(<DesktopServiceUnavailable name="Jellyfin" state="stopped" startPath="/api/apps/talome/jellyfin/start" canStart onStarted={onStarted} />);
     expect(screen.getByText("Jellyfin is stopped")).toBeInTheDocument();
 
     const requests: unknown[] = [];
@@ -181,22 +268,29 @@ describe("a window for a service that isn't running", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Start Jellyfin" }));
     await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
-    expect(mocks.post).toHaveBeenCalledWith("/api/containers/abc/start");
+    expect(mocks.post).toHaveBeenCalledWith("/api/apps/talome/jellyfin/start");
   });
 
   it("reports a failed start in place", async () => {
     mocks.post.mockRejectedValue(new Error("port 8096 is already in use"));
-    render(<DesktopServiceUnavailable name="Jellyfin" state="unhealthy" containerId="abc" canStart onStarted={vi.fn()} />);
+    render(<DesktopServiceUnavailable name="Jellyfin" state="unhealthy" startPath="/api/containers/abc/start" canStart onStarted={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Start Jellyfin" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't start Jellyfin: port 8096 is already in use");
   });
 
   it("offers no Start without permission, and none for an uninstalled app", () => {
-    const { rerender } = render(<DesktopServiceUnavailable name="Jellyfin" state="stopped" containerId="abc" canStart={false} onStarted={vi.fn()} />);
+    const { rerender } = render(<DesktopServiceUnavailable name="Jellyfin" state="stopped" startPath="/api/containers/abc/start" canStart={false} onStarted={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "Start Jellyfin" })).not.toBeInTheDocument();
-    rerender(<DesktopServiceUnavailable name="Jellyfin" state="missing" canStart onStarted={vi.fn()} />);
+    const remove = vi.fn();
+    const store = vi.fn();
+    rerender(<DesktopServiceUnavailable name="Jellyfin" state="missing" canStart onStarted={vi.fn()} onRemoveFromDock={remove} onOpenAppStore={store} />);
     expect(screen.getByText("Jellyfin isn't installed")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Start/ })).not.toBeInTheDocument();
+    // The copy names two ways out; both are there.
+    fireEvent.click(screen.getByRole("button", { name: "Remove from Dock" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open App Store" }));
+    expect(remove).toHaveBeenCalledOnce();
+    expect(store).toHaveBeenCalledOnce();
   });
 });
 
@@ -231,6 +325,33 @@ describe("approvals in the menu bar (D-P0-1)", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0]);
     await waitFor(() => expect(mocks.decide).toHaveBeenCalledWith("sonarr", "approve"));
     expect(mocks.mutate).toHaveBeenCalled();
+  });
+});
+
+describe("approvals in the menu bar: what will run", () => {
+  const approval = (id: string, summary: string) => ({
+    id, actor: { kind: "mcp_token", id: "t1", label: "Cursor" }, source: "mcp", tool: "uninstall_app",
+    summary, argsPreview: "{}", status: "pending", createdAt: "2026-09-30T10:00:00Z",
+    expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(), decidedBy: null, decidedAt: null, consumedAt: null,
+  });
+
+  beforeEach(() => {
+    mocks.decide.mockReset().mockResolvedValue({ ok: true });
+  });
+
+  it("says the access level and reversibility, and opens the details before anyone approves blind", async () => {
+    expect(splitApprovalSummary('Cursor wants to run "Uninstall app" on sonarr (destructive).'))
+      .toEqual({ sentence: 'Cursor wants to run "Uninstall app" on sonarr.', tier: "destructive" });
+    expect(approvalDetailLine("modify")).toBe("Everyday change · can be changed back");
+    mocks.pending = [approval("apr_1", 'Cursor wants to run "Uninstall app" on sonarr (destructive).')];
+    const onReviewAll = vi.fn();
+    render(<DesktopApprovalsButton isAdmin onReviewAll={onReviewAll} />);
+    fireEvent.click(screen.getByRole("button", { name: "1 approval waiting" }));
+    expect(await screen.findByText('Cursor wants to run "Uninstall app" on sonarr.')).toBeInTheDocument();
+    expect(screen.getByText("Destructive change · may not be reversible")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Details for Uninstall app" }));
+    expect(onReviewAll).toHaveBeenCalledWith("/dashboard/settings/approvals?id=apr_1");
+    expect(mocks.decide).not.toHaveBeenCalled();
   });
 });
 

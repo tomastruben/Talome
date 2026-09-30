@@ -28,33 +28,40 @@ export function serviceUnavailableCopy(name: string, state: DesktopServiceState)
 
 /**
  * What a window shows instead of the browser's error page when its service
- * isn't running (D-P0-3). Start goes through the same container route as
- * Services, so the session and the server's checks apply.
+ * isn't running (D-P0-3). Start goes through the gated app route for apps
+ * Talome installed (the whole stack starts, journaled), and through the
+ * container route only for containers Talome doesn't manage.
  */
 export function DesktopServiceUnavailable({
   name,
   state,
-  containerId,
+  startPath,
   canStart,
   onStarted,
+  onRemoveFromDock,
+  onOpenAppStore,
 }: {
   name: string;
   state: DesktopServiceState;
-  containerId?: string;
+  /** From desktopServiceStartPath(); null when nothing can be started. */
+  startPath?: string | null;
   canStart: boolean;
   onStarted: () => Promise<unknown> | void;
+  /** Offered for an app that isn't installed any more. */
+  onRemoveFromDock?: () => void;
+  onOpenAppStore?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const copy = serviceUnavailableCopy(name, state);
-  const startable = canStart && containerId && (state === "stopped" || state === "unhealthy");
+  const startable = canStart && startPath && (state === "stopped" || state === "unhealthy");
 
   const start = async () => {
-    if (!containerId) return;
+    if (!startPath) return;
     setBusy(true);
     setError(null);
     try {
-      await talomePost(`/api/containers/${encodeURIComponent(containerId)}/start`);
+      await talomePost(startPath);
       await onStarted();
     } catch (err) {
       setError(
@@ -83,12 +90,18 @@ export function DesktopServiceUnavailable({
         <p className="text-sm font-medium text-foreground">{copy.title}</p>
         <p className="text-sm text-muted-foreground">{copy.description}</p>
       </div>
-      {error ? <p role="alert" className="max-w-sm text-xs text-status-critical">{error}</p> : null}
+      {error ? <p role="alert" className="max-w-sm text-sm text-status-critical">{error}</p> : null}
       <div className="flex gap-2">
         {startable ? (
           <Button size="sm" busy={busy} busyLabel={`Starting ${name}…`} onClick={() => void start()}>
             Start {name}
           </Button>
+        ) : null}
+        {state === "missing" && onOpenAppStore ? (
+          <Button size="sm" onClick={onOpenAppStore}>Open App Store</Button>
+        ) : null}
+        {state === "missing" && onRemoveFromDock ? (
+          <Button size="sm" variant="outline" onClick={onRemoveFromDock}>Remove from Dock</Button>
         ) : null}
         {state !== "missing" ? (
           <Button

@@ -3,9 +3,12 @@ import { SWRConfig } from "swr";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   inFlightConsequence,
+  inFlightScope,
   processDotState,
   restartSettled,
+  restartTargets,
   runVerifiedRestart,
+  type InFlightWork,
   type RestartDeps,
   type SupervisorState,
 } from "@/lib/service-restart";
@@ -36,6 +39,7 @@ function deps(overrides: Partial<RestartDeps> & { statuses?: Array<SupervisorSta
     readStatus: overrides.readStatus ?? (async () => statuses[Math.min(call++, statuses.length - 1)] ?? null),
     sleep: overrides.sleep ?? (async (ms) => { clock += ms; }),
     now: overrides.now ?? (() => clock),
+    signal: overrides.signal,
   };
 }
 
@@ -70,12 +74,69 @@ describe("verified restart", () => {
     expect(restartSettled(before, state({ core: 11, dashboard: 12, terminal_daemon: 13 }), ["core", "dashboard", "terminal_daemon"])).toBe(true);
   });
 
+  const idle: InFlightWork = { operations: [], evolutionRuns: 0, assistantReplying: false, terminalSessions: [], unknown: false };
+
   it("describes what a restart interrupts, and admits when it couldn't check", () => {
-    expect(inFlightConsequence({ operations: [], evolutionRuns: 0, assistantReplying: false, unknown: false }, "core")).toBeNull();
-    expect(inFlightConsequence({ operations: ["Updating jellyfin", "Backing up immich", "Installing sonarr"], evolutionRuns: 1, assistantReplying: true, unknown: false }, "core"))
+    expect(inFlightConsequence(idle, "core")).toBeNull();
+    expect(inFlightConsequence({ ...idle, operations: ["Updating jellyfin", "Backing up immich", "Installing sonarr"], evolutionRuns: 1, assistantReplying: true }, "core"))
       .toBe("Restarting Core interrupts Updating jellyfin, Backing up immich and 1 more, a self-improvement run and the Assistant's reply.");
-    expect(inFlightConsequence({ operations: [], evolutionRuns: 0, assistantReplying: false, unknown: true }, "all"))
+    expect(inFlightConsequence({ ...idle, unknown: true }, "all"))
       .toBe("Restarting every service may interrupt running work: Talome couldn't check what is running.");
+    expect(inFlightConsequence({ ...idle, terminalSessions: ["default", "Evolution · Sep 30, 2:30pm", "App: notes"] }, "terminal_daemon"))
+      .toBe("Restarting Terminal interrupts 3 terminal sessions (default, Evolution · Sep 30, 2:30pm and 1 more).");
+  });
+
+  it("checks only the work each service can interrupt", () => {
+    // Operations, self-improvement and the Assistant run in core; the terminal daemon owns the sessions.
+    expect(inFlightScope("core")).toEqual({ core: true, terminal: false });
+    expect(inFlightScope("terminal_daemon")).toEqual({ core: false, terminal: true });
+    expect(inFlightScope("dashboard")).toEqual({ core: false, terminal: false });
+    expect(inFlightScope("all")).toEqual({ core: true, terminal: true });
+  });
+
+  it("verifies a dashboard or full restart whose request died with the proxy (regression)", async () => {
+    // Core SIGKILLs the dashboard that proxies the request before it answers.
+    const before = state({ core: 1, dashboard: 2, terminal_daemon: 3 });
+    const dashboard = await runVerifiedRestart("dashboard", before, deps({
+      request: async () => { throw new TypeError("Failed to fetch"); },
+      statuses: [null, state({ core: 1, dashboard: 12, terminal_daemon: 3 })],
+    }));
+    expect(dashboard).toEqual({ ok: true });
+    const all = await runVerifiedRestart("all", before, deps({
+      request: async () => new Response("Bad gateway", { status: 502 }),
+      statuses: [null, state({ core: 11, dashboard: 12, terminal_daemon: 13 })],
+    }));
+    expect(all).toEqual({ ok: true });
+    // A restart that never happened still ends in "couldn't confirm", never in success.
+    const never = await runVerifiedRestart("dashboard", before, deps({
+      request: async () => { throw new TypeError("Failed to fetch"); },
+      statuses: [before],
+    }), { pollMs: 1000, timeoutMs: 3000 });
+    expect(never).toEqual({ ok: false, reason: "timeout" });
+    // Core's own request doesn't die with the restart: a failure there is a failure.
+    const core = await runVerifiedRestart("core", before, deps({ request: async () => { throw new TypeError("Failed to fetch"); } }));
+    expect(core).toMatchObject({ ok: false, reason: "request" });
+  });
+
+  it("restart all waits only for the processes the supervisor runs", () => {
+    expect(restartTargets("all", state({ core: 1, terminal_daemon: 3 }))).toEqual(["core", "terminal_daemon"]);
+    expect(restartTargets("all", null)).toEqual(["core", "dashboard", "terminal_daemon"]);
+    expect(restartTargets("terminal_daemon", state({ core: 1 }))).toEqual(["terminal_daemon"]);
+  });
+
+  it("stops polling when cancelled", async () => {
+    const controller = new AbortController();
+    let polls = 0;
+    const outcome = await runVerifiedRestart("core", state({ core: 1 }), deps({
+      readStatus: async () => {
+        polls += 1;
+        if (polls === 2) controller.abort();
+        return state({ core: 1 });
+      },
+      signal: controller.signal,
+    }));
+    expect(outcome).toEqual({ ok: false, reason: "cancelled" });
+    expect(polls).toBe(2);
   });
 
   it("maps supervisor states to the status grammar (crashed is failed, stopped is grey)", () => {
@@ -99,11 +160,12 @@ describe("Settings → Services restart", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  function route(handlers: { operations?: unknown; evolution?: unknown }) {
+  function route(handlers: { operations?: unknown; evolution?: unknown; sessions?: unknown }) {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.includes("/api/supervisor/status")) return new Response(JSON.stringify(state({ core: 10, dashboard: 20, terminal_daemon: 30 })), { status: 200 });
       if (url.includes("/api/operations")) return new Response(JSON.stringify(handlers.operations ?? []), { status: 200 });
       if (url.includes("/api/evolution/suggestions")) return new Response(JSON.stringify(handlers.evolution ?? { suggestions: [] }), { status: 200 });
+      if (url.includes("/api/terminal/sessions")) return new Response(JSON.stringify(handlers.sessions ?? { sessions: [] }), { status: 200 });
       if (url.includes("/api/supervisor/restart") && init?.method === "POST") return new Response("{}", { status: 200 });
       return new Response("{}", { status: 404 });
     });
@@ -154,5 +216,56 @@ describe("Settings → Services restart", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't restart: Supervisor not running.");
     expect(mocks.confirm).not.toHaveBeenCalled();
     expect(mocks.success).not.toHaveBeenCalled();
+  });
+
+  const posts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).includes("/restart") && init?.method === "POST");
+
+  it("doesn't ask about app operations before restarting the dashboard (they run in core)", async () => {
+    route({
+      operations: [{
+        id: "op1", appId: "jellyfin", kind: "update", actor: "user", status: "running", step: null, progress: 0.4,
+        detail: null, error: null, startedAt: "2026-09-30T10:00:00Z", updatedAt: "2026-09-30T10:00:05Z", finishedAt: null,
+      }],
+    });
+    renderSection();
+    const [, dashboardRestart] = await screen.findAllByRole("button", { name: "Restart" });
+    fireEvent.click(dashboardRestart);
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/operations"))).toBe(false);
+  });
+
+  it("names the terminal sessions a terminal restart would kill", async () => {
+    route({ sessions: { sessions: [{ id: "sess_talome-claude", name: "talome-claude", displayName: "Claude Code" }] } });
+    mocks.confirm.mockResolvedValue({ confirmed: false, optionChecked: false });
+    renderSection();
+    const [, , terminalRestart] = await screen.findAllByRole("button", { name: "Restart" });
+    fireEvent.click(terminalRestart);
+    await waitFor(() => expect(mocks.confirm).toHaveBeenCalledOnce());
+    expect(mocks.confirm.mock.calls[0][0]).toMatchObject({
+      title: "Restart Terminal now?",
+      consequence: "Restarting Terminal interrupts 1 terminal session (Claude Code).",
+    });
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("sends one restart for a double click while the in-flight check runs (regression)", async () => {
+    route({});
+    renderSection();
+    const [coreRestart] = await screen.findAllByRole("button", { name: "Restart" });
+    fireEvent.click(coreRestart);
+    fireEvent.click(coreRestart);
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    // Give a second click every chance to have sent its own request.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("keeps the section and says so when the supervisor status is unavailable", async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ error: "Supervisor not running" }), { status: 404 }));
+    renderSection();
+    expect(await screen.findByText(/Status unavailable/)).toBeInTheDocument();
+    expect(document.getElementById("services")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 });

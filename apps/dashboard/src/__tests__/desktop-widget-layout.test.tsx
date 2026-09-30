@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useDesktopWidgetLayout } from "@/hooks/use-desktop-widget-layout";
+import { WIDGET_LABELS, widgetDisplayLabel } from "@/components/widgets/widget-grid";
 
 describe("desktop widget layout", () => {
   beforeEach(() => {
@@ -80,5 +81,29 @@ describe("desktop widget layout", () => {
     expect(
       result.current.layout.find((widget) => widget.instanceId === "desktop-cpu")?.size,
     ).toEqual({ cols: 2, rows: 2 });
+  });
+
+  it("keeps a widget visible when Undo follows re-adding it (regression: Undo toggled it hidden again)", () => {
+    const { result } = renderHook(() => useDesktopWidgetLayout());
+    const cpu = () => result.current.layout.find((widget) => widget.instanceId === "desktop-cpu");
+    act(() => result.current.setWidgetVisible("desktop-cpu", false));
+    expect(cpu()?.visible).toBe(false);
+    // Re-added from "Add widgets" within the undo window: the hidden instance comes back.
+    act(() => result.current.addWidget("cpu"));
+    expect(cpu()?.visible).toBe(true);
+    // Then Undo from the removal toast.
+    act(() => result.current.setWidgetVisible("desktop-cpu", true));
+    expect(cpu()?.visible).toBe(true);
+  });
+});
+
+describe("widget names in copy", () => {
+  it("are sentence case, and a custom widget is named by its manifest, never its id", () => {
+    expect(WIDGET_LABELS["active-downloads"]).toBe("Active downloads");
+    expect(WIDGET_LABELS["system-health"]).toBe("System health");
+    const manifests = new Map([["my-widget-id", { title: "Plex now playing" }]]);
+    expect(widgetDisplayLabel("widget:my-widget-id", manifests)).toBe("Plex now playing");
+    expect(widgetDisplayLabel("widget:unknown", manifests)).toBe("custom widget");
+    expect(widgetDisplayLabel("cpu", manifests)).toBe("CPU");
   });
 });

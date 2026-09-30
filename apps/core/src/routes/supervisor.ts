@@ -5,10 +5,16 @@ import { homedir } from "node:os";
 import { db, schema } from "../db/index.js";
 import { desc } from "drizzle-orm";
 import { serverError } from "../middleware/request-logger.js";
+import { requireRole } from "../middleware/role-guard.js";
 
 const TALOME_DIR = join(homedir(), ".talome");
 
 const supervisor = new Hono();
+
+// Restarting core, the dashboard or the terminal daemon (which SIGKILLs every
+// shell and Claude Code session), and switching the server mode, are server
+// administration: admins only, like /api/settings.
+supervisor.use("*", requireRole("admin"));
 
 supervisor.get("/status", (c) => {
   try {

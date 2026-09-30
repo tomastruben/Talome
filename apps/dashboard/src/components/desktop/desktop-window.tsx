@@ -98,10 +98,18 @@ function WindowControlGlyph({ kind }: { kind: WindowControlGlyphKind }) {
       strokeWidth={3}
       aria-hidden="true"
       data-window-control-glyph={kind}
-      className="pointer-events-none absolute left-1/2 top-1/2 shrink-0 -translate-x-1/2 -translate-y-1/2 text-black/70 opacity-0 transition-opacity duration-100"
+      className={WINDOW_CONTROL_GLYPH_CLASS}
     />
   );
 }
+
+/**
+ * The glyph on a traffic light: dark on the light, saturated fill in both
+ * themes (the lights don't change with the theme). Shown on hover and focus,
+ * and always under increased contrast (the parent adds opacity-100).
+ */
+export const WINDOW_CONTROL_GLYPH_CLASS =
+  "pointer-events-none absolute left-1/2 top-1/2 shrink-0 -translate-x-1/2 -translate-y-1/2 text-black/70 opacity-0 transition-opacity duration-100";
 
 const desktopActionIcons: Record<DesktopAppActionIcon, IconSvgElement> = {
   add: Add01Icon,

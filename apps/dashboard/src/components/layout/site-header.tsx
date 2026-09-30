@@ -39,7 +39,7 @@ import { MobileNav } from "@/components/layout/mobile-nav";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { useContainerLookup } from "@/hooks/use-containers";
 import { Switch } from "@/components/ui/switch";
-import { DURATION, EASE_ENTER, EASE_EXIT } from "@/lib/motion";
+import { DURATION, EASE_ENTER, EASE_EXIT, enter } from "@/lib/motion";
 import { humanizeSlug, navTitleForPath } from "./nav-config";
 
 interface DrilldownRoute {
@@ -109,7 +109,8 @@ const titleSlideVariants = {
   center: {
     opacity: 1,
     x: 0,
-    transition: { duration: 0.16, ease: EASE_ENTER, opacity: { duration: 0.1, ease: EASE_ENTER } },
+    // Opacity finishes at 60% of the travel (motion.enter).
+    transition: enter(DURATION.pill),
   },
   exit: (dir: number) => ({
     opacity: 0,

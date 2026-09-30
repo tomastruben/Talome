@@ -456,6 +456,18 @@ export function useWidgetLayout(options: UseWidgetLayoutOptions = {}) {
     });
   }, [persistLayout]);
 
+  /** Show or hide one widget (Undo after Remove sets, never toggles). */
+  const setWidgetVisible = useCallback((instanceId: string, visible: boolean) => {
+    setLayout((prev) => {
+      if (!prev.some((w) => w.instanceId === instanceId && w.visible !== visible)) return prev;
+      const next = prev.map((w) =>
+        w.instanceId === instanceId ? { ...w, visible } : w
+      );
+      persistLayout(next);
+      return next;
+    });
+  }, [persistLayout]);
+
   const addWidget = useCallback((widgetType: WidgetType) => {
     setLayout((prev) => {
       const existingHidden = prev.find((w) => w.widgetType === widgetType && !w.visible);
@@ -516,6 +528,7 @@ export function useWidgetLayout(options: UseWidgetLayoutOptions = {}) {
   return {
     layout,
     toggleWidget,
+    setWidgetVisible,
     addWidget,
     reorderLayout,
     resizeWidget,

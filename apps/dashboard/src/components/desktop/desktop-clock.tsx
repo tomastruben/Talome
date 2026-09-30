@@ -44,9 +44,11 @@ export function DesktopClock() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
+        {/* Focusable, so the full date reaches keyboard users too (the tooltip opens on focus). */}
         <time
+          tabIndex={0}
           dateTime={now.toISOString()}
-          className="rounded-md px-1 text-xs tabular-nums text-muted-foreground"
+          className="rounded-md px-1 text-xs tabular-nums text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           suppressHydrationWarning
         >
           {time}
