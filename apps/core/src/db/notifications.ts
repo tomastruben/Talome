@@ -1,6 +1,7 @@
 import { db, schema } from "./index.js";
 import { eq, and, gte, like } from "drizzle-orm";
 import { ensureNotificationLinkColumn } from "./migrations/wire-backend.js";
+import { getHeldOperation, type OperationKind } from "../ops/operations.js";
 
 export type NotificationType = "info" | "warning" | "critical";
 
@@ -92,6 +93,54 @@ export interface WriteNotificationOptions {
   link?: string | null;
   /** Skip title/source de-duplication (default true = de-duplicate). */
   dedupe?: boolean;
+  /**
+   * The app operation this notification reports on. Its notifications are
+   * de-duplicated only against earlier ones of the same operation, never by
+   * title against other operations. Defaults to the outcome operation the
+   * caller is running inside (see operationScopeFor).
+   */
+  operationId?: string;
+}
+
+/**
+ * Operation kinds whose notifications report an outcome the user must see
+ * every time (an update rolled back twice in a row is two events, not one).
+ * start/stop/restart are left to the title/source dedupe: automated retries
+ * of a failing start would otherwise notify on every attempt.
+ */
+const OUTCOME_OPERATION_KINDS: ReadonlySet<OperationKind> = new Set(["install", "uninstall", "update", "rollback", "backup", "restore"]);
+
+/** Operation id a notification belongs to, when it reports an outcome operation's result. */
+function operationScopeFor(sourceId: string | null, explicit: string | undefined): string | null {
+  if (explicit) return explicit;
+  if (!sourceId) return null;
+  try {
+    const held = getHeldOperation(sourceId);
+    return held && OUTCOME_OPERATION_KINDS.has(held.kind) ? held.id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Titles already written per operation (bounded; oldest operations are forgotten first). */
+const MAX_TRACKED_OPERATIONS = 500;
+const titlesByOperation = new Map<string, Set<string>>();
+
+/** True when this operation already wrote a notification with this title; records it otherwise. */
+function seenInOperation(operationId: string, title: string): boolean {
+  const titles = titlesByOperation.get(operationId);
+  if (titles?.has(title)) return true;
+  if (titles) {
+    titles.add(title);
+  } else {
+    titlesByOperation.set(operationId, new Set([title]));
+    while (titlesByOperation.size > MAX_TRACKED_OPERATIONS) {
+      const oldest = titlesByOperation.keys().next().value;
+      if (oldest === undefined) break;
+      titlesByOperation.delete(oldest);
+    }
+  }
+  return false;
 }
 
 /** Only same-origin, absolute-path links are stored — never external URLs. */
@@ -127,8 +176,13 @@ export function writeNotification(
   sourceId?: string,
   options: WriteNotificationOptions = {},
 ) {
-  // Skip if an identical notification was written recently
-  if (options.dedupe !== false && isDuplicate(title, sourceId ?? null)) return;
+  if (options.dedupe !== false) {
+    // Outcome notifications (update, rollback, restore, …) are de-duplicated
+    // per operation: a title seen minutes ago from another operation is a new
+    // event, not noise. Everything else keeps the title/source cooldowns.
+    const operationId = operationScopeFor(sourceId ?? null, options.operationId);
+    if (operationId ? seenInOperation(operationId, title) : isDuplicate(title, sourceId ?? null)) return;
+  }
 
   try {
     insertNotification({ type, title, body, sourceId: sourceId ?? null, link: sanitizeNotificationLink(options.link) });

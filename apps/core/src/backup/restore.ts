@@ -448,7 +448,9 @@ export async function restoreAppBackup(backupId: string, opts: RestoreOptions = 
     });
     if (result.success) {
       finishRestore(restoreId, "completed", null, { health: result.health, warnings: result.warnings, safetyBackupId: result.safetyBackupId });
-      writeNotification("info", `${appId} restored`, `Restored from backup of ${row.completed_at ?? row.started_at}. ${result.health.detail}`, appId);
+      writeNotification("info", `${appId} restored`, `Restored from backup of ${row.completed_at ?? row.started_at}. ${result.health.detail}`, appId, {
+        operationId: restoreId,
+      });
       try {
         writeAuditEntry(`Restore: ${appId}`, "destructive", JSON.stringify({ backupId, restoreId, safetyBackupId: result.safetyBackupId }));
       } catch {
@@ -464,6 +466,7 @@ export async function restoreAppBackup(backupId: string, opts: RestoreOptions = 
         `Restore failed: ${appId}`,
         result.rolledBack ? `${result.error} — the previous state was restored.` : `${result.error}${result.safetyBackupId ? ` Safety backup: ${result.safetyBackupId}` : ""}`,
         appId,
+        { operationId: restoreId },
       );
     }
     return { ...result, restoreId };

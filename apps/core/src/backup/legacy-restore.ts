@@ -282,7 +282,9 @@ export async function restoreLegacyArchive(appId: string, archivePath: string, o
         health = { healthy: true, containers: [], detail: "App was stopped before the restore and was left stopped" };
       }
       finishRestore(restoreId, "completed", null, { health, warnings, safetyBackupId, legacy: true });
-      writeNotification("info", `${appId} restored`, `Restored from the legacy backup ${basename(archivePath)}. ${health.detail}`, appId);
+      writeNotification("info", `${appId} restored`, `Restored from the legacy backup ${basename(archivePath)}. ${health.detail}`, appId, {
+        operationId: restoreId,
+      });
       try {
         writeAuditEntry(`Restore: ${appId}`, "destructive", JSON.stringify({ backupFile: archivePath, legacy: true, restoreId, safetyBackupId }));
       } catch {
@@ -330,6 +332,7 @@ export async function restoreLegacyArchive(appId: string, archivePath: string, o
         `Restore failed: ${appId}`,
         rolledBack ? `${error} — the previous state was restored.` : `${error}${safetyBackupId ? ` Safety backup: ${safetyBackupId}` : ""}`,
         appId,
+        { operationId: restoreId },
       );
       return fail(error, {
         rolledBack,
