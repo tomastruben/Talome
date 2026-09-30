@@ -1052,6 +1052,8 @@ export async function restoreSafetyBackup(
   appId: string,
   safetyBackupId: string,
   opts: Pick<RestoreOptions, "healthTimeoutMs" | "pollIntervalMs" | "dbReadyTimeoutMs" | "onStage"> = {},
+  /** Receives the databases it reloads from dumps (verify them with verifyLoadedDatabases once the app runs again) */
+  loadedOut?: LoadedDatabase[],
 ): Promise<RestoreAppBackupResult> {
   const row = getBackupRow(safetyBackupId);
   if (!row?.file_path || !row.manifest_path || row.app_id !== appId) return failResult(safetyBackupId, appId, "Safety backup not found");
@@ -1063,6 +1065,7 @@ export async function restoreSafetyBackup(
       manifestPath: row.manifest_path,
       restoreId: randomUUID(),
       opts: { ...opts, skipSafetyBackup: true },
+      loadedOut,
       stage: (s) => {
         try {
           opts.onStage?.(s);

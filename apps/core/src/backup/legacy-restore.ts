@@ -26,7 +26,17 @@ import { createLogger } from "../utils/logger.js";
 import { bindVolumes, resolveAppContext } from "./compose.js";
 import { listAppContainers, startAppViaLifecycle, type AppContainer } from "./docker-ops.js";
 import { errorMessage, getBackupRoot, isWithin } from "./fs-utils.js";
-import { containerKey, resolveHealthUrl, restartAfterRollback, restoreSafetyBackup, stopAll, takeSafetyBackup, waitForHealthy } from "./restore.js";
+import {
+  containerKey,
+  resolveHealthUrl,
+  restartAfterRollback,
+  restoreSafetyBackup,
+  stopAll,
+  takeSafetyBackup,
+  verifyLoadedDatabases,
+  waitForHealthy,
+  type LoadedDatabase,
+} from "./restore.js";
 import { acquireAppOperation, releaseAppMaintenance } from "./state.js";
 import { clearRecoveryRecord, finishRestore, insertRestore, saveRecoveryRecord, updateRestoreStage } from "./store.js";
 import { readTarGz } from "./tar.js";
@@ -305,12 +315,14 @@ export async function restoreLegacyArchive(appId: string, archivePath: string, o
       stage("rolling-back");
       let rolledBack = false;
       const problems: string[] = [];
+      /** Databases the rollback reloaded from the safety backup */
+      const rollbackLoadedDbs: LoadedDatabase[] = [];
       try {
         await stopAll(ctx).catch(() => {});
         if (!changed) {
           rolledBack = true;
         } else if (safetyBackupId) {
-          const r = await restoreSafetyBackup(appId, safetyBackupId, opts);
+          const r = await restoreSafetyBackup(appId, safetyBackupId, opts, rollbackLoadedDbs);
           rolledBack = r.success;
           if (!r.success) problems.push(`restoring the safety backup failed: ${r.error}`);
         } else {
@@ -326,8 +338,10 @@ export async function restoreLegacyArchive(appId: string, archivePath: string, o
             healthTimeoutMs: opts.healthTimeoutMs ?? 120_000,
             pollMs,
           });
-          if (restartProblem) {
-            problems.push(restartProblem);
+          // Running is not enough: the reloaded database data must be in the database the app now uses
+          const lost = restartProblem ? [] : await verifyLoadedDatabases(ctx, rollbackLoadedDbs);
+          if (restartProblem || lost.length > 0) {
+            problems.push(...(restartProblem ? [restartProblem] : lost));
             rolledBack = false;
           }
         }
