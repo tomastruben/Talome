@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { cors } from "hono/cors";
-import { csrf } from "hono/csrf";
 import { sql } from "drizzle-orm";
 import { system } from "./routes/system.js";
 import { containers } from "./routes/containers.js";
@@ -74,9 +73,7 @@ import { startTelegramBot } from "./messaging/telegram.js";
 // discord-bot.js is imported dynamically below to avoid loading discord.js at startup
 import { checkDockerConnection, startPeriodicPrune } from "./docker/client.js";
 import { safeRoute, rateLimit, requireSession, requireRole, requireAnyPermission, requirePermission, requestLogger } from "./middleware/index.js";
-import { errorTracker } from "./middleware/error-tracker.js";
-import { getRequestId, getRequestStart } from "./middleware/request-logger.js";
-import { randomUUID } from "node:crypto";
+import { appErrorHandler, csrfProtection } from "./middleware/http-errors.js";
 import { loadCustomTools } from "./ai/custom-tools.js";
 import { migrateSettingsEncryption } from "./utils/crypto.js";
 import { enableLocalDomains } from "./proxy/local-domains.js";
@@ -309,18 +306,11 @@ app.use(
   }),
 );
 
-/**
- * CSRF protection — belt-and-suspenders on top of SameSite=Lax cookies
- * and the CORS allowlist above. Rejects state-changing requests whose
- * Origin header isn't trusted. Same-origin and no-Origin requests pass.
- * Webhook endpoints skip this (they're validated via HMAC elsewhere).
- */
-app.use("*", async (c, next) => {
-  if (c.req.path.startsWith("/api/webhooks/")) return next();
-  return csrf({
-    origin: (origin) => isTrustedOrigin(origin),
-  })(c, next);
-});
+// CSRF protection — policy and rationale in middleware/http-errors.ts:
+// state-changing requests with a form-like or missing Content-Type need
+// Sec-Fetch-Site: same-origin or a trusted Origin (403 otherwise). JSON
+// requests and webhooks (HMAC-validated elsewhere) pass.
+app.use("*", csrfProtection(isTrustedOrigin));
 
 app.use("*", safeRoute);
 app.use("/api/*", requestLogger);
@@ -494,39 +484,9 @@ app.route("/api/automations", automations);
   app.route("/api/tools", toolsRoute);
 
 // ── Global error handler ──────────────────────────────────────────────────────
-app.onError((err, c) => {
-  // Reuse the request-level ID if available, otherwise generate one
-  const errorId = getRequestId(c) || randomUUID().slice(0, 8);
-  const startMs = getRequestStart(c);
-  const durationMs = startMs ? Date.now() - startMs : -1;
-
-  errorLog.error(`Unhandled error ${errorId}`, err);
-
-  // Record to the in-memory error tracker for the diagnostics endpoint
-  const url = new URL(c.req.url);
-  errorTracker.record({
-    errorId,
-    timestamp: new Date().toISOString(),
-    method: c.req.method,
-    path: url.pathname,
-    query: url.search,
-    status: 500,
-    durationMs,
-    errorType: err.constructor?.name || "Error",
-    errorMessage: err.message || String(err),
-    stack: err.stack,
-    userId: (c.get("sessionUser" as never) as string) || undefined,
-  });
-
-  return c.json(
-    {
-      error: "An unexpected error occurred",
-      errorId,
-      timestamp: new Date().toISOString(),
-    },
-    500,
-  );
-});
+// HTTPExceptions (e.g. a CSRF 403) keep their status; anything else is a
+// logged, tracked 500 (middleware/http-errors.ts).
+app.onError(appErrorHandler);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 
