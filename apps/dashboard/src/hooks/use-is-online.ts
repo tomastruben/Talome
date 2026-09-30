@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { getHostUrl } from "@/lib/constants";
+import { getDirectCoreUrl } from "@/lib/constants";
 
 export type OnlineStatus = "online" | "degraded" | "offline";
 
@@ -43,7 +43,7 @@ export function useIsOnline(): HealthState {
 
   const check = useCallback(async () => {
     try {
-      const res = await fetch(`${getHostUrl(4000)}/api/health`, {
+      const res = await fetch(`${getDirectCoreUrl()}/api/health`, {
         signal: AbortSignal.timeout(5000),
         cache: "no-store",
       });

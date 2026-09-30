@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import {
   listContainers,
   getContainerStats,
+  getContainerStatsBatch,
   startContainer,
   stopContainer,
   restartContainer,
@@ -20,6 +21,7 @@ import { getLastErrorWithVariables, getStartupFailures } from "../services/docke
 import { serverError } from "../middleware/request-logger.js";
 import { createLogger } from "../utils/logger.js";
 import { discoverContainerWebUis } from "../docker/web-ui.js";
+import { onCatalogChanged } from "../stores/catalog-events.js";
 
 const log = createLogger("containers");
 import type { Container, ServiceStack, TalomeNativeSurfaceDescriptor } from "@talome/types";
@@ -56,7 +58,26 @@ function pickPrimary(containers: Container[]): Container {
   return running ?? containers[0];
 }
 
-type CatalogRow = (typeof import("../db/schema.js"))["appCatalog"]["$inferSelect"];
+/** The app_catalog columns stack grouping needs (the full row carries multi-KB descriptions/compose). */
+const catalogColumns = {
+  appId: schema.appCatalog.appId,
+  source: schema.appCatalog.source,
+  name: schema.appCatalog.name,
+  icon: schema.appCatalog.icon,
+  iconUrl: schema.appCatalog.iconUrl,
+  category: schema.appCatalog.category,
+  image: schema.appCatalog.image,
+};
+
+type CatalogRow = {
+  appId: string;
+  source: string;
+  name: string;
+  icon: string;
+  iconUrl: string | null;
+  category: string;
+  image: string | null;
+};
 
 /** Generic image/service name segments that cause false catalog matches.
  *  Many apps use "server", "web", "app" etc. as their image name last segment
@@ -143,33 +164,33 @@ function makeStack(
   };
 }
 
-/** Build ServiceStack[] from enriched containers + app metadata.
- *  Groups by compose project first (OrbStack-style), then matches metadata. */
-function buildStacks(containers: Container[]): ServiceStack[] {
-  // 1. Load installed apps and catalog data
-  let installed: (typeof schema.installedApps.$inferSelect)[];
-  let catalog: (typeof schema.appCatalog.$inferSelect)[];
-  try {
-    installed = db.select().from(schema.installedApps).all();
-    catalog = db.select().from(schema.appCatalog).all();
-  } catch (err) {
-    log.error("buildStacks DB error", err);
-    // Fall back to basic stacks without app metadata
-    return containers.map((c) => makeStack(c.id, c.name, "standalone", [c]));
-  }
+// ── Catalog lookup memo ──────────────────────────────────────────────────────
+// The catalog holds ~700 rows; rebuilding both lookup maps on every
+// dashboard poll was pure waste. Memoized for a minute (catalog syncs are
+// rare and a one-minute-old icon is harmless).
 
-  // 2. Map container ID → installed app
-  const cidToApp = new Map<string, typeof installed[number]>();
-  for (const app of installed) {
-    const cids = JSON.parse(app.containerIds) as string[];
-    for (const cid of cids) {
-      cidToApp.set(cid, app);
-      if (cid.length > 12) cidToApp.set(cid.slice(0, 12), app);
-    }
-  }
+const CATALOG_LOOKUP_TTL_MS = 60_000;
 
-  // 3. Map appId → best catalog entry (prefer talome source)
-  const appCatalogMap = new Map<string, typeof catalog[number]>();
+interface CatalogLookup {
+  /** appId → best catalog entry (prefers the talome source). */
+  appCatalogMap: Map<string, CatalogRow>;
+  /** Multi-key (appId, image, image segment) → catalog row for heuristic matching. */
+  catalogByKey: Map<string, CatalogRow>;
+}
+
+let catalogLookupCache: { at: number; lookup: CatalogLookup } | null = null;
+
+/** Drop the memoized catalog lookup (call after a catalog sync if immediate freshness matters). */
+export function invalidateCatalogLookupCache(): void {
+  catalogLookupCache = null;
+}
+
+// Store sync rewrites the catalog → drop the memo right away.
+onCatalogChanged(invalidateCatalogLookupCache);
+
+function buildCatalogLookup(catalog: CatalogRow[]): CatalogLookup {
+  // Map appId → best catalog entry (prefer talome source)
+  const appCatalogMap = new Map<string, CatalogRow>();
   for (const row of catalog) {
     const existing = appCatalogMap.get(row.appId);
     if (!existing || row.source === "talome") {
@@ -177,9 +198,9 @@ function buildStacks(containers: Container[]): ServiceStack[] {
     }
   }
 
-  // 4. Build a multi-key → catalog row map for heuristic matching.
-  //    Skip overly generic image name segments that cause false matches
-  //    (e.g. "server" from owncloud/server, goauthentik/server, vaultwarden/server).
+  // Build a multi-key → catalog row map for heuristic matching.
+  // Skip overly generic image name segments that cause false matches
+  // (e.g. "server" from owncloud/server, goauthentik/server, vaultwarden/server).
   const catalogByKey = new Map<string, CatalogRow>();
   for (const row of catalog) {
     const dominated = (key: string) => {
@@ -195,6 +216,46 @@ function buildStacks(containers: Container[]): ServiceStack[] {
       if (seg && seg !== img && !GENERIC_IMAGE_SEGMENTS.has(seg) && dominated(seg)) {
         catalogByKey.set(seg, row);
       }
+    }
+  }
+
+  return { appCatalogMap, catalogByKey };
+}
+
+function getCatalogLookup(): CatalogLookup {
+  const now = Date.now();
+  if (catalogLookupCache && now - catalogLookupCache.at < CATALOG_LOOKUP_TTL_MS) {
+    return catalogLookupCache.lookup;
+  }
+  const rows = db.select(catalogColumns).from(schema.appCatalog).all();
+  const lookup = buildCatalogLookup(rows);
+  catalogLookupCache = { at: now, lookup };
+  return lookup;
+}
+
+/** Build ServiceStack[] from enriched containers + app metadata.
+ *  Groups by compose project first (OrbStack-style), then matches metadata. */
+function buildStacks(containers: Container[]): ServiceStack[] {
+  // 1. Load installed apps and catalog data
+  let installed: (typeof schema.installedApps.$inferSelect)[];
+  let appCatalogMap: CatalogLookup["appCatalogMap"];
+  let catalogByKey: CatalogLookup["catalogByKey"];
+  try {
+    installed = db.select().from(schema.installedApps).all();
+    ({ appCatalogMap, catalogByKey } = getCatalogLookup());
+  } catch (err) {
+    log.error("buildStacks DB error", err);
+    // Fall back to basic stacks without app metadata
+    return containers.map((c) => makeStack(c.id, c.name, "standalone", [c]));
+  }
+
+  // 2. Map container ID → installed app
+  const cidToApp = new Map<string, typeof installed[number]>();
+  for (const app of installed) {
+    const cids = JSON.parse(app.containerIds) as string[];
+    for (const cid of cids) {
+      cidToApp.set(cid, app);
+      if (cid.length > 12) cidToApp.set(cid.slice(0, 12), app);
     }
   }
 
@@ -329,20 +390,17 @@ function buildStacks(containers: Container[]): ServiceStack[] {
 
 containers.get("/", async (c) => {
   try {
-    const list = await listContainers();
-    const withStats = await Promise.all(
-      list.map(async (container) => {
-        if (container.status === "running") {
-          try {
-            const stats = await getContainerStats(container.id);
-            return { ...container, stats };
-          } catch {
-            return container;
-          }
-        }
-        return container;
-      })
-    );
+    // Polled by dashboards — a list a few seconds old is fine (mutations via
+    // Talome and Docker events invalidate it), and stats come from the
+    // shared sampler: cached samples return immediately, missing ones are
+    // awaited for a bounded time, stale ones refresh in the background.
+    const list = await listContainers({ cached: true });
+    const runningIds = list.filter((container) => container.status === "running").map((container) => container.id);
+    const statsById = await getContainerStatsBatch(runningIds);
+    const withStats = list.map((container) => {
+      const stats = container.status === "running" ? statsById.get(container.id) : undefined;
+      return stats ? { ...container, stats } : container;
+    });
 
     if (c.req.query("grouped") === "true") {
       return c.json(buildStacks(await discoverContainerWebUis(withStats)));

@@ -18,6 +18,9 @@ import { deduplicate, formatOccurrenceLabel } from "./event-dedup.js";
 import { writeNotification } from "../db/notifications.js";
 import { subscribeDockerEvents, connectContainerToNetwork, type DockerEvent } from "../docker/client.js";
 import { ensureTalomeNetwork } from "../docker/talome-network.js";
+import { isContainerUnderOperation } from "../ops/maintenance.js";
+import { checkRemediationGuard } from "./app-scope.js";
+import { registerSemanticOutcomeProbe } from "./semantic-probe.js";
 import type { AgentLoopConfig, SystemEvent } from "./types.js";
 import { DEFAULT_AGENT_LOOP_CONFIG } from "./types.js";
 import { randomUUID } from "node:crypto";
@@ -105,6 +108,17 @@ async function runCycle(): Promise<void> {
     const newEvents: SystemEvent[] = [];
 
     for (const event of events) {
+      // Apps being changed on purpose (live operation / maintenance window) are
+      // left alone: no AI spend, no remediation fighting the operation. Their
+      // warning+ events are neither persisted nor deduplicated, so the first
+      // occurrence after the operation is new and gets triaged.
+      if (event.severity !== "info") {
+        const guard = checkRemediationGuard(event);
+        if (guard.blocked) {
+          log.info(`Skipping ${event.type} for ${event.source}: ${guard.reason}`);
+          continue;
+        }
+      }
       const result = deduplicate(event.id, event.type, event.source, event.data);
 
       if (result.isDuplicate) {
@@ -218,6 +232,13 @@ async function runCycle(): Promise<void> {
       const event = newEvents.find((e) => e.id === result.eventId);
       if (!event) continue;
 
+      // Re-checked right before acting: an operation may have started during triage.
+      const guard = checkRemediationGuard(event);
+      if (guard.blocked) {
+        log.info(`Not remediating ${event.type} for ${event.source}: ${guard.reason}`);
+        continue;
+      }
+
       // Update event with remediation link
       try {
         const remResult = await remediateEvent(
@@ -231,6 +252,12 @@ async function runCycle(): Promise<void> {
           .set({ remediationId: remResult.eventId })
           .where(eq(schema.systemEvents.id, event.id))
           .run();
+
+        // An attempted fix is only reported as fixed once verified — check
+        // soon instead of waiting for the next 5-minute verification tick.
+        if (remResult.outcome === "pending_verification") {
+          scheduleEarlyVerification();
+        }
       } catch (err) {
         log.error(`Remediation for ${event.id} failed`, err);
       }
@@ -240,6 +267,20 @@ async function runCycle(): Promise<void> {
   } finally {
     running = false;
   }
+}
+
+let earlyVerifyTimer: ReturnType<typeof setTimeout> | null = null;
+const EARLY_VERIFY_DELAY_MS = 90_000;
+
+function scheduleEarlyVerification(): void {
+  if (earlyVerifyTimer) return;
+  earlyVerifyTimer = setTimeout(() => {
+    earlyVerifyTimer = null;
+    verifyPendingRemediations().catch((err) => {
+      log.error("Early outcome verification error (isolated)", err);
+    });
+  }, EARLY_VERIFY_DELAY_MS);
+  earlyVerifyTimer.unref?.();
 }
 
 // ── Reactive Network Repair ────────────────────────────────────────────────
@@ -278,6 +319,8 @@ function handleDockerEventUnsafe(event: DockerEvent): void {
   if (!config.enabled) return;
 
   const containerName = event.actorName || event.actorId;
+  // Intentional stop by a backup/restore/update/rollback (any Talome process) — not a crash, don't remediate
+  if (isContainerUnderOperation(event.actorName, event.actorId)) return;
   const now = new Date().toISOString();
 
   let systemEvent: SystemEvent | null = null;
@@ -395,6 +438,9 @@ export function startAgentLoop(): () => void {
     return () => {};
   }
 
+  // Remediations on apps with outcome probes are judged by verifyApp(appId).
+  registerSemanticOutcomeProbe();
+
   log.info(
     `Starting background agent (interval=${config.checkIntervalMs}ms, ` +
     `triage=${config.maxTriagePerHour}/hr, remediation=${config.maxRemediationPerHour}/hr, ` +
@@ -451,6 +497,10 @@ export function startAgentLoop(): () => void {
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
+    }
+    if (earlyVerifyTimer) {
+      clearTimeout(earlyVerifyTimer);
+      earlyVerifyTimer = null;
     }
     if (eventStreamCleanup) {
       eventStreamCleanup();

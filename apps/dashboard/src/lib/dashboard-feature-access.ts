@@ -24,6 +24,7 @@ const ROUTE_REQUIREMENTS: ReadonlyArray<{
   { path: "/dashboard/apps", requirement: { permission: "apps" } },
   { path: "/dashboard/share", requirement: { permission: "apps" } },
   { path: "/dashboard/native-apps", requirement: { permission: "apps" } },
+  { path: "/dashboard/backups", requirement: { permission: "apps" } },
   { path: "/dashboard/automations", requirement: { permission: "automations" } },
   { path: "/dashboard/intelligence", requirement: { permission: "intelligence" } },
   { path: "/dashboard/logs", requirement: { permission: "intelligence" } },

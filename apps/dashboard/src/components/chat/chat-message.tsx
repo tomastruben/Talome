@@ -37,6 +37,7 @@ import {
 } from "@/components/ai-elements/confirmation";
 import { ReasoningSummary } from "@/components/ai-elements/reasoning";
 import { extractAssistantEntityReferences } from "@/lib/assistant-entity-references";
+import { ApprovalCard } from "@/components/trust/approval-card";
 
 interface ChatMessageProps {
   message: UIMessage;
@@ -462,6 +463,7 @@ export function ChatMessage({
                   <LiveToolOutput isRunning={p.state === "input-available"} />
                 )}
               </Tool>
+              {p.state === "output-available" && <ApprovalCard output={p.output} />}
 
               {approval && addToolApprovalResponse && (
                 <Confirmation approval={approval} state={p.state}>

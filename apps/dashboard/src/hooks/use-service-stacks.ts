@@ -10,11 +10,33 @@ async function fetcher(url: string): Promise<ServiceStack[]> {
   return res.json();
 }
 
-export function useServiceStacks() {
+export const SERVICE_STACKS_KEY = `${CORE_URL}/api/containers?grouped=true`;
+
+export interface UseServiceStacksOptions {
+  /** When false, nothing is fetched or polled (SWR key is null). Default true. */
+  enabled?: boolean;
+  /**
+   * Polling interval in ms. Default CONTAINERS_REFRESH_INTERVAL.
+   * Pass 0 for a passive subscriber that reads the shared cache (filled by
+   * another polling instance) without starting its own timer.
+   */
+  refreshInterval?: number;
+}
+
+/** SWR key for the grouped containers endpoint, or null when disabled. */
+export function getServiceStacksKey(enabled: boolean): string | null {
+  return enabled ? SERVICE_STACKS_KEY : null;
+}
+
+export function useServiceStacks(options: UseServiceStacksOptions = {}) {
+  const { enabled = true, refreshInterval = CONTAINERS_REFRESH_INTERVAL } = options;
+  const passive = refreshInterval <= 0;
   const { data, error, mutate, isLoading } = useSWR<ServiceStack[]>(
-    `${CORE_URL}/api/containers?grouped=true`,
+    getServiceStacksKey(enabled),
     fetcher,
-    { refreshInterval: CONTAINERS_REFRESH_INTERVAL },
+    passive
+      ? { refreshInterval: 0, revalidateOnFocus: false, revalidateIfStale: false }
+      : { refreshInterval },
   );
 
   return {

@@ -242,9 +242,12 @@ This attaches to an existing `talome-claude` tmux session if one is already runn
 
 ### Headless mode (automated)
 
-The AI agent uses `claude --dangerously-skip-permissions --print <task>` for automated operations:
-- `apply_change` — self-improvement changes with typecheck + auto-rollback
-- `executeWorkspaceGeneration` — app scaffolding in a generated-app workspace
+Headless runs never use `--dangerously-skip-permissions`. Every one goes through `spawnClaudeStreaming()` in `apps/core/src/ai/claude-process.ts` with a tool policy:
+- **Code editing** (`codeEditingClaudePolicy`) — `apply_change` / evolution auto-execute (the evolution worker), the dashboard build autofix and `executeWorkspaceGeneration`: file edits inside the working directory only (never `.claude/`, `.mcp.json`, `.git/`, `.env*`, `CLAUDE.md`), no shell, no web, no MCP servers. Talome runs the typecheck/build and rollback itself.
+- **Text only** (`textOnlyClaudePolicy`, `generateTextViaClaudeCode`) — weekly digest, activity summary, supervisor crash diagnosis: every tool denied, no MCP servers. Log/event/activity text in their prompts is fenced as untrusted data (`ai/untrusted-data.ts`).
+- **Remediation** (`remediationClaudePolicy`) — see Agent loop below.
+
+Evolution auto-execute is off unless the owner turns it on in Settings -> Intelligence (`evolution_auto_execute` plus the `evolution_auto_execute_enabled_at` opt-in; admin-only). Only the interactive terminal commands an admin launches and watches may add `--dangerously-skip-permissions` (the "auto" toggle).
 
 CLAUDE.md is read automatically in both modes.
 
@@ -255,44 +258,41 @@ CLAUDE.md is read automatically in both modes.
 Tools are organized into **domains** — groups of tools that belong to a specific app or capability. Each domain declares which settings keys indicate the app is configured.
 
 **Key files:**
-- `apps/core/src/ai/tool-registry.ts` — registry engine (`registerDomain`, `getActiveRegisteredTools`, `getAllRegisteredTools`)
-- `apps/core/src/ai/agent.ts` — domain registrations (each `registerDomain()` call)
+- `apps/core/src/ai/tool-registry.ts` — registry engine (`registerDomain`, `registerDomainWithOnDemandGroups`, `getActiveRegisteredTools`, `getAllRegisteredTools`)
+- `apps/core/src/ai/agent.ts` — domain registrations (each `registerDomain()` call) and the system prompt
+- `apps/core/src/ai/tool-discovery.ts` — per-conversation chat routing and the `discover_tools` tool
+- `apps/core/src/ai/execution.ts` — `executeTool()`, the single execution path for every tool call
 
-**How it works:**
-- **Dashboard chat** (`getActiveTools`) — only loads tools for domains whose settings are configured (e.g. arr tools only if `sonarr_url` or `radarr_url` exist). This keeps tool count low for better LLM selection.
-- **MCP server** (Claude Code) — uses `activeTools` / `getActiveRegisteredTools()`, same domain filtering as dashboard chat. Only tools for configured apps are exposed.
+**Active vs registered:** a domain with `settingsKeys` is active only when one of those settings has a value (e.g. `arr` needs `sonarr_url`/`radarr_url`/…). Domains with no settings keys are always active. MCP and automations see every tool of every active domain.
 
-**Current domains** (17 total, 219 registered tools — verify with `grep "registerDomain({" apps/core/src/ai/agent.ts | wc -l`):
+**Base vs on-demand (dashboard chat only):**
+- **Base domains** — active domains with no settings keys and not `onDemand` (the everyday `core` ops surface, `setup`, `verification`). Sent on every chat turn; their prefix stays prompt-cache friendly.
+- **On-demand domains** — everything else: app domains (`arr`, `jellyfin`, …), `onDemand: true` domains (`mdns`), and the `core` groups split out by `CORE_ON_DEMAND_GROUPS` in `agent.ts` (`docker-admin`, `storage`, `monitoring`, `app-management`, `memory-admin`, `widgets`, `automations`, `notifications`, `files`, `self-improvement`, `app-creator`). A conversation gains a domain when a user message matches its keywords, one of its tools was already used, or the model calls **`discover_tools`** with a keyword or tool name. The set only grows within a conversation and is persisted per conversation (`conversation_tool_domains`).
 
-| Domain | Settings Keys | Tool Count |
-|---|---|---|
-| `core` | *(always loaded)* | 112 |
-| `media` | `sonarr_url`, `radarr_url` | 5 |
-| `optimization` | `sonarr_url`, `radarr_url` | 9 |
-| `arr` | `sonarr_url`, `radarr_url`, `readarr_url`, `prowlarr_url` | 27 |
-| `qbittorrent` | `qbittorrent_url` | 6 |
-| `jellyfin` | `jellyfin_url` | 6 |
-| `audiobookshelf` | `audiobookshelf_url` | 9 |
-| `overseerr` | `overseerr_url` | 7 |
-| `plex` | `plex_url` | 5 |
-| `homeassistant` | `homeassistant_url` | 5 |
-| `pihole` | `pihole_url` | 5 |
-| `vaultwarden` | `vaultwarden_url` | 4 |
-| `proxy` | *(always loaded)* | 5 |
-| `tailscale` | *(always loaded)* | 3 |
-| `mdns` | *(always loaded)* | 4 |
-| `ollama` | *(always loaded — auto-detects local Ollama)* | 5 |
-| `setup` | *(always loaded — first-run wizard)* | 2 |
+Count domains and tools from the source (`grep -c "registerDomain" apps/core/src/ai/agent.ts`, the settings tool browser) rather than trusting a table here.
 
-**Adding a new domain:** Create the tool file in `apps/core/src/ai/tools/`, import the tools in `agent.ts`, and add a `registerDomain()` call with the appropriate `settingsKeys`. The MCP server auto-syncs — no changes needed there.
+**Adding a new domain:** Create the tool file in `apps/core/src/ai/tools/`, import the tools in `agent.ts`, and add a `registerDomain()` call with the appropriate `settingsKeys`, tiers (`read` / `modify` / `destructive`) and — for chat routing — `keywords`/`summary`. The MCP server and `discover_tools` pick it up automatically.
+
+### One execution path: `executeTool()`
+
+Every tool call — dashboard chat (via `gateToolExecution`), the Telegram/Discord bots, MCP over HTTP and stdio, automation steps (`automation/engine.ts`), agent-loop remediation (`agent-loop/remediation.ts`) and the setup agent (`setup/loop.ts`) — goes through `executeTool()` in `apps/core/src/ai/execution.ts`. It applies, in order: per-actor grants, the security mode (`permissive` / `cautious` / `locked`), server-issued approvals, execution with error normalization, and an actor-aware, redacted audit entry. Never call a tool's `execute()` directly from new code; an unattended model gets its tools through `gateToolsForUnattendedActor()`.
+
+- **Actors:** `user` (session user in chat, or `telegram:<id>` / `discord:<id>` for the bots — which answer only senders the owner allowed in Settings -> Chat Bots, `messaging/allowlist.ts`; unknown senders are refused, told their user id, and the owner is notified), `mcp_token` (token id + name), `mcp_stdio` (local owner), `automation` (automation id + name), `agent_loop` (`remediation`, `setup`). The tool runs inside the actor's context (`ai/actor-context.ts`), so app operations it starts are journaled under that actor in `app_operations.actor` (`ops/operations.ts` `currentActor()`); `runWithActor()` still works for explicit overrides.
+- **Grants:** MCP tokens carry scopes. An automation an MCP token creates or changes in any way (steps, enabled, trigger, name) is bound to that token (`automations.actor_token_id`, with a snapshot in `automations.actor_scopes`) and runs under its grants — every step and every tool its `ai_prompt` model calls — so a token cannot escape its grants by scheduling work or by enabling an owner-written automation. Each run re-reads the token: revoked, expired or deleted → the run is blocked and the automation disabled (the owner is notified); narrowed → the current grants apply. Owner-written automations are owner-level.
+- **Approvals:** in cautious mode a destructive call returns `approval_required` with an `approvalId` and `approveUrl` (`/dashboard/settings/approvals?id=…`), and a notification with that `link` is written. After the owner approves, the caller retries with the same arguments plus `approval_id`. Approvals are bound to actor + tool + argument hash and are single-use; they expire after 15 minutes (24 hours for automations and the agent loop, which cannot retry while the owner watches). The model never sets the legacy `confirmed` flag — the execution service sets it once the call is authorized. In cautious mode, `run_shell` commands outside the shell allowlist are refused outright instead of asking for an approval that could never be used.
+- **Unattended runs:** automations and the agent loop never wait. A step that needs approval (or has `approvalPolicy: "require_approval"`) ends `blocked_approval`; the owner approves from the notification link, and the next run with the same arguments ("Run now" or the next scheduled run) consumes it. An `ai_prompt` step blocked on a call its model made resumes after the owner approves that call, without a new prompt approval (the model must repeat the call — best effort). Legacy v1 `run_shell` actions marked `approved: true` no longer bypass the security mode: in cautious mode each run needs an approval (use permissive mode, or a v2 workflow, for unattended scripts).
+- **Agent loop:** remediation escalates once — one "Agent needs approval" notification — and holds the source while the approval is pending and for 4 hours after it is denied or expires unanswered (persisted in `remediation_escalations`). When the owner approves, the exact proposed call runs right away (`resumeApprovedRemediation`, from the approvals route) and the outcome tracker verifies it. The Claude Code remediation path launches Claude with `TALOME_MCP_ACTOR`, so the MCP stdio server runs as `agent_loop:remediation` limited to the remediation tools, and the run's outcome is read from the audit log (a call held for approval is not an attempted fix). That session never gets `--dangerously-skip-permissions`: only the Talome MCP remediation tools are allowed, Claude Code's own shell, file and web tools are denied, only the Talome MCP server is loaded (`remediationClaudePolicy`), and in locked mode it is diagnosis-only. Event text is fenced in the prompt as untrusted data. Every remediation write (API path, Claude Code path via the stdio server, and the owner-approved resume) is re-checked right before it runs against app operations and maintenance windows (`agent-loop/remediation-guard.ts`): while the target app is being updated, backed up or restored the call is deferred — an approved one stays approved and is retried — and a rollback made stale by a newer update is dropped. The setup agent pauses its run when a call needs approval.
 
 ---
 
 ## Talome MCP Server
 
-Talome's MCP tools are available in every Claude Code session automatically via the `.mcp.json` in the repo root. Claude Code launches a local stdio process — **no HTTP server, no token, no env vars needed**.
+Talome exposes its tools over MCP in two ways. Both build the tool list per actor and route every call through `executeTool()`.
 
-The MCP server connects to the same SQLite database and Docker socket as the main Talome server. It works whether or not the full Talome web server is running.
+- **Local stdio** (`apps/core/src/mcp-stdio.ts`, launched by `.mcp.json` via `apps/core/mcp-launch.sh`) — **no HTTP server, no token needed**. It connects to the same SQLite database and Docker socket as the main server, so it runs as the local owner (`mcp_stdio`): no per-token grants, but the security mode, approvals and audit still apply. It re-evaluates the configured domains and disabled tools every ~15s (emitting `tools/list_changed`), and **exits when its client disconnects** (stdin closed, EPIPE, transport closed, signals, or the parent process going away) — after finishing any backup, restore or update it is running (bounded, 2 h). Work cut short anyway (SIGKILL) is undone by the server's backup recovery once the process is gone.
+- **HTTP** (`POST /api/mcp`, `apps/core/src/routes/mcp.ts`) — requires a Bearer token created in Settings. Each token carries **grants** (max tier, domains, allowed/denied tools, apps); the tool list is evaluated per request for that token, and every call is re-checked against the grants.
+
+It works whether or not the full Talome web server is running (stdio).
 
 ### No setup required
 
@@ -305,7 +305,9 @@ pnpm install
 
 ### Available MCP Tools
 
-The MCP server auto-syncs from `activeTools` in `apps/core/src/ai/agent.ts`. It uses the same domain filtering as dashboard chat — only tools for configured apps are exposed. Core tools (Docker, system, apps, filesystem, widgets, automations, memories, settings, notifications, self-improvement, app creation) are always available.
+The MCP tool list is every tool of the currently active domains (the same settings-based filtering as chat, without chat's base/on-demand routing), minus tools disabled in Settings, minus — for HTTP tokens — tools outside the token's grants. Core tools (Docker, system, apps, filesystem, widgets, automations, memories, settings, notifications, self-improvement, app creation) are always available.
+
+Destructive tools in cautious mode return `[approval_required]` with an approval link: ask the user to approve it in Talome (Settings -> Approvals), then call the tool again with the same arguments plus `approval_id`. Never invent approval ids.
 
 Full tool listing with descriptions: **`docs/tools-reference.md`**
 
@@ -342,7 +344,7 @@ Common error patterns specific to this codebase. Read before making changes to a
 
 ### Connection resilience
 
-The MCP stdio server is a **long-running process launched at Claude Code startup** — it is independent of the Talome web server. Editing files in the repo does **not** restart or affect your MCP connection. If you see "Connection error" in your terminal, that is Claude's API connection (internet blip), not the Talome MCP. Wait for the auto-reconnect; your MCP tools will still be available once you're reconnected.
+The MCP stdio server is a **process launched at Claude Code startup that lives as long as that Claude Code session** — it is independent of the Talome web server and exits when Claude Code disconnects. Editing files in the repo does **not** restart or affect your MCP connection. If you see "Connection error" in your terminal, that is Claude's API connection (internet blip), not the Talome MCP. Wait for the auto-reconnect; your MCP tools will still be available once you're reconnected.
 
 If the MCP server itself does go down (rare), restart with `/mcp` in Claude Code to reinitialize.
 

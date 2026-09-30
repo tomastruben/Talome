@@ -1,48 +1,25 @@
 import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { spawn } from "node:child_process";
-import { resolveClaudeBinary } from "./ai/claude-binary.js";
 import { db, schema } from "./db/index.js";
 import { desc, eq } from "drizzle-orm";
 import { logAiUsage, shouldRunService, isInStartupGrace } from "./agent-loop/budget.js";
 import { createLogger } from "./utils/logger.js";
+import { generateTextViaClaudeCode, isClaudeCodeAvailable } from "./ai/claude-process.js";
+import { fenceUntrusted } from "./ai/untrusted-data.js";
 
 const activityLog = createLogger("activity-summary");
 
 const ACTIVITY_MODEL = "claude-haiku-4-5-20251001";
 
-let _claudeAvailable: boolean | null = null;
-async function isClaudeCodeAvailable(): Promise<boolean> {
-  if (_claudeAvailable !== null) return _claudeAvailable;
-  try {
-    _claudeAvailable = await new Promise<boolean>((resolve) => {
-      const proc = spawn(resolveClaudeBinary(), ["--version"], { shell: false });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
-      const p = proc as any;
-      p.on("close", (code: number | null) => resolve(code === 0));
-      p.on("error", () => resolve(false));
-    });
-  } catch { _claudeAvailable = false; }
-  return _claudeAvailable;
+const ACTIVITY_SYSTEM_PROMPT = "You summarise server activity logs into exactly 3 concise bullet points (one sentence each, starting with '•'). Focus on what changed, what's notable, what needs attention. Be specific — include container names, app names, sizes. No intro text, no outro.";
+
+/** The summary request: audit entries (tool arguments, app and container names) fenced as untrusted data. */
+export function buildActivityPrompt(entries: Array<{ timestamp: string; action: string; details: string; tier: string }>): string {
+  const lines = entries.map((e) => `[${e.timestamp}] ${e.action} ${e.details.slice(0, 300)} (${e.tier})`).join("\n");
+  return `Recent activity:\n${fenceUntrusted(lines, { label: "server activity log entries", prefix: "ACTIVITY", maxChars: 12_000 })}`;
 }
 
-async function generateViaClaudeCode(systemPrompt: string, userPrompt: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    let stdout = "";
-    const { ANTHROPIC_API_KEY: _s1, CLAUDECODE: _s2, ...cleanEnv } = process.env;
-    const proc = spawn(resolveClaudeBinary(), ["--dangerously-skip-permissions", "--print", `${systemPrompt}\n\n${userPrompt}`], {
-      cwd: process.cwd(), env: cleanEnv, shell: false,
-    });
-    const timeout = setTimeout(() => { proc.kill("SIGTERM"); resolve(null); }, 30_000);
-    proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
-    const p2 = proc as any;
-    p2.on("close", () => { clearTimeout(timeout); resolve(stdout.trim() || null); });
-    p2.on("error", () => { clearTimeout(timeout); resolve(null); });
-  });
-}
-
-async function generateActivitySummary(): Promise<void> {
+export async function generateActivitySummary(): Promise<void> {
   if (isInStartupGrace()) return;
   const zoneCheck = shouldRunService("activity_summary");
   if (!zoneCheck.allowed) {
@@ -72,16 +49,12 @@ async function generateActivitySummary(): Promise<void> {
 
     if (entries.length === 0) return;
 
-    const log = entries
-      .map((e) => `[${e.timestamp}] ${e.action} ${e.details} (${e.tier})`)
-      .join("\n");
-
-    const systemPrompt = "You summarise server activity logs into exactly 3 concise bullet points (one sentence each, starting with '•'). Focus on what changed, what's notable, what needs attention. Be specific — include container names, app names, sizes. No intro text, no outro.";
-    const userPrompt = `Recent activity:\n${log}`;
+    const systemPrompt = ACTIVITY_SYSTEM_PROMPT;
+    const userPrompt = buildActivityPrompt(entries);
 
     let summary: string | null = null;
     if (await isClaudeCodeAvailable()) {
-      summary = await generateViaClaudeCode(systemPrompt, userPrompt);
+      summary = await generateTextViaClaudeCode(`${systemPrompt}\n\n${userPrompt}`, { cwd: process.cwd(), timeoutMs: 30_000 });
       if (summary) {
         logAiUsage({ model: "claude-code-local", tokensIn: 0, tokensOut: 0, context: "activity_summary" });
         activityLog.info("Generated summary via Claude Code (subscription)");

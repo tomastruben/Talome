@@ -11,3 +11,6 @@ data/
 .bin/
 .playwright-mcp/
 apps/web/out/
+
+# worktree node_modules symlinks
+node_modules

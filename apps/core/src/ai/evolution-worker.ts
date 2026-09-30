@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { execSync, spawnSync } from "node:child_process";
 import {
   spawnClaudeStreaming,
+  codeEditingClaudePolicy,
   getChangedFiles,
   runTypecheck,
   stashRollback,
@@ -191,6 +192,9 @@ async function main() {
   const deadlineController = new AbortController();
   const deadlineTimer = setTimeout(() => deadlineController.abort(), CLAUDE_TIMEOUT_MS);
 
+  // Restricted session (never --dangerously-skip-permissions): file edits
+  // inside the working directory only (none in plan mode), no shell, no web,
+  // no MCP servers. The typecheck below is Talome's, not Claude's.
   const { code, stdout, stderr } = await spawnClaudeStreaming(
     fullTask,
     cwd,
@@ -198,6 +202,8 @@ async function main() {
       await postEvent({ type: "output", chunk });
     },
     deadlineController.signal,
+    undefined,
+    codeEditingClaudePolicy({ canEdit: mode === "apply" }),
   );
   clearTimeout(deadlineTimer);
 

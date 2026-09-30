@@ -336,7 +336,7 @@ After calling: Present as a concise list. Highlight custom networks and how many
 });
 
 export const pruneResourcesTool = tool({
-  description: `Remove unused Docker resources (stopped containers, dangling images, unused volumes, unused networks). Requires user confirmation — this is destructive and cannot be undone.
+  description: `Remove unused Docker resources (stopped containers, dangling images, unused volumes, unused networks). Destructive and cannot be undone — in cautious mode Talome returns approval_required and the owner approves it.
 
 After calling: Report exactly what was removed and how much disk space was reclaimed. Warn that pruned volumes cannot be recovered.`,
   inputSchema: z.object({
@@ -344,11 +344,11 @@ After calling: Report exactly what was removed and how much disk space was recla
       .array(z.enum(["containers", "images", "volumes", "networks"]))
       .min(1)
       .describe("Which resource types to prune"),
-    confirmed: z.boolean().describe("Must be true — ask user to confirm before calling"),
+    confirmed: z.boolean().optional().describe("Leave unset. Talome sets it once this call is authorized (the owner approved it, or permissive mode)."),
   }),
   execute: async ({ targets, confirmed }) => {
     if (!confirmed) {
-      return { error: "This is a destructive action. Ask the user to confirm, then call again with confirmed: true." };
+      return { error: "This destructive action was not authorized. Call it without confirmed: Talome asks the owner to approve it (approval_required), then retry with approval_id." };
     }
     const results = await pruneResources(targets);
     writeAuditEntry(

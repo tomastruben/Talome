@@ -21,6 +21,7 @@ import { notificationChannels } from "./routes/notification-channels.js";
 import { memories } from "./routes/memories.js";
 import { integrations } from "./routes/integrations.js";
 import { mcp } from "./routes/mcp.js";
+import { approvals } from "./routes/approvals.js";
 import { setupTerminal } from "./routes/terminal.js";
 import { automations } from "./routes/automations.js";
 import { auth } from "./routes/auth.js";
@@ -39,6 +40,8 @@ import { mdns as mdnsRoute } from "./routes/mdns.js";
 import { webhooks } from "./routes/webhooks.js";
 import { backups as backupsRoute } from "./routes/backups.js";
 import { updates as updatesRoute } from "./routes/updates.js";
+import { operationsRoute } from "./ops/routes.js";
+import { recoverOperationsOnBoot } from "./ops/recovery.js";
 import { ollama as ollamaRoute } from "./routes/ollama.js";
 import { aiModels as aiModelsRoute } from "./routes/ai-models.js";
 import { push as pushRoute } from "./routes/push.js";
@@ -56,6 +59,7 @@ import { health as healthRoute } from "./routes/health.js";
 import { diagnostics as diagnosticsRoute } from "./routes/diagnostics.js";
 import { search as searchRoute } from "./routes/search.js";
 import { supervisor as supervisorRoute } from "./routes/supervisor.js";
+import { verification as verificationRoute } from "./routes/verification.js";
 import { startAutomationCron, stopAutomationCron } from "./automation/cron.js";
 import { startMonitor } from "./monitor.js";
 import { startAgentLoop } from "./agent-loop/index.js";
@@ -206,6 +210,14 @@ try {
   // Non-fatal — schema may not exist yet on first boot (migration handles it)
 }
 
+// ── Recover app operations / automation runs cut short by a restart ─────────
+// Marks them interrupted (never re-runs them) and reconciles real container state.
+try {
+  recoverOperationsOnBoot();
+} catch (err) {
+  startupLog.error("recoverOperationsOnBoot failed", err);
+}
+
 try {
   initializeStores();
   const nativeBackfillCount = backfillUserAppSpecs();
@@ -346,7 +358,7 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
-// ── Session auth (guards all /api/* except health + auth + mcp + terminal) ───
+// ── Session auth (guards all /api/* except health + auth + mcp + webhooks) ──
 app.use("/api/*", requireSession);
 
 // ── Health check ──────────────────────────────────────────────────────────────
@@ -392,6 +404,7 @@ app.use("/api/evolution/*", requireRole("admin"));
 app.use("/api/stores/*", requireRole("admin"));
 // Drive allow-list changes affect every Files user and can expose whole volumes.
 app.use("/api/files/drives", requireRole("admin"));
+app.use("/api/approvals/*", requireRole("admin"));
 
 // ── Feature-level permission guards ─────────────────────────────────────────
 app.use("/api/media/*", requirePermission("media"));
@@ -401,6 +414,8 @@ app.use("/api/automations/*", requirePermission("automations"));
 app.use("/api/apps/*", requirePermission("apps"));
 app.use("/api/app-specs", requirePermission("apps"));
 app.use("/api/app-specs/*", requirePermission("apps"));
+app.use("/api/operations", requirePermission("apps"));
+app.use("/api/operations/*", requirePermission("apps"));
 app.use("/api/chat/*", requirePermission("chat"));
 app.use("/api/widgets", requirePermission("dashboard"));
 app.use("/api/widgets/*", requirePermission("dashboard"));
@@ -426,6 +441,7 @@ app.use("/api/auth/*", rateLimit(10, 60_000));
 app.use("/api/webhooks/*", rateLimit(30, 60_000));
 
 app.route("/api/audit-log", auditLog);
+app.route("/api/approvals", approvals);
 app.route("/api/settings", settings);
 app.route("/api/media", media);
 app.route("/api/metrics", metricsRoute);
@@ -444,6 +460,7 @@ app.route("/api/mdns", mdnsRoute);
 app.route("/api/network", network);
 app.route("/api/backups", backupsRoute);
 app.route("/api/updates", updatesRoute);
+app.route("/api/operations", operationsRoute);
 app.route("/api/webhooks", webhooks);
 app.route("/api/ollama", ollamaRoute);
 app.route("/api/ai", aiModelsRoute);
@@ -458,12 +475,14 @@ app.route("/api/audiobooks", audiobooksRoute);
 app.route("/api/audible", audibleRoute);
 app.route("/api/search", searchRoute);
 app.route("/api/supervisor", supervisorRoute);
+app.route("/api/verification", verificationRoute);
 
 // Rate-limit MCP endpoint: 60 requests per 60 seconds per IP
 app.use("/api/mcp/*", rateLimit(60, 60_000));
 app.route("/api/mcp", mcp);
 
-// Terminal WebSocket — auth handled inside setupTerminal via bearerAuth
+// Terminal HTTP proxy — admin session required (routes/terminal.ts); the
+// WebSocket goes straight to the daemon with a token minted here
 setupTerminal(app, upgradeWebSocket);
 
 app.route("/api/automations", automations);

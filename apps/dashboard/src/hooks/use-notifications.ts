@@ -3,6 +3,7 @@
 import useSWR, { mutate } from "swr";
 import { useCallback, useRef } from "react";
 import { CORE_URL } from "@/lib/constants";
+import { APPROVALS_PATH, approvalHref } from "@/components/trust/format";
 
 export interface AppNotification {
   id: number;
@@ -12,6 +13,8 @@ export interface AppNotification {
   read: boolean;
   sourceId: string | null;
   createdAt: string;
+  /** Where the notification's action leads (newer cores; optional). */
+  link?: string | null;
 }
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -71,12 +74,99 @@ function formatNotificationTitle(notification: AppNotification): string {
   return title;
 }
 
+export interface NotificationAction {
+  href: string;
+  label: string;
+  /** Absolute http(s) URL — open in a new tab instead of client navigation. */
+  external: boolean;
+}
+
+/** Who is looking at the notification. Approvals can only be reviewed by admins. */
+export interface NotificationViewer {
+  isAdmin: boolean;
+}
+
+type ActionableNotification = Pick<AppNotification, "title" | "body" | "sourceId"> & {
+  link?: string | null;
+  fullBody?: string;
+};
+
+const APPROVAL_REF = /approval:([A-Za-z0-9_-]{1,128})/;
+
+/** A same-origin path ("/dashboard/…"), never protocol-relative ("//host") or a backslash trick. */
+function isSafeInternalPath(value: string): boolean {
+  return value.startsWith("/") && !value.startsWith("//") && !value.includes("\\");
+}
+
+function isSafeExternalUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function approvalReference(n: ActionableNotification): string | null {
+  const match =
+    APPROVAL_REF.exec(n.sourceId ?? "") ?? APPROVAL_REF.exec(n.title) ?? APPROVAL_REF.exec(n.fullBody ?? n.body ?? "");
+  return match ? match[1] : null;
+}
+
+function notificationLink(n: ActionableNotification): string {
+  return typeof n.link === "string" ? n.link.trim() : "";
+}
+
+function isApprovalsPath(link: string): boolean {
+  return link.startsWith(APPROVALS_PATH);
+}
+
+/** True for an "Approval needed" notification (links to, or references, an approval). */
+export function isApprovalNotification(n: ActionableNotification): boolean {
+  const link = notificationLink(n);
+  return (isSafeInternalPath(link) && isApprovalsPath(link)) || approvalReference(n) !== null;
+}
+
+/**
+ * The clickable action for a notification: its `link` when the server sent
+ * one, else — for approval notifications written before `link` existed — the
+ * approvals page for the `approval:<id>` reference in its source or text.
+ * Returns null when there is nothing safe to link to.
+ *
+ * The approvals page is admin-only, so members get no approval action at all
+ * (it would only bounce them to the Settings index).
+ */
+export function getNotificationAction(
+  n: ActionableNotification,
+  viewer: NotificationViewer,
+): NotificationAction | null {
+  const approvalLabel = "Review approval";
+
+  const link = notificationLink(n);
+  if (link) {
+    if (isSafeInternalPath(link)) {
+      if (isApprovalsPath(link)) return viewer.isAdmin ? { href: link, label: approvalLabel, external: false } : null;
+      return { href: link, label: "Open", external: false };
+    }
+    if (isSafeExternalUrl(link)) return { href: link, label: "Open link", external: true };
+  }
+
+  const approvalId = approvalReference(n);
+  if (approvalId && viewer.isAdmin) {
+    return { href: approvalHref(approvalId), label: approvalLabel, external: false };
+  }
+  return null;
+}
+
 /**
  * Build the navigation target for a notification click.
  * View-only events go to a dashboard page; actionable events go to the
  * assistant with a prompt that explains the situation and asks before acting.
  */
-export function getNotificationRoute(n: AppNotification): string {
+export function getNotificationRoute(n: AppNotification, viewer: NotificationViewer): string {
+  const action = getNotificationAction(n, viewer);
+  if (action && !action.external) return action.href;
+
   const t = n.title.toLowerCase();
   const s = n.sourceId;
 
@@ -118,23 +208,77 @@ function assistantPromptUrl(n: AppNotification): string {
   return `/dashboard/assistant?prompt=${encodeURIComponent(prompt)}`;
 }
 
-export function useNotifications() {
+/** Poll cadence of the notification list (the only polled notification key). */
+export const NOTIFICATIONS_POLL_MS = 15_000;
+/**
+ * Safety refresh for the unread count. The count is normally refreshed when
+ * the polled list changes; this cheap poll also catches changes outside the
+ * top-N list (read/dismissed on another device, bulk cleanup).
+ */
+export const NOTIFICATIONS_COUNT_SAFETY_MS = 60_000;
+export const NOTIFICATIONS_MUTE_POLL_MS = 60_000;
+
+/**
+ * Signature of the fields that affect the unread count. When it changes
+ * between two list polls, the count is refetched — so the count endpoint no
+ * longer needs its own 15s poll.
+ */
+export function notificationListSignature(list: AppNotification[] | undefined): string {
+  if (!Array.isArray(list)) return "";
+  return list.map((n) => `${n.id}:${n.read ? 1 : 0}`).join(",");
+}
+
+export interface UseNotificationsOptions {
+  /**
+   * Exactly one mounted instance (NotificationToastBridge in the dashboard
+   * shell) owns polling; every other consumer reads the shared SWR cache and
+   * never starts timers of its own. Default false.
+   */
+  poll?: boolean;
+}
+
+export function getNotificationSWROptions(poll: boolean) {
+  return {
+    list: { refreshInterval: poll ? NOTIFICATIONS_POLL_MS : 0 },
+    count: {
+      refreshInterval: poll ? NOTIFICATIONS_COUNT_SAFETY_MS : 0,
+      revalidateOnFocus: false,
+    },
+    mute: { refreshInterval: poll ? NOTIFICATIONS_MUTE_POLL_MS : 0 },
+  } as const;
+}
+
+export function useNotifications(options: UseNotificationsOptions = {}) {
+  const { poll = false } = options;
+  const swrOptions = getNotificationSWROptions(poll);
+  const lastSignatureRef = useRef<string | null>(null);
+
   const { data, isLoading } = useSWR<AppNotification[]>(
     LIST_KEY,
     fetcher,
-    { refreshInterval: 15000 }
+    {
+      ...swrOptions.list,
+      onSuccess: (list) => {
+        if (!poll) return;
+        const signature = notificationListSignature(list);
+        const previous = lastSignatureRef.current;
+        lastSignatureRef.current = signature;
+        // New / read / dismissed notifications → refresh the unread count.
+        if (previous !== null && previous !== signature) void mutate(COUNT_KEY);
+      },
+    }
   );
 
   const { data: countData } = useSWR<{ count: number }>(
     COUNT_KEY,
     fetcher,
-    { refreshInterval: 15000 }
+    swrOptions.count
   );
 
   const { data: muteData } = useSWR<{ muted: boolean }>(
     MUTE_KEY,
     fetcher,
-    { refreshInterval: 60000 }
+    swrOptions.mute
   );
 
   // Prevent rapid-fire dismiss calls for the same ID

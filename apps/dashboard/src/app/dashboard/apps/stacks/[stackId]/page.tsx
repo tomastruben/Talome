@@ -19,6 +19,7 @@ import {
   resolveApplicationIcon,
   resolveApplicationIconUrl,
 } from "@/components/native-app/native-app-icons";
+import { VerificationPanel } from "@/components/app-detail/verification-panel";
 import type { StackApp, EnrichedStackApp } from "@talome/types";
 
 /* ── Types ─────────────────────────────────────────────── */
@@ -195,6 +196,9 @@ export default function StackDetailPage() {
           })}
         </div>
       </section>
+
+      {/* ── Outcome verification (once something is installed) ── */}
+      <VerificationPanel target="stack" id={stack.id} enabled={installedCount > 0} />
 
       {/* ── About ── */}
       <section className="grid gap-3">

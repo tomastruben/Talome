@@ -12,19 +12,25 @@ import {
 import { HugeiconsIcon } from "@/components/icons";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { useBugHunt } from "@/components/bug-hunt/bug-hunt-context";
-import { useDownloads } from "@/hooks/use-downloads";
+import { adaptiveDownloadsInterval, useDownloads } from "@/hooks/use-downloads";
 import { useUser } from "@/hooks/use-user";
 import { CORE_URL } from "@/lib/constants";
-import { startNav, contentNav, operationsNav, systemNav } from "./nav-config";
+import { usePendingApprovals } from "@/components/trust/api";
+import { startNav, contentNav, operationsNav, systemNav, approvalsNavItem } from "./nav-config";
 import type { NavItem } from "./nav-config";
 
-function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStreaming, isIntelligenceActive, onAction }: {
+/** Nav download badge: 10s while something is downloading, 30s otherwise. */
+const NAV_DOWNLOADS_INTERVAL = adaptiveDownloadsInterval(10_000);
+
+function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStreaming, isIntelligenceActive, badgeCount, onAction }: {
   item: NavItem;
   isActive: boolean;
   totalCount?: number;
   isActivelyDownloading?: boolean;
   isStreaming?: boolean;
   isIntelligenceActive?: boolean;
+  /** Attention count (e.g. pending approvals), shown as an amber pill. */
+  badgeCount?: number;
   onAction?: () => void;
 }) {
   const content = (
@@ -51,6 +57,14 @@ function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStrea
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />
             <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
           </span>
+        </span>
+      )}
+      {badgeCount !== undefined && badgeCount > 0 && (
+        <span
+          className="ml-auto text-xs font-medium tabular-nums bg-status-warning/15 text-status-warning rounded-full px-1.5 py-0.5 leading-none"
+          aria-label={`${badgeCount} pending`}
+        >
+          {badgeCount}
         </span>
       )}
       {item.title === "Intelligence" && isIntelligenceActive && (
@@ -81,7 +95,8 @@ function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStrea
 
 export function NavMain() {
   const pathname = usePathname();
-  const { totalCount, isActivelyDownloading } = useDownloads(10000);
+  // 10s while something is downloading, 30s otherwise
+  const { totalCount, isActivelyDownloading } = useDownloads(NAV_DOWNLOADS_INTERVAL);
   const { status: aiStatus } = useAssistant();
   const isStreaming = aiStatus === "streaming" || aiStatus === "submitted";
   const { isAdmin, hasPermission } = useUser();
@@ -101,6 +116,9 @@ export function NavMain() {
     { refreshInterval: 30_000, dedupingInterval: 10_000 },
   );
   const isIntelligenceActive = (activeTasks?.length ?? 0) > 0;
+
+  // Agent actions waiting for an admin (shares the SWR cache with Settings).
+  const { count: pendingApprovals } = usePendingApprovals(isAdmin);
 
   const actionHandlers: Record<string, () => void> = {
     "bug-hunt": () => bugHunt.open(),
@@ -170,6 +188,13 @@ export function NavMain() {
       {/* System — pinned to bottom */}
       <SidebarGroup className="mt-auto">
         <SidebarMenu>
+          {isAdmin && pendingApprovals > 0 && (
+            <NavItemRow
+              item={approvalsNavItem}
+              isActive={checkActive(approvalsNavItem.url)}
+              badgeCount={pendingApprovals}
+            />
+          )}
           {filteredSystem.map((item) => (
             <NavItemRow
               key={item.title}

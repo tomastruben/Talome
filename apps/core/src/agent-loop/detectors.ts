@@ -5,11 +5,13 @@ import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 import { listContainers, getContainerLogs } from "../docker/client.js";
 import { getSystemStats } from "../docker/client.js";
+import { mapWithConcurrency } from "../platform/concurrency.js";
 import { getSetting } from "../utils/settings.js";
 import { APP_REGISTRY } from "../app-registry/index.js";
 import { db, schema } from "../db/index.js";
 import { eq, desc } from "drizzle-orm";
 import type { SystemEvent, EventSeverity, AgentLoopConfig } from "./types.js";
+import { isContainerUnderOperation } from "../ops/maintenance.js";
 
 const execAsync = promisify(execCb);
 
@@ -62,15 +64,20 @@ async function detectContainerIssues(config: AgentLoopConfig): Promise<SystemEve
   const events: SystemEvent[] = [];
 
   try {
-    const containers = await listContainers();
+    // Shared cached `docker ps` — the detectors in one cycle make one call.
+    const containers = await listContainers({ cached: true });
     const currentStates = new Map<string, string>();
 
     for (const c of containers) {
-      currentStates.set(c.name, c.status);
       const prev = previousStates.get(c.name);
+      const wentDown = prev === "running" && c.status !== "running";
+      // Stopped on purpose by an operation (any process): keep the previous
+      // state so a container still down after the operation is reported then.
+      const intentional = wentDown && isContainerUnderOperation(c.name, c.id);
+      currentStates.set(c.name, intentional ? "running" : c.status);
 
       // Container went down
-      if (prev && prev === "running" && c.status !== "running") {
+      if (wentDown && !intentional) {
         if (shouldEmit(`container_down:${c.name}`)) {
           events.push(
             makeEvent("container_down", "warning", c.name, `Container ${c.name} stopped (was running)`, {
@@ -221,7 +228,7 @@ async function detectStaleImages(config: AgentLoopConfig): Promise<SystemEvent[]
   const events: SystemEvent[] = [];
 
   try {
-    const containers = await listContainers();
+    const containers = await listContainers({ cached: true });
     const now = Date.now();
     const staleThresholdMs = config.imageStalenessDays * 24 * 60 * 60 * 1000;
 
@@ -356,42 +363,142 @@ async function detectAppHealthIssues(): Promise<SystemEvent[]> {
 const ERROR_PATTERN = /\b(error|exception|fatal|panic|critical|crash|segfault|oom|killed)\b/i;
 const FALSE_POSITIVE_PREFIX = /^\s*\[?\s*(info|debug|trace|warn(ing)?)\b/i;
 
-async function detectErrorSpikes(): Promise<SystemEvent[]> {
+// Each running container keeps a rolling window of its last N log lines.
+// The first check fetches `tail=N`; later checks ask Docker only for lines
+// written since the newest timestamp we have seen (`since=`), so quiet
+// containers cost an empty response instead of re-reading 100 lines.
+
+const ERROR_SPIKE_WINDOW_LINES = 100;
+const LOG_FETCH_CONCURRENCY = 3;
+
+interface LogWindow {
+  /** Last ERROR_SPIKE_WINDOW_LINES lines (raw, including timestamp). */
+  lines: string[];
+  /** Sortable key (YYYY-MM-DDTHH:MM:SS.nnnnnnnnn) of the newest line seen. */
+  lastKey: string | null;
+  /** Unix seconds of the newest line seen — Docker's `since` granularity. */
+  lastSeconds: number;
+}
+
+const logWindows = new Map<string, LogWindow>();
+
+// Docker's RFC3339Nano timestamps trim trailing zeros, so they can't be
+// compared as strings directly; normalise the fraction to 9 digits.
+const DOCKER_LOG_TS_RE = /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z\s?/;
+
+export interface ParsedLogTimestamp {
+  key: string;
+  seconds: number;
+  /** The line without its timestamp prefix (and any stream-header residue). */
+  message: string;
+}
+
+/** Parse the timestamp docker prepends with `timestamps: true`. */
+export function parseDockerLogTimestamp(line: string): ParsedLogTimestamp | null {
+  const m = DOCKER_LOG_TS_RE.exec(line);
+  // The timestamp sits at the start, possibly after stream-header residue bytes.
+  if (!m || m.index > 8) return null;
+  const seconds = Math.floor(Date.parse(`${m[1]}Z`) / 1000);
+  if (!Number.isFinite(seconds)) return null;
+  return {
+    key: `${m[1]}.${(m[2] ?? "").padEnd(9, "0")}`,
+    seconds,
+    message: line.slice(m.index + m[0].length),
+  };
+}
+
+/**
+ * Merge a freshly fetched log chunk into a container's rolling window,
+ * dropping lines at or before the newest timestamp already seen.
+ */
+export function mergeLogWindow(prev: LogWindow | undefined, logText: string): LogWindow {
+  const fetched = logText.split("\n").filter((l) => l.trim().length > 0);
+  const lastKey = prev?.lastKey ?? null;
+  let newestKey = lastKey;
+  let newestSeconds = prev?.lastSeconds ?? 0;
+  const fresh: string[] = [];
+  let keepContinuation = lastKey === null;
+
+  for (const line of fetched) {
+    const ts = parseDockerLogTimestamp(line);
+    if (!ts) {
+      // Untimestamped continuation line: keep it only if the line it
+      // continues was new.
+      if (keepContinuation) fresh.push(line);
+      continue;
+    }
+    if (lastKey !== null && ts.key <= lastKey) {
+      keepContinuation = false;
+      continue;
+    }
+    keepContinuation = true;
+    fresh.push(line);
+    if (newestKey === null || ts.key > newestKey) {
+      newestKey = ts.key;
+      newestSeconds = ts.seconds;
+    }
+  }
+
+  const lines = [...(prev?.lines ?? []), ...fresh].slice(-ERROR_SPIKE_WINDOW_LINES);
+  return { lines, lastKey: newestKey, lastSeconds: newestSeconds };
+}
+
+async function refreshLogWindow(containerId: string): Promise<LogWindow> {
+  // Without a known newest timestamp we can't fetch incrementally — re-read
+  // the full tail and replace the window instead of appending duplicates.
+  const prev = logWindows.get(containerId)?.lastKey ? logWindows.get(containerId) : undefined;
+  const logText = prev
+    ? await getContainerLogs(containerId, ERROR_SPIKE_WINDOW_LINES, { since: prev.lastSeconds })
+    : await getContainerLogs(containerId, ERROR_SPIKE_WINDOW_LINES);
+  const next = mergeLogWindow(prev, logText);
+  logWindows.set(containerId, next);
+  return next;
+}
+
+export async function detectErrorSpikes(): Promise<SystemEvent[]> {
   const events: SystemEvent[] = [];
 
   try {
-    const containers = await listContainers();
+    const containers = await listContainers({ cached: true });
+    const running = containers.filter((c) => c.status === "running");
 
-    for (const c of containers) {
-      if (c.status !== "running") continue;
-
-      try {
-        const logText = await getContainerLogs(c.id, 100);
-        const lines = logText.split("\n").filter((l) => l.trim().length > 0);
-        if (lines.length < 10) continue; // too few lines to judge
-
-        const errorLines = lines.filter(
-          (l) => ERROR_PATTERN.test(l) && !FALSE_POSITIVE_PREFIX.test(l),
-        );
-        const errorRate = errorLines.length / lines.length;
-
-        if (errorRate > 0.3 && shouldEmit(`error_spike:${c.name}`)) {
-          events.push(
-            makeEvent("error_spike", "warning", c.name,
-              `${c.name} has ${Math.round(errorRate * 100)}% error rate in recent logs`,
-              {
-                errorRate: Math.round(errorRate * 100),
-                sampleSize: lines.length,
-                sampleErrors: errorLines.slice(0, 3).map((l) => l.slice(0, 200)),
-                containerName: c.name,
-              },
-            ),
-          );
-        }
-      } catch {
-        // Skip containers whose logs we can't read
-      }
+    // Forget windows of containers that are gone or stopped.
+    const runningIds = new Set(running.map((c) => c.id));
+    for (const id of logWindows.keys()) {
+      if (!runningIds.has(id)) logWindows.delete(id);
     }
+
+    const windows = await mapWithConcurrency(running, LOG_FETCH_CONCURRENCY, (c) => refreshLogWindow(c.id));
+
+    running.forEach((c, i) => {
+      const settled = windows[i];
+      // Skip containers whose logs we can't read
+      if (settled.status !== "fulfilled") return;
+      const lines = settled.value.lines;
+      if (lines.length < 10) return; // too few lines to judge
+
+      const errorLines = lines.filter((l) => {
+        // Judge the message, not the timestamp prefix — otherwise the
+        // "[INFO] ..." false-positive filter can never match.
+        const message = parseDockerLogTimestamp(l)?.message ?? l;
+        return ERROR_PATTERN.test(message) && !FALSE_POSITIVE_PREFIX.test(message);
+      });
+      const errorRate = errorLines.length / lines.length;
+
+      if (errorRate > 0.3 && shouldEmit(`error_spike:${c.name}`)) {
+        events.push(
+          makeEvent("error_spike", "warning", c.name,
+            `${c.name} has ${Math.round(errorRate * 100)}% error rate in recent logs`,
+            {
+              errorRate: Math.round(errorRate * 100),
+              sampleSize: lines.length,
+              sampleErrors: errorLines.slice(0, 3).map((l) => l.slice(0, 200)),
+              containerName: c.name,
+            },
+          ),
+        );
+      }
+    });
   } catch (err) {
     console.error("[agent-loop] detectErrorSpikes error:", err);
   }
@@ -739,6 +846,7 @@ export function resetDetectorState(): void {
   restartHistory.clear();
   previousStates.clear();
   lastEventKeys.clear();
+  logWindows.clear();
   appHealthCycleCount = 0;
   connectivityCycleCount = 0;
   reclaimCycleCount = 0;

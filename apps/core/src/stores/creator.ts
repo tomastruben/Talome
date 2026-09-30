@@ -453,7 +453,12 @@ export async function deleteUserApp(appId: string): Promise<{ success: boolean; 
     const installed = db.select().from(schema.installedApps)
       .where(eq(schema.installedApps.appId, appId)).get();
     if (installed) {
-      await uninstallApp(appId);
+      // Keep the catalog/registry entry when uninstall did not happen (e.g. an
+      // update is running): deleting it would orphan a still-installed app.
+      const uninstall = await uninstallApp(appId);
+      if (!uninstall.success) {
+        return { success: false, error: uninstall.error ?? `Could not uninstall ${appId}` };
+      }
     }
 
     if (existsSync(registryPath)) {

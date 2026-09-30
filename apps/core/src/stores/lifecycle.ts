@@ -2,10 +2,9 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { atomicWriteFileSync } from "../utils/filesystem.js";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import yaml from "js-yaml";
 import { db, schema } from "../db/index.js";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, notInArray } from "drizzle-orm";
 import { listContainers, listNetworks, removeNetwork, connectContainerToNetwork } from "../docker/client.js";
 import { ensureTalomeNetwork, injectTalomeNetwork } from "../docker/talome-network.js";
 import { autoConfigureApp, type AutoConfigResult } from "../app-registry/auto-configure.js";
@@ -14,6 +13,7 @@ import type { InstalledAppStatus, AppVolume } from "@talome/types";
 import { fireTrigger } from "../automation/engine.js";
 import { writeNotification } from "../db/notifications.js";
 import { createLogger } from "../utils/logger.js";
+import { encryptSetting } from "../utils/crypto.js";
 
 const log = createLogger("lifecycle");
 import { autoRegisterProxyRoute, removeProxyRoutesForApp } from "../proxy/caddy.js";
@@ -26,7 +26,6 @@ import {
   run,
   validateCompose,
   discoverContainers,
-  captureImageDigest,
   pinImageDigest,
   getCatalogApp,
   getInstalledApp,
@@ -48,9 +47,119 @@ import {
   applyVolumeMounts,
 } from "./compose-pipeline.js";
 import { executeHook } from "./lifecycle-hooks.js";
+import {
+  withAppOperation,
+  OperationConflictError,
+  currentActor,
+  hasLiveOperation,
+  waitForAppOperation,
+  getHeldOperation,
+  nestedOperationContext,
+  type OperationContext,
+  type OperationKind,
+} from "../ops/operations.js";
+import {
+  captureServiceImages,
+  verifyAppHealth,
+  restoreServiceImages,
+  probeHttp,
+  type ServiceImageState,
+  type VerifyResult,
+  type VerifyOptions,
+} from "../ops/docker-probe.js";
+import { isPreUpdateBackupEnabled, takePreUpdateBackup, findPreUpdateBackupId, backupTriggerForActor, type PreUpdateBackupResult } from "../ops/pre-update-backup.js";
+import { getSemanticBaseline, hasSemanticProbe, runSemanticVerification, type SemanticVerification } from "../ops/semantic-verify.js";
+import { holdAppMaintenance } from "../backup/state.js";
+import { reconcileUmbrelDependencies, applyUmbrelV2Install, getSavedDependencySelections } from "./umbrel-v2-install.js";
+import {
+  clearImagePins,
+  composeServiceImages,
+  decideImageRef,
+  describeKeptImages,
+  readImageRefState,
+  recordManagedImages,
+  resetImageRefState,
+  type ImageRefDecision,
+  type KeptImageRef,
+} from "../ops/image-refs.js";
 
 // ── Re-exports (preserve public API) ─────────────────────────────────────
 export { checkPortConflicts } from "./port-resolution.js";
+
+// ── Durable per-app operations ────────────────────────────────────────────
+// Every public lifecycle entry point runs as a journaled operation (see
+// ops/operations.ts): a conflicting operation on the same app fails fast with
+// a message naming the one in progress, and progress survives restarts.
+
+export interface LifecycleOptions {
+  /** Who requested the operation — "user:<id>", "assistant", "automation:<id>"… */
+  actor?: string;
+}
+
+export interface UpdateOptions extends LifecycleOptions {
+  /**
+   * Proceed even when the pre-update backup (enabled by the app's update
+   * policy) fails. Without it a failed backup aborts the update before any
+   * container is recreated.
+   */
+  force?: boolean;
+  /**
+   * Also move image refs the user pinned or customised (upgrade_app_image, a
+   * hand-edited tag or a fork image) to the catalog's. Without it those refs
+   * are kept and reported in `imagesKept`.
+   */
+  useCatalogImages?: boolean;
+}
+
+export interface OperationResultMeta {
+  /** Journal id of the operation (GET /api/operations/:id) */
+  operationId?: string;
+  /** True when rejected because another operation on the app is running */
+  conflict?: boolean;
+}
+
+async function runAppOperation<T extends { success: boolean; error?: string }>(
+  appId: string,
+  kind: OperationKind,
+  opts: LifecycleOptions | undefined,
+  fn: (ctx: OperationContext) => Promise<T>,
+): Promise<T & OperationResultMeta> {
+  let operationId: string | undefined;
+  try {
+    const result = await withAppOperation(appId, kind, opts?.actor ?? currentActor(), (ctx) => {
+      operationId = ctx.id;
+      // The compose lock still serializes against non-journaled writers (e.g. env edits).
+      return withAppLock(appId, () => fn(ctx));
+    });
+    return { ...result, operationId };
+  } catch (err) {
+    if (err instanceof OperationConflictError) {
+      const conflict: { success: false; error: string } & OperationResultMeta = {
+        success: false,
+        error: err.message,
+        conflict: true,
+        operationId: err.running.id,
+      };
+      return conflict as unknown as T & OperationResultMeta;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Run a non-lifecycle change to an app (compose/port edits, backup with
+ * stopFirst, restore) as a journaled operation under the same per-app lock,
+ * so it cannot interleave with an install/update/rollback — whose automatic
+ * rollback would otherwise silently overwrite the edit.
+ */
+export function withAppMaintenance<T extends { success: boolean; error?: string }>(
+  appId: string,
+  kind: Extract<OperationKind, "backup" | "restore" | "configure">,
+  fn: (ctx: OperationContext) => Promise<T>,
+  opts?: LifecycleOptions,
+): Promise<T & OperationResultMeta> {
+  return runAppOperation(appId, kind, opts, fn);
+}
 
 // ── Dependency resolution ──────────────────────────────────────────────────
 
@@ -146,14 +255,33 @@ export async function bulkUpdate(
 
 // ── Install ───────────────────────────────────────────────────────────────
 
+const INSTALL_STAGE_PROGRESS: Record<string, number> = {
+  pulling: 30,
+  creating: 60,
+  starting: 75,
+  running: 90,
+};
+
 export function installApp(
   appId: string,
   storeSourceId: string,
   envOverrides: Record<string, string> = {},
   volumeMounts: Record<string, string> = {},
   onProgress?: (stage: string, message: string) => void,
-): Promise<{ success: boolean; error?: string; remappedPorts?: Record<number, number>; dependencies?: DependencyCheck; autoConfig?: AutoConfigResult }> {
-  return withAppLock(appId, () => installAppInner(appId, storeSourceId, envOverrides, volumeMounts, onProgress));
+  opts?: LifecycleOptions,
+): Promise<{ success: boolean; error?: string; remappedPorts?: Record<number, number>; dependencies?: DependencyCheck; autoConfig?: AutoConfigResult } & OperationResultMeta> {
+  return runAppOperation(appId, "install", opts, (ctx) => {
+    let preparing = 0;
+    const progress = (stage: string, message: string) => {
+      if (stage !== "error") {
+        // "queued" is reported several times while preparing — advance gently.
+        const pct = stage === "queued" ? Math.min(20, (preparing += 4)) : (INSTALL_STAGE_PROGRESS[stage] ?? 0);
+        ctx.step(stage === "queued" ? "preparing" : stage, pct, message);
+      }
+      onProgress?.(stage, message);
+    };
+    return installAppInner(appId, storeSourceId, envOverrides, volumeMounts, progress);
+  });
 }
 
 async function installAppInner(
@@ -177,7 +305,7 @@ async function installAppInner(
 
   // Check dependencies
   onProgress?.("queued", "Checking dependencies…");
-  const depCheck = resolveDependencies(appId, storeSourceId);
+  const depCheck = reconcileUmbrelDependencies(app, resolveDependencies(appId, storeSourceId));
   if (!depCheck.satisfied) {
     return {
       success: false,
@@ -263,6 +391,12 @@ async function installAppInner(
   } catch (err: unknown) {
     log.warn(`talome network injection for ${appId}`, err);
   }
+
+  // ── Umbrel 2.0 manifest (folderAccess, environment, GPU, dataRoot, torOnly) ──
+  const umbrelV2 = applyUmbrelV2Install(app, appId, composePath, mergedEnvOverrides);
+  if (!umbrelV2.ok) return { success: false, error: umbrelV2.error };
+  if (umbrelV2.composePath) composePath = effectiveCompose = umbrelV2.composePath;
+  mergedEnvOverrides = umbrelV2.env;
 
   // ── Write per-app .env file ─────────────────────────────────────────
   writeAppDotEnv(appId, mergedEnvOverrides);
@@ -362,6 +496,8 @@ async function installAppInner(
 
     // Pin image digest for reproducible deploys
     pinImageDigest(appId, composePath);
+    // Every image ref in this compose is Talome's: updates may move them (ops/image-refs.ts).
+    resetImageRefState(appId, composeServiceImages(composePath));
 
     // Execute postInstall hook (best-effort)
     void executeHook("postInstall", appId, app.hooks, { composePath, env });
@@ -444,11 +580,11 @@ async function installAppInner(
 
 // ── Uninstall ─────────────────────────────────────────────────────────────
 
-export function uninstallApp(appId: string): Promise<{ success: boolean; error?: string }> {
-  return withAppLock(appId, () => uninstallAppInner(appId));
+export function uninstallApp(appId: string, opts?: LifecycleOptions): Promise<{ success: boolean; error?: string } & OperationResultMeta> {
+  return runAppOperation(appId, "uninstall", opts, (ctx) => uninstallAppInner(appId, ctx));
 }
 
-async function uninstallAppInner(appId: string): Promise<{ success: boolean; error?: string }> {
+async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<{ success: boolean; error?: string }> {
   const installed = getInstalledApp(appId);
   if (!installed) return { success: false, error: "App is not installed" };
 
@@ -461,10 +597,12 @@ async function uninstallAppInner(appId: string): Promise<{ success: boolean; err
   }
 
   // Execute preUninstall hook (best-effort)
+  ctx.step("pre_uninstall_hook", 10, "Running pre-uninstall hook");
   const envOverridesUninst = JSON.parse(installed.envConfig) as Record<string, string>;
   const envUninst = buildEnv(appId, envOverridesUninst);
   await executeHook("preUninstall", appId, app.hooks, { composePath: app.composePath, env: envUninst }).catch((err) => log.warn(`preUninstall hook failed for ${appId}`, err));
 
+  ctx.step("remove_containers", 30, "Stopping and removing containers");
   try {
     const effectiveCompose = installed.overrideComposePath ?? app.composePath;
     const projectDir = dirname(effectiveCompose);
@@ -477,6 +615,7 @@ async function uninstallAppInner(appId: string): Promise<{ success: boolean; err
   }
 
   // Clean up app-specific networks (not the shared talome network)
+  ctx.step("cleanup", 70, "Removing app networks and proxy routes");
   try {
     const networks = await listNetworks();
     const appNetworks = networks.filter(n =>
@@ -500,28 +639,86 @@ async function uninstallAppInner(appId: string): Promise<{ success: boolean; err
 
 // ── Start / Stop / Restart ────────────────────────────────────────────────
 
-export async function startApp(appId: string): Promise<{ success: boolean; error?: string }> {
-  return composeAction(appId, "start");
+export async function startApp(appId: string, opts?: LifecycleOptions): Promise<{ success: boolean; error?: string } & OperationResultMeta> {
+  return composeAction(appId, "start", opts);
 }
 
-export async function stopApp(appId: string): Promise<{ success: boolean; error?: string }> {
-  return composeAction(appId, "stop");
+export async function stopApp(appId: string, opts?: LifecycleOptions): Promise<{ success: boolean; error?: string } & OperationResultMeta> {
+  return composeAction(appId, "stop", opts);
 }
 
-export async function restartApp(appId: string): Promise<{ success: boolean; error?: string }> {
-  return composeAction(appId, "restart");
+export async function restartApp(appId: string, opts?: LifecycleOptions): Promise<{ success: boolean; error?: string } & OperationResultMeta> {
+  return composeAction(appId, "restart", opts);
+}
+
+/**
+ * Start an app from code that may already run inside an operation on the same
+ * app (a restore run as a journaled operation, see backup/operation.ts). Inside such an
+ * operation the start is recorded as nested steps of it — the operation and
+ * the compose lock are already held, so taking them again would conflict or
+ * deadlock. Anywhere else it is a plain startApp().
+ */
+export async function startAppWithinHeldOperation(appId: string, opts?: LifecycleOptions): Promise<{ success: boolean; error?: string } & OperationResultMeta> {
+  const held = getHeldOperation(appId);
+  if (!held) return startApp(appId, opts);
+  const result = await composeActionInner(appId, "start", nestedOperationContext(held, "start"));
+  return { ...result, operationId: held.id };
+}
+
+// Internal dependency starts wait for an operation already running on the
+// dependency (e.g. a parallel bulk start of the same group) instead of failing
+// fast like user-facing entry points do. `waitingOn` guards against circular
+// dependencies waiting on each other forever.
+const DEPENDENCY_WAIT_MS = Number(process.env.TALOME_DEPENDENCY_WAIT_MS) || 10 * 60_000;
+const waitingOn = new Map<string, string>();
+
+function wouldDeadlock(appId: string, depId: string): boolean {
+  let cursor: string | undefined = depId;
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor)) {
+    if (cursor === appId) return true;
+    seen.add(cursor);
+    cursor = waitingOn.get(cursor);
+  }
+  return false;
+}
+
+async function ensureDependencyRunning(appId: string, depId: string): Promise<{ success: boolean; error?: string }> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (hasLiveOperation(depId)) {
+      if (wouldDeadlock(appId, depId)) {
+        return { success: false, error: `Circular dependency between ${appId} and ${depId}` };
+      }
+      waitingOn.set(appId, depId);
+      let free: boolean;
+      try {
+        free = await waitForAppOperation(depId, { timeoutMs: DEPENDENCY_WAIT_MS });
+      } finally {
+        waitingOn.delete(appId);
+      }
+      if (!free) return { success: false, error: `Timed out waiting for the operation running on ${depId}` };
+    }
+    // Whatever just ran on the dependency may already have started it.
+    if (getInstalledApp(depId)?.status === "running") return { success: true };
+    const result = await startApp(depId);
+    if (result.success || !result.conflict) return result;
+    // An operation on the dependency began between our check and our start — wait for it, then re-check.
+  }
+  return { success: false, error: `${depId} is busy with other operations` };
 }
 
 function composeAction(
   appId: string,
   action: "start" | "stop" | "restart",
-): Promise<{ success: boolean; error?: string }> {
-  return withAppLock(appId, () => composeActionInner(appId, action));
+  opts?: LifecycleOptions,
+): Promise<{ success: boolean; error?: string } & OperationResultMeta> {
+  return runAppOperation(appId, action, opts, (ctx) => composeActionInner(appId, action, ctx));
 }
 
 async function composeActionInner(
   appId: string,
   action: "start" | "stop" | "restart",
+  ctx: OperationContext,
 ): Promise<{ success: boolean; error?: string }> {
   const installed = getInstalledApp(appId);
   if (!installed) return { success: false, error: "App is not installed" };
@@ -539,6 +736,7 @@ async function composeActionInner(
   }
 
   const env = buildEnv(appId, envOverrides);
+  ctx.step("prepare", 10, `Preparing to ${action}`);
 
   try {
     const projectDir = dirname(effectiveCompose);
@@ -556,9 +754,16 @@ async function composeActionInner(
     }
 
     if (action === "start") {
-      // Check that dependencies are installed and running before starting
+      // Check that dependencies are installed and running before starting —
+      // resolved the way the install resolved them: an Umbrel dependency may
+      // be met by an app that `implements` it or by the provider the user
+      // chose at install, and that provider is the app to start.
       if (installed.storeSourceId) {
-        const depCheck = resolveDependencies(appId, installed.storeSourceId);
+        const depCheck = reconcileUmbrelDependencies(
+          app,
+          resolveDependencies(appId, installed.storeSourceId),
+          getSavedDependencySelections(appId, installed.storeSourceId),
+        );
         const stoppedDeps = depCheck.installed.filter((d) => d.status !== "running");
         if (depCheck.missing.length > 0) {
           return {
@@ -568,9 +773,10 @@ async function composeActionInner(
         }
         if (stoppedDeps.length > 0) {
           // Auto-start stopped dependencies before starting the app
+          ctx.step("dependencies", 20, `Starting ${stoppedDeps.length} dependency app(s)`);
           for (const dep of stoppedDeps) {
             log.info(`Starting dependency ${dep.name} before ${appId}`);
-            const depResult = await startApp(dep.appId);
+            const depResult = await ensureDependencyRunning(appId, dep.appId);
             if (!depResult.success) {
               return {
                 success: false,
@@ -582,6 +788,7 @@ async function composeActionInner(
       }
 
       // Clean up any leftover containers from this compose project
+      ctx.step("start_containers", 40, "Starting containers");
       await run(`docker compose -f "${effectiveCompose}" down --remove-orphans`, {
         cwd: projectDir,
         env,
@@ -612,12 +819,14 @@ async function composeActionInner(
         }
       }
     } else if (action === "restart") {
+      ctx.step("recreate_containers", 40, "Recreating containers");
       await run(`docker compose -f "${effectiveCompose}" up -d --force-recreate`, {
         cwd: projectDir,
         env,
         timeout: 180_000,
       });
     } else {
+      ctx.step("stop_containers", 40, "Stopping containers");
       await run(`docker compose -f "${effectiveCompose}" ${action}`, {
         cwd: projectDir,
         env,
@@ -667,38 +876,313 @@ async function composeActionInner(
 }
 
 // ── Update ────────────────────────────────────────────────────────────────
+//
+// Safe update pipeline (each step journaled with honest progress):
+//   1. snapshot   — compose, env and the exact image each service runs (before
+//                   pulling: afterwards the tag points at the new image)
+//   2. pull       — new images are downloaded while the app keeps running; a
+//                   failed pull leaves the app untouched
+//   3. backup     — best-effort pre-update backup of the app's config volumes
+//   4. recreate   — containers recreated on the new images
+//   5. verify     — containers running, healthchecks healthy, no restart loop,
+//                   web UI answering (when it answered before the update)
+//   6. rollback   — on recreate/verify failure: previous compose + images are
+//                   restored and verified again; status rolled_back + notice
 
-function snapshotBeforeUpdate(appId: string, installed: { version: string; overrideComposePath: string | null }, composePath: string): void {
+type UpdateSnapshotRow = typeof schema.updateSnapshots.$inferSelect;
+
+/** Base verification window; a healthcheck's own start_period + interval × retries extends it. */
+const UPDATE_VERIFY_TIMEOUT_MS = Number(process.env.TALOME_UPDATE_VERIFY_TIMEOUT_MS) || 120_000;
+/** Upper bound for that extension (slow first-start migrations). */
+const UPDATE_VERIFY_MAX_MS = Number(process.env.TALOME_UPDATE_VERIFY_MAX_MS) || 15 * 60_000;
+/** Update snapshots kept per app (older ones are pruned). */
+const SNAPSHOTS_KEPT_PER_APP = 5;
+
+const IRREVERSIBLE_NOTE =
+  "Rolling back restores the previous container images and compose file, but cannot undo data or database " +
+  "migrations the new version may already have applied to the app's volumes.";
+
+export interface UpdateResult {
+  success: boolean;
+  error?: string;
+  /** True when the new version passed health verification */
+  verified?: boolean;
+  /** True when verification failed and the previous version was restored */
+  rolledBack?: boolean;
+  /**
+   * updated     — new images running and verified healthy
+   * no_change   — nothing new was pulled; version left unchanged
+   * unverified  — new version running but still settling at the deadline; not rolled back
+   * rolled_back — verification failed hard; previous version restored and healthy
+   * failed      — the update (or its rollback) did not complete
+   */
+  outcome?: "updated" | "no_change" | "unverified" | "rolled_back" | "failed";
+  /** Human-readable caveat for success results (e.g. why it is unverified) */
+  warning?: string;
+  /** True when the update was aborted because the pre-update backup failed (retry with force to skip it) */
+  backupFailed?: boolean;
+  /** Backup taken right before the update (restorable per app) */
+  preUpdateBackupId?: string;
+  /** After a rollback: how to also revert the app's data */
+  dataRestoreHint?: string;
+  /** Outcome-probe result after the update (apps with outcome probes only) */
+  semanticVerification?: { status: string; baseline: string | null; regression: boolean; summary: string };
+  /** Image refs the user pinned or customised that the update left alone (see useCatalogImages) */
+  imagesKept?: KeptImageRef[];
+}
+
+function parseSnapshotImages(raw: string | null | undefined): ServiceImageState[] {
+  if (!raw) return [];
   try {
-    const { image, digest } = captureImageDigest(installed.overrideComposePath ?? composePath);
-
-    let composeContent: string | null = null;
-    try {
-      composeContent = readFileSync(installed.overrideComposePath ?? composePath, "utf-8");
-    } catch {
-      // Best-effort
-    }
-
-    db.insert(schema.updateSnapshots)
-      .values({
-        appId,
-        previousVersion: installed.version,
-        previousImage: image,
-        previousDigest: digest,
-        previousCompose: composeContent,
-        createdAt: new Date().toISOString(),
-      })
-      .run();
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ServiceImageState[]) : [];
   } catch {
-    // Snapshot is best-effort
+    return [];
   }
 }
 
-export function rollbackUpdate(appId: string): Promise<{ success: boolean; error?: string; rolledBackTo?: string }> {
-  return withAppLock(appId, () => rollbackUpdateInner(appId));
+function runningServices(images: ServiceImageState[]): string[] {
+  return [...new Set(images.filter((i) => i.status === "running").map((i) => i.service))];
 }
 
-async function rollbackUpdateInner(appId: string): Promise<{ success: boolean; error?: string; rolledBackTo?: string }> {
+function recordUpdateSnapshot(
+  appId: string,
+  installed: { version: string; envConfig: string },
+  composePath: string,
+  images: ServiceImageState[],
+  operationId: string,
+): number | null {
+  let composeContent: string | null = null;
+  try {
+    composeContent = readFileSync(composePath, "utf-8");
+  } catch {
+    return null; // Without the compose we cannot promise a rollback
+  }
+  const primary = images[0];
+  try {
+    const row = db
+      .insert(schema.updateSnapshots)
+      .values({
+        appId,
+        previousVersion: installed.version,
+        previousImage: primary?.imageId ?? primary?.imageRef ?? null,
+        previousDigest: primary?.repoDigest?.match(/sha256:[a-f0-9]{64}/)?.[0] ?? null,
+        previousCompose: composeContent,
+        // Env overrides often hold app passwords/API keys — encrypted at rest.
+        previousEnv: encryptSetting(installed.envConfig),
+        previousImages: JSON.stringify(images),
+        operationId,
+        createdAt: new Date().toISOString(),
+      })
+      .returning({ id: schema.updateSnapshots.id })
+      .get();
+    if (row) pruneUpdateSnapshots(appId);
+    return row?.id ?? null;
+  } catch (err) {
+    log.warn(`Failed to record update snapshot for ${appId}`, err);
+    return null;
+  }
+}
+
+/**
+ * Carry a configuration edit (env, ports, mounts, limits) made to an installed
+ * app's compose into the compose files its rollback snapshots would restore,
+ * so rolling an update back restores the previous images without silently
+ * undoing configuration changed after the update. `edit` mutates a parsed
+ * compose and returns false when it does not apply to that version (e.g. the
+ * service does not exist there) — such snapshots are left as they are and
+ * counted in `skipped` (rolling back to them would revert the edit). Call it
+ * while holding the app's operation. Never throws.
+ */
+export function applyComposeEditToUpdateSnapshots(
+  appId: string,
+  edit: (compose: Record<string, unknown>) => boolean,
+): { refreshed: number; skipped: number } {
+  const counts = { refreshed: 0, skipped: 0 };
+  try {
+    const snapshots = db
+      .select({ id: schema.updateSnapshots.id, previousCompose: schema.updateSnapshots.previousCompose })
+      .from(schema.updateSnapshots)
+      .where(and(eq(schema.updateSnapshots.appId, appId), eq(schema.updateSnapshots.rolledBack, false)))
+      .all();
+    for (const snap of snapshots) {
+      if (!snap.previousCompose) continue;
+      try {
+        const doc = yaml.load(snap.previousCompose);
+        if (!doc || typeof doc !== "object" || Array.isArray(doc) || !edit(doc as Record<string, unknown>)) {
+          counts.skipped++;
+          continue;
+        }
+        db.update(schema.updateSnapshots)
+          .set({ previousCompose: yaml.dump(doc, { lineWidth: -1 }) })
+          .where(eq(schema.updateSnapshots.id, snap.id))
+          .run();
+        counts.refreshed++;
+      } catch (err) {
+        log.warn(`Could not carry a compose edit into update snapshot #${snap.id} of ${appId}`, err);
+        counts.skipped++;
+      }
+    }
+  } catch (err) {
+    log.warn(`Could not read the update snapshots of ${appId}`, err);
+  }
+  return counts;
+}
+
+function pruneUpdateSnapshots(appId: string): void {
+  try {
+    const keep = db
+      .select({ id: schema.updateSnapshots.id })
+      .from(schema.updateSnapshots)
+      .where(eq(schema.updateSnapshots.appId, appId))
+      .orderBy(desc(schema.updateSnapshots.id))
+      .limit(SNAPSHOTS_KEPT_PER_APP)
+      .all()
+      .map((r) => r.id);
+    if (keep.length < SNAPSHOTS_KEPT_PER_APP) return;
+    db.delete(schema.updateSnapshots)
+      .where(and(eq(schema.updateSnapshots.appId, appId), notInArray(schema.updateSnapshots.id, keep)))
+      .run();
+  } catch (err) {
+    log.warn(`Failed to prune update snapshots for ${appId}`, err);
+  }
+}
+
+/**
+ * The override compose written at install freezes the catalog's image refs.
+ * An update must move them to the catalog's current refs, or `pull` + `up -d`
+ * would just re-run the old image. Only `image:` of services present in both
+ * files changes; every other override edit (ports, volumes, network) is kept.
+ * The pre-update compose is in the snapshot, so a rollback restores the old refs.
+ *
+ * `decide` may keep a service's ref (a user pin or custom image, see
+ * ops/image-refs.ts); kept services are appended to `kept`.
+ */
+export function syncOverrideImageRefs(
+  overridePath: string,
+  catalogPath: string,
+  opts: { decide?: (service: string, from: string, to: string) => ImageRefDecision; kept?: KeptImageRef[] } = {},
+): { service: string; from: string; to: string }[] {
+  if (overridePath === catalogPath || !existsSync(overridePath) || !existsSync(catalogPath)) return [];
+  const override = yaml.load(readFileSync(overridePath, "utf-8")) as { services?: Record<string, Record<string, unknown> | null> } | null;
+  const catalog = yaml.load(readFileSync(catalogPath, "utf-8")) as { services?: Record<string, Record<string, unknown> | null> } | null;
+  const overrideServices = override?.services;
+  const catalogServices = catalog?.services;
+  if (!overrideServices || !catalogServices) return [];
+
+  const changes: { service: string; from: string; to: string }[] = [];
+  for (const [name, svc] of Object.entries(overrideServices)) {
+    const from = svc?.image;
+    const to = catalogServices[name]?.image;
+    if (svc && typeof from === "string" && typeof to === "string" && to.trim() && from !== to) {
+      const decision = opts.decide?.(name, from, to) ?? { move: true };
+      if (!decision.move) {
+        opts.kept?.push({ service: name, image: from, catalogImage: to, reason: decision.reason });
+        continue;
+      }
+      svc.image = to;
+      changes.push({ service: name, from, to });
+    }
+  }
+  if (changes.length > 0) {
+    atomicWriteFileSync(overridePath, yaml.dump(override, { lineWidth: -1 }), "utf-8");
+  }
+  return changes;
+}
+
+/** Services whose previous image could not be put back ("" when all were). */
+function describeUnrestoredImages(
+  baseline: ServiceImageState[],
+  imagesRestored: Awaited<ReturnType<typeof restoreServiceImages>>,
+): string {
+  if (baseline.length === 0) return "no previous images were recorded";
+  return imagesRestored
+    .filter((r) => !r.restored)
+    .map((r) => `${r.service} (${r.error ?? "not restored"})`)
+    .join(", ");
+}
+
+/**
+ * Restore compose + images from a snapshot and recreate the containers.
+ * Throws if the recreate command fails.
+ */
+async function restoreFromSnapshot(
+  appId: string,
+  snapshot: UpdateSnapshotRow,
+  composeTarget: string,
+  env: Record<string, string>,
+): Promise<{ imagesRestored: Awaited<ReturnType<typeof restoreServiceImages>> }> {
+  if (snapshot.previousCompose) {
+    atomicWriteFileSync(composeTarget, snapshot.previousCompose, "utf-8");
+  }
+
+  const images = parseSnapshotImages(snapshot.previousImages);
+  const imagesRestored = images.length > 0 ? await restoreServiceImages(images) : [];
+
+  await ensureTalomeNetwork().catch((err: unknown) =>
+    log.warn(`ensureTalomeNetwork before rollback ${appId}`, err),
+  );
+
+  await run(`docker compose -f "${composeTarget}" up -d --force-recreate --remove-orphans`, {
+    cwd: dirname(composeTarget),
+    env,
+    timeout: 180_000,
+  });
+
+  return { imagesRestored };
+}
+
+export interface RollbackResult {
+  success: boolean;
+  error?: string;
+  rolledBackTo?: string;
+  verified?: boolean;
+  /**
+   * Backup taken right before the update that is being rolled back. A rollback
+   * restores images and compose, not data — restoring this backup also
+   * reverts data migrations the newer version applied.
+   */
+  preUpdateBackupId?: string;
+  dataRestoreHint?: string;
+}
+
+/** Container names/ids recorded by the newest rollback snapshot (for the maintenance hold). */
+function latestSnapshotContainerKeys(appId: string): string[] {
+  try {
+    const snap = db
+      .select({ previousImages: schema.updateSnapshots.previousImages })
+      .from(schema.updateSnapshots)
+      .where(and(eq(schema.updateSnapshots.appId, appId), eq(schema.updateSnapshots.rolledBack, false)))
+      .orderBy(desc(schema.updateSnapshots.id))
+      .limit(1)
+      .get();
+    return parseSnapshotImages(snap?.previousImages).flatMap((i) => [i.containerId, i.containerName]).filter((k): k is string => Boolean(k));
+  } catch {
+    return [];
+  }
+}
+
+export function rollbackUpdate(appId: string, opts?: LifecycleOptions): Promise<RollbackResult & OperationResultMeta> {
+  return runAppOperation(appId, "rollback", opts, async (ctx) => {
+    // Containers are recreated: keep monitors and the agent loop quiet until
+    // done — including containers whose container_name is not app-prefixed.
+    const releaseMaintenance = holdAppMaintenance(appId, "rollback", latestSnapshotContainerKeys(appId));
+    try {
+      return await rollbackUpdateInner(appId, ctx);
+    } finally {
+      releaseMaintenance();
+    }
+  });
+}
+
+function dataRestoreHint(backupId: string): string {
+  return `The rollback restored the previous images and compose file but not the app's data. ` +
+    `To also revert data changes made by the newer version, restore the pre-update backup ${backupId} ` +
+    `(restore_app with backupId, or Backups → Restore). Data written since the update would be lost.`;
+}
+
+async function rollbackUpdateInner(appId: string, ctx: OperationContext): Promise<RollbackResult> {
+  ctx.step("preflight", 5, "Finding rollback snapshot");
   const installed = getInstalledApp(appId);
   if (!installed) return { success: false, error: "App is not installed" };
 
@@ -716,40 +1200,54 @@ async function rollbackUpdateInner(appId: string): Promise<{ success: boolean; e
   if (!snapshot) {
     return { success: false, error: "No update snapshot available to roll back to" };
   }
+  ctx.setDetail({ snapshotId: snapshot.id, targetVersion: snapshot.previousVersion, irreversibleNote: IRREVERSIBLE_NOTE });
+  const preUpdateBackupId = findPreUpdateBackupId(snapshot);
+  const dataRestore = preUpdateBackupId ? { preUpdateBackupId, dataRestoreHint: dataRestoreHint(preUpdateBackupId) } : {};
+  if (preUpdateBackupId) ctx.setDetail({ dataRestore: { backupId: preUpdateBackupId, available: true } });
 
   const effectiveCompose = installed.overrideComposePath ?? app.composePath;
   const envOverrides = JSON.parse(installed.envConfig) as Record<string, string>;
   const env = buildEnv(appId, envOverrides);
-  const projectDir = dirname(effectiveCompose);
 
   try {
-    // Ensure talome network exists before rollback compose up
-    await ensureTalomeNetwork().catch((err: unknown) =>
-      log.warn(`ensureTalomeNetwork before rollback ${appId}`, err),
-    );
+    ctx.step("restore", 30, `Restoring version ${snapshot.previousVersion}`);
+    const snapshotImages = parseSnapshotImages(snapshot.previousImages);
+    const { imagesRestored } = await restoreFromSnapshot(appId, snapshot, effectiveCompose, env);
+    ctx.setDetail({ imagesRestored });
 
-    if (snapshot.previousCompose) {
-      const rollbackPath = installed.overrideComposePath ?? app.composePath;
-      atomicWriteFileSync(rollbackPath, snapshot.previousCompose, "utf-8");
-    }
-
-    await run(`docker compose -f "${effectiveCompose}" down --remove-orphans`, {
-      cwd: projectDir,
-      env,
-      timeout: 60_000,
-    }).catch((err) => log.warn(`Failed to bring down containers during rollback for ${appId}`, err));
-
-    await run(`docker compose -f "${effectiveCompose}" up -d`, {
-      cwd: projectDir,
-      env,
-      timeout: 180_000,
+    ctx.step("verify", 70, "Verifying app health");
+    const verification = await verifyAppHealth(appId, {
+      composePath: effectiveCompose,
+      requiredServices: runningServices(snapshotImages),
+      timeoutMs: UPDATE_VERIFY_TIMEOUT_MS,
+      maxTimeoutMs: UPDATE_VERIFY_MAX_MS,
     });
+    ctx.setDetail({ verification: summarizeVerification(verification) });
 
     const containers = await discoverContainers(appId);
+    const unrestored = describeUnrestoredImages(snapshotImages, imagesRestored);
+
+    if (unrestored) {
+      // Compose went back, but the image tags may still point at the new
+      // version — do not claim the previous version is running.
+      const error = `Restored the previous compose file, but not the previous images: ${unrestored}. ` +
+        `The app may still be running the newer images.`;
+      db.update(schema.installedApps)
+        .set({
+          status: verification.healthy ? "running" : "error",
+          containerIds: JSON.stringify(containers),
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.installedApps.appId, appId))
+        .run();
+      ctx.markFailed(error);
+      writeNotification("warning", `${app.name} rollback incomplete`, error, appId);
+      return { success: false, error, verified: verification.healthy };
+    }
 
     db.update(schema.installedApps)
       .set({
-        status: "running",
+        status: verification.healthy ? "running" : "error",
         containerIds: JSON.stringify(containers),
         version: snapshot.previousVersion,
         updatedAt: new Date().toISOString(),
@@ -758,12 +1256,27 @@ async function rollbackUpdateInner(appId: string): Promise<{ success: boolean; e
       .run();
 
     db.update(schema.updateSnapshots)
-      .set({ rolledBack: true })
+      .set({ rolledBack: true, rollbackReason: "Manual rollback" })
       .where(eq(schema.updateSnapshots.id, snapshot.id))
       .run();
 
-    writeNotification("info", `${app.name} rolled back`, `Reverted to version ${snapshot.previousVersion}`, appId);
-    return { success: true, rolledBackTo: snapshot.previousVersion };
+    if (!verification.healthy) {
+      // The rollback ran, but the journal must not say "succeeded" for an app left unhealthy.
+      ctx.markFailed(`Rolled back to version ${snapshot.previousVersion}, but the app did not pass health checks: ${verification.reason}`);
+    }
+
+    const restoreNote = preUpdateBackupId ? ` A pre-update data backup (${preUpdateBackupId}) can be restored if the newer version changed the app's data.` : "";
+    if (verification.healthy) {
+      writeNotification("info", `${app.name} rolled back`, `Reverted to version ${snapshot.previousVersion}.${restoreNote}`, appId);
+    } else {
+      writeNotification(
+        "warning",
+        `${app.name} rolled back but not healthy`,
+        `Reverted to version ${snapshot.previousVersion}, but the app did not pass health checks: ${verification.reason}.${restoreNote}`,
+        appId,
+      );
+    }
+    return { success: true, rolledBackTo: snapshot.previousVersion, verified: verification.healthy, ...dataRestore };
   } catch (err: any) {
     const errorDetail = err?.stderr || err.message;
     db.update(schema.installedApps)
@@ -776,139 +1289,379 @@ async function rollbackUpdateInner(appId: string): Promise<{ success: boolean; e
   }
 }
 
-export function updateApp(appId: string): Promise<{ success: boolean; error?: string; verified?: boolean }> {
-  return withAppLock(appId, () => updateAppInner(appId));
+function summarizeVerification(v: VerifyResult): Record<string, unknown> {
+  return {
+    healthy: v.healthy,
+    verdict: v.verdict,
+    reason: v.reason,
+    checks: v.checks,
+    elapsedMs: v.elapsedMs,
+    containers: v.containers.map((c) => ({ name: c.name, status: c.status, health: c.health, restartCount: c.restartCount })),
+    ...(v.http ? { http: v.http } : {}),
+  };
 }
 
-async function updateAppInner(appId: string): Promise<{ success: boolean; error?: string; verified?: boolean }> {
+export function updateApp(appId: string, opts?: UpdateOptions): Promise<UpdateResult & OperationResultMeta> {
+  return runAppOperation(appId, "update", opts, async (ctx) => {
+    // The maintenance window opens when containers are about to be recreated
+    // (the pull leaves the app running) and always closes here.
+    const maintenance: { release: (() => void) | null } = { release: null };
+    const beginMaintenance = (keys: Array<string | null | undefined>) => {
+      maintenance.release ??= holdAppMaintenance(appId, "update", keys);
+    };
+    try {
+      return await updateAppInner(appId, ctx, {
+        force: opts?.force === true,
+        useCatalogImages: opts?.useCatalogImages === true,
+        beginMaintenance,
+      });
+    } finally {
+      maintenance.release?.();
+    }
+  });
+}
+
+interface UpdateRunOptions {
+  force: boolean;
+  useCatalogImages: boolean;
+  beginMaintenance: (keys: Array<string | null | undefined>) => void;
+}
+
+/** Journal progress for the pre-update backup's engine stages (inside the 6–9% band). */
+const PRE_UPDATE_BACKUP_PROGRESS: Record<string, number> = {
+  preparing: 6,
+  dumping: 7,
+  pausing: 7,
+  archiving: 8,
+  resuming: 9,
+  validating: 9,
+  uploading: 9,
+};
+
+function summarizeSemantic(v: SemanticVerification): UpdateResult["semanticVerification"] {
+  return { status: v.status ?? "unknown", baseline: v.baseline, regression: v.regression, summary: v.summary ?? "" };
+}
+
+async function updateAppInner(appId: string, ctx: OperationContext, runOpts: UpdateRunOptions): Promise<UpdateResult> {
+  ctx.step("preflight", 2, "Checking app");
   const installed = getInstalledApp(appId);
   if (!installed) return { success: false, error: "App is not installed" };
 
   const app = getCatalogApp(appId, installed.storeSourceId);
   if (!app) return { success: false, error: "App not found in catalog" };
 
-  // Enforce pre-update backup if the app's update policy requires it
+  let effectiveCompose = installed.overrideComposePath ?? app.composePath;
+  const envOverrides = JSON.parse(installed.envConfig) as Record<string, string>;
+  const env = buildEnv(appId, envOverrides);
+  ctx.setDetail({ fromVersion: installed.version, toVersion: app.version, composePath: effectiveCompose });
+
+  // ── 1. Snapshot (before pull — tags move once new images land) ─────────
+  ctx.step("snapshot", 5, "Recording current images, compose and settings for rollback");
+  let baselineImages: ServiceImageState[];
   try {
-    const policy = db
-      .select()
-      .from(schema.appUpdatePolicies)
-      .where(eq(schema.appUpdatePolicies.appId, appId))
-      .get();
-    if (policy?.preBackup) {
-      const effectiveCompose = installed.overrideComposePath ?? app.composePath;
-      const composeDir = dirname(effectiveCompose);
-      const backupDir = join(homedir(), ".talome", "backups", "apps", appId);
-      mkdirSync(backupDir, { recursive: true });
-      const ts = new Date().toISOString().replace(/[:.]/g, "-");
-      const backupFile = join(backupDir, `${ts}-pre-update.tar.gz`);
-      try {
-        const raw = readFileSync(effectiveCompose, "utf-8");
-        const parsed = yaml.load(raw) as Record<string, unknown>;
-        const paths: string[] = [];
-        const services = (parsed?.services ?? {}) as Record<string, Record<string, unknown>>;
-        for (const svc of Object.values(services)) {
-          const volumes = Array.isArray(svc?.volumes) ? svc.volumes as unknown[] : [];
-          for (const vol of volumes) {
-            const volObj = vol as Record<string, string> | undefined;
-            const hostPath = typeof vol === "string" ? vol.split(":")[0] : volObj?.source;
-            if (hostPath && !hostPath.startsWith("/var/run") && !hostPath.startsWith("/etc")) {
-              const resolved = hostPath.startsWith("/") ? hostPath : join(composeDir, hostPath);
-              if (existsSync(resolved)) paths.push(resolved);
-            }
-          }
-        }
-        if (paths.length > 0) {
-          const pathArgs = paths.map((p) => `"${p}"`).join(" ");
-          execSync(`tar -czf "${backupFile}" ${pathArgs}`, { timeout: 120_000, stdio: "pipe" });
-          writeNotification("info", `Pre-update backup created`, `${appId} backed up before update`, appId);
-        }
-      } catch {
-        // Backup is best-effort
-      }
-    }
-  } catch {
-    // Policy check is best-effort
+    baselineImages = await captureServiceImages(appId, effectiveCompose);
+  } catch (err: unknown) {
+    // Without the current images a failed update could not be rolled back.
+    const reason = err instanceof Error ? err.message : String(err);
+    const error = `Could not read the app's current containers from Docker (${reason}). Update aborted; the app was not changed.`;
+    ctx.setDetail({ appTouched: false });
+    writeNotification("warning", `Update of ${app.name} did not start`, error, appId);
+    return { success: false, error, outcome: "failed" };
   }
+  // No containers (e.g. the app was never started): the update can proceed,
+  // but there is nothing to roll back to except the compose file.
+  const imageRollbackAvailable = baselineImages.length > 0;
+  const requiredServices = runningServices(baselineImages);
+  // Status to restore if the update never touches the app. A transient status
+  // left by an earlier crash is replaced by what Docker actually shows.
+  const previousStatus: InstalledAppStatus = installed.status === "installing" || installed.status === "updating"
+    ? (requiredServices.length > 0 ? "running" : "stopped")
+    : (installed.status as InstalledAppStatus);
+  const baselineHttp = app.webPort && requiredServices.length > 0 ? await probeHttp(app.webPort) : null;
+  // The outcome-probe baseline is the last stored result from BEFORE the update.
+  const semanticProbe = await hasSemanticProbe(appId);
+  const semanticBaseline = semanticProbe ? await getSemanticBaseline(appId) : null;
 
-  // Snapshot current state before updating (for rollback)
-  snapshotBeforeUpdate(appId, installed, app.composePath);
+  const snapshotId = recordUpdateSnapshot(appId, installed, effectiveCompose, baselineImages, ctx.id);
+  if (snapshotId === null) {
+    const error = "Could not record a rollback snapshot (compose file unreadable or database error). Update aborted; the app was not changed.";
+    writeNotification("warning", `Update of ${app.name} did not start`, error, appId);
+    return { success: false, error, outcome: "failed" };
+  }
+  ctx.setDetail({
+    snapshotId,
+    baselineServices: requiredServices,
+    baselineHttp,
+    imageRollbackAvailable,
+    irreversibleNote: IRREVERSIBLE_NOTE,
+    ...(semanticProbe ? { semanticBaseline } : {}),
+    ...(runOpts.force ? { force: true } : {}),
+  });
 
+  // ── 2. Pre-update backup ────────────────────────────────────────────────
+  // Taken before anything changes — before the compose image refs move and
+  // before new images are pulled — so the archive (and its compose snapshot
+  // and manifest version) captures the version that is actually running, and
+  // an abort leaves nothing half-applied (no moved tags, no edited compose).
+  // It runs while holding this operation: the engine uses its own per-app lock
+  // and Docker directly (never a lifecycle entry point), so it cannot conflict
+  // with or deadlock on this update.
   db.update(schema.installedApps)
     .set({ status: "updating", updatedAt: new Date().toISOString() })
     .where(eq(schema.installedApps.appId, appId))
     .run();
 
-  let effectiveCompose = installed.overrideComposePath ?? app.composePath;
+  let backup: PreUpdateBackupResult;
+  if (isPreUpdateBackupEnabled(appId)) {
+    ctx.step("backup", 6, "Backing up app data before switching versions");
+    backup = await takePreUpdateBackup(appId, {
+      triggeredBy: backupTriggerForActor(ctx.actor),
+      onStage: (stage) => ctx.step(`backup:${stage}`, PRE_UPDATE_BACKUP_PROGRESS[stage] ?? 7),
+    });
+  } else {
+    backup = { attempted: false, success: false, reason: "Not enabled in the app's update policy (preBackup)" };
+  }
+  ctx.setDetail({ backup });
+  if (backup.attempted && !backup.success && !backup.skipped) {
+    const backupError = backup.error ?? "unknown error";
+    if (!runOpts.force) {
+      // Nothing was changed yet (no compose edit, no pull, no recreate).
+      db.update(schema.installedApps)
+        .set({ status: previousStatus, updatedAt: new Date().toISOString() })
+        .where(eq(schema.installedApps.appId, appId))
+        .run();
+      db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
+      ctx.setDetail({ snapshotId: null, appTouched: false, outcome: "failed", backupFailed: true });
+      const error =
+        `Pre-update backup failed: ${backupError}. The update was aborted before anything changed — ` +
+        `${app.name} keeps running version ${installed.version}. Fix the backup, or update with force to proceed without one.`;
+      writeNotification("warning", `Update of ${app.name} aborted`, error, appId);
+      return { success: false, error, outcome: "failed", backupFailed: true };
+    }
+    ctx.setDetail({ backupForced: true });
+    log.warn(`Pre-update backup of ${appId} failed (${backupError}); proceeding because the update was forced`);
+  }
+  if (backup.success && backup.backupFile) {
+    try {
+      db.update(schema.updateSnapshots)
+        .set({ backupPath: backup.backupFile })
+        .where(eq(schema.updateSnapshots.id, snapshotId))
+        .run();
+    } catch {
+      // Detail on the operation already records it
+    }
+  }
 
-  const envOverrides = JSON.parse(installed.envConfig) as Record<string, string>;
-  const env = buildEnv(appId, envOverrides);
+  // The override compose froze the image refs at install — move them to the
+  // catalog's current refs (restored from the snapshot on any failure).
+  // Refs the user pinned or customised stay unless they asked for the catalog's.
+  let imageRefChanges: { service: string; from: string; to: string }[] = [];
+  const imagesKept: KeptImageRef[] = [];
+  try {
+    const refState = readImageRefState(appId);
+    imageRefChanges = syncOverrideImageRefs(effectiveCompose, app.composePath, {
+      decide: (service, from, to) => decideImageRef(refState, service, from, to, { adoptCatalog: runOpts.useCatalogImages }),
+      kept: imagesKept,
+    });
+    if (imageRefChanges.length > 0) {
+      ctx.setDetail({ imageRefChanges });
+      // Both are Talome's now: `from` was judged movable (a first record for an
+      // app installed before records existed must keep treating it so, e.g.
+      // after this update fails and the compose is restored), `to` is written here.
+      recordManagedImages(appId, Object.fromEntries(imageRefChanges.map((c) => [c.service, c.from])));
+      recordManagedImages(appId, Object.fromEntries(imageRefChanges.map((c) => [c.service, c.to])));
+      if (runOpts.useCatalogImages) clearImagePins(appId, imageRefChanges.map((c) => c.service));
+    }
+    if (imagesKept.length > 0) ctx.setDetail({ imagesKept });
+  } catch (err: unknown) {
+    log.warn(`Could not sync image refs from the catalog compose for ${appId}`, err);
+  }
+
+  const restoreSnapshotCompose = () => {
+    if (imageRefChanges.length === 0) return;
+    const snap = db.select().from(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).get();
+    if (snap?.previousCompose) atomicWriteFileSync(effectiveCompose, snap.previousCompose, "utf-8");
+  };
+
+  // ── 3. Pull new images while the app keeps running ─────────────────────
+  ctx.step("pull", 10, "Downloading new images (app keeps running)");
 
   try {
-    await run(`docker compose -f "${app.composePath}" pull`, {
-      cwd: dirname(app.composePath),
+    await run(`docker compose -f "${effectiveCompose}" pull`, {
+      cwd: dirname(effectiveCompose),
       env,
-      timeout: 300_000,
+      timeout: 600_000,
     });
+  } catch (err: any) {
+    const errorDetail = String(err?.stderr || err?.message || err);
+    try {
+      restoreSnapshotCompose();
+    } catch (restoreErr: unknown) {
+      log.warn(`Could not restore the compose file of ${appId} after a failed pull`, restoreErr);
+    }
+    db.update(schema.installedApps)
+      .set({ status: previousStatus, updatedAt: new Date().toISOString() })
+      .where(eq(schema.installedApps.appId, appId))
+      .run();
+    // The update never touched the app — drop the snapshot so a later
+    // "rollback" does not target a state that was never left.
+    db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
+    ctx.setDetail({ snapshotId: null, appTouched: false });
+    writeNotification(
+      "warning",
+      `Update of ${app.name} failed`,
+      `Could not download the new images, so nothing was changed and the app kept running. ${errorDetail.slice(0, 500)}`,
+      appId,
+    );
+    return { success: false, error: `Image pull failed; app left unchanged: ${errorDetail}`, outcome: "failed" };
+  }
+  ctx.step("pull", 40, "New images downloaded");
 
-    // Re-inject talome network into compose (may have been lost if catalog compose changed)
+  // ── 4. Recreate on the new images ───────────────────────────────────────
+  // From here until the operation ends, container stops/recreates are intended.
+  runOpts.beginMaintenance(baselineImages.flatMap((i) => [i.containerId, i.containerName]));
+  ctx.step("recreate", 55, "Recreating containers on the new version");
+  // The snapshot's createdAt marks when the new version went live: the
+  // post-update crash-loop detector keys off it, so pull/backup time must not count.
+  try {
+    db.update(schema.updateSnapshots)
+      .set({ createdAt: new Date().toISOString() })
+      .where(eq(schema.updateSnapshots.id, snapshotId))
+      .run();
+  } catch {
+    // Advisory
+  }
+  const overridePath = join(APP_DATA_DIR, appId, "docker-compose.yml");
+  if (effectiveCompose === overridePath) {
+    // Re-inject the talome network in place (a changed catalog compose may have lost it).
     try {
       await ensureTalomeNetwork();
       effectiveCompose = await injectNetworkIntoCompose(effectiveCompose, appId);
     } catch (err: unknown) {
       log.warn(`talome network re-injection during update for ${appId}`, err);
     }
+  }
 
-    const projectDir = dirname(effectiveCompose);
-
+  let failureReason: string | null = null;
+  let verification: VerifyResult | null = null;
+  try {
     await run(`docker compose -f "${effectiveCompose}" up -d`, {
-      cwd: projectDir,
+      cwd: dirname(effectiveCompose),
       env,
       timeout: 180_000,
     });
+  } catch (err: any) {
+    const errorDetail = String(err?.stderr || err?.message || err);
+    recordInstallError(appId, `docker compose up -d (update)`, err, effectiveCompose, env);
+    failureReason = `Recreating containers failed: ${errorDetail.slice(0, 500)}`;
+  }
 
-    const containers = await discoverContainers(appId);
+  // ── 5. Verify ───────────────────────────────────────────────────────────
+  const verifyOptions: VerifyOptions = {
+    composePath: effectiveCompose,
+    requiredServices,
+    webPort: app.webPort ?? null,
+    requireHttp: baselineHttp?.ok === true,
+    timeoutMs: UPDATE_VERIFY_TIMEOUT_MS,
+    maxTimeoutMs: UPDATE_VERIFY_MAX_MS,
+  };
+  if (!failureReason) {
+    ctx.step("verify", 70, "Verifying the new version is healthy");
+    verification = await verifyAppHealth(appId, verifyOptions);
+    ctx.setDetail({ verification: summarizeVerification(verification) });
+    // Only a hard failure (exited, unhealthy, restart loop) justifies rolling
+    // back. A slow start may be a data migration in progress — recreating the
+    // old version on top of it could corrupt the app's data.
+    if (verification.verdict === "unhealthy") failureReason = `Health verification failed: ${verification.reason}`;
+  }
 
-    // Post-update health verification: wait up to 60s for containers to be running
-    const verifyDeadline = Date.now() + 60_000;
-    let allHealthy = false;
-    while (Date.now() < verifyDeadline) {
-      try {
-        const live = await listContainers();
-        const appContainers = live.filter((c) => containers.includes(c.id));
-        allHealthy = appContainers.length > 0 && appContainers.every((c) => c.status === "running");
-        if (allHealthy) break;
-      } catch {
-        // Transient Docker error — keep trying
-      }
-      await new Promise((r) => setTimeout(r, 3_000));
-    }
-
-    if (!allHealthy) {
-      log.warn(`Post-update health check failed for ${appId} — containers not all running after 60s`);
-      writeNotification("warning", `${app.name} update: containers slow to start`, "The update completed but not all containers are running yet. Check the app status.", appId);
-    }
-
+  let imagesChanged = true;
+  if (!failureReason) {
+    let afterImages: ServiceImageState[] = [];
     try {
-      const latestSnapshot = db
-        .select()
-        .from(schema.updateSnapshots)
-        .where(eq(schema.updateSnapshots.appId, appId))
-        .orderBy(desc(schema.updateSnapshots.id))
-        .limit(1)
-        .get();
-      if (latestSnapshot) {
-        db.update(schema.updateSnapshots)
-          .set({ newVersion: app.version })
-          .where(eq(schema.updateSnapshots.id, latestSnapshot.id))
-          .run();
-      }
+      afterImages = await captureServiceImages(appId, effectiveCompose);
     } catch {
-      // Best-effort
+      // Unknown — treated as changed below
     }
+    const before = new Map(baselineImages.map((i) => [i.service, i.imageId]));
+    imagesChanged = baselineImages.length === 0 || afterImages.length === 0 ||
+      afterImages.some((i) => before.get(i.service) !== i.imageId);
+  }
+
+  // ── 5b. Semantic verification (apps with outcome probes) ────────────────
+  // Only once the new version passed container/HTTP verification. A regression
+  // from "verified" to "failed" is reported loudly but NEVER rolled back
+  // automatically. By now the new version has run, so its startup migrations
+  // may already have been applied to the app's data:
+  //   - putting the old images back alone runs the old binary on a schema it
+  //     does not know (*arr apps refuse to start; others may corrupt data);
+  //   - restoring the pre-update backup as well would discard everything the
+  //     app wrote since that backup (it kept serving during the pull), unattended,
+  //     on the strength of outcome probes that can fail for reasons outside the
+  //     app (e.g. a download client restarting in the same bulk update).
+  // The containers are healthy, so the safest state is the one we are in: keep
+  // the new version, notify, and let the owner roll back the update and then
+  // restore the pre-update backup (both offered) if the app really is broken.
+  let semantic: SemanticVerification | null = null;
+  /** Why a semantic regression was not rolled back automatically (null when there is none). */
+  let semanticNotRolledBack: string | null = null;
+  if (!failureReason && imagesChanged && verification?.healthy && semanticProbe) {
+    ctx.step("semantic_verify", 75, "Checking the app still does its job (outcome probes)");
+    semantic = await runSemanticVerification(appId, { baseline: semanticBaseline });
+    ctx.setDetail({ semanticVerification: semantic });
+    if (semantic.regression) {
+      const preUpdateBackupId = backup.success ? backup.backupId : undefined;
+      semanticNotRolledBack =
+        "the new version has already run and may have migrated the app's data, which the older version might not run on, " +
+        "and restoring the pre-update backup automatically would discard what the app wrote since then. " +
+        (!imageRollbackAvailable
+          ? "No previous images were recorded, so it cannot be rolled back."
+          : preUpdateBackupId
+            ? `To go back, roll back the update and then restore the pre-update backup ${preUpdateBackupId} ` +
+              "(restore_app with backupId, or Backups → Restore) so the older version gets its own data back."
+            : "No pre-update backup was taken, so rolling back would run the older version on data the new version may have migrated " +
+              "(enable preBackup in the app's update policy to make a clean rollback possible).");
+      ctx.setDetail({ semanticRollback: { automatic: false, reason: "the new version already ran on the app's data" } });
+    }
+  }
+
+  const backupLine = backup.success && backup.backupFile
+    ? ` A pre-update backup is available at ${backup.backupFile}${backup.backupId ? ` (backup ${backup.backupId})` : ""}.`
+    : " No pre-update backup was taken.";
+  const keptNote = describeKeptImages(imagesKept);
+  const keptLine = keptNote ? ` ${keptNote}` : "";
+  const keptResult = imagesKept.length > 0 ? { imagesKept } : {};
+
+  if (!failureReason) {
+    ctx.step("finalize", 95, "Recording new version");
+    const containers = await discoverContainers(appId);
+    ctx.setDetail({ imagesChanged });
+
+    if (!imagesChanged) {
+      // Same bytes as before: do not claim an update or bump the version.
+      db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
+      db.update(schema.installedApps)
+        .set({ status: "running", containerIds: JSON.stringify(containers), updatedAt: new Date().toISOString() })
+        .where(eq(schema.installedApps.appId, appId))
+        .run();
+      ctx.setDetail({ outcome: "no_change", snapshotId: null });
+      const note = (imagesKept.length > 0 && imageRefChanges.length === 0
+        ? `${app.name} still runs version ${installed.version}.`
+        : app.version !== installed.version
+          ? `No new image was published for ${app.name} ${app.version}, so it still runs version ${installed.version}.`
+          : `${app.name} is already on the latest image.`) + keptLine;
+      writeNotification("info", `${app.name} unchanged`, note, appId);
+      return { success: true, verified: verification?.healthy ?? false, outcome: "no_change", warning: note, ...keptResult };
+    }
+
+    db.update(schema.updateSnapshots)
+      .set({ newVersion: app.version })
+      .where(eq(schema.updateSnapshots.id, snapshotId))
+      .run();
 
     db.update(schema.installedApps)
       .set({
-        status: allHealthy ? "running" : "error",
+        status: "running",
         containerIds: JSON.stringify(containers),
         version: app.version,
         updatedAt: new Date().toISOString(),
@@ -918,22 +1671,148 @@ async function updateAppInner(appId: string): Promise<{ success: boolean; error?
 
     pinImageDigest(appId, effectiveCompose);
 
-    if (allHealthy) {
-      writeNotification("info", `${app.name} updated`, `Updated to version ${app.version}`, appId);
-    }
-    return { success: true, verified: allHealthy };
-  } catch (err: any) {
-    const errorDetail = err?.stderr || err.message;
-    recordInstallError(appId, `docker compose up -d (update)`, err, effectiveCompose, env);
+    const semanticResult = semantic?.ran ? { semanticVerification: summarizeSemantic(semantic) } : {};
+    const backupResult = backup.success && backup.backupId ? { preUpdateBackupId: backup.backupId } : {};
 
+    if (verification && !verification.healthy) {
+      // Inconclusive: still starting / not answering yet. Not rolled back.
+      const warning =
+        `Updated to version ${app.version}, but it was not verified healthy yet (${verification.reason}). ` +
+        `It was not rolled back automatically because it may still be starting or migrating data. ` +
+        `If it does not recover, roll back the update.${backupLine}${keptLine}`;
+      ctx.setDetail({ outcome: "unverified" });
+      writeNotification("warning", `${app.name} updated, not yet verified`, warning, appId);
+      return { success: true, verified: false, outcome: "unverified", warning, ...backupResult, ...keptResult };
+    }
+
+    if (semantic?.regression && semanticNotRolledBack) {
+      // A known regression is never reported as a clean, verified success.
+      const warning =
+        `Updated to version ${app.version} and its containers are healthy, but it passed its outcome checks before the update ` +
+        `and fails them now (${semantic.summary ?? "checks failed"}). It was not rolled back automatically: ${semanticNotRolledBack}` +
+        `${backupLine}${keptLine}`;
+      ctx.setDetail({ outcome: "regressed" });
+      writeNotification("critical", `${app.name} updated, outcome checks now failing`, warning, appId);
+      return { success: true, verified: true, outcome: "unverified", warning, ...semanticResult, ...backupResult, ...keptResult };
+    }
+
+    ctx.setDetail({ outcome: "updated" });
+    if (semantic?.ran && semantic.status !== "verified" && !semantic.regression) {
+      // Recorded + notified, never rolled back: degraded/unknown results (or a
+      // failure without a verified baseline) are not attributable to the update.
+      const status = semantic.status ?? "unknown";
+      const summary = semantic.summary ?? "no details";
+      const warning = status === "unknown"
+        ? `Updated to version ${app.version} and healthy, but its outcome checks could not confirm it works: ${summary}`
+        : `Updated to version ${app.version} and healthy, but its outcome checks report ${status}: ${summary}` +
+          (status === "failed" ? ` (they were not passing before the update either).` : "");
+      writeNotification(status === "unknown" ? "info" : "warning", `${app.name} updated, outcome checks ${status}`, `${warning}${keptLine}`, appId);
+      return { success: true, verified: true, outcome: "updated", warning: `${warning}${keptLine}`, ...semanticResult, ...backupResult, ...keptResult };
+    }
+    const outcomeNote = semantic?.ran && semantic.status === "verified" ? "; outcome checks pass" : "";
+    writeNotification("info", `${app.name} updated`, `Updated to version ${app.version} and verified healthy${outcomeNote}${keptLine ? `.${keptLine}` : ""}`, appId);
+    return { success: true, verified: true, outcome: "updated", ...(keptNote ? { warning: keptNote } : {}), ...semanticResult, ...backupResult, ...keptResult };
+  }
+
+  // ── 6. Automatic rollback ───────────────────────────────────────────────
+  if (!imageRollbackAvailable) {
+    // Without the previous images, "rolling back" would recreate the new
+    // images under the old compose and misreport it as restored.
+    const error = `${failureReason}. Automatic rollback is unavailable: the previous images were not recorded (the app had no containers before the update).`;
+    ctx.setDetail({ outcome: "failed", rollback: { attempted: false, reason: "no image baseline" } });
     db.update(schema.installedApps)
-      .set({ status: "error", updatedAt: new Date().toISOString() })
+      .set({ status: "error", containerIds: JSON.stringify(await discoverContainers(appId)), updatedAt: new Date().toISOString() })
       .where(eq(schema.installedApps.appId, appId))
       .run();
-
-    writeNotification("critical", `Failed to update ${app.name}`, errorDetail, appId);
-    return { success: false, error: errorDetail };
+    ctx.markFailed(error);
+    writeNotification("critical", `Update of ${app.name} failed`, `${error}${backupLine} Manual attention is needed.`, appId);
+    return { success: false, error, verified: false, rolledBack: false, outcome: "failed" };
   }
+
+  ctx.step("rollback", 80, `${failureReason} — restoring version ${installed.version}`);
+  log.warn(`Update of ${appId} failed (${failureReason}); rolling back`);
+
+  const snapshot = db
+    .select()
+    .from(schema.updateSnapshots)
+    .where(eq(schema.updateSnapshots.id, snapshotId))
+    .get();
+
+  let rollbackError: string | null = null;
+  let rollbackVerified = false;
+  let imagesFullyRestored = false;
+  if (!snapshot) {
+    rollbackError = "Rollback snapshot disappeared";
+  } else {
+    try {
+      const { imagesRestored } = await restoreFromSnapshot(appId, snapshot, effectiveCompose, env);
+      const unrestored = describeUnrestoredImages(baselineImages, imagesRestored);
+      imagesFullyRestored = unrestored === "";
+      ctx.setDetail({ rollback: { imagesRestored } });
+      ctx.step("rollback_verify", 90, "Verifying the restored version");
+      const reverify = await verifyAppHealth(appId, verifyOptions);
+      rollbackVerified = reverify.healthy;
+      ctx.setDetail({ rollback: { imagesRestored, verification: summarizeVerification(reverify) } });
+      if (!imagesFullyRestored) {
+        rollbackError = `The previous compose file was restored, but not the previous images: ${unrestored}. The app may still be running the newer images`;
+      } else if (!reverify.healthy) {
+        rollbackError = `Restored version is not healthy either: ${reverify.reason}`;
+      }
+    } catch (err: any) {
+      rollbackError = `Rollback failed: ${String(err?.stderr || err?.message || err).slice(0, 500)}`;
+    }
+  }
+
+  const rolledBack = rollbackVerified && imagesFullyRestored && snapshot !== undefined;
+  const containers = await discoverContainers(appId);
+  db.update(schema.installedApps)
+    .set({
+      status: rollbackVerified ? "running" : "error",
+      containerIds: JSON.stringify(containers),
+      // Only a verified, complete rollback may claim the previous version is running.
+      ...(rolledBack ? { version: installed.version } : {}),
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.installedApps.appId, appId))
+    .run();
+
+  const dataRestore = backup.success && backup.backupId
+    ? { preUpdateBackupId: backup.backupId, dataRestoreHint: dataRestoreHint(backup.backupId) }
+    : {};
+
+  if (rolledBack && snapshot) {
+    db.update(schema.updateSnapshots)
+      .set({ rolledBack: true, rollbackReason: failureReason })
+      .where(eq(schema.updateSnapshots.id, snapshot.id))
+      .run();
+    ctx.setDetail({ outcome: "rolled_back", ...(backup.success && backup.backupId ? { dataRestore: { backupId: backup.backupId, available: true } } : {}) });
+    ctx.markRolledBack(failureReason);
+    writeNotification(
+      "warning",
+      `Update of ${app.name} rolled back`,
+      `${failureReason}. Version ${installed.version} was restored and is running. ${IRREVERSIBLE_NOTE}${backupLine}`,
+      appId,
+    );
+    return {
+      success: false,
+      error: `${failureReason}. Rolled back to version ${installed.version}.`,
+      verified: false,
+      rolledBack: true,
+      outcome: "rolled_back",
+      ...dataRestore,
+    };
+  }
+
+  const error = `${failureReason}. ${rollbackError ?? "Rollback did not complete"}`;
+  ctx.setDetail({ outcome: "failed" });
+  ctx.markFailed(error);
+  writeNotification(
+    "critical",
+    `Update of ${app.name} failed and could not be rolled back`,
+    `${error}.${backupLine} Manual attention is needed.`,
+    appId,
+  );
+  return { success: false, error, verified: false, rolledBack: false, outcome: "failed", ...dataRestore };
 }
 
 // ── Status refresh ────────────────────────────────────────────────────────

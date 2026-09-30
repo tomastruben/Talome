@@ -1,0 +1,35 @@
+manifestVersion: 1.2
+id: photo-vault
+category: files
+name: Photo Vault
+version: "2.3.0"
+tagline: Browse and organise your photo library
+description: Indexes an existing folder of photos without copying them.
+developer: Example Labs
+website: https://example.com/photo-vault
+dependencies: []
+repo: ""
+support: https://example.com/photo-vault/support
+port: 2342
+gallery: []
+path: ""
+storage:
+  dataRoot: data
+folderAccess:
+  - id: photos
+    name: Photos
+    note: The folder with the photos you want to browse
+    mounts:
+      - service: web
+        targetPath: /photoprism/originals
+  - id: import
+    name: Import
+    mounts:
+      - service: web
+        targetPath: /photoprism/import
+        readOnly: true
+  - id: broken
+    name: Broken folder
+    mounts: []
+x-future-flag: shiny
+submitter: Example Labs

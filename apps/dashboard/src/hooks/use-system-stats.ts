@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { SystemStats } from "@talome/types";
-import { getHostUrl } from "@/lib/constants";
+import { getDirectCoreUrl } from "@/lib/constants";
 
 export interface MetricSample {
   ts: number;
@@ -99,7 +99,7 @@ function createSystemStatsStore(): SystemStatsStore {
       isConnecting: snapshot.stats === null,
     });
 
-    eventSource = new EventSource(`${getHostUrl(4000)}/api/stats/stream`, {
+    eventSource = new EventSource(`${getDirectCoreUrl()}/api/stats/stream`, {
       withCredentials: true,
     });
 

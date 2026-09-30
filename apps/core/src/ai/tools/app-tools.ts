@@ -16,7 +16,10 @@ import {
 } from "../../stores/lifecycle.js";
 import { addStore, syncStore } from "../../stores/sync.js";
 import { getCatalogApp } from "../../stores/compose-exec.js";
+import { UmbrelInstallOptionsSchema } from "../../stores/umbrel-v2.js";
+import { getInstallAccessWarnings, reconcileUmbrelDependencies, runWithUmbrelInstallOptions } from "../../stores/umbrel-v2-install.js";
 import { writeAuditEntry } from "../../db/audit.js";
+import { volumeMountsError } from "../../stores/host-mounts.js";
 import { checkForUpdates } from "../../stores/update-checker.js";
 import os from "node:os";
 
@@ -150,13 +153,20 @@ export const searchAppsTool = tool({
 });
 
 export const checkDependenciesTool = tool({
-  description: "Check if an app's dependencies are satisfied before installing. Returns missing and installed dependencies.",
+  description: "Check if an app's dependencies are satisfied before installing. Returns missing and installed dependencies. For Umbrel apps, an installed app that implements a dependency (e.g. any LLM runtime) counts as satisfying it — the same rule install_app applies.",
   inputSchema: z.object({
     appId: z.string().describe("App ID to check dependencies for"),
     storeId: z.string().describe("Store source ID"),
+    umbrel: UmbrelInstallOptionsSchema.pick({ dependencies: true }).optional().describe("Umbrel apps only: { dependencies: { <dependency>: <installed provider app id> } } — the same provider choices you would pass to install_app."),
   }),
-  execute: async ({ appId, storeId }) => {
-    const result = resolveDependencies(appId, storeId);
+  execute: async ({ appId, storeId, umbrel }) => {
+    const catalogApp = getCatalogApp(appId, storeId);
+    // Same resolution as the install path (lifecycle installAppInner): Umbrel
+    // `implements` alternatives and explicit provider choices count as installed.
+    const result = await runWithUmbrelInstallOptions(umbrel, async () => {
+      const base = resolveDependencies(appId, storeId);
+      return catalogApp ? reconcileUmbrelDependencies(catalogApp, base) : base;
+    });
     return {
       ...result,
       message: result.satisfied
@@ -177,9 +187,17 @@ All apps are placed on the shared 'talome' Docker network so they can reach each
     storeId: z.string().describe("Store source ID the app belongs to"),
     env: z.record(z.string(), z.string()).optional().describe("Environment variable overrides."),
     volumeMounts: z.record(z.string(), z.string()).optional().describe("Volume name → host path mapping for media volumes (e.g. { 'media': '/Volumes/Media/Movies', 'downloads': '/DATA/Downloads' }). Only needed for volumes with mediaVolume=true."),
+    umbrel: UmbrelInstallOptionsSchema.optional().describe("Umbrel 2.0 apps only: { folders: { <folderAccess id>: '/host/path' }, environment: { <NAME>: <allowed value> }, dataRoot: '/host/path', dependencies: { <dependency>: <installed provider app id> } }. Omit to use defaults."),
   }),
-  execute: async ({ appId, storeId, env, volumeMounts }) => {
-    const result = await installApp(appId, storeId, env || {}, volumeMounts || {});
+  execute: async ({ appId, storeId, env, volumeMounts, umbrel }) => {
+    // Protected host folders are refused; the Docker socket and folders outside
+    // the configured media/data roots need approval (execution.ts).
+    const mountError = volumeMountsError(appId, volumeMounts || {});
+    if (mountError) return { success: false, error: mountError };
+    const installed = await runWithUmbrelInstallOptions(umbrel, () => installApp(appId, storeId, env || {}, volumeMounts || {}));
+    // e.g. an app that requires HTTPS but has no TLS route — surface it, never serve HTTP silently.
+    const accessWarnings = installed.success ? getInstallAccessWarnings(appId) : [];
+    const result = accessWarnings.length > 0 ? { ...installed, warnings: accessWarnings } : installed;
     if (result.success) {
       writeAuditEntry("Installed app", "modify", `${appId} from store ${storeId}`);
 
@@ -208,14 +226,14 @@ All apps are placed on the shared 'talome' Docker network so they can reach each
 });
 
 export const uninstallAppTool = tool({
-  description: "Uninstall an app and remove its containers. This is a DESTRUCTIVE action requiring explicit CONFIRM from user.",
+  description: "Uninstall an app and remove its containers. DESTRUCTIVE: tell the user what will be removed first; in cautious mode Talome returns approval_required and the owner approves it before it runs.",
   inputSchema: z.object({
     appId: z.string().describe("App ID to uninstall"),
-    confirmed: z.boolean().describe("Must be true — ask user to confirm before calling"),
+    confirmed: z.boolean().optional().describe("Leave unset. Talome sets it once this call is authorized (the owner approved it, or permissive mode)."),
   }),
   execute: async ({ appId, confirmed }) => {
     if (!confirmed) {
-      return { error: "This is a destructive action. Ask the user to confirm, then call again with confirmed: true." };
+      return { error: "This destructive action was not authorized. Call it without confirmed: Talome asks the owner to approve it (approval_required), then retry with approval_id." };
     }
     const result = await uninstallApp(appId);
     if (result.success) {
@@ -264,12 +282,14 @@ export const restartAppTool = tool({
 });
 
 export const updateAppTool = tool({
-  description: "Update an installed app by pulling the latest image and recreating containers.",
+  description: "Update an installed app by pulling the latest image and recreating containers. If the app's update policy takes a pre-update backup and that backup fails, the update is aborted before anything changes — only pass force: true when the user explicitly accepts updating without a backup. Image tags the user pinned or customised are kept (reported in imagesKept) unless useCatalogImages is true.",
   inputSchema: z.object({
     appId: z.string().describe("App ID to update"),
+    force: z.boolean().optional().describe("Proceed even if the pre-update backup fails (only with the user's explicit consent)"),
+    useCatalogImages: z.boolean().optional().describe("Also move image tags the user pinned or customised to the catalog's (only when the user asks for that)"),
   }),
-  execute: async ({ appId }) => {
-    const result = await updateApp(appId);
+  execute: async ({ appId, force, useCatalogImages }) => {
+    const result = await updateApp(appId, { force: force === true, useCatalogImages: useCatalogImages === true });
     if (result.success) writeAuditEntry("Updated app", "modify", appId);
     return result;
   },

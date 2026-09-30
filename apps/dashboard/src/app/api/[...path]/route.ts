@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const CORE = process.env.NEXT_PUBLIC_CORE_URL || "http://127.0.0.1:4000";
+const CORE = process.env.NEXT_PUBLIC_CORE_URL || process.env.CORE_BACKEND_URL || "http://127.0.0.1:4000";
 
 async function proxyToCore(req: NextRequest) {
   const url = new URL(req.url);

@@ -1,49 +1,97 @@
-import { generateText, stepCountIs } from "ai";
+import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { spawn } from "node:child_process";
-import { resolveClaudeBinary } from "./ai/claude-binary.js";
-import { activeTools } from "./ai/agent.js";
 import { db, schema } from "./db/index.js";
-import { eq } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { logAiUsage, getBudgetZone } from "./agent-loop/budget.js";
 import { createLogger } from "./utils/logger.js";
 import { getSetting } from "./utils/settings.js";
+import { generateTextViaClaudeCode, isClaudeCodeAvailable } from "./ai/claude-process.js";
+import { fenceUntrusted } from "./ai/untrusted-data.js";
+import { getSystemStats, listContainers } from "./docker/client.js";
 
 const log = createLogger("digest");
 
-let _claudeAvailable: boolean | null = null;
-async function isClaudeCodeAvailable(): Promise<boolean> {
-  if (_claudeAvailable !== null) return _claudeAvailable;
+const DIGEST_SYSTEM_PROMPT = `You are generating a concise weekly digest for a home server.
+Using only the server state you are given, produce a brief summary covering:
+1. **Services** — which are running, any issues
+2. **Storage** — disk usage
+3. **Notable events** — anything worth flagging from this week
+
+Keep it focused, honest, and under 300 words. No fluff. Lead with anything critical.`;
+
+function formatGiB(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
+}
+
+/**
+ * The server state the digest is written from, gathered by Talome itself —
+ * the model gets no tools. Container names, event messages and sources come
+ * from apps and logs, so the caller fences all of it as untrusted.
+ */
+export async function gatherDigestState(): Promise<string> {
+  const sections: string[] = [];
+
   try {
-    _claudeAvailable = await new Promise<boolean>((resolve) => {
-      const proc = spawn(resolveClaudeBinary(), ["--version"], { shell: false });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
-      const p = proc as any;
-      p.on("close", (code: number | null) => resolve(code === 0));
-      p.on("error", () => resolve(false));
-    });
-  } catch { _claudeAvailable = false; }
-  return _claudeAvailable;
+    const containers = await listContainers();
+    const running = containers.filter((c) => c.status === "running");
+    const notRunning = containers.filter((c) => c.status !== "running");
+    sections.push(
+      `Services: ${running.length} of ${containers.length} containers running.`,
+      ...notRunning.slice(0, 30).map((c) => `- ${c.name}: ${c.status}`),
+    );
+  } catch {
+    sections.push("Services: container list unavailable.");
+  }
+
+  try {
+    const stats = await getSystemStats();
+    sections.push(
+      `Storage: ${stats.disk.percent.toFixed(0)}% used (${formatGiB(stats.disk.usedBytes)} of ${formatGiB(stats.disk.totalBytes)}).`,
+      ...stats.disk.mounts.slice(0, 12).map((m) => `- ${m.mount}: ${m.percent.toFixed(0)}% of ${formatGiB(m.totalBytes)}`),
+      `Memory: ${stats.memory.percent.toFixed(0)}% used. Uptime: ${Math.round(stats.uptime / 86_400)} days.`,
+    );
+  } catch {
+    sections.push("Storage: disk usage unavailable.");
+  }
+
+  try {
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const events = db
+      .select({
+        severity: schema.systemEvents.severity,
+        type: schema.systemEvents.type,
+        source: schema.systemEvents.source,
+        message: schema.systemEvents.message,
+        count: schema.systemEvents.occurrenceCount,
+      })
+      .from(schema.systemEvents)
+      .where(sql`${schema.systemEvents.createdAt} > ${weekAgo} AND ${schema.systemEvents.severity} IN ('warning', 'critical')`)
+      .orderBy(desc(schema.systemEvents.createdAt))
+      .limit(25)
+      .all();
+    sections.push(
+      events.length > 0 ? "Notable events this week:" : "Notable events this week: none.",
+      ...events.map((e) => `- [${e.severity}] ${e.type} from ${e.source}${e.count > 1 ? ` (${e.count}x)` : ""}: ${e.message.slice(0, 200)}`),
+    );
+  } catch {
+    sections.push("Notable events: unavailable.");
+  }
+
+  return sections.join("\n");
 }
 
-async function generateViaClaudeCode(prompt: string, cwd: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    let stdout = "";
-    const { ANTHROPIC_API_KEY: _s1, CLAUDECODE: _s2, ...cleanEnv } = process.env;
-    const proc = spawn(resolveClaudeBinary(), ["--dangerously-skip-permissions", "--print", prompt], {
-      cwd, env: cleanEnv, shell: false,
-    });
-    const timeout = setTimeout(() => { proc.kill("SIGTERM"); resolve(null); }, 120_000);
-    proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @types/node regression: ChildProcess lost .on()
-    const p2 = proc as any;
-    p2.on("close", () => { clearTimeout(timeout); resolve(stdout.trim() || null); });
-    p2.on("error", () => { clearTimeout(timeout); resolve(null); });
-  });
+/** The digest request: the gathered state fenced as untrusted data. */
+export function buildDigestPrompt(state: string): string {
+  return `Generate this week's server digest from this server state.\n\n${fenceUntrusted(state, {
+    label: "server state gathered by Talome: container names, disk usage and event messages",
+    prefix: "STATE",
+    maxChars: 8000,
+  })}`;
 }
 
-async function generateWeeklyDigest() {
+export async function generateWeeklyDigest(): Promise<void> {
   const apiKey = getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return; // No key — skip silently
   if (getBudgetZone() === "exhausted") {
@@ -52,22 +100,14 @@ async function generateWeeklyDigest() {
   }
 
   const DIGEST_MODEL = "claude-haiku-4-5-20251001";
-  const DIGEST_PROMPT = `You are generating a concise weekly digest for a home server.
-Use your tools to gather current state, then produce a brief summary covering:
-1. **Services** — which are running, any issues
-2. **Storage** — disk usage trends
-3. **Downloads** — anything completed or in progress
-4. **Notable events** — anything worth flagging from this week
-
-Keep it focused, honest, and under 300 words. No fluff. Lead with anything critical.`;
 
   try {
+    const prompt = buildDigestPrompt(await gatherDigestState());
     let text: string | null = null;
 
     if (await isClaudeCodeAvailable()) {
-      const PROJECT_ROOT = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
-      const fullPrompt = `${DIGEST_PROMPT}\n\nGenerate this week's server digest. Use your Talome MCP tools to check services, storage, downloads, and recent events.`;
-      text = await generateViaClaudeCode(fullPrompt, PROJECT_ROOT);
+      const cwd = fileURLToPath(new URL("../..", import.meta.url));
+      text = await generateTextViaClaudeCode(`${DIGEST_SYSTEM_PROMPT}\n\n${prompt}`, { cwd, timeoutMs: 120_000 });
       if (text) {
         logAiUsage({ model: "claude-code-local", tokensIn: 0, tokensOut: 0, context: "weekly_digest" });
         log.info("Generated digest via Claude Code (subscription)");
@@ -75,12 +115,11 @@ Keep it focused, honest, and under 300 words. No fluff. Lead with anything criti
     }
 
     if (!text && apiKey) {
+      // No tools: the digest is written from the state gathered above.
       const result = await generateText({
         model: createAnthropic({ apiKey })(DIGEST_MODEL),
-        system: DIGEST_PROMPT,
-        messages: [{ role: "user", content: "Generate this week's server digest." }],
-        tools: activeTools,
-        stopWhen: stepCountIs(6),
+        system: DIGEST_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: prompt }],
       });
       logAiUsage({
         model: DIGEST_MODEL,

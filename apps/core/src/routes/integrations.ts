@@ -5,18 +5,23 @@ import { eq } from "drizzle-orm";
 import { startTelegramBot, stopTelegramBot, getTelegramBotStatus } from "../messaging/telegram.js";
 import { startDiscordBot, stopDiscordBot, getDiscordBotStatus } from "../messaging/discord-bot.js";
 import { serverError } from "../middleware/request-logger.js";
-import { generateMcpToken } from "./mcp.js";
+import { requireRole } from "../middleware/role-guard.js";
+import { mcpTokens } from "./mcp-tokens.js";
+import { messagingSenders } from "./messaging-senders.js";
 
 const integrations = new Hono();
+
+// Starting, stopping or re-pointing a chat bot (its token decides which bot
+// the owner's agent answers through) is an admin action.
+for (const platform of ["telegram", "discord"] as const) {
+  integrations.use(`/${platform}/restart`, requireRole("admin"));
+  integrations.use(`/${platform}/stop`, requireRole("admin"));
+}
 
 /* ── Request schemas ─────────────────────────────────────────────────────── */
 
 const botTokenSchema = z.object({
   token: z.string().max(500).optional(),
-});
-
-const mcpTokenSchema = z.object({
-  name: z.string().min(1).max(100).transform((s) => s.trim()),
 });
 
 // ── Telegram ─────────────────────────────────────────────────────────────────
@@ -116,49 +121,13 @@ integrations.post("/discord/stop", async (c) => {
 });
 
 // ── MCP Tokens ────────────────────────────────────────────────────────────────
+// Per-token grants, expiry and soft revocation live in routes/mcp-tokens.ts.
 
-integrations.get("/mcp/tokens", (c) => {
-  try {
-    const tokens = db
-      .select({
-        id: schema.mcpTokens.id,
-        name: schema.mcpTokens.name,
-        createdAt: schema.mcpTokens.createdAt,
-        lastUsedAt: schema.mcpTokens.lastUsedAt,
-      })
-      .from(schema.mcpTokens)
-      .all();
-    return c.json(tokens);
-  } catch (err) {
-    return serverError(c, err, { message: "Failed to list MCP tokens" });
-  }
-});
+integrations.route("/mcp/tokens", mcpTokens);
 
-integrations.post("/mcp/tokens", async (c) => {
-  try {
-    const parsed = mcpTokenSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ ok: false, error: parsed.error.flatten() }, 400);
-    const { name } = parsed.data;
+// ── Chat bot senders ──────────────────────────────────────────────────────────
+// Who the Telegram/Discord bots answer (admin-only, messaging/allowlist.ts).
 
-    const { id, plaintext, hash } = generateMcpToken(name);
-    db.insert(schema.mcpTokens)
-      .values({ id, name, tokenHash: hash })
-      .run();
-
-    return c.json({ ok: true, id, name, token: plaintext });
-  } catch (err) {
-    return serverError(c, err, { message: "Failed to create MCP token" });
-  }
-});
-
-integrations.delete("/mcp/tokens/:id", (c) => {
-  try {
-    const { id } = c.req.param();
-    db.delete(schema.mcpTokens).where(eq(schema.mcpTokens.id, id)).run();
-    return c.json({ ok: true });
-  } catch (err) {
-    return serverError(c, err, { message: "Failed to delete MCP token", context: { tokenId: c.req.param("id") } });
-  }
-});
+integrations.route("/messaging/senders", messagingSenders);
 
 export { integrations };

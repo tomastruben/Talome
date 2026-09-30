@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { getSetting } from "../../utils/settings.js";
+import { invalidateLibraryCache } from "../../media/library-cache.js";
 
 function getServiceUrl(service: string): string {
   const custom = getSetting(`${service}_url`);
@@ -43,6 +44,8 @@ async function arrPost(service: string, path: string, body: unknown): Promise<un
     const text = await res.text().catch(() => "");
     throw new Error(`${service} API ${res.status}: ${text}`);
   }
+  // A series/movie was added (or otherwise changed) — drop the cached library.
+  if (service === "sonarr" || service === "radarr") invalidateLibraryCache();
   return res.json();
 }
 

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-const CORE = process.env.NEXT_PUBLIC_CORE_URL || "http://127.0.0.1:4000";
+const CORE = process.env.NEXT_PUBLIC_CORE_URL || process.env.CORE_BACKEND_URL || "http://127.0.0.1:4000";
 
 export async function generateMetadata({
   params,

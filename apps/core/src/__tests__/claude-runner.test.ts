@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const process = vi.hoisted(() => ({
   spawnProcess: vi.fn(), spawnClaudeStreaming: vi.fn(), getChangedFiles: vi.fn(),
   runTypecheck: vi.fn(), stashRollback: vi.fn(),
+  // The runner's restricted session policy (never --dangerously-skip-permissions).
+  codeEditingClaudePolicy: vi.fn(() => ({ allowedTools: [], disallowedTools: [] })),
 }));
 vi.mock("../ai/claude-process.js", () => process);
 // Importing the runner must not sweep the user's screenshot directory in a test.

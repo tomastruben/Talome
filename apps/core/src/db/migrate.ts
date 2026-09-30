@@ -1,6 +1,14 @@
 import { db } from "./index.js";
+import { runOpsUpdatesMigrations } from "./migrations/ops-updates.js";
 import { sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { runCorePerfMigrations } from "./migrations/core-perf.js";
+import { runTrustMigrations } from "./migrations/trust.js";
+import { runBackupsMigrations } from "./migrations/backups.js";
+import { runStoreCompatMigrations } from "./migrations/store-compat.js";
+import { runAiChatMigrations } from "./migrations/ai-chat.js";
+import { runOutcomeProbesMigrations } from "./migrations/outcome-probes.js";
+import { runWireBackendMigrations } from "./migrations/wire-backend.js";
 
 function recordMigration(version: number, description: string) {
   db.run(sql`INSERT OR IGNORE INTO schema_versions (version, applied_at, description) VALUES (${version}, datetime('now'), ${description})`);
@@ -959,6 +967,15 @@ export function runMigrations() {
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_attempts_run_id ON setup_attempts(run_id)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_runs_status ON setup_runs(status)`);
 
+  runCorePerfMigrations();
+  runTrustMigrations();
+  runOpsUpdatesMigrations();
+  runBackupsMigrations();
+  runStoreCompatMigrations();
+  runAiChatMigrations();
+  runOutcomeProbesMigrations();
+  runWireBackendMigrations();
+
   // ── Record schema versions ─────────────────────────────────────────────
   recordMigration(1, "Initial schema: users, conversations, messages, settings, audit_log");
   recordMigration(2, "App store: store_sources, app_catalog, installed_apps");
@@ -979,6 +996,16 @@ export function runMigrations() {
   recordMigration(17, "Family invitations and expiring public stack share links");
   recordMigration(18, "Native apps: versioned declarative AppSpecs");
   recordMigration(19, "Members: default legacy Intelligence permission to disabled");
+  // Parity migrations use 101+ so they can never collide with versions 16-99
+  // recorded by other Talome builds (a production DB was found at version 19).
+  recordMigration(101, "Trust: per-token MCP grants, server-issued approvals, actor-aware audit log");
+  recordMigration(102, "Ops journal: app_operations, app_operation_events, snapshot rollback state, automation run durability");
+  recordMigration(103, "Backups: methods, manifests, verification, per-app config, destinations, restores, GFS retention");
+  recordMigration(104, "Store compat: app_catalog.umbrel_meta, store_sources.last_parsed_rev, app_install_options, catalog store index");
+  recordMigration(105, "core-perf: retention + hot-query indexes (container_events, install_errors, evolution_runs, evolution_log)");
+  recordMigration(106, "AI chat: conversation_tool_domains for per-conversation tool routing");
+  recordMigration(107, "Outcome probes: verification_results for semantic app/stack verification");
+  recordMigration(108, "Wire backend: notifications.link, automations.actor_scopes, remediation_escalations");
 
   console.log("Database migrations complete");
 }

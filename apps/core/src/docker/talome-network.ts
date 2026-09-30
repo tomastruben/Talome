@@ -5,7 +5,7 @@
  * Replaces per-app bridge isolation and the separate talome-proxy network.
  */
 
-import { docker } from "./client.js";
+import { docker, listContainersRaw } from "./client.js";
 import yaml from "js-yaml";
 
 export const TALOME_NETWORK = "talome";
@@ -55,8 +55,8 @@ export async function verifyTalomeNetworkAttachments(): Promise<{ missing: strin
       Object.values(info.Containers ?? {}).map((c: any) => c.Name as string),
     );
 
-    // Get all running containers
-    const containers = await docker.listContainers({ all: false });
+    // Get all running containers (shares the monitor's cached `docker ps`)
+    const containers = (await listContainersRaw()).filter((c) => c.State === "running");
     for (const c of containers) {
       const name = c.Names[0]?.replace(/^\//, "") ?? "";
       // Skip infrastructure containers that use host networking

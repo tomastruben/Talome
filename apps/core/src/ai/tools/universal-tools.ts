@@ -12,6 +12,10 @@ import { z } from "zod";
 import { APP_REGISTRY, type AppCapabilities } from "../../app-registry/index.js";
 import { listContainers } from "../../docker/client.js";
 import { getSetting } from "../../utils/settings.js";
+import { invalidateLibraryCache } from "../../media/library-cache.js";
+
+/** Apps whose data backs the cached media library (GET /api/media/library). */
+const LIBRARY_APPS = new Set(["sonarr", "radarr"]);
 
 // ── Auth patterns ────────────────────────────────────────────────────────────
 
@@ -138,6 +142,10 @@ export async function executeAppApiRequest({
         appId,
       };
     }
+
+    // A Sonarr/Radarr change (e.g. DELETE /api/v3/series/{id}) must not be
+    // hidden by the cached media library payload.
+    if (method !== "GET" && LIBRARY_APPS.has(appId.toLowerCase())) invalidateLibraryCache();
 
     return { success: true as const, statusCode: res.status, data, appId };
   } catch (err: unknown) {

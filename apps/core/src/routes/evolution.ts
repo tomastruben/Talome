@@ -1114,8 +1114,9 @@ evolution.post("/rebuild-dashboard/autofix", async (c) => {
   }).run();
 
   // Spawn Claude Code to fix errors — fire-and-forget, result tracked via evolution_runs
-  const { spawnClaudeStreaming: runClaude } = await import("../ai/claude-process.js");
-  void runClaude(task, dashboardDir).then(async (result) => {
+  // Restricted session: edits inside apps/dashboard only, no shell or web — Talome rebuilds.
+  const { spawnClaudeStreaming: runClaude, codeEditingClaudePolicy } = await import("../ai/claude-process.js");
+  void runClaude(task, dashboardDir, undefined, undefined, undefined, codeEditingClaudePolicy({ canEdit: true })).then(async (result) => {
     const status = result.code === 0 ? "applied" : "failed";
     db.update(schema.evolutionRuns)
       .set({ status, completedAt: new Date().toISOString(), error: result.code !== 0 ? result.stderr.slice(0, 2000) : undefined })

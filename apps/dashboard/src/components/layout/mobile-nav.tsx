@@ -11,12 +11,15 @@ import {
   Moon02Icon,
   Sun01Icon,
 } from "@/components/icons";
-import { useDownloads } from "@/hooks/use-downloads";
+import { adaptiveDownloadsInterval, useDownloads } from "@/hooks/use-downloads";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { cn } from "@/lib/utils";
 import { allNav } from "./nav-config";
 import { useUser } from "@/hooks/use-user";
 import { NotificationsBell } from "@/components/notifications/notifications-bell";
+
+/** Nav download badge: 10s while something is downloading, 30s otherwise. */
+const NAV_DOWNLOADS_INTERVAL = adaptiveDownloadsInterval(10_000);
 
 interface MobileNavProps {
   open: boolean;
@@ -26,7 +29,8 @@ interface MobileNavProps {
 export function MobileNav({ open, onClose }: MobileNavProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { totalCount, isActivelyDownloading } = useDownloads(10000);
+  // 10s while something is downloading, 30s otherwise
+  const { totalCount, isActivelyDownloading } = useDownloads(NAV_DOWNLOADS_INTERVAL);
   const { status: aiStatus } = useAssistant();
   const isStreaming = aiStatus === "streaming" || aiStatus === "submitted";
   const [mounted, setMounted] = useState(false);

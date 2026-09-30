@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { createChatStream } from "../ai/agent.js";
+import { sessionChatActor, withExecutionContext } from "../ai/execution.js";
 import { checkDailyCap, getDailyCapUsd, getTodayCostUsd } from "../agent-loop/budget.js";
 import { serverError } from "../middleware/request-logger.js";
-import { getSetting } from "../utils/settings.js";
+import { getActiveProvider } from "../ai/configured-model.js";
 import { serializeChatError } from "../ai/chat-error.js";
 
 const chat = new Hono();
@@ -15,9 +16,8 @@ const chat = new Hono();
 const activeStreams = new Map<string, AbortController>();
 
 function resolveRequestProvider(provider: unknown): string {
-  if (provider === "anthropic" || provider === "openai" || provider === "ollama") return provider;
-  const configured = getSetting("ai_provider");
-  return configured === "openai" || configured === "ollama" ? configured : "anthropic";
+  if (provider === "anthropic" || provider === "openai" || provider === "kimi" || provider === "ollama") return provider;
+  return getActiveProvider();
 }
 
 chat.post("/", async (c) => {
@@ -33,7 +33,7 @@ chat.post("/", async (c) => {
       );
     }
 
-    const { messages, pageContext, model, provider } = await c.req.json();
+    const { messages, pageContext, model, provider, conversationId } = await c.req.json();
     requestProvider = resolveRequestProvider(provider);
 
     if (!messages || !Array.isArray(messages)) {
@@ -61,7 +61,15 @@ chat.post("/", async (c) => {
 
     activeStreams.set(streamKey, streamAbort);
 
-    const result = await createChatStream(messages, pageContext ?? undefined, model ?? undefined, streamAbort.signal, requestProvider);
+    // Tool calls in this chat act as the session user (audit, approvals).
+    const actor = sessionChatActor(c.get("sessionUser" as never), c.get("sessionUsername" as never), c.get("sessionRole" as never));
+    // Optional stable conversation id keys per-conversation tool routing;
+    // without it the first message id is used (see ai/tool-discovery.ts).
+    const result = await withExecutionContext(actor, "chat", () =>
+      createChatStream(messages, pageContext ?? undefined, model ?? undefined, streamAbort.signal, requestProvider, {
+        conversationId: typeof conversationId === "string" ? conversationId : undefined,
+      }),
+    );
 
     // Wrap the result stream so lazy read failures are always translated
     // into protocol-level "error" chunks the client can render.

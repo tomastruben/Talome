@@ -1,19 +1,27 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import {
   HugeiconsIcon,
   SecurityCheckIcon,
   SquareUnlock02Icon,
   LockedIcon,
   ComputerTerminal01Icon,
+  Activity01Icon,
+  Plug02Icon,
+  ArrowRight01Icon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import { SettingsGroup, SettingsRow, SaveRow } from "@/components/settings/settings-primitives";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { CORE_URL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { usePendingApprovals } from "@/components/trust/api";
 
 type SecurityMode = "cautious" | "permissive" | "locked";
 
@@ -29,7 +37,7 @@ const MODES: { value: SecurityMode; label: string; description: string; icon: Ic
     value: "cautious",
     label: "Cautious",
     description:
-      "AI can read freely. Destructive actions require confirmation. Shell commands restricted to safe defaults.",
+      "AI can read freely. Destructive actions wait for your approval. Shell commands restricted to safe defaults.",
     icon: SecurityCheckIcon,
   },
   {
@@ -49,6 +57,133 @@ const SHELL_ALLOWLIST = [
   "ping", "curl", "dig", "nslookup", "ss", "ifconfig", "ip", "docker",
   "find", "locate", "rg",
 ];
+
+const TRUST_LINKS: { href: string; label: string; hint: string; icon: IconSvgElement; badge?: "approvals" }[] = [
+  {
+    href: "/dashboard/settings/approvals",
+    label: "Approvals",
+    hint: "Destructive agent actions waiting for your decision",
+    icon: SecurityCheckIcon,
+    badge: "approvals",
+  },
+  {
+    href: "/dashboard/settings/mcp",
+    label: "AI Agents",
+    hint: "Per-client tokens and what each one may do",
+    icon: Plug02Icon,
+  },
+  {
+    href: "/dashboard/settings/audit",
+    label: "Audit Log",
+    hint: "Who did what, from where, and how it went",
+    icon: Activity01Icon,
+  },
+];
+
+function TrustLinks() {
+  const { count } = usePendingApprovals(true);
+  return (
+    <SettingsGroup>
+      {TRUST_LINKS.map((link) => (
+        <Link key={link.href} href={link.href} className="block">
+          <SettingsRow className="hover:bg-muted/30 transition-colors">
+            <div className="size-8 rounded-lg bg-muted/50 flex items-center justify-center shrink-0">
+              <HugeiconsIcon icon={link.icon} size={16} className="text-muted-foreground" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">{link.label}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{link.hint}</p>
+            </div>
+            {link.badge === "approvals" && count > 0 && (
+              <Badge className="bg-status-warning text-background tabular-nums">{count}</Badge>
+            )}
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="text-dim-foreground shrink-0" />
+          </SettingsRow>
+        </Link>
+      ))}
+    </SettingsGroup>
+  );
+}
+
+const MIN_BACKUP_PASSWORD_LENGTH = 8;
+
+/**
+ * The terminal daemon's own login, for when the main server is down. Only an
+ * admin can set or change it (through the admin-only terminal proxy).
+ */
+function BackupTerminalPassword() {
+  const [hasPassword, setHasPassword] = useState<boolean | null>(null);
+  const [password, setPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`${CORE_URL}/api/terminal/backup-auth/status`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { hasPassword?: boolean } | null) => setHasPassword(data?.hasPassword ?? null))
+      .catch(() => setHasPassword(null));
+  }, []);
+
+  const save = async () => {
+    if (password.length < MIN_BACKUP_PASSWORD_LENGTH) {
+      toast.error(`Use at least ${MIN_BACKUP_PASSWORD_LENGTH} characters`);
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`${CORE_URL}/api/terminal/backup-auth/setup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (res.ok && data.ok) {
+        setHasPassword(true);
+        setPassword("");
+        toast("Backup terminal password saved");
+      } else {
+        toast.error(data.error || "Failed to save");
+      }
+    } catch {
+      toast.error("Terminal daemon unreachable");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SettingsGroup>
+      <SettingsRow className="py-2.5">
+        <div className="flex items-center gap-2">
+          <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} className="text-muted-foreground" />
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Backup Terminal
+          </p>
+        </div>
+      </SettingsRow>
+      <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+        <div className="flex-1 min-w-0">
+          <Label htmlFor="backup-terminal-password" className="text-sm font-medium cursor-pointer">
+            {hasPassword ? "Change password" : "Set password"}
+          </Label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Logs in to the terminal daemon directly when the dashboard is down.
+            {hasPassword === false && " Not set yet — the backup terminal stays closed until you set one."}
+          </p>
+        </div>
+        <Input
+          id="backup-terminal-password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder={`At least ${MIN_BACKUP_PASSWORD_LENGTH} characters`}
+          className="text-sm h-8 w-full sm:w-72"
+          autoComplete="new-password"
+        />
+      </SettingsRow>
+      {password && <SaveRow onSave={() => void save()} saving={saving} />}
+    </SettingsGroup>
+  );
+}
 
 export function SecuritySection() {
   const [mode, setMode] = useState<SecurityMode>("cautious");
@@ -202,6 +337,10 @@ export function SecuritySection() {
           </SettingsRow>
         </SettingsGroup>
       )}
+
+      <TrustLinks />
+
+      <BackupTerminalPassword />
 
       <p className="text-xs text-muted-foreground px-1">
         Security mode changes take effect immediately for new AI interactions.

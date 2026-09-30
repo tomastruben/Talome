@@ -8,7 +8,7 @@
  * negative result logging (failed approaches), Markdown-as-program.
  */
 
-import { generateText, stepCountIs } from "ai";
+import { generateText, stepCountIs, type Tool } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -21,6 +21,13 @@ import { logAiUsage } from "../agent-loop/budget.js";
 import { computeHealthScore, type ServerHealthScore } from "./health-score.js";
 import { logAttempt, getAllFailedApproaches, getRunAttempts } from "./results-log.js";
 import { emitSetupEvent } from "./setup-emitter.js";
+import { writeNotification } from "../db/notifications.js";
+import {
+  agentLoopActor,
+  gateToolsForUnattendedActor,
+  withExecutionContext,
+  type ApprovalRequired,
+} from "../ai/execution.js";
 
 // Tools — import the constrained set
 import { setSettingTool, getSettingsTool } from "../ai/tools/settings-tools.js";
@@ -59,6 +66,15 @@ const SETUP_TOOLS = {
   app_api_call: appApiCallTool,
   jellyfin_create_api_key: jellyfinCreateApiKeyTool,
 };
+
+/**
+ * The setup agent is unattended: every tool call runs through executeTool as
+ * this actor (security mode, approvals — e.g. protected settings or a
+ * credential endpoint — and audit apply). A call that needs the owner's
+ * approval pauses the run; the next run with the same call consumes it once
+ * the owner approved.
+ */
+export const SETUP_ACTOR = agentLoopActor("setup", "Setup agent");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -240,6 +256,11 @@ async function executeSetupLoop(
 
     const iterationStart = Date.now();
 
+    const approvals: ApprovalRequired[] = [];
+    const tools = gateToolsForUnattendedActor(SETUP_TOOLS as unknown as Record<string, Tool>, SETUP_ACTOR, "agent_loop", {
+      onApprovalRequired: (approval) => approvals.push(approval),
+    });
+
     try {
       // Collect tool call data via onStepFinish callback
       const stepData: Array<{
@@ -247,15 +268,18 @@ async function executeSetupLoop(
         input: Record<string, unknown>;
         resultJson: string;
         isError: boolean;
+        /** Held for the owner's approval — not a failed approach. */
+        held: boolean;
       }> = [];
 
       const result = await Promise.race([
-        generateText({
+        withExecutionContext(SETUP_ACTOR, "agent_loop", () => generateText({
           model,
           system: systemPrompt,
           prompt: `Iteration ${iteration}. Current health score: ${health.overall}%. Pick the most impactful action to improve the score. Focus on apps with the lowest scores whose dependencies are met.`,
-          tools: SETUP_TOOLS,
-          stopWhen: stepCountIs(5),
+          tools,
+          // Stop at the step that needs approval: never retried in a loop.
+          stopWhen: [stepCountIs(5), () => approvals.length > 0],
           maxRetries: 1,
           onStepFinish: ({ toolCalls, toolResults }) => {
             if (!toolCalls) return;
@@ -269,10 +293,11 @@ async function executeSetupLoop(
                 input: (call as any).args ?? (call as any).input ?? {},
                 resultJson: resultStr.slice(0, 500),
                 isError: isErr,
+                held: resultStr.includes('"approval_required"'),
               });
             }
           },
-        }),
+        })),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Iteration timeout")), ITERATION_TIMEOUT_MS),
         ),
@@ -294,7 +319,7 @@ async function executeSetupLoop(
           appId: (step.input.appId as string) ?? (step.input.app_id as string) ?? "unknown",
           action: step.toolName,
           approach: JSON.stringify(step.input).slice(0, 200),
-          status: step.isError ? "failure" : "success",
+          status: step.held ? "skipped" : step.isError ? "failure" : "success",
           result: step.isError ? undefined : step.resultJson,
           error: step.isError ? step.resultJson : undefined,
           durationMs: duration,
@@ -309,8 +334,21 @@ async function executeSetupLoop(
           appId: (step.input.appId as string) ?? (step.input.app_id as string),
           action: step.toolName,
           approach: JSON.stringify(step.input).slice(0, 100),
-          message: step.isError ? "Failed" : "Success",
+          message: step.held ? "Waiting for approval" : step.isError ? "Failed" : "Success",
         });
+      }
+
+      if (approvals.length > 0) {
+        const approval = approvals[0];
+        writeNotification(
+          "warning",
+          `Setup agent needs approval: ${approval.tool}`,
+          `${approval.summary}\nReview it in Settings -> Approvals: ${approval.approveUrl}\nOnce approved, start setup again to apply it.`,
+          `approval:${approval.approvalId}`,
+          { link: approval.approveUrl },
+        );
+        completeRun(runId, "paused", `Waiting for the owner's approval of ${approval.tool} (${approval.approveUrl})`);
+        return;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";

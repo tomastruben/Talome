@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Sheet,
@@ -17,6 +18,8 @@ import { useAssistant } from "@/components/assistant/assistant-context";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+import { getNotificationAction, isApprovalNotification } from "@/hooks/use-notifications";
+import { useUser } from "@/hooks/use-user";
 
 interface NotificationDetailSheetProps {
   open: boolean;
@@ -24,8 +27,11 @@ interface NotificationDetailSheetProps {
   notification: {
     type: "info" | "warning" | "critical";
     title: string;
+    body?: string;
     fullBody: string;
     createdAt: string;
+    sourceId?: string | null;
+    link?: string | null;
   } | null;
 }
 
@@ -43,8 +49,20 @@ export function NotificationDetailSheet({
   const isMobile = useIsMobile();
   const router = useRouter();
   const { handleSubmit } = useAssistant();
+  const { isAdmin, isLoading: userLoading } = useUser();
 
   if (!notification) return null;
+
+  const actionable = {
+    title: notification.title,
+    body: notification.body ?? "",
+    fullBody: notification.fullBody,
+    sourceId: notification.sourceId ?? null,
+    link: notification.link,
+  };
+  const action = getNotificationAction(actionable, { isAdmin });
+  // Members can't open the admin-only approvals page; say who decides instead.
+  const awaitingAdmin = !action && !isAdmin && !userLoading && isApprovalNotification(actionable);
 
   const askAssistant = () => {
     const userMessage = `Discuss this notification: **${notification.title}**`;
@@ -108,7 +126,23 @@ export function NotificationDetailSheet({
           </div>
         </ScrollArea>
 
-        <div className="shrink-0 px-5 py-3 border-t border-border/60">
+        <div className="shrink-0 px-5 py-3 border-t border-border/60 grid gap-2">
+          {action && (
+            <Button size="sm" className="w-full text-xs" asChild>
+              {action.external ? (
+                <a href={action.href} target="_blank" rel="noopener noreferrer" onClick={() => onOpenChange(false)}>
+                  {action.label}
+                </a>
+              ) : (
+                <Link href={action.href} onClick={() => onOpenChange(false)}>
+                  {action.label}
+                </Link>
+              )}
+            </Button>
+          )}
+          {awaitingAdmin && (
+            <p className="text-xs text-muted-foreground text-center">Waiting for an admin to review it.</p>
+          )}
           <Button
             variant="outline"
             size="sm"

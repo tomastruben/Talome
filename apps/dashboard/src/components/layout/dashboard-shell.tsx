@@ -8,16 +8,16 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { SiteHeader } from "@/components/layout/site-header";
 import { MediaDetailProvider } from "@/components/media/media-detail-context";
 import { AssistantProvider } from "@/components/assistant/assistant-context";
-import { CommandPalette } from "@/components/assistant/command-palette";
+import { CommandPaletteLauncher } from "@/components/assistant/command-palette-launcher";
 import { WidgetEditProvider } from "@/components/widgets/widget-edit-context";
 import { AutomationProvider } from "@/components/automations/automation-context";
 import { SystemHealthBanner } from "@/components/system-health-banner";
 import { QuickLookProvider } from "@/components/quick-look/quick-look-context";
 import { QuickLookModal } from "@/components/quick-look/quick-look";
 import { BugHuntProvider } from "@/components/bug-hunt/bug-hunt-context";
-import { BugHuntOverlay } from "@/components/bug-hunt/bug-hunt-overlay";
+import { BugHuntLauncher } from "@/components/bug-hunt/bug-hunt-launcher";
 import { CinemaBrowserProvider } from "@/components/media/cinema-browser-context";
-import { CinemaBrowserOverlay } from "@/components/media/cinema-browser";
+import { CinemaBrowserLauncher } from "@/components/media/cinema-browser-launcher";
 import { NotificationToastBridge } from "@/components/notifications/notification-toast-bridge";
 import { hideShellHeaderAtom } from "@/atoms/shell";
 import { registerServiceWorker } from "@/lib/register-sw";
@@ -35,14 +35,13 @@ import {
   firstAccessibleDashboardRoute,
 } from "@/lib/dashboard-feature-access";
 
-const subscribeToHydration = () => () => {};
+const subscribeNoop = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const mounted = useSyncExternalStore(
-    subscribeToHydration,
-    () => true,
-    () => false,
-  );
+  // true only on the client after hydration (false during SSR and hydration)
+  const mounted = useSyncExternalStore(subscribeNoop, getClientSnapshot, getServerSnapshot);
   const router = useRouter();
   const pathname = usePathname();
   const embeddedFrame = useIsEmbeddedFrame();
@@ -108,11 +107,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         <WidgetEditProvider>
           <AutomationProvider>
           <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
-            {mounted && <CommandPalette />}
+            {/* Heavy overlays are code-split: each launcher is tiny and loads its
+                overlay on first use (the palette is also preloaded when idle).
+                Desktop windows are iframes running this same shell, so each
+                window gets its own palette/Quick Look/Bug Hunt/Cinema; toasts
+                are shown once, by the top-level page only. */}
+            {mounted && <CommandPaletteLauncher />}
             {!embeddedFrame ? <NotificationToastBridge /> : null}
             <QuickLookModal />
-            <BugHuntOverlay />
-            <CinemaBrowserOverlay />
+            <BugHuntLauncher />
+            <CinemaBrowserLauncher />
             {desktopRoute ? (
               <main id="main-content" className="h-dvh min-h-0 flex-1 overflow-hidden">
                 {children}

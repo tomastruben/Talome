@@ -1,11 +1,21 @@
 import Docker from "dockerode";
 import type { Container, ContainerStats, SystemStats } from "@talome/types";
 import os from "node:os";
-import { createCpuUsageSampler } from "../utils/cpu-usage.js";
-import { execSync } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { statSync } from "node:fs";
 import { join } from "node:path";
-import { getAppMemoryUsed, sampleNetworkBytes as platformSampleNetworkBytes } from "../platform/index.js";
+import {
+  getAppMemoryUsedAsync,
+  sampleNetworkBytesAsync,
+  readDiskMountsTracked,
+  readDiskUsage,
+  sampleCpuTimes,
+  computeCpuUsage,
+  type CpuTimesSample,
+  type DiskMountInfo,
+  type DiskUsage,
+} from "../platform/index.js";
+import { createLimiter, settleWithin } from "../platform/concurrency.js";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("docker-events");
@@ -138,8 +148,105 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 1000): Pr
   throw lastErr;
 }
 
-export async function listContainers(): Promise<Container[]> {
-  const raw = await withRetry(() => withTimeout(docker.listContainers({ all: true }), 10_000, "listContainers"));
+// ── Container list cache ──────────────────────────────────────────────────
+//
+// `docker ps` is called from many background jobs (monitor, agent-loop
+// detectors, feature stacks, app status refresh) plus polling dashboards.
+// A short-lived shared cache with in-flight de-duplication collapses those
+// into one Docker round-trip per few seconds.
+//
+// Staleness rules:
+//  - Callers get cached data only when they opt in (`cached` / `maxAgeMs`)
+//    or run inside `runWithContainerListCache()`. Plain `listContainers()`
+//    stays a fresh read so install/compose flows that create containers
+//    outside Talome's helpers never see a pre-mutation list.
+//  - Talome's own start/stop/restart/remove/prune helpers and Docker
+//    container events invalidate the cache immediately. The events come from
+//    a private watcher (see startContainerCacheWatcher) that is independent
+//    of the agent loop; while it is disconnected, cached reads fall back to
+//    fresh ones so compose-driven changes are never masked.
+//  - A generation counter guarantees a request that was in flight when the
+//    cache was invalidated never repopulates it with pre-mutation data.
+
+type RawContainerInfo = Docker.ContainerInfo;
+
+export const CONTAINER_LIST_CACHE_TTL_MS = 4_000;
+
+export interface ListContainersOptions {
+  /** Always do a new Docker round-trip (never cached, never joins an older in-flight request). */
+  fresh?: boolean;
+  /** Accept a cached list up to CONTAINER_LIST_CACHE_TTL_MS old. */
+  cached?: boolean;
+  /** Accept a cached list up to this age in ms (overrides `cached`). */
+  maxAgeMs?: number;
+}
+
+const containerListScope = new AsyncLocalStorage<{ maxAgeMs: number }>();
+
+let containerListGeneration = 0;
+let containerListCache: { at: number; data: RawContainerInfo[] } | null = null;
+let containerListInflight: { generation: number; promise: Promise<RawContainerInfo[]> } | null = null;
+
+/**
+ * Run `fn` with container-list caching enabled for every `listContainers()`
+ * call made inside it (including calls in modules that don't know about the
+ * cache, e.g. `refreshAppStatuses`). Use only for read-only background work.
+ */
+export function runWithContainerListCache<T>(fn: () => Promise<T>, maxAgeMs = CONTAINER_LIST_CACHE_TTL_MS): Promise<T> {
+  return containerListScope.run({ maxAgeMs }, fn);
+}
+
+/** Drop the cached container list. Called after any container mutation. */
+export function invalidateContainerListCache(): void {
+  containerListGeneration++;
+  containerListCache = null;
+}
+
+function resolveListMaxAge(opts: ListContainersOptions | undefined): number {
+  if (opts?.fresh) return 0;
+  if (typeof opts?.maxAgeMs === "number") return Math.max(0, opts.maxAgeMs);
+  if (opts?.cached) return CONTAINER_LIST_CACHE_TTL_MS;
+  return containerListScope.getStore()?.maxAgeMs ?? 0;
+}
+
+function fetchContainerList(joinInflight: boolean): Promise<RawContainerInfo[]> {
+  const generation = containerListGeneration;
+  if (joinInflight && containerListInflight && containerListInflight.generation === generation) {
+    return containerListInflight.promise;
+  }
+  const promise = withRetry(() => withTimeout(docker.listContainers({ all: true }), 10_000, "listContainers"))
+    .then((data) => {
+      // Only cache if nothing mutated containers while the request was in flight.
+      if (generation === containerListGeneration) {
+        containerListCache = { at: Date.now(), data };
+      }
+      return data;
+    })
+    .finally(() => {
+      if (containerListInflight?.promise === promise) containerListInflight = null;
+    });
+  containerListInflight = { generation, promise };
+  return promise;
+}
+
+/**
+ * Raw Docker container list (all containers), shared with the list cache.
+ * The returned array is shared between callers — treat it as read-only.
+ */
+export async function listContainersRaw(opts?: ListContainersOptions): Promise<readonly RawContainerInfo[]> {
+  const requestedMaxAgeMs = resolveListMaxAge(opts);
+  if (requestedMaxAgeMs > 0) void startContainerCacheWatcher();
+  // Without a live event stream, compose-driven changes would go unnoticed:
+  // only in-flight de-duplication is allowed then, never a cached list.
+  const maxAgeMs = cacheWatcherConnected ? requestedMaxAgeMs : 0;
+  if (maxAgeMs > 0 && containerListCache && Date.now() - containerListCache.at <= maxAgeMs) {
+    return containerListCache.data;
+  }
+  return fetchContainerList(requestedMaxAgeMs > 0);
+}
+
+export async function listContainers(opts?: ListContainersOptions): Promise<Container[]> {
+  const raw = await listContainersRaw(opts);
   return raw.map((c) => ({
     id: c.Id.slice(0, 12),
     name: c.Names[0]?.replace(/^\//, "") ?? c.Id.slice(0, 12),
@@ -153,12 +260,30 @@ export async function listContainers(): Promise<Container[]> {
         protocol: (p.Type as "tcp" | "udp") ?? "tcp",
       })),
     created: new Date(c.Created * 1000).toISOString(),
-    labels: c.Labels ?? {},
+    // Copy so callers mutating labels can't corrupt the shared cache.
+    labels: { ...(c.Labels ?? {}) },
     networkMode: c.HostConfig?.NetworkMode,
   }));
 }
 
-export async function getContainerStats(id: string): Promise<ContainerStats> {
+// ── Container stats sampler ───────────────────────────────────────────────
+//
+// `container.stats({ stream: false })` takes ~1-2s per container because the
+// daemon waits for a second CPU sample. Samples are cached per container,
+// refreshed with bounded concurrency and de-duplicated while in flight.
+
+export const CONTAINER_STATS_TTL_MS = 10_000;
+/** Older cached samples are not served as "current" — callers wait for a fresh one. */
+const CONTAINER_STATS_MAX_STALE_MS = 60_000;
+/** Samples for containers nobody asked about for this long are dropped. */
+const CONTAINER_STATS_EVICT_MS = 5 * 60_000;
+const CONTAINER_STATS_CONCURRENCY = 4;
+
+const containerStatsLimiter = createLimiter(CONTAINER_STATS_CONCURRENCY);
+const containerStatsCache = new Map<string, { stats: ContainerStats; at: number }>();
+const containerStatsInflight = new Map<string, StatsInflight>();
+
+async function fetchContainerStats(id: string): Promise<ContainerStats> {
   const container = docker.getContainer(id);
   interface DockerStatsResponse {
     cpu_stats: { cpu_usage: { total_usage: number }; system_cpu_usage: number; online_cpus?: number };
@@ -199,29 +324,167 @@ export async function getContainerStats(id: string): Promise<ContainerStats> {
   };
 }
 
+interface StatsInflight {
+  promise: Promise<ContainerStats>;
+  /** `started` flips once the task left the limiter queue and is talking to Docker. */
+  state: { started: boolean };
+  priority: boolean;
+}
+
+/**
+ * Take a new stats sample (bounded concurrency, joined if already in flight).
+ * Priority samples (interactive requests) jump ahead of queued background
+ * refreshes; a queued background sample that finds a newer sample in the
+ * cache when its turn comes reuses it instead of asking Docker again.
+ */
+function sampleContainerStats(id: string, opts: { priority?: boolean } = {}): Promise<ContainerStats> {
+  const priority = opts.priority === true;
+  const existing = containerStatsInflight.get(id);
+  // Join unless the caller is interactive and the existing sample is still
+  // waiting behind background work in the queue.
+  if (existing && (existing.state.started || existing.priority || !priority)) return existing.promise;
+
+  const queuedAt = Date.now();
+  const state = { started: false };
+  const promise: Promise<ContainerStats> = containerStatsLimiter(async () => {
+    state.started = true;
+    const cached = containerStatsCache.get(id);
+    if (cached && cached.at >= queuedAt) return { stats: cached.stats, reused: true };
+    return { stats: await fetchContainerStats(id), reused: false };
+  }, { priority })
+    .then(({ stats, reused }) => {
+      if (!reused) containerStatsCache.set(id, { stats, at: Date.now() });
+      return stats;
+    })
+    .finally(() => {
+      if (containerStatsInflight.get(id)?.promise === promise) containerStatsInflight.delete(id);
+    });
+  containerStatsInflight.set(id, { promise, state, priority });
+  return promise;
+}
+
+function evictOldContainerStats(now: number): void {
+  for (const [id, entry] of containerStatsCache) {
+    if (now - entry.at > CONTAINER_STATS_EVICT_MS) containerStatsCache.delete(id);
+  }
+}
+
+/** Forget cached stats for a container (after stop/restart/remove). */
+export function invalidateContainerStats(id?: string): void {
+  if (id === undefined) containerStatsCache.clear();
+  else containerStatsCache.delete(id);
+}
+
+/** Upper bound for an interactive stats request, including time spent queued. */
+const CONTAINER_STATS_REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Current stats for one container: a cached sample younger than
+ * CONTAINER_STATS_TTL_MS when there is one, otherwise a new sample that
+ * jumps ahead of queued background refreshes. Concurrent callers for the
+ * same container share one Docker request, at most
+ * CONTAINER_STATS_CONCURRENCY samples run at once across the process, and
+ * the whole wait (queue + Docker) is bounded.
+ */
+export async function getContainerStats(id: string): Promise<ContainerStats> {
+  const cached = getCachedContainerStats(id);
+  if (cached) return cached;
+  return withTimeout(
+    sampleContainerStats(id, { priority: true }),
+    CONTAINER_STATS_REQUEST_TIMEOUT_MS,
+    `getContainerStats(${id})`,
+  );
+}
+
+/** Cached stats sample if one exists and is at most `maxAgeMs` old. */
+export function getCachedContainerStats(id: string, maxAgeMs = CONTAINER_STATS_TTL_MS): ContainerStats | undefined {
+  const entry = containerStatsCache.get(id);
+  if (!entry || Date.now() - entry.at > maxAgeMs) return undefined;
+  return entry.stats;
+}
+
+/**
+ * Stale-while-revalidate stats for many containers:
+ *  - a cached sample younger than the TTL is returned as-is;
+ *  - an older (but not ancient) sample is returned immediately while a
+ *    background refresh is kicked off;
+ *  - containers with no usable sample are sampled now, waiting at most
+ *    `waitMs` — those still pending are simply omitted from the result.
+ */
+export async function getContainerStatsBatch(
+  ids: readonly string[],
+  opts: { waitMs?: number } = {},
+): Promise<Map<string, ContainerStats>> {
+  const waitMs = opts.waitMs ?? 3_000;
+  const now = Date.now();
+  evictOldContainerStats(now);
+
+  const result = new Map<string, ContainerStats>();
+  const pending: Array<[string, Promise<ContainerStats>]> = [];
+
+  for (const id of ids) {
+    const entry = containerStatsCache.get(id);
+    const age = entry ? now - entry.at : Infinity;
+    if (entry && age <= CONTAINER_STATS_MAX_STALE_MS) {
+      result.set(id, entry.stats);
+      if (age > CONTAINER_STATS_TTL_MS) {
+        sampleContainerStats(id).catch(() => { /* keep serving the last sample */ });
+      }
+    } else {
+      pending.push([id, sampleContainerStats(id)]);
+    }
+  }
+
+  if (pending.length > 0) {
+    await Promise.all(
+      pending.map(async ([id, promise]) => {
+        const stats = await settleWithin(promise, waitMs, null);
+        if (stats) result.set(id, stats);
+      }),
+    );
+  }
+
+  return result;
+}
+
+async function mutateContainer(id: string, op: () => Promise<unknown>): Promise<void> {
+  invalidateContainerListCache();
+  try {
+    await op();
+  } finally {
+    // Invalidate again after the daemon applied the change so no reader
+    // (including one that started mid-mutation) sees the old state.
+    invalidateContainerListCache();
+    invalidateContainerStats(id);
+  }
+}
+
 export async function startContainer(id: string): Promise<void> {
-  await docker.getContainer(id).start();
+  await mutateContainer(id, () => docker.getContainer(id).start());
 }
 
 export async function stopContainer(id: string): Promise<void> {
-  await docker.getContainer(id).stop();
+  await mutateContainer(id, () => docker.getContainer(id).stop());
 }
 
 export async function restartContainer(id: string): Promise<void> {
-  await docker.getContainer(id).restart();
+  await mutateContainer(id, () => docker.getContainer(id).restart());
 }
 
 export async function removeContainer(id: string): Promise<void> {
-  const container = docker.getContainer(id);
-  try {
-    await container.stop();
-  } catch {}
-  await container.remove({ force: true });
+  await mutateContainer(id, async () => {
+    const container = docker.getContainer(id);
+    try {
+      await container.stop();
+    } catch {}
+    await container.remove({ force: true });
+  });
 }
 
 export async function getContainerLogs(
   id: string,
-  tail = 200
+  tail = 200,
+  opts: { since?: number } = {},
 ): Promise<string> {
   const container = docker.getContainer(id);
   const buffer = await container.logs({
@@ -229,119 +492,62 @@ export async function getContainerLogs(
     stderr: true,
     tail,
     timestamps: true,
+    // Unix seconds; lets pollers fetch only lines written since their last check.
+    ...(opts.since !== undefined ? { since: Math.max(0, Math.floor(opts.since)) } : {}),
   });
   return stripDockerHeaders(buffer.toString("utf-8"));
 }
 
-// getAppMemoryUsed imported from platform/index.ts
+// ── System stats ──────────────────────────────────────────────────────────────
+//
+// Everything here is async: no execSync on the request path. The cache TTL
+// is just under the 3s SSE tick (routes/stats-stream.ts) so every tick gets
+// a new sample while concurrent SSE clients / monitor / tools share it.
 
-// ── Stats caching ─────────────────────────────────────────────────────────────
+const STATS_CACHE_TTL_MS = 2_500;
 let cachedStats: SystemStats | null = null;
 let cachedStatsAt = 0;
-const STATS_CACHE_TTL_MS = 5_000;
+let systemStatsInflight: Promise<SystemStats> | null = null;
 
 export async function getSystemStats(): Promise<SystemStats> {
   const now = Date.now();
   if (cachedStats && now - cachedStatsAt < STATS_CACHE_TTL_MS) {
     return cachedStats;
   }
-  const stats = getSystemStatsImpl();
-  cachedStats = stats;
-  cachedStatsAt = now;
-  return stats;
+  if (systemStatsInflight) return systemStatsInflight;
+  const promise = getSystemStatsImpl()
+    .then((stats) => {
+      cachedStats = stats;
+      cachedStatsAt = Date.now();
+      return stats;
+    })
+    .finally(() => {
+      if (systemStatsInflight === promise) systemStatsInflight = null;
+    });
+  systemStatsInflight = promise;
+  return promise;
 }
 
-function getSystemStatsImpl(): SystemStats {
+async function getSystemStatsImpl(): Promise<SystemStats> {
   const cpus = os.cpus();
   const totalMem = os.totalmem();
 
+  // CPU goes first: with a warm baseline its sample is taken synchronously,
+  // before vm_stat / df / netstat are spawned, so Talome's own helper
+  // processes are not what the reading measures.
   // On macOS, use vm_stat to get real app memory (excludes reclaimable file cache).
   // On Linux, os.freemem() already excludes buffers/cache (reads from MemAvailable).
-  const appMemUsed = getAppMemoryUsed();
-  const usedMem = appMemUsed ?? (totalMem - os.freemem());
-
-  const PSEUDO_FS = new Set([
-    "tmpfs", "devtmpfs", "sysfs", "proc", "udev", "devfs", "autofs",
-    "squashfs", "nsfs", "cgroup", "cgroup2", "pstore",
-    "securityfs", "debugfs", "tracefs", "hugetlbfs", "mqueue",
-    "fusectl", "binfmt_misc", "configfs", "efivarfs",
+  const [cpuUsage, appMemUsed, diskInfo, network] = await Promise.all([
+    getCpuUsage(),
+    getAppMemoryUsedAsync().catch(() => null),
+    getDiskInfo(),
+    getNetworkThroughput(),
   ]);
-
-  function getMountType(fs: string, mount: string): "internal" | "external" | "network" {
-    const netFs = ["nfs", "nfs4", "cifs", "smb", "smbfs", "afpfs", "ftp", "sshfs", "davfs"];
-    if (netFs.some((n) => fs.toLowerCase().startsWith(n))) return "network";
-    if (fs.includes(":/")) return "network";
-    if (mount.startsWith("/Volumes/") || mount.startsWith("/media/") || mount.startsWith("/run/media/")) return "external";
-    return "internal";
-  }
-
-  interface MountInfo {
-    fs: string;
-    mount: string;
-    usedBytes: number;
-    totalBytes: number;
-    percent: number;
-    type: "internal" | "external" | "network";
-  }
-  let diskInfo = { usedBytes: 0, totalBytes: 0, percent: 0, mounts: [] as MountInfo[] };
-  try {
-    // -P uses POSIX format: fixed 5 columns then mount path (handles spaces in names)
-    const dfOutput = execSync("df -Pk", { encoding: "utf-8" });
-    const lines = dfOutput.trim().split("\n").slice(1);
-    const mounts: MountInfo[] = [];
-
-    for (const line of lines) {
-      // POSIX df -P columns: Filesystem 1K-blocks Used Available Capacity% MountedOn
-      const match = line.match(/^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+\d+%\s+(.+)$/);
-      if (!match) continue;
-      const [, fs, totalKbStr, , availKbStr, mount] = match;
-      const totalKb = parseInt(totalKbStr, 10);
-      const availKb = parseInt(availKbStr, 10);
-
-      if (!totalKb || totalKb <= 0) continue;
-      if (PSEUDO_FS.has(fs.toLowerCase())) continue;
-      if (fs.startsWith("map ") || fs === "none") continue;
-      // Skip macOS internal APFS system volumes (VM, Preboot, Update, Data, etc.)
-      if (mount.startsWith("/System/Volumes/")) continue;
-      // Skip Xcode simulator runtime disk images
-      if (mount.startsWith("/Library/Developer/")) continue;
-      // Skip macOS cryptex mounts (Metal toolchains, security extensions)
-      if (mount.startsWith("/private/var/run/com.apple.")) continue;
-      // Skip virtual container filesystems (OrbStack, Lima, etc.)
-      if (fs.includes(":/") && !["nfs", "nfs4", "cifs", "smb", "smbfs", "afpfs"].some(n => fs.toLowerCase().startsWith(n))) continue;
-      // Skip Talome-managed RAM disks
-      if (mount === "/Volumes/TalomeHLS") continue;
-
-      // Use total - available instead of the raw "Used" column.
-      // On macOS APFS, volumes share a container pool — the "Used" column
-      // only reflects per-volume usage, while "Available" correctly shows
-      // the shared free space. total - available gives true disk consumption.
-      const usedKb = totalKb - availKb;
-
-      mounts.push({
-        fs,
-        mount,
-        usedBytes: usedKb * 1024,
-        totalBytes: totalKb * 1024,
-        percent: Math.round((usedKb / totalKb) * 1000) / 10,
-        type: getMountType(fs, mount),
-      });
-    }
-
-    if (mounts.length > 0) {
-      const rootMount = mounts.find((m) => m.mount === "/") ?? mounts[0];
-      diskInfo = {
-        usedBytes: rootMount.usedBytes,
-        totalBytes: rootMount.totalBytes,
-        percent: rootMount.percent,
-        mounts,
-      };
-    }
-  } catch {}
+  const usedMem = appMemUsed ?? (totalMem - os.freemem());
 
   return {
     cpu: {
-      usage: getCpuUsage(),
+      usage: cpuUsage,
       cores: cpus.length,
       model: cpus[0]?.model ?? "unknown",
     },
@@ -351,7 +557,7 @@ function getSystemStatsImpl(): SystemStats {
       percent: Math.round((usedMem / totalMem) * 1000) / 10,
     },
     disk: diskInfo,
-    network: getNetworkThroughput(),
+    network,
     uptime: Math.floor(os.uptime()),
     platform: os.platform() as "darwin" | "linux",
     arch: os.arch() as "arm64" | "x64",
@@ -359,18 +565,200 @@ function getSystemStatsImpl(): SystemStats {
   };
 }
 
-const sampleCpuUsage = createCpuUsageSampler(os.cpus());
-function getCpuUsage(): number {
-  return sampleCpuUsage(os.cpus());
+// ── Disk — root via statfs, mount list via df (stale-while-revalidate) ─────
+// The headline figures (usedBytes / totalBytes / percent — what the disk
+// alerts, automations and the dashboard disk widget read) come from statfs("/"),
+// which only touches the root filesystem. The mount list comes from `df`,
+// which walks the whole mount table: GNU df blocks on a hard-mounted NFS/SMB
+// share whose server is gone, and a slow first df after a restart used to
+// report 0% (so alerts never fired, and the monitor's first-run rule was
+// bypassed once the real value arrived). A dead mount now only makes the
+// mount list stale.
+//
+// `df` can stall for a long time on unreachable SMB/NFS mounts. It runs
+// async with a timeout and callers get the last known result immediately
+// while a refresh happens in the background.
+//
+// A df blocked in uninterruptible I/O outlives its timeout (the kernel holds
+// it until the mount answers), so the "one at a time" rule is tied to the
+// child's real exit, not to the timeout: no new df is spawned while the
+// previous one is still alive. Failed/timed-out reads also back off
+// exponentially so a dead mount is not re-probed on every stats tick.
+
+interface DiskInfo {
+  usedBytes: number;
+  totalBytes: number;
+  percent: number;
+  mounts: DiskMountInfo[];
+}
+
+const DISK_REFRESH_MS = 15_000;
+const DISK_FIRST_WAIT_MS = 5_000;
+const DISK_DF_TIMEOUT_MS = 5_000;
+/** Upper bound for the retry backoff after consecutive df failures. */
+const DISK_BACKOFF_MAX_MS = 5 * 60_000;
+/** statfs("/") answers in microseconds; this only bounds a pathological root. */
+const ROOT_STATFS_TIMEOUT_MS = 2_000;
+
+const diskLog = createLogger("disk");
+
+let diskCache: { mounts: DiskMountInfo[]; at: number } | null = null;
+/** Result of the latest df run (settles within the timeout). */
+let diskRefresh: Promise<DiskMountInfo[] | null> | null = null;
+/** True from spawn until the df child has really exited. */
+let dfChildAlive = false;
+let diskFailures = 0;
+let diskNextAttemptAt = 0;
+let diskFailureWarned = false;
+
+/** Latest statfs("/") result — null after a failed call, so df's "/" takes over. */
+let rootUsageCache: DiskUsage | null = null;
+/** The statfs("/") call still pending, if any — never more than one at a time. */
+let rootStatfsPending: Promise<DiskUsage | null> | null = null;
+
+function summarizeDisk(root: DiskUsage | null, mounts: DiskMountInfo[]): DiskInfo {
+  const usage = root ?? mounts.find((m) => m.mount === "/") ?? mounts[0];
+  if (!usage) return { usedBytes: 0, totalBytes: 0, percent: 0, mounts };
+  return {
+    usedBytes: usage.usedBytes,
+    totalBytes: usage.totalBytes,
+    percent: usage.percent,
+    mounts,
+  };
+}
+
+function recordDiskFailure(): void {
+  diskFailures++;
+  const backoff = Math.min(DISK_REFRESH_MS * 2 ** (diskFailures - 1), DISK_BACKOFF_MAX_MS);
+  diskNextAttemptAt = Date.now() + backoff;
+  // Once per failure streak. A df wedged in the kernel never fails a second
+  // time (no new df runs until it exits), so this cannot wait for a count.
+  if (!diskFailureWarned) {
+    diskFailureWarned = true;
+    diskLog.warn(
+      `df gave no answer within ${DISK_DF_TIMEOUT_MS}ms — a network or USB mount may be unreachable. ` +
+      "The mount list stays stale until it answers; root disk usage is still measured directly.",
+    );
+  }
+}
+
+function recordDiskSuccess(): void {
+  diskFailures = 0;
+  diskNextAttemptAt = 0;
+  diskFailureWarned = false;
+}
+
+function refreshDiskMounts(): Promise<DiskMountInfo[] | null> {
+  // Never stack df processes: a wedged child keeps this closed until it exits.
+  if (dfChildAlive) return diskRefresh ?? Promise.resolve(null);
+  if (Date.now() < diskNextAttemptAt) return Promise.resolve(null);
+
+  let run: ReturnType<typeof readDiskMountsTracked>;
+  try {
+    run = readDiskMountsTracked(DISK_DF_TIMEOUT_MS);
+  } catch {
+    recordDiskFailure();
+    return Promise.resolve(null);
+  }
+  dfChildAlive = true;
+  const markExited = () => {
+    if (diskRefresh === promise) dfChildAlive = false;
+  };
+  const promise = run.mounts
+    .then((mounts) => {
+      if (!mounts) {
+        recordDiskFailure();
+        return null;
+      }
+      recordDiskSuccess();
+      diskCache = { mounts, at: Date.now() };
+      return mounts;
+    })
+    .catch(() => {
+      recordDiskFailure();
+      return null;
+    });
+  diskRefresh = promise;
+  run.exited.then(markExited, markExited);
+  return promise;
+}
+
+/** Mount list from df: fresh cache, else stale cache (refreshing in the background), else a bounded first read. */
+async function getDiskMounts(): Promise<DiskMountInfo[]> {
+  const cached = diskCache;
+  if (cached && Date.now() - cached.at < DISK_REFRESH_MS) return cached.mounts;
+  const refresh = refreshDiskMounts();
+  if (cached) return cached.mounts; // serve stale, refresh in background
+  return (await settleWithin(refresh, DISK_FIRST_WAIT_MS, null)) ?? [];
+}
+
+/** statfs("/"), falling back to the last good reading while a call is stuck or failing. */
+async function getRootDiskUsage(): Promise<DiskUsage | null> {
+  if (!rootStatfsPending) {
+    const pending: Promise<DiskUsage | null> = readDiskUsage("/")
+      .catch(() => null)
+      .then((usage) => {
+        // A failed statfs drops the old reading (df's "/" takes over); a slow
+        // one keeps serving it (see below).
+        rootUsageCache = usage;
+        return usage;
+      })
+      .finally(() => {
+        if (rootStatfsPending === pending) rootStatfsPending = null;
+      });
+    rootStatfsPending = pending;
+  }
+  const usage = await settleWithin(rootStatfsPending, ROOT_STATFS_TIMEOUT_MS, null);
+  return usage ?? rootUsageCache;
+}
+
+async function getDiskInfo(): Promise<DiskInfo> {
+  const [root, mounts] = await Promise.all([getRootDiskUsage(), getDiskMounts()]);
+  return summarizeDisk(root, mounts);
+}
+
+// ── CPU — real utilisation from deltas between samples ─────────────────────
+// os.cpus() ticks are cumulative since boot; (1 - idle/total) over them is
+// the lifetime average, not current load. We diff consecutive samples.
+
+/**
+ * Baselines older than this are replaced by a short fresh measurement window.
+ * It spans the monitor's and agent loop's 60s cadence (with room for a slow
+ * tick), so background readings — metrics history, CPU threshold alerts,
+ * high_cpu detection — are the average since the previous sample instead of
+ * a 250 ms snapshot of whatever was busy at that instant. The dashboard's 3s
+ * stream keeps its 3s windows.
+ */
+const CPU_BASELINE_MAX_AGE_MS = 3 * 60_000;
+const CPU_MEASURE_WINDOW_MS = 250;
+
+let lastCpuSample: (CpuTimesSample & { at: number }) | null = null;
+let lastCpuUsage = 0;
+
+async function getCpuUsage(): Promise<number> {
+  let prev = lastCpuSample;
+  if (!prev || Date.now() - prev.at > CPU_BASELINE_MAX_AGE_MS) {
+    prev = { ...sampleCpuTimes(), at: Date.now() };
+    await new Promise((r) => setTimeout(r, CPU_MEASURE_WINDOW_MS));
+  }
+  const curr = { ...sampleCpuTimes(), at: Date.now() };
+  const usage = computeCpuUsage(prev, curr);
+  // Keep the old baseline when no ticks elapsed so the next call measures
+  // a real window instead of a zero-length one.
+  if (usage !== null) {
+    lastCpuUsage = usage;
+    lastCpuSample = curr;
+  } else if (!lastCpuSample) {
+    lastCpuSample = prev;
+  }
+  return lastCpuUsage;
 }
 
 let lastNetSample: { time: number; rx: number; tx: number } | null = null;
 let lastNetResult = { rxBytesPerSec: 0, txBytesPerSec: 0 };
 
-// sampleNetworkBytes imported from platform/index.ts as platformSampleNetworkBytes
-
-function getNetworkThroughput(): { rxBytesPerSec: number; txBytesPerSec: number } {
-  const sample = platformSampleNetworkBytes();
+async function getNetworkThroughput(): Promise<{ rxBytesPerSec: number; txBytesPerSec: number }> {
+  const sample = await sampleNetworkBytesAsync();
   if (!sample) return lastNetResult;
 
   const now = Date.now();
@@ -385,6 +773,30 @@ function getNetworkThroughput(): { rxBytesPerSec: number; txBytesPerSec: number 
   }
   lastNetSample = { time: now, rx: sample.rx, tx: sample.tx };
   return lastNetResult;
+}
+
+/** Reset internal caches — test helper. */
+export function __resetDockerClientCachesForTests(): void {
+  stopContainerCacheWatcher();
+  invalidateContainerListCache();
+  containerListInflight = null;
+  containerStatsCache.clear();
+  containerStatsInflight.clear();
+  cachedStats = null;
+  cachedStatsAt = 0;
+  systemStatsInflight = null;
+  diskCache = null;
+  diskRefresh = null;
+  dfChildAlive = false;
+  diskFailures = 0;
+  diskNextAttemptAt = 0;
+  diskFailureWarned = false;
+  rootUsageCache = null;
+  rootStatfsPending = null;
+  lastCpuSample = null;
+  lastCpuUsage = 0;
+  lastNetSample = null;
+  lastNetResult = { rxBytesPerSec: 0, txBytesPerSec: 0 };
 }
 
 function mapStatus(
@@ -506,6 +918,7 @@ export async function pruneResources(
     switch (target) {
       case "containers": {
         const r = await docker.pruneContainers();
+        invalidateContainerListCache();
         results.containers = {
           spaceReclaimed: r.SpaceReclaimed ?? 0,
           count: r.ContainersDeleted?.length ?? 0,
@@ -752,6 +1165,175 @@ export type DockerEventHandler = (event: DockerEvent) => void;
 let eventStream: NodeJS.ReadableStream | null = null;
 let eventStreamCleanup: (() => void) | null = null;
 
+/** Actions forwarded to the subscriber (the historical server-side filter). */
+const FORWARDED_EVENT_ACTIONS = new Set(["start", "stop", "die", "restart", "destroy", "oom", "health_status"]);
+/** Actions that change what `docker ps` returns — they invalidate the list cache. */
+const LIST_INVALIDATING_ACTIONS = new Set([
+  "create", "start", "stop", "die", "restart", "destroy", "kill", "pause", "unpause", "rename", "oom",
+]);
+
+/**
+ * Keep Talome's container caches coherent with daemon state. Returns true
+ * when the event should also be forwarded to the subscriber.
+ */
+function applyDockerEventToCaches(action: string, actorId: string): boolean {
+  // health_status arrives as "health_status: healthy" — compare the prefix.
+  const base = action.split(":")[0].trim();
+  if (LIST_INVALIDATING_ACTIONS.has(base)) {
+    invalidateContainerListCache();
+    if (base === "die" || base === "destroy" || base === "stop") invalidateContainerStats(actorId);
+  }
+  return FORWARDED_EVENT_ACTIONS.has(base);
+}
+
+/**
+ * Build a chunk handler for the daemon's event stream. The daemon sends
+ * newline-delimited JSON; one chunk can carry several events or a partial
+ * one, so input is buffered and split on newlines.
+ */
+function createDockerEventParser(onEvent: (event: DockerEvent) => void): (chunk: Buffer) => void {
+  let pending = "";
+  return (chunk: Buffer) => {
+    pending += chunk.toString("utf-8");
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    const parsed: unknown[] = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try { parsed.push(JSON.parse(line)); } catch { /* Malformed event — skip */ }
+    }
+    // A complete event without a trailing newline: parse it now; a
+    // partial one fails to parse and stays buffered for the next chunk.
+    if (pending.trim()) {
+      try {
+        parsed.push(JSON.parse(pending));
+        pending = "";
+      } catch { /* incomplete — keep buffering */ }
+    }
+    for (const item of parsed) {
+      try {
+        const raw = item as {
+          Type?: DockerEvent["type"];
+          Action?: string;
+          status?: string;
+          id?: string;
+          from?: string;
+          time?: number;
+          Actor?: { ID?: string; Attributes?: Record<string, string> };
+        };
+        onEvent({
+          type: raw.Type ?? "container",
+          action: raw.Action ?? raw.status ?? "",
+          actorId: (raw.Actor?.ID ?? raw.id ?? "").slice(0, 12),
+          actorName: raw.Actor?.Attributes?.name ?? "",
+          actorImage: raw.Actor?.Attributes?.image ?? raw.from ?? "",
+          time: raw.time ?? Math.floor(Date.now() / 1000),
+        });
+      } catch {
+        // Malformed event — skip
+      }
+    }
+    // Guard against unbounded growth on a garbage stream.
+    if (pending.length > 1_000_000) pending = "";
+  };
+}
+
+function destroyEventStream(stream: NodeJS.ReadableStream): void {
+  try {
+    const s = stream as NodeJS.ReadableStream & { destroy?: () => void };
+    if (typeof s.destroy === "function") s.destroy();
+  } catch { /* ignore */ }
+}
+
+// ── Container cache watcher ─────────────────────────────────────────────────
+//
+// App lifecycle (compose up/stop/restart, installs, updates) runs through
+// `docker compose` rather than the helpers above, so the list cache relies on
+// Docker events to notice those changes. This private, invalidation-only
+// subscription is independent of the agent loop (which may be disabled) and
+// starts on the first cached read. Cached reads are honoured only while it is
+// connected; otherwise callers get a fresh `docker ps`.
+
+let cacheWatcherStop: (() => void) | null = null;
+let cacheWatcherReady: Promise<void> | null = null;
+let cacheWatcherConnected = false;
+
+/**
+ * Start the invalidation-only Docker event subscription (idempotent). The
+ * returned promise settles after the first connection attempt.
+ */
+export function startContainerCacheWatcher(): Promise<void> {
+  if (cacheWatcherReady) return cacheWatcherReady;
+  let aborted = false;
+  let current: NodeJS.ReadableStream | null = null;
+  let markReady!: () => void;
+  cacheWatcherReady = new Promise<void>((resolve) => { markReady = resolve; });
+
+  const scheduleReconnect = (ms: number) => {
+    const timer = setTimeout(() => { if (!aborted) void connect(); }, ms);
+    timer.unref?.();
+  };
+
+  const connect = async (): Promise<void> => {
+    try {
+      const stream = await docker.getEvents({
+        filters: { type: ["container"], event: [...LIST_INVALIDATING_ACTIONS] },
+      });
+      if (aborted) {
+        destroyEventStream(stream);
+        return;
+      }
+      current = stream;
+      const parse = createDockerEventParser((event) => { applyDockerEventToCaches(event.action, event.actorId); });
+      stream.on("data", (chunk: Buffer) => {
+        if (!aborted && current === stream) parse(chunk);
+      });
+      const onLost = () => {
+        if (current !== stream) return;
+        current = null;
+        cacheWatcherConnected = false;
+        // Events may have been missed — don't trust the cache.
+        invalidateContainerListCache();
+        if (!aborted) scheduleReconnect(5_000);
+      };
+      stream.on("error", onLost);
+      stream.on("end", onLost);
+      stream.on("close", onLost);
+      // Changes made before the stream was up were never seen as events.
+      invalidateContainerListCache();
+      cacheWatcherConnected = true;
+    } catch (err) {
+      cacheWatcherConnected = false;
+      log.debug("Container cache watcher could not subscribe, retrying in 10s", err);
+      if (!aborted) scheduleReconnect(10_000);
+    } finally {
+      markReady();
+    }
+  };
+
+  cacheWatcherStop = () => {
+    aborted = true;
+    cacheWatcherConnected = false;
+    if (current) destroyEventStream(current);
+    current = null;
+  };
+  void connect();
+  return cacheWatcherReady;
+}
+
+/** Stop the cache watcher (shutdown / tests). Cached reads become fresh reads. */
+export function stopContainerCacheWatcher(): void {
+  cacheWatcherStop?.();
+  cacheWatcherStop = null;
+  cacheWatcherReady = null;
+  cacheWatcherConnected = false;
+}
+
+/** Whether cached container-list reads are currently trusted. */
+export function isContainerCacheWatcherConnected(): boolean {
+  return cacheWatcherConnected;
+}
+
 /**
  * Subscribe to real-time Docker events via the daemon's event stream.
  * Returns a cleanup function to stop listening.
@@ -772,32 +1354,24 @@ export function subscribeDockerEvents(handler: DockerEventHandler): () => void {
       const stream = await docker.getEvents({
         filters: {
           type: ["container"],
-          event: ["start", "stop", "die", "restart", "destroy", "oom", "health_status"],
+          event: [...new Set([...FORWARDED_EVENT_ACTIONS, ...LIST_INVALIDATING_ACTIONS])],
         },
       });
 
       eventStream = stream;
 
+      const parse = createDockerEventParser((event) => {
+        if (applyDockerEventToCaches(event.action, event.actorId)) handler(event);
+      });
       stream.on("data", (chunk: Buffer) => {
         if (aborted) return;
-        try {
-          const raw = JSON.parse(chunk.toString("utf-8"));
-          const event: DockerEvent = {
-            type: raw.Type ?? "container",
-            action: raw.Action ?? raw.status ?? "",
-            actorId: (raw.Actor?.ID ?? raw.id ?? "").slice(0, 12),
-            actorName: raw.Actor?.Attributes?.name ?? "",
-            actorImage: raw.Actor?.Attributes?.image ?? raw.from ?? "",
-            time: raw.time ?? Math.floor(Date.now() / 1000),
-          };
-          handler(event);
-        } catch {
-          // Malformed event — skip
-        }
+        parse(chunk);
       });
 
       stream.on("error", (err: Error) => {
         if (aborted) return;
+        // Events may be missed until we reconnect — don't trust the cache.
+        invalidateContainerListCache();
         log.error("Stream error, will reconnect", err.message);
         // Reconnect after a brief delay
         setTimeout(() => {
@@ -927,6 +1501,8 @@ async function pruneOrphanedStoppedContainers(
       log.warn(`Failed to prune orphaned container ${candidate.name} (${candidate.id.slice(0, 12)})`, err);
     }
   }
+  // Container mutation → the shared container-list cache is stale.
+  if (deleted.length > 0) invalidateContainerListCache();
 
   return { ...classified, deleted };
 }

@@ -1,0 +1,16 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      APP_HOST: photo-vault_web_1
+      APP_PORT: 2342
+
+  web:
+    image: photoprism/photoprism:240915
+    restart: on-failure
+    environment:
+      PHOTOPRISM_ADMIN_PASSWORD: ${APP_PASSWORD}
+    volumes:
+      - ${APP_DATA_DIR}/data/storage:/photoprism/storage
+      - ${UMBREL_ROOT}/home/Photos:/photoprism/originals

@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { readdir, stat, readFile, unlink, mkdir, rename, rm } from "node:fs/promises";
+import { readdir, stat, readFile, unlink, mkdir, rename, rm, realpath } from "node:fs/promises";
 import { join, resolve, basename, dirname, extname } from "node:path";
 import { existsSync } from "node:fs";
 import { writeAuditEntry } from "../../db/audit.js";
@@ -10,6 +10,7 @@ import {
   isAllowed,
   isAllowedRoot,
 } from "../../utils/filesystem.js";
+import { protectedFileReason } from "../../utils/secret-paths.js";
 
 function assertAllowed(absPath: string): void {
   if (!isAllowed(absPath)) {
@@ -152,6 +153,10 @@ For binary files (images, videos, etc.), returns metadata instead of contents. M
     try {
       const abs = resolve(path);
       assertAllowed(abs);
+      // The allowed roots include ~/.talome, which also holds the install's
+      // .env (TALOME_SECRET) and the database directory: never hand those out.
+      const blocked = protectedFileReason(abs) ?? protectedFileReason(await realpath(abs).catch(() => abs));
+      if (blocked) return { error: `Access denied: ${blocked}.` };
 
       const s = await stat(abs);
       if (s.isDirectory()) {
@@ -214,15 +219,15 @@ For binary files (images, videos, etc.), returns metadata instead of contents. M
 export const deleteFileTool = tool({
   description: `Delete a file or directory from the user's drives. Scoped to allowed roots.
 
-IMPORTANT: This is a destructive operation. Always confirm with the user before deleting. Cannot delete root directories.`,
+IMPORTANT: This is a destructive operation. Tell the user exactly what will be deleted first; in cautious mode Talome returns approval_required and the owner approves it. Cannot delete root directories.`,
   inputSchema: z.object({
     path: z.string().describe("Absolute path to the file or directory to delete"),
     recursive: z.boolean().default(false).describe("Required for non-empty directories"),
-    confirmed: z.boolean().describe("Must be true — ask user to confirm before calling"),
+    confirmed: z.boolean().optional().describe("Leave unset. Talome sets it once this call is authorized (the owner approved it, or permissive mode)."),
   }),
   execute: async ({ path, recursive, confirmed }) => {
     if (!confirmed) {
-      return { error: "This is a destructive action. Ask the user to confirm, then call again with confirmed: true." };
+      return { error: "This destructive action was not authorized. Call it without confirmed: Talome asks the owner to approve it (approval_required), then retry with approval_id." };
     }
     try {
       const abs = resolve(path);

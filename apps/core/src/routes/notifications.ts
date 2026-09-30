@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { db, schema } from "../db/index.js";
 import { eq, desc, sql } from "drizzle-orm";
 import { recordGracefulError, serverError } from "../middleware/request-logger.js";
+import { allowedSenderIds } from "../messaging/allowlist.js";
 
 const notifications = new Hono();
 
@@ -39,11 +40,14 @@ async function pushToMessaging(title: string, message: string, level = "warning"
       const { getTelegramBotStatus } = await import("../messaging/telegram.js");
       const telegramStatus = getTelegramBotStatus();
       if (telegramStatus.connected) {
+        // Only chats with senders the owner allowed receive notifications.
+        const allowed = allowedSenderIds("telegram");
         const telegramChats = db
           .select({ externalId: schema.conversations.externalId })
           .from(schema.conversations)
           .where(eq(schema.conversations.platform, "telegram"))
-          .all();
+          .all()
+          .filter((c) => c.externalId !== null && allowed.has(c.externalId));
 
         if (telegramChats.length > 0) {
           const telegramToken = db
@@ -74,11 +78,14 @@ async function pushToMessaging(title: string, message: string, level = "warning"
       const { getDiscordBotStatus } = await import("../messaging/discord-bot.js");
       const discordStatus = getDiscordBotStatus();
       if (discordStatus.connected) {
+        // Only senders the owner allowed receive notifications.
+        const allowed = allowedSenderIds("discord");
         const discordChats = db
           .select({ externalId: schema.conversations.externalId })
           .from(schema.conversations)
           .where(eq(schema.conversations.platform, "discord"))
-          .all();
+          .all()
+          .filter((c) => c.externalId !== null && allowed.has(c.externalId));
 
         if (discordChats.length > 0) {
           const { Client } = await import("discord.js");
@@ -119,7 +126,8 @@ notifications.get("/", (c) => {
       .orderBy(desc(schema.notifications.createdAt))
       .limit(limit)
       .all();
-    return c.json(rows);
+    // `link` (string | null): optional in-app target, e.g. the approval to review.
+    return c.json(rows.map((row) => ({ ...row, link: row.link ?? null })));
   } catch (err) {
     recordGracefulError(c, err, { endpoint: "notifications/list" });
     return c.json([]);

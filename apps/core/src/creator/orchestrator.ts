@@ -27,7 +27,7 @@ function summarizeReferenceContent(content: string): string {
   return content.split("\n").slice(0, 40).join("\n").slice(0, 1800);
 }
 
-/** Kept for existing internal callers; stored secrets must be decrypted. */
+/** Kept for existing internal callers. anthropic_key is encrypted at rest — getSetting() decrypts it. */
 export function getAnthropicApiKey(): string | undefined {
   return getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
 }

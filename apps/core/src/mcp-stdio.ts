@@ -7,12 +7,71 @@
  *
  * The DB path defaults to ~/.talome/talome.db (same as the main server).
  * Docker access uses the same socket as the main server (/var/run/docker.sock).
+ *
+ * Trust model: the caller is the local owner (localStdioActor) — this process
+ * already has the DB file and Docker socket, so per-token grants would not
+ * constrain it. Security mode and approvals still apply to every call, and
+ * every call is audited as actor "mcp_stdio" — or as agent_loop:remediation
+ * when the agent loop launched Claude Code (TALOME_MCP_ACTOR).
+ *
+ * Nothing may be written to stdout except MCP frames — log to stderr.
  */
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createMcpServer } from "./routes/mcp.js";
+import { createMcpSession } from "./routes/mcp.js";
+import { localStdioActor } from "./ai/execution.js";
+import { runStdioMigrations } from "./db/migrations/stdio.js";
+import { stdioActorFromEnv } from "./agent-loop/remediation-actor.js";
+import { remediationMcpSessionOptions } from "./agent-loop/remediation-guard.js";
+import { installStdioShutdown } from "./mcp-stdio-lifecycle.js";
+import { inFlightAppWork } from "./mcp-stdio-pending.js";
 
-const server = createMcpServer();
+/** How often to re-evaluate configured domains / disabled tools. */
+const TOOL_SYNC_INTERVAL_MS = 15_000;
+
+// The main server may be older than this process (or not running), and this
+// process's drizzle schema reads columns from every migration module: run the
+// full, idempotent migration set (race-tolerant against core running it too).
+// Its console output goes to stderr — stdout carries MCP frames only.
+runStdioMigrations((line) => process.stderr.write(`${line}\n`));
+
+// Claude Code remediation (agent-loop/remediation.ts) launches this server
+// with TALOME_MCP_ACTOR so its calls run as the agent loop, not the owner —
+// and its write calls wait for app operations (remediation-guard.ts).
+const actor = stdioActorFromEnv(process.env, localStdioActor());
+const session = createMcpSession(actor, remediationMcpSessionOptions(actor));
 const transport = new StdioServerTransport();
 
-await server.connect(transport);
+let syncTimer: ReturnType<typeof setInterval> | undefined;
+
+const lifecycle = installStdioShutdown({
+  stdin: process.stdin,
+  stdout: process.stdout,
+  signals: process,
+  getPpid: () => process.ppid,
+  exit: (code) => process.exit(code),
+  // A backup, restore or update this process started is finished before exiting (bounded)
+  pendingWork: inFlightAppWork,
+  onShutdown: async () => {
+    if (syncTimer) clearInterval(syncTimer);
+    await session.server.close().catch(() => {});
+  },
+});
+
+session.server.server.onclose = () => void lifecycle.shutdown("transport closed");
+
+await session.server.connect(transport);
+
+// Newly configured domains (or tools disabled in Settings) show up without a
+// restart: the SDK emits notifications/tools/list_changed on every change.
+syncTimer = setInterval(() => {
+  try {
+    const { added, removed } = session.sync();
+    if (added.length || removed.length) {
+      process.stderr.write(`[mcp-stdio] tools changed: +${added.length} -${removed.length}\n`);
+    }
+  } catch (err) {
+    process.stderr.write(`[mcp-stdio] tool sync failed: ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}, TOOL_SYNC_INTERVAL_MS);
+syncTimer.unref();

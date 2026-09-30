@@ -61,6 +61,18 @@ function extractBaseCommand(command: string): string {
   return base;
 }
 
+/** Cautious mode runs only commands whose program is on SHELL_ALLOWLIST. */
+export function isCautiousShellCommandAllowed(command: string): boolean {
+  const baseCmd = extractBaseCommand(command);
+  return !!baseCmd && SHELL_ALLOWLIST.has(baseCmd);
+}
+
+/** The error run_shell returns for a command cautious mode refuses. */
+export function cautiousShellRefusal(command: string): string {
+  const baseCmd = extractBaseCommand(command);
+  return `Command "${baseCmd || command}" is not in the allowed command list for cautious mode. Allowed commands: ${[...SHELL_ALLOWLIST].slice(0, 20).join(", ")}... An admin can switch to permissive mode in Settings > Security.`;
+}
+
 export const runShellTool = tool({
   description:
     "Run a shell command on the Talome host. Use ONLY for commands explicitly requested by the user. Every execution is logged to the audit trail.",
@@ -80,12 +92,9 @@ export const runShellTool = tool({
 
     // Cautious mode: allowlist-based filtering
     if (mode === "cautious") {
-      const baseCmd = extractBaseCommand(command);
-      if (!baseCmd || !SHELL_ALLOWLIST.has(baseCmd)) {
+      if (!isCautiousShellCommandAllowed(command)) {
         writeAuditEntry(`run_shell BLOCKED (not in allowlist): ${command}`, "destructive", command, false);
-        return {
-          error: `Command "${baseCmd || command}" is not in the allowed command list for cautious mode. Allowed commands: ${[...SHELL_ALLOWLIST].slice(0, 20).join(", ")}... An admin can switch to permissive mode in Settings > Security.`,
-        };
+        return { error: cautiousShellRefusal(command) };
       }
     }
 

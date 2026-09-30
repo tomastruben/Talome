@@ -1,0 +1,20 @@
+manifestVersion: 1
+id: sonarr
+category: media
+name: Sonarr
+version: "4.0.11"
+tagline: Smart PVR for TV shows
+description: Monitors RSS feeds for new episodes and grabs, sorts and renames them.
+developer: Sonarr
+website: https://sonarr.tv
+dependencies:
+  - transmission
+repo: https://github.com/Sonarr/Sonarr
+support: https://forums.sonarr.tv
+port: 8989
+gallery:
+  - 1.jpg
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: Umbrel

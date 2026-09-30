@@ -4,19 +4,33 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import useSWR from "swr";
+import dynamic from "next/dynamic";
+import useSWR, { useSWRConfig } from "swr";
 import { CORE_URL } from "@/lib/constants";
-import {
-  UnifiedMediaSheet,
-  type SheetItem,
-  type MediaItem,
-  type LookupItem,
-  type LibraryData,
+import { POLL_SLOW_MS } from "@/lib/polling";
+import type {
+  SheetItem,
+  MediaItem,
+  LookupItem,
+  LibraryData,
 } from "./media-detail-sheet";
+
+// The sheet (and its download polling) is only needed once a detail is
+// opened — keep it out of the dashboard shell's initial bundle.
+const loadMediaDetailSheet = () => import("./media-detail-sheet");
+const UnifiedMediaSheet = dynamic(
+  () => loadMediaDetailSheet().then((m) => ({ default: m.UnifiedMediaSheet })),
+  { ssr: false },
+);
+
+const LIBRARY_KEY = `${CORE_URL}/api/media/library`;
+/** Give up waiting for the library after this long and fall back to a lookup. */
+const LIBRARY_WAIT_TIMEOUT_MS = 15_000;
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
@@ -29,6 +43,11 @@ interface MediaDetailContextValue {
   ) => void;
   /** Return the library item that best matches `title`, or undefined if not found. */
   findItem: (title: string) => MediaItem | undefined;
+  /**
+   * Register interest in library data (starts fetching/polling it while at
+   * least one consumer holds it). Returns the release function.
+   */
+  acquireLibrary: () => () => void;
 }
 
 const MediaDetailContext = createContext<MediaDetailContextValue | null>(null);
@@ -37,6 +56,20 @@ export function useMediaDetail() {
   const ctx = useContext(MediaDetailContext);
   if (!ctx) throw new Error("useMediaDetail must be used within MediaDetailProvider");
   return ctx;
+}
+
+/**
+ * Declare that the calling component needs `findItem` to see library data.
+ * The library (a full Sonarr/Radarr pull on the backend) is only fetched —
+ * and refreshed every 60s — while at least one consumer is mounted or a
+ * detail sheet is open, instead of on every dashboard page.
+ */
+export function useMediaLibraryDemand(enabled = true) {
+  const acquire = useContext(MediaDetailContext)?.acquireLibrary;
+  useEffect(() => {
+    if (!enabled || !acquire) return;
+    return acquire();
+  }, [enabled, acquire]);
 }
 
 // ── Provider ──────────────────────────────────────────────────────────────────
@@ -223,30 +256,91 @@ function pickBestLookupItem(
   return best?.item ?? null;
 }
 
+function resolveLibraryItem(
+  lib: LibraryData | undefined,
+  title: string,
+  options?: MatchOpts
+): MediaItem | undefined {
+  if (!lib) return undefined;
+  const all: MediaItem[] = [...(lib.movies ?? []), ...(lib.tv ?? [])];
+  return pickBestMediaItem(all, title, options);
+}
+
 export function MediaDetailProvider({ children }: { children: React.ReactNode }) {
   const [sheetItem, setSheetItem] = useState<SheetItem | null>(null);
+  const [sheetMounted, setSheetMounted] = useState(false);
+  const [libraryDemand, setLibraryDemand] = useState(0);
+  const { cache } = useSWRConfig();
 
-  const libraryRef = useRef<LibraryData | null>(null);
+  // Fetch the library only while something needs it: a consumer registered
+  // demand (chat inline media tags) or a detail sheet is open / loading.
+  const libraryActive = libraryDemand > 0 || sheetItem !== null;
+  const { data: library, error: libraryError } = useSWR<LibraryData>(
+    libraryActive ? LIBRARY_KEY : null,
+    fetcher,
+    {
+      refreshInterval: POLL_SLOW_MS,
+      revalidateOnFocus: false,
+      // Data already cached by the media pages is fresh enough; the 60s
+      // refresh keeps it current while active.
+      revalidateIfStale: false,
+    },
+  );
 
-  useSWR<LibraryData>(`${CORE_URL}/api/media/library`, fetcher, {
-    refreshInterval: 60_000,
-    onSuccess: (data) => { libraryRef.current = data; },
-  });
+  /** Latest library from the shared SWR cache (also filled by media pages). */
+  const getLibrary = useCallback(
+    (): LibraryData | undefined => cache.get(LIBRARY_KEY)?.data as LibraryData | undefined,
+    [cache],
+  );
 
-  function resolve(
-    title: string,
-    options?: MatchOpts
-  ): MediaItem | undefined {
-    const lib = libraryRef.current;
-    if (!lib) return undefined;
-    const all: MediaItem[] = [...(lib.movies ?? []), ...(lib.tv ?? [])];
-    return pickBestMediaItem(all, title, options);
-  }
+  // Resolvers waiting for the library to arrive (openDetail before load).
+  const libraryWaitersRef = useRef<Array<(lib: LibraryData | undefined) => void>>([]);
+  useEffect(() => {
+    if (!library && !libraryError) return;
+    const waiters = libraryWaitersRef.current;
+    libraryWaitersRef.current = [];
+    for (const resolveWaiter of waiters) resolveWaiter(library);
+  }, [library, libraryError]);
+
+  const waitForLibrary = useCallback((): Promise<LibraryData | undefined> => {
+    const cached = getLibrary();
+    if (cached) return Promise.resolve(cached);
+    if (cache.get(LIBRARY_KEY)?.error) return Promise.resolve(undefined);
+    return new Promise((resolveWait) => {
+      let settled = false;
+      const settle = (lib: LibraryData | undefined) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolveWait(lib);
+      };
+      const timer = setTimeout(() => settle(getLibrary()), LIBRARY_WAIT_TIMEOUT_MS);
+      libraryWaitersRef.current.push(settle);
+    });
+  }, [cache, getLibrary]);
+
+  const acquireLibrary = useCallback(() => {
+    setLibraryDemand((n) => n + 1);
+    // Warm the sheet chunk so opening a detail from chat is instant.
+    void loadMediaDetailSheet().catch(() => {});
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      setLibraryDemand((n) => Math.max(0, n - 1));
+    };
+  }, []);
+
+  // Monotonic id so a stale async open (library/lookup still loading) never
+  // overrides a newer open or a close.
+  const openSeqRef = useRef(0);
 
   const openDetail = useCallback((
     rawTitle: string,
     options?: { typeHint?: "movie" | "tv"; yearHint?: number }
   ) => {
+    const seq = ++openSeqRef.current;
+    setSheetMounted(true);
     setSheetItem(null);
     const parsed = parseReference(rawTitle);
     const queryTitle = parsed.title || rawTitle;
@@ -254,48 +348,84 @@ export function MediaDetailProvider({ children }: { children: React.ReactNode })
     const tmdbId = parsed.tmdbId;
     const tvdbId = parsed.tvdbId;
     const matchOpts: MatchOpts = { typeHint: options?.typeHint, yearHint, tmdbId, tvdbId };
-    const match = resolve(queryTitle, matchOpts);
-    if (match) {
-      // Open unified sheet in library mode
-      setSheetItem({ kind: "library", data: match });
+
+    const lookup = () => {
+      // Not in library — show loading, then fetch metadata
+      setSheetItem({ kind: "loading", pendingTitle: queryTitle });
+      const params = new URLSearchParams({ q: queryTitle });
+      if (options?.typeHint) params.set("type", options.typeHint);
+      fetch(`${CORE_URL}/api/media/lookup?${params.toString()}`)
+        .then((r) => r.ok ? r.json() : Promise.reject())
+        .then((data) => {
+          if (seq !== openSeqRef.current) return;
+          const results: LookupItem[] = data.results ?? [];
+          const best = pickBestLookupItem(results, queryTitle, matchOpts);
+          if (best) {
+            setSheetItem({ kind: "lookup", data: best });
+          } else {
+            setSheetItem(null);
+          }
+        })
+        .catch(() => {
+          if (seq === openSeqRef.current) setSheetItem(null);
+        });
+    };
+
+    const showResolved = (lib: LibraryData | undefined) => {
+      const match = resolveLibraryItem(lib, queryTitle, matchOpts);
+      if (match) {
+        // Open unified sheet in library mode
+        setSheetItem({ kind: "library", data: match });
+        return;
+      }
+      lookup();
+    };
+
+    const cached = getLibrary();
+    if (cached) {
+      showResolved(cached);
       return;
     }
-    // Not in library — show loading, then fetch metadata
+
+    // Library not loaded yet (it is fetched lazily): show the loading state —
+    // which also activates the library fetch — then resolve once it arrives.
     setSheetItem({ kind: "loading", pendingTitle: queryTitle });
-    const params = new URLSearchParams({ q: queryTitle });
-    if (options?.typeHint) params.set("type", options.typeHint);
-    fetch(`${CORE_URL}/api/media/lookup?${params.toString()}`)
-      .then((r) => r.ok ? r.json() : Promise.reject())
-      .then((data) => {
-        const results: LookupItem[] = data.results ?? [];
-        const best = pickBestLookupItem(results, queryTitle, matchOpts);
-        if (best) {
-          setSheetItem({ kind: "lookup", data: best });
-        } else {
-          setSheetItem(null);
-        }
-      })
-      .catch(() => setSheetItem(null));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    void waitForLibrary().then((lib) => {
+      if (seq !== openSeqRef.current) return;
+      showResolved(lib);
+    });
+  }, [getLibrary, waitForLibrary]);
+
+  const closeDetail = useCallback(() => {
+    openSeqRef.current++;
+    setSheetItem(null);
   }, []);
 
   const findItem = useCallback((title: string): MediaItem | undefined => {
     const parsed = parseReference(title);
-    return resolve(parsed.title || title, {
+    return resolveLibraryItem(getLibrary(), parsed.title || title, {
       yearHint: parsed.year,
       tmdbId: parsed.tmdbId,
       tvdbId: parsed.tvdbId,
     });
+  // `library` is a dependency so consumers re-render once data arrives.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [getLibrary, library]);
+
+  const value = useMemo(
+    () => ({ openDetail, findItem, acquireLibrary }),
+    [openDetail, findItem, acquireLibrary],
+  );
 
   return (
-    <MediaDetailContext.Provider value={useMemo(() => ({ openDetail, findItem }), [openDetail, findItem])}>
+    <MediaDetailContext.Provider value={value}>
       {children}
-      <UnifiedMediaSheet
-        item={sheetItem}
-        onClose={() => setSheetItem(null)}
-      />
+      {sheetMounted && (
+        <UnifiedMediaSheet
+          item={sheetItem}
+          onClose={closeDetail}
+        />
+      )}
     </MediaDetailContext.Provider>
   );
 }

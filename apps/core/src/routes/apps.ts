@@ -11,13 +11,34 @@ import {
   stopApp,
   restartApp,
   updateApp,
+  withAppMaintenance,
+  applyComposeEditToUpdateSnapshots,
 } from "../stores/lifecycle.js";
 import { installProgress, emitProgress, type InstallProgressEvent } from "../stores/install-emitter.js";
+import { listAppOperations, hasLiveOperation } from "../ops/operations.js";
+import { UmbrelInstallOptionsSchema } from "../stores/umbrel-v2.js";
+import { getInstallAccessWarnings, runWithUmbrelInstallOptions } from "../stores/umbrel-v2-install.js";
+import { volumeMountsError, volumeMountsNeedingApproval } from "../stores/host-mounts.js";
 import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus, TalomeNativeSurfaceDescriptor } from "@talome/types";
 import { listContainers } from "../docker/client.js";
 import os from "node:os";
+import type { Context } from "hono";
 
 const apps = new Hono();
+
+/** Attribute lifecycle operations to the signed-in user (journal "actor"). */
+function actorFor(c: Context): string {
+  const userId = c.get("sessionUser" as never) as string | undefined;
+  return userId ? `user:${userId}` : "user";
+}
+
+/** 409 when another operation on the app is running, 400 otherwise. */
+function operationError(c: Context, result: { error?: string; conflict?: boolean; operationId?: string }) {
+  if (result.conflict) {
+    return c.json({ error: result.error, operationId: result.operationId, conflict: true }, 409);
+  }
+  return c.json({ error: result.error, ...(result.operationId ? { operationId: result.operationId } : {}) }, 400);
+}
 
 const dockerArch = os.arch() === "arm64" ? "arm64" : "amd64";
 
@@ -298,6 +319,21 @@ apps.get("/categories", (c) => {
   }
 });
 
+const operationsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(50),
+});
+
+// Registered before "/:storeId/:appId" so "operations" is not read as an app id.
+apps.get("/:appId/operations", (c) => {
+  const parsed = operationsQuerySchema.safeParse({ limit: c.req.query("limit") ?? undefined });
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  try {
+    return c.json(listAppOperations(c.req.param("appId"), parsed.data.limit));
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to load app operations" });
+  }
+});
+
 apps.get("/:storeId/:appId", async (c) => {
   const { storeId, appId } = c.req.param();
   const locale = c.req.query("locale") || c.req.header("Accept-Language")?.split(",")[0]?.trim() || null;
@@ -338,28 +374,46 @@ apps.get("/:storeId/:appId", async (c) => {
 const installSchema = z.object({
   env: z.record(z.string(), z.string()).default({}),
   volumeMounts: z.record(z.string(), z.string()).default({}),
+  /** Umbrel 2.0 choices: folderAccess folders, environment values, data root, dependency providers */
+  umbrel: UmbrelInstallOptionsSchema.optional(),
 });
 
 apps.post("/:storeId/:appId/install", async (c) => {
   const { storeId, appId } = c.req.param();
   const parsed = installSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-  const { env, volumeMounts } = parsed.data;
+  const { env, volumeMounts, umbrel } = parsed.data;
 
-  emitProgress(appId, { stage: "queued", message: "Preparing..." });
-
-  const result = await installApp(appId, storeId, env, volumeMounts, (stage, message) => {
-    emitProgress(appId, { stage: stage as InstallProgressEvent["stage"], message });
-  });
-
-  if (!result.success) {
-    return c.json({ error: result.error }, 400);
+  // Same host-folder rules as the agent's install_app: protected folders never,
+  // the Docker socket or folders outside the configured roots only for an admin.
+  const mountError = volumeMountsError(appId, volumeMounts);
+  if (mountError) return c.json({ error: mountError }, 400);
+  const risky = volumeMountsNeedingApproval(appId, volumeMounts);
+  if (risky.length > 0 && c.get("sessionRole" as never) !== "admin") {
+    return c.json({ error: `Only an admin can install with this mount: ${risky[0]}.` }, 403);
   }
 
+  // Don't reset the progress of an install that is already running (double-click, second tab).
+  if (!hasLiveOperation(appId)) emitProgress(appId, { stage: "queued", message: "Preparing..." });
+
+  const result = await runWithUmbrelInstallOptions(umbrel, () => installApp(appId, storeId, env, volumeMounts, (stage, message) => {
+    emitProgress(appId, { stage: stage as InstallProgressEvent["stage"], message });
+  }, { actor: actorFor(c) }));
+
+  if (!result.success) {
+    // On a conflict, do NOT emit into the per-app progress channel: the running
+    // install's own progress stream would treat "error" as terminal. The 409
+    // carries the running operationId (see /api/operations/stream).
+    return operationError(c, result);
+  }
+
+  const warnings = getInstallAccessWarnings(appId);
   return c.json({
     ok: true,
     message: `${appId} installed`,
     remappedPorts: result.remappedPorts,
+    operationId: result.operationId,
+    ...(warnings.length > 0 ? { warnings } : {}),
   });
 });
 
@@ -401,30 +455,52 @@ apps.get("/:storeId/:appId/progress", (c) => {
 
 apps.post("/:storeId/:appId/start", async (c) => {
   const { appId } = c.req.param();
-  const result = await startApp(appId);
-  if (!result.success) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true });
+  const result = await startApp(appId, { actor: actorFor(c) });
+  if (!result.success) return operationError(c, result);
+  return c.json({ ok: true, operationId: result.operationId });
 });
 
 apps.post("/:storeId/:appId/stop", async (c) => {
   const { appId } = c.req.param();
-  const result = await stopApp(appId);
-  if (!result.success) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true });
+  const result = await stopApp(appId, { actor: actorFor(c) });
+  if (!result.success) return operationError(c, result);
+  return c.json({ ok: true, operationId: result.operationId });
 });
 
 apps.post("/:storeId/:appId/restart", async (c) => {
   const { appId } = c.req.param();
-  const result = await restartApp(appId);
-  if (!result.success) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true });
+  const result = await restartApp(appId, { actor: actorFor(c) });
+  if (!result.success) return operationError(c, result);
+  return c.json({ ok: true, operationId: result.operationId });
 });
+
+const updateBodySchema = z.object({
+  /** Proceed even if the pre-update backup fails */
+  force: z.boolean().optional(),
+  /** Also move pinned/customised image tags to the catalog's */
+  useCatalogImages: z.boolean().optional(),
+}).catch({});
 
 apps.post("/:storeId/:appId/update", async (c) => {
   const { appId } = c.req.param();
-  const result = await updateApp(appId);
-  if (!result.success) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true });
+  const { force, useCatalogImages } = updateBodySchema.parse(await c.req.json().catch(() => ({})));
+  const result = await updateApp(appId, { actor: actorFor(c), force: force === true, useCatalogImages: useCatalogImages === true });
+  if (!result.success) {
+    if (result.conflict) return operationError(c, result);
+    return c.json({
+      error: result.error,
+      operationId: result.operationId,
+      rolledBack: result.rolledBack ?? false,
+      ...(result.backupFailed ? { backupFailed: true } : {}),
+      ...(result.preUpdateBackupId ? { preUpdateBackupId: result.preUpdateBackupId, dataRestoreHint: result.dataRestoreHint } : {}),
+    }, 400);
+  }
+  return c.json({
+    ok: true,
+    operationId: result.operationId,
+    verified: result.verified ?? false,
+    ...(result.imagesKept ? { imagesKept: result.imagesKept, warning: result.warning } : {}),
+  });
 });
 
 /* ── Rename app / change port mappings ─────────────────────────────── */
@@ -501,32 +577,47 @@ apps.patch("/:storeId/:appId", async (c) => {
     const { readFile, writeFile, mkdir } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const { parse: parseYaml, stringify: stringifyYaml } = await import("yaml");
+    const targetCompose = composePath;
 
-    const content = await readFile(composePath, "utf-8");
-    const doc = parseYaml(content) as Record<string, unknown>;
-    const services = doc.services as Record<string, Record<string, unknown>> | undefined;
-    if (!services) return c.json({ error: "No services in compose file" }, 400);
+    // Journaled "configure" operation under the per-app lock: a compose edit
+    // must not interleave with an update whose rollback would overwrite it.
+    const edit = await withAppMaintenance(appId, "configure", async (ctx) => {
+      ctx.step("edit_ports", 50, "Updating port mappings");
+      const content = await readFile(targetCompose, "utf-8");
+      const doc = parseYaml(content) as Record<string, unknown>;
+      if (!doc.services) return { success: false, error: "No services in compose file", changed: false };
 
-    // Apply port changes across all services
-    let changed = false;
-    for (const service of Object.values(services)) {
-      if (!Array.isArray(service.ports)) continue;
-      service.ports = (service.ports as string[]).map((p: string) => {
-        const [, container] = p.split(":");
-        const newHost = ports[container];
-        if (newHost !== undefined) { changed = true; return `${newHost}:${container}`; }
-        return p;
-      });
-    }
+      // Apply port changes across all services
+      const applyPorts = (compose: Record<string, unknown>): boolean => {
+        const services = compose.services as Record<string, Record<string, unknown>> | undefined;
+        let changed = false;
+        for (const service of Object.values(services ?? {})) {
+          if (!Array.isArray(service?.ports)) continue;
+          service.ports = (service.ports as string[]).map((p: string) => {
+            const [, container] = String(p).split(":");
+            const newHost = ports[container];
+            if (newHost !== undefined) { changed = true; return `${newHost}:${container}`; }
+            return p;
+          });
+        }
+        return changed;
+      };
+      const changed = applyPorts(doc);
 
-    if (changed) {
-      const BACKUP_DIR = join(process.env.HOME || "/tmp", ".talome", "backups", "compose");
-      await mkdir(BACKUP_DIR, { recursive: true });
-      const ts = new Date().toISOString().replace(/[:.]/g, "-");
-      await writeFile(join(BACKUP_DIR, `${appId}-${ts}.yml.bak`), content, "utf-8");
-      await writeFile(composePath, stringifyYaml(doc), "utf-8");
-      portMessage = "Port mappings updated. Restart the app to apply.";
-    }
+      if (changed) {
+        const BACKUP_DIR = join(process.env.HOME || "/tmp", ".talome", "backups", "compose");
+        await mkdir(BACKUP_DIR, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        await writeFile(join(BACKUP_DIR, `${appId}-${ts}.yml.bak`), content, "utf-8");
+        await writeFile(targetCompose, stringifyYaml(doc), "utf-8");
+        // Keep the new ports when an earlier update is rolled back.
+        applyComposeEditToUpdateSnapshots(appId, applyPorts);
+      }
+      return { success: true, changed };
+    }, { actor: actorFor(c) });
+
+    if (!edit.success) return operationError(c, edit);
+    if (edit.changed) portMessage = "Port mappings updated. Restart the app to apply.";
   }
 
   return c.json({ ok: true, portMessage });
@@ -534,9 +625,9 @@ apps.patch("/:storeId/:appId", async (c) => {
 
 apps.delete("/:storeId/:appId", async (c) => {
   const { appId } = c.req.param();
-  const result = await uninstallApp(appId);
-  if (!result.success) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true, message: `${appId} uninstalled` });
+  const result = await uninstallApp(appId, { actor: actorFor(c) });
+  if (!result.success) return operationError(c, result);
+  return c.json({ ok: true, message: `${appId} uninstalled`, operationId: result.operationId });
 });
 
 /* ── Serve local store assets (icons, screenshots, covers) ─────────── */

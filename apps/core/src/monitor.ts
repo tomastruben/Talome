@@ -1,4 +1,12 @@
-import { listContainers, getSystemStats, checkInterContainerConnectivity, type ContainerPair } from "./docker/client.js";
+import {
+  listContainers,
+  getSystemStats,
+  checkInterContainerConnectivity,
+  runWithContainerListCache,
+  type ContainerPair,
+} from "./docker/client.js";
+import { createSkipIfRunning, settleWithin } from "./platform/concurrency.js";
+import { startRetentionScheduler } from "./db/retention.js";
 import { verifyTalomeNetworkAttachments } from "./docker/talome-network.js";
 import { writeAuditEntry } from "./db/audit.js";
 import { writeNotification } from "./db/notifications.js";
@@ -11,8 +19,9 @@ import { maybeRunScheduledSetup } from "./setup/triggers.js";
 import { getSetting, setSetting } from "./utils/settings.js";
 import { db } from "./db/index.js";
 import { sql } from "drizzle-orm";
-import { backupAppTool } from "./ai/tools/backup-tools.js";
-import { randomUUID } from "node:crypto";
+import { runScheduledBackup, runBackupMaintenance, type ScheduleRow } from "./backup/index.js";
+import { isContainerUnderOperation } from "./ops/maintenance.js";
+import { cronMatches } from "./backup/cron.js";
 import { createLogger } from "./utils/logger.js";
 
 const log = createLogger("monitor");
@@ -62,15 +71,21 @@ function persistTimestamp(key: string): void {
 
 async function checkContainerHealth() {
   try {
-    const containers = await listContainers();
+    // Shared with the other checks in this tick (one docker ps per minute).
+    const containers = await listContainers({ cached: true });
     const currentStates = new Map<string, string>();
     const stoppedNames: string[] = [];
 
     for (const c of containers) {
-      currentStates.set(c.name, c.status);
       const prev = previousContainerStates.get(c.name);
+      const wentDown = prev === "running" && c.status !== "running";
+      // Containers stopped on purpose (backup, restore, update, rollback — in
+      // any Talome process) are not "down" yet: keep the previous state so a
+      // container still down once the operation is over is reported then.
+      const intentional = wentDown && isContainerUnderOperation(c.name, c.id);
+      currentStates.set(c.name, intentional ? "running" : c.status);
 
-      if (prev && prev === "running" && c.status !== "running") {
+      if (wentDown && !intentional) {
         stoppedNames.push(c.name);
         writeAuditEntry(
           `Container down: ${c.name}`,
@@ -330,74 +345,25 @@ async function persistMetrics() {
 // ── Backup scheduler ──────────────────────────────────────────────────────────
 
 function cronMatchesNow(cron: string): boolean {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  const [minExpr, hourExpr, domExpr, monExpr, dowExpr] = parts;
-  const now = new Date();
-  const min = now.getMinutes();
-  const hour = now.getHours();
-  const dom = now.getDate();
-  const mon = now.getMonth() + 1;
-  const dow = now.getDay();
-
-  function matches(expr: string, value: number): boolean {
-    if (expr === "*") return true;
-    if (expr.startsWith("*/")) {
-      const step = parseInt(expr.slice(2), 10);
-      return step > 0 && value % step === 0;
-    }
-    return expr.split(",").some((part) => {
-      if (part.includes("-")) {
-        const [lo, hi] = part.split("-").map(Number);
-        return value >= lo && value <= hi;
-      }
-      return parseInt(part, 10) === value;
-    });
-  }
-
-  return (
-    matches(minExpr, min) &&
-    matches(hourExpr, hour) &&
-    matches(domExpr, dom) &&
-    matches(monExpr, mon) &&
-    matches(dowExpr, dow)
-  );
+  // Same dialect as schedule validation and stale-backup thresholds (lists, ranges, steps)
+  return cronMatches(cron, new Date());
 }
 
-async function executeScheduledBackup(appId: string, scheduleId: string) {
-  const execute = backupAppTool.execute;
-  if (!execute) {
-    log.error("backupAppTool.execute not available");
-    return;
-  }
+async function executeScheduledBackup(appId: string, schedule: ScheduleRow) {
   try {
-    const result = await execute(
-      { appId, stopFirst: false, triggeredBy: "schedule" as const },
-      { toolCallId: randomUUID(), messages: [], abortSignal: undefined as unknown as AbortSignal },
-    );
-    const success = typeof result === "object" && result !== null && "success" in result && result.success;
-    if (success) {
-      const sizeMb = "sizeMb" in result ? result.sizeMb : "?";
-      writeNotification("info", "Backup completed", `${appId} backed up successfully (${sizeMb} MB)`);
-    } else {
-      const error = typeof result === "object" && result !== null && "error" in result ? result.error : "Unknown error";
-      writeNotification("warning", "Backup failed", `${appId}: ${error}`);
-      log.error(`Scheduled backup failed for ${appId}`, error);
-    }
+    // Application-consistent backup + manifest, then the schedule's retention policy.
+    // Notifications for success/failure are written by runScheduledBackup.
+    await runScheduledBackup(schedule, appId);
   } catch (err) {
     writeNotification("warning", "Backup failed", `${appId}: ${err instanceof Error ? err.message : String(err)}`);
     log.error(`Scheduled backup error for ${appId}`, err);
   }
 }
 
-async function checkBackupSchedules() {
+/** Exported for tests. */
+export async function checkBackupSchedules() {
   try {
-    const schedules = db.all(sql`SELECT * FROM backup_schedules WHERE enabled = 1`) as Array<{
-      id: string;
-      app_id: string | null;
-      cron: string;
-      last_run_at: string | null;
-    }>;
+    const schedules = db.all(sql`SELECT * FROM backup_schedules WHERE enabled = 1`) as ScheduleRow[];
 
     for (const schedule of schedules) {
       if (!cronMatchesNow(schedule.cron)) continue;
@@ -411,18 +377,20 @@ async function checkBackupSchedules() {
       // Mark as run
       db.run(sql`UPDATE backup_schedules SET last_run_at = ${new Date().toISOString()} WHERE id = ${schedule.id}`);
 
-      // Fire automation trigger for any wired automations
-      void fireTrigger("schedule", { scheduleId: schedule.id, type: "backup", appId: schedule.app_id });
+      // Hook for automations wired to backup runs. Its own trigger type: a
+      // "schedule" trigger here would run every cron automation (they carry no
+      // appId to filter on) whenever any backup schedule fires.
+      void fireTrigger("backup_schedule", { scheduleId: schedule.id, appId: schedule.app_id });
 
       // Execute backups directly — don't rely on an automation being wired up
       if (schedule.app_id) {
-        void executeScheduledBackup(schedule.app_id, schedule.id);
+        void executeScheduledBackup(schedule.app_id, schedule);
       } else {
         // All-apps backup: back up each installed app sequentially
         const apps = db.all(sql`SELECT app_id FROM installed_apps`) as Array<{ app_id: string }>;
         void (async () => {
           for (const app of apps) {
-            await executeScheduledBackup(app.app_id, schedule.id);
+            await executeScheduledBackup(app.app_id, schedule);
           }
         })();
       }
@@ -430,6 +398,8 @@ async function checkBackupSchedules() {
   } catch (err) {
     log.error("checkBackupSchedules error", err);
   }
+  // Weekly verification, stale-backup alerts, safety-backup pruning (self-throttled)
+  void runBackupMaintenance();
 }
 
 // ── Evolution auto-scan ──────────────────────────────────────────────────────
@@ -474,16 +444,41 @@ async function repairNetworkAttachments() {
   }
 }
 
+// ── Tick scheduling ────────────────────────────────────────────────────────
+//
+// Each check is guarded on its own: a slow or wedged check (Docker daemon
+// freeze, dead network mount) only skips *that* check on later ticks while
+// everything else — crash notifications, metrics, backup schedules — keeps
+// running every minute. A check stuck for longer than MONITOR_CHECK_ABANDON_MS is
+// abandoned so one hung promise can never disable it permanently.
+
+/** A check still running after this long is treated as wedged and may start again. */
+const MONITOR_CHECK_ABANDON_MS = 5 * 60_000;
+/** Upper bound on how long a tick waits before running its follow-up steps. */
+const TICK_SETTLE_MS = 50_000;
+
+const runMonitorCheck = createSkipIfRunning({
+  abandonAfterMs: MONITOR_CHECK_ABANDON_MS,
+  onAbandon: (name) => log.warn(`Monitor check "${name}" still running after ${MONITOR_CHECK_ABANDON_MS / 1000}s — starting a new run`),
+});
+
 async function runChecks() {
-  await Promise.allSettled([
-    checkContainerHealth(),
-    checkDiskUsage(),
-    checkMetricThresholds(),
-    refreshAppStatuses(),
-    persistMetrics(),
-    checkBackupSchedules(),
-    repairNetworkAttachments(),
-  ]);
+  await settleWithin(
+    Promise.allSettled([
+      runMonitorCheck("containerHealth", checkContainerHealth),
+      runMonitorCheck("diskUsage", checkDiskUsage),
+      runMonitorCheck("metricThresholds", checkMetricThresholds),
+      // Read-only consumers of `docker ps`: let them share the cached list
+      // with checkContainerHealth instead of each doing their own round-trip.
+      runMonitorCheck("appStatuses", () => runWithContainerListCache(() => refreshAppStatuses())),
+      runMonitorCheck("persistMetrics", persistMetrics),
+      // Not guarded: schedules are minute-exact, so every tick must look at them.
+      checkBackupSchedules(),
+      runMonitorCheck("networkAttachments", () => runWithContainerListCache(() => repairNetworkAttachments())),
+    ]),
+    TICK_SETTLE_MS,
+    undefined,
+  );
   // Non-async, runs on its own 6h cadence internally
   maybeCheckUpdates();
   // Evolution scan runs on its own 6h cadence
@@ -495,7 +490,12 @@ async function runChecks() {
 }
 
 export function startMonitor(intervalMs = 60_000) {
-  runChecks();
-  const timer = setInterval(runChecks, intervalMs);
-  return () => clearInterval(timer);
+  void runChecks();
+  const timer = setInterval(() => void runChecks(), intervalMs);
+  // Daily pruning of unbounded log/event tables (first pass a few minutes after boot).
+  const stopRetention = startRetentionScheduler();
+  return () => {
+    clearInterval(timer);
+    stopRetention();
+  };
 }

@@ -1,0 +1,34 @@
+manifestVersion: 1.2
+id: webui-tuner
+category: ai
+name: WebUI Tuner
+version: "0.4.1"
+tagline: A chat UI with tunable settings
+description: Exposes a couple of settings through Umbrel environment inputs.
+developer: Example Labs
+website: https://example.com/webui-tuner
+dependencies: []
+support: https://example.com/webui-tuner/support
+port: 3100
+gallery: []
+installSize: lots
+environment:
+  - name: LOG_LEVEL
+    services:
+      - web
+    default: info
+    options:
+      - debug
+      - info
+      - warning
+    note: How chatty the logs are
+  - name: MODEL_HOST
+    services: [web]
+    default: http://ollama_ollama_1:11434
+  - name: WORKERS
+    services: [web]
+    default: 2
+    options: [1, 2, 4]
+  - name: BAD_OPTIONS
+    services: [web]
+    options: [a, a]

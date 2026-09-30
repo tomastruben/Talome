@@ -22,6 +22,7 @@ import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { CORE_URL } from "@/lib/constants";
+import { installedAppsRefreshInterval, installedStateSignature } from "@/lib/polling";
 import type { CatalogApp, StoreSource, StackListItem } from "@talome/types";
 
 type Tab = "all" | "installed" | string;
@@ -33,6 +34,8 @@ const SOURCE_TAB_ORDER: Record<string, number> = {
   casaos: 2,
   "user-created": 3,
 };
+/** Don't refetch the multi-MB catalog more than once per this window. */
+const CATALOG_DEDUPE_MS = 5 * 60 * 1000;
 
 function sourceLabel(type: string) {
   if (type === "casaos") return "CasaOS";
@@ -87,13 +90,16 @@ function AppsPageContent() {
   const [category, setCategory] = useState("all");
   const [tab, setTab] = useState<Tab>(searchParams.get("tab") || "all");
   const [hoveredStackIndex, setHoveredStackIndex] = useState<number | null>(null);
-  const [visibleCount, setVisibleCount] = useState(PAGE_CHUNK);
+  // Paging is keyed by the active filters so a filter change resets the visible
+  // window during render instead of via a setState-in-effect round trip.
+  const filterKey = `${tab}\u0000${category}\u0000${search}`;
+  const [paging, setPaging] = useState({ key: filterKey, count: PAGE_CHUNK });
+  const visibleCount = paging.key === filterKey ? paging.count : PAGE_CHUNK;
   const loadSentinelRef = useRef<HTMLDivElement | null>(null);
 
   const changeTab = useCallback((newTab: string) => {
     setTab(newTab);
     setCategory("all");
-    setVisibleCount(PAGE_CHUNK);
     const params = new URLSearchParams(window.location.search);
     if (newTab === "all") {
       params.delete("tab");
@@ -107,12 +113,41 @@ function AppsPageContent() {
   const jsonFetcher = useCallback((url: string) => fetch(url).then((r) => r.ok ? r.json() : Promise.reject(new Error("fetch failed"))), []);
   const swrOpts = { revalidateOnFocus: true, revalidateOnReconnect: true, keepPreviousData: true } as const;
 
-  const { data: apps = [], mutate: mutateApps, error: appsError } = useSWR<CatalogApp[]>(
-    `${CORE_URL}/api/apps?limit=2000`, jsonFetcher, swrOpts,
+  // The full catalog is several MB and changes rarely — don't refetch it on
+  // every window focus or remount within a few minutes (explicit retries and
+  // mutations still refresh it).
+  const { data: catalogData, mutate: mutateApps, error: appsError } = useSWR<CatalogApp[]>(
+    `${CORE_URL}/api/apps?limit=2000`, jsonFetcher,
+    { ...swrOpts, revalidateOnFocus: false, dedupingInterval: CATALOG_DEDUPE_MS },
   );
-  const { data: installedApps = [], mutate: mutateInstalled } = useSWR<CatalogApp[]>(
-    `${CORE_URL}/api/apps/installed`, jsonFetcher, swrOpts,
+  // Installed tab: poll fast only while an install/update is in progress.
+  const { data: installedData, mutate: mutateInstalled } = useSWR<CatalogApp[]>(
+    `${CORE_URL}/api/apps/installed`, jsonFetcher,
+    {
+      ...swrOpts,
+      refreshInterval: tab === "installed" ? installedAppsRefreshInterval : 0,
+    },
   );
+  // The catalog is cached for minutes, but its `installed` badges must not go
+  // stale: the small installed-apps list revalidates on every mount/focus, so
+  // when it disagrees with the cached catalog (install, uninstall, start/stop
+  // from the detail page or the assistant), refetch the catalog once.
+  const catalogIds = useMemo(
+    () => (catalogData ? new Set(catalogData.map((a) => a.id)) : null),
+    [catalogData],
+  );
+  const catalogInstalledSig = useMemo(
+    () => (catalogData ? installedStateSignature(catalogData) : null),
+    [catalogData],
+  );
+  const installedListSig = useMemo(
+    () => (installedData && catalogIds ? installedStateSignature(installedData, catalogIds) : null),
+    [installedData, catalogIds],
+  );
+  useEffect(() => {
+    if (catalogInstalledSig === null || installedListSig === null) return;
+    if (catalogInstalledSig !== installedListSig) void mutateApps();
+  }, [catalogInstalledSig, installedListSig, mutateApps]);
   const { data: stores = [] } = useSWR<StoreSource[]>(
     `${CORE_URL}/api/stores`, jsonFetcher, swrOpts,
   );
@@ -125,6 +160,8 @@ function AppsPageContent() {
   const { data: updatesData = [] } = useSWR<{ appId: string; hasUpdate: boolean }[]>(
     `${CORE_URL}/api/updates`, jsonFetcher, { ...swrOpts, refreshInterval: 5 * 60 * 1000 },
   );
+  const apps = useMemo(() => catalogData ?? [], [catalogData]);
+  const installedApps = useMemo(() => installedData ?? [], [installedData]);
   const stacks = stacksData?.stacks ?? [];
   const appsWithUpdates = useMemo(
     () => new Set(updatesData.filter((u) => u.hasUpdate).map((u) => u.appId)),
@@ -161,12 +198,6 @@ function AppsPageContent() {
       cancelled = true;
     };
   }, [tab, sourceCache]);
-
-  useEffect(() => {
-    if (tab !== "installed") return;
-    const interval = setInterval(() => { void mutateInstalled(); }, 5000);
-    return () => clearInterval(interval);
-  }, [tab, mutateInstalled]);
 
   const sourceTypes = useMemo(
     () => [...new Set(stores.map((s) => s.type))].sort(
@@ -207,18 +238,20 @@ function AppsPageContent() {
     });
   }, [currentApps, search, category]);
 
+  // Paging resets during render via `filterKey`, so these are plain setters.
   const changeSearch = useCallback((value: string) => {
     setSearch(value);
-    setVisibleCount(PAGE_CHUNK);
   }, []);
   const changeCategory = useCallback((value: string) => {
     setCategory(value);
-    setVisibleCount(PAGE_CHUNK);
   }, []);
 
   const loadNextChunk = useCallback(() => {
-    setVisibleCount((current) => Math.min(current + PAGE_CHUNK, filtered.length));
-  }, [filtered.length]);
+    setPaging((prev) => {
+      const current = prev.key === filterKey ? prev.count : PAGE_CHUNK;
+      return { key: filterKey, count: Math.min(current + PAGE_CHUNK, filtered.length) };
+    });
+  }, [filterKey, filtered.length]);
 
   useAutoLoadSentinel({
     targetRef: loadSentinelRef,
@@ -231,6 +264,7 @@ function AppsPageContent() {
 
   const totalInstalled = installedApps.length;
   const hasSourceCache = tab === "all" || tab === "installed" || !!sourceCache[tab];
+  // The source-tab fetch is in flight exactly while that tab has no cached result.
   const showSourceLoading = !isInstalled && !loading && !hasSourceCache;
   const leftFadeOpacity = hoveredStackIndex === 0 ? 0 : hoveredStackIndex === null ? 1 : 0.72;
   const rightFadeOpacity = hoveredStackIndex === stacks.length - 1 ? 0 : hoveredStackIndex === null ? 1 : 0.72;

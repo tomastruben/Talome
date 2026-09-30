@@ -1,0 +1,20 @@
+manifestVersion: 1
+id: nextcloud
+category: files
+name: Nextcloud
+version: "30.0.2"
+tagline: Productivity platform that keeps you in control
+description: Files, calendar, contacts and more on your own server.
+developer: Nextcloud GmbH
+website: https://nextcloud.com
+dependencies: []
+repo: https://github.com/nextcloud/server
+support: https://help.nextcloud.com
+port: 8081
+gallery:
+  - 1.jpg
+path: ""
+defaultUsername: umbrel
+deterministicPassword: true
+requiresHttps: false
+submitter: Umbrel

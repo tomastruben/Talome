@@ -188,5 +188,6 @@ volumes:
 5. Sync Prowlarr indexers to both Sonarr and Radarr
 6. Connect Overseerr to Jellyfin
 7. Add Sonarr and Radarr as servers in Overseerr
-Please complete all these steps now using the available tools.`,
+8. Add a Jellyfin library for /data/media/tv and /data/media/movies
+Please complete all these steps now using the available tools. Then call verify_app_outcome with stackId "media-server": it checks the whole chain (request → indexers → download client → import path → Jellyfin library). Fix every failed or degraded check using its remediation and verify again before telling the user the stack is ready.`,
 };

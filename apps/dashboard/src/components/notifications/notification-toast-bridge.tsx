@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { useNotifications, type AppNotification } from "@/hooks/use-notifications";
+import {
+  getNotificationAction,
+  useNotifications,
+  type AppNotification,
+  type NotificationViewer,
+} from "@/hooks/use-notifications";
+import { useUser } from "@/hooks/use-user";
 
 /** Parse **bold** markers into <strong> elements. */
 function renderInlineBold(text: string): ReactNode {
@@ -24,7 +31,10 @@ function renderInlineBold(text: string): ReactNode {
  * Renders nothing — this is a behaviour-only component.
  */
 export function NotificationToastBridge() {
-  const { notifications, isMuted } = useNotifications();
+  // The always-mounted bridge is the single notifications poller.
+  const { notifications, isMuted } = useNotifications({ poll: true });
+  const { isAdmin } = useUser();
+  const router = useRouter();
   const seenIds = useRef<Set<number>>(new Set());
   const initialized = useRef(false);
 
@@ -50,21 +60,36 @@ export function NotificationToastBridge() {
       // Suppress toasts when muted
       if (isMuted) continue;
 
-      showToast(n);
+      showToast(n, { isAdmin }, (href) => router.push(href));
     }
-  }, [notifications, isMuted]);
+  }, [notifications, isMuted, isAdmin, router]);
 
   return null;
 }
 
-function showToast(n: AppNotification) {
+function showToast(
+  n: AppNotification & { fullBody?: string },
+  viewer: NotificationViewer,
+  navigate: (href: string) => void,
+) {
   const body = n.body ? renderInlineBold(n.body) : undefined;
+  const link = getNotificationAction(n, viewer);
+  const action = link
+    ? {
+        label: link.label,
+        onClick: () => {
+          if (link.external) window.open(link.href, "_blank", "noopener,noreferrer");
+          else navigate(link.href);
+        },
+      }
+    : undefined;
 
   switch (n.type) {
     case "critical":
       toast.error(n.title, {
         description: body,
         duration: Infinity,
+        action,
       });
       break;
 
@@ -72,6 +97,7 @@ function showToast(n: AppNotification) {
       toast.warning(n.title, {
         description: body,
         duration: 8000,
+        action,
       });
       break;
 

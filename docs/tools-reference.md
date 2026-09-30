@@ -1,6 +1,8 @@
 # Talome MCP Tools Reference
 
-The MCP server auto-syncs from `allTools` in `apps/core/src/ai/agent.ts` — every tool the dashboard assistant has is also available here.
+The MCP server lists the tools of every currently active domain registered in `apps/core/src/ai/agent.ts` (domains whose settings are configured, plus the always-on ones), minus tools disabled in Settings. The list is evaluated per request (HTTP) or re-synced every ~15s (stdio), and an HTTP token only sees the tools its grants allow. Dashboard chat uses the same tools but loads non-core domains on demand (`discover_tools`).
+
+Every call — from MCP, chat, automations or the agent loop — runs through `executeTool()` (`apps/core/src/ai/execution.ts`): grants, the security mode, approvals and the audit log apply. In cautious mode a destructive tool returns `approval_required` with an approval link (`/dashboard/settings/approvals?id=…`); once the owner approves, call it again with the same arguments plus `approval_id`. Do not pass `confirmed` — Talome sets it once the call is authorized.
 
 ## Docker
 - `list_containers` — list all containers with status, ports, images
@@ -84,8 +86,8 @@ The MCP server auto-syncs from `allTools` in `apps/core/src/ai/agent.ts` — eve
 - `wire_apps` — auto-configure connections between related apps
 
 ## Backup & Restore
-- `backup_app` — create tarball backup of app data volumes
-- `restore_app` — restore app data from a backup archive
+- `backup_app` — application-consistent backup of app data (database dump or brief stop), with a checksummed manifest
+- `restore_app` — restore app data from a backup (safety backup first, health check, automatic rollback)
 
 ## Log Search
 - `search_container_logs` — cross-container log search with regex pattern matching
@@ -97,7 +99,7 @@ The MCP server auto-syncs from `allTools` in `apps/core/src/ai/agent.ts` — eve
 ## Widgets & Automations
 - `list_widgets` / `create_widget_manifest` / `update_widget_manifest`
 - `list_automations` / `create_automation` / `update_automation` / `delete_automation`
-- `get_automation_runs` — run history with per-step results
+- `get_automation_runs` — run history with per-step results (a step waiting for the owner's approval ends `blocked_approval`; approve it from the notification link, then run the automation again)
 - `validate_cron` — validate cron expressions and show next fire times
 - `list_automation_safe_tools` — show which tools are available in automations
 

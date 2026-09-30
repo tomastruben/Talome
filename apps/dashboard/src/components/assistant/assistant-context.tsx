@@ -8,12 +8,14 @@ import {
   useRef,
   useEffect,
   useMemo,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import useSWR, { mutate } from "swr";
 import { CORE_URL, getDirectCoreUrl } from "@/lib/constants";
+import { POLL_SLOW_MS } from "@/lib/polling";
 import type { FileUIPart, UIMessage } from "ai";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -171,25 +173,109 @@ function idempotencyKey(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Options for every configured provider — active provider first. */
+function buildModelOptions(config: AiModelsResponse): ModelOption[] {
+  const allOptions: ModelOption[] = [];
+  const activeFirst = [
+    ...config.providers.filter((p) => p.provider === config.activeProvider),
+    ...config.providers.filter((p) => p.provider !== config.activeProvider),
+  ];
+  const usableProviders = activeFirst.filter((pp) => pp.configured && pp.models.length > 0).length;
+  for (const p of activeFirst) {
+    if (!p.configured || p.models.length === 0) continue;
+    const label = PROVIDER_LABELS[p.provider] ?? p.provider;
+    for (const m of p.models) {
+      // Prefix name with provider when showing cross-provider options
+      const name = usableProviders > 1 ? `${label} ${m.name}` : m.name;
+      allOptions.push({ id: m.id, name, provider: p.provider, description: m.description });
+    }
+  }
+  return allOptions;
+}
+
+// ── Auto mode (persisted in localStorage, shared with other surfaces) ────────
+
+const AUTO_MODE_KEY = "talome-auto-mode";
+const autoModeListeners = new Set<() => void>();
+let autoModeFallback = false;
+
+function readAutoMode(): boolean {
+  try {
+    return localStorage.getItem(AUTO_MODE_KEY) === "true";
+  } catch {
+    return autoModeFallback;
+  }
+}
+
+function writeAutoMode(enabled: boolean): void {
+  autoModeFallback = enabled;
+  try { localStorage.setItem(AUTO_MODE_KEY, String(enabled)); } catch { /* noop */ }
+  for (const listener of autoModeListeners) listener();
+}
+
+function subscribeAutoMode(listener: () => void): () => void {
+  autoModeListeners.add(listener);
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === AUTO_MODE_KEY) listener();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    autoModeListeners.delete(listener);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
+// Server render and hydration see `false`; the stored value applies right after.
+const getAutoModeServerSnapshot = () => false;
+
+interface ChatRequestBody {
+  model: ChatModel;
+  provider: string;
+}
+
+/**
+ * Builds the chat transport together with the per-request body it sends.
+ * The body lives in this closure (not a React ref) so it can be read lazily
+ * at request time — including automatic resends — while effects keep it in
+ * sync with the selected model/provider. `getConversationId` is also read at
+ * request time so the server can key its per-conversation caches.
+ */
+function createChatRequest(initial: ChatRequestBody) {
+  let body: ChatRequestBody = { ...initial };
+  let conversationId: string | null = null;
+  const transport = new DefaultChatTransport({
+    api: `${getDirectCoreUrl()}/api/chat`,
+    credentials: "include",
+    body: () => (conversationId ? { ...body, conversationId } : { ...body }),
+  });
+  return {
+    transport,
+    update(patch: Partial<ChatRequestBody>) {
+      body = { ...body, ...patch };
+    },
+    /** Set synchronously wherever the active conversation changes (before any send). */
+    setConversationId(id: string | null) {
+      conversationId = id;
+    },
+  };
+}
+
 export function AssistantProvider({ children }: { children: ReactNode }) {
   const [activeId, setActiveIdState] = useState<string | null>(null);
   const activeIdRef = useRef(activeId);
-  const [model, setModel] = useState<ChatModel>("");
-  const modelRef = useRef<ChatModel>(model);
-  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
-  const [activeProvider, setActiveProvider] = useState("anthropic");
-  const providerRef = useRef(activeProvider);
+  // The user's explicit pick; the effective model is derived below once the
+  // server's model config is known.
+  const [selectedModel, setModel] = useState<ChatModel>("");
+  // Created once: useChat only reads the transport when it creates its Chat
+  // instance; the request body is kept current by the effects below.
+  const [chatRequest] = useState(() =>
+    createChatRequest({ model: "", provider: "anthropic" })
+  );
 
   // Auto mode: skip confirmation dialogs
-  const [autoMode, setAutoModeState] = useState(false);
+  const autoMode = useSyncExternalStore(subscribeAutoMode, readAutoMode, getAutoModeServerSnapshot);
   const setAutoMode = useCallback((enabled: boolean) => {
-    setAutoModeState(enabled);
-    try { localStorage.setItem("talome-auto-mode", String(enabled)); } catch { /* noop */ }
-  }, []);
-
-  // Sync autoMode from localStorage after hydration
-  useEffect(() => {
-    try { setAutoModeState(localStorage.getItem("talome-auto-mode") === "true"); } catch { /* noop */ }
+    writeAutoMode(enabled);
   }, []);
 
   // Submission mutex — prevents double-sends during network latency
@@ -203,64 +289,40 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     { revalidateOnFocus: false },
   );
 
-  useEffect(() => {
-    if (!modelsConfig?.providers) return;
-
-    // Build options from ALL configured providers — active provider first
-    const allOptions: ModelOption[] = [];
-    const activeFirst = [
-      ...modelsConfig.providers.filter((p) => p.provider === modelsConfig.activeProvider),
-      ...modelsConfig.providers.filter((p) => p.provider !== modelsConfig.activeProvider),
-    ];
-    for (const p of activeFirst) {
-      if (!p.configured || p.models.length === 0) continue;
-      const label = PROVIDER_LABELS[p.provider] ?? p.provider;
-      for (const m of p.models) {
-        // Prefix name with provider when showing cross-provider options
-        const name = activeFirst.filter((pp) => pp.configured && pp.models.length > 0).length > 1
-          ? `${label} ${m.name}`
-          : m.name;
-        allOptions.push({
-          id: m.id,
-          name,
-          provider: p.provider,
-          description: m.description,
-        });
-      }
-    }
-    setModelOptions(allOptions);
-
-    // Populate request refs synchronously with the config. A prompt can arrive
-    // from a URL before React has committed the corresponding state updates.
-    const selectedModel = model && allOptions.some((option) => option.id === model)
-      ? model
-      : modelsConfig.activeModel;
-    const selectedProvider = allOptions.find((option) => option.id === selectedModel)?.provider
-      ?? modelsConfig.activeProvider;
-    modelRef.current = selectedModel;
-    providerRef.current = selectedProvider;
-    setModel(selectedModel);
-    setActiveProvider(selectedProvider);
-  }, [modelsConfig]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hasModelsConfig = !!modelsConfig?.providers;
+  const modelOptions = useMemo(
+    () => (modelsConfig?.providers ? buildModelOptions(modelsConfig) : []),
+    [modelsConfig],
+  );
+  // Keep the user's pick while it is offered; otherwise use the server's active model.
+  const model: ChatModel =
+    hasModelsConfig && !(selectedModel && modelOptions.some((o) => o.id === selectedModel))
+      ? modelsConfig.activeModel
+      : selectedModel;
+  // Provider of the effective model (models can come from any configured
+  // provider); falls back to the server's active provider.
+  const activeProvider =
+    modelOptions.find((o) => o.id === model)?.provider
+    ?? (hasModelsConfig ? modelsConfig.activeProvider : "anthropic");
 
   useEffect(() => {
     activeIdRef.current = activeId;
-  }, [activeId]);
+    chatRequest.setConversationId(activeId);
+  }, [activeId, chatRequest]);
 
   useEffect(() => {
-    modelRef.current = model;
-  }, [model]);
+    chatRequest.update({ model });
+  }, [chatRequest, model]);
 
   useEffect(() => {
-    // Track current provider for the selected model
-    const opt = modelOptions.find((o) => o.id === model);
-    if (opt) {
-      providerRef.current = opt.provider;
-      setActiveProvider(opt.provider);
-    }
-  }, [model, modelOptions]);
+    // Track the provider of the selected model
+    if (hasModelsConfig) chatRequest.update({ provider: activeProvider });
+  }, [chatRequest, hasModelsConfig, activeProvider]);
 
-  const modelReady = Boolean(modelsConfig?.providers);
+  // True once the server's model config is known. The request body above is
+  // synced in this same commit's effects, which all flush before handleSubmit's
+  // first await resumes — so a prompt arriving from the URL uses the right model.
+  const modelReady = hasModelsConfig;
 
   // Holds a reference to the CommandPalette's open-in-chat-mode function,
   // registered once the palette mounts.
@@ -274,10 +336,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     openPaletteRef.current?.(prefill);
   }, []);
 
+  // Local changes (new conversation, title, delete) call mutate() directly;
+  // polling only picks up changes made elsewhere, so it can be slow.
   const { data: conversationList } = useSWR<ConversationItem[]>(
     `${CORE_URL}/api/conversations`,
     fetcher,
-    { refreshInterval: 10000 }
+    { refreshInterval: POLL_SLOW_MS }
   );
 
   const { data: storedMessages } = useSWR<StoredMessage[]>(
@@ -299,11 +363,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     error,
     clearError,
   } = useChat({
-    transport: new DefaultChatTransport({
-      api: `${getDirectCoreUrl()}/api/chat`,
-      credentials: "include",
-      body: () => ({ model: modelRef.current, provider: providerRef.current }),
-    }),
+    transport: chatRequest.transport,
     onFinish: ({ message }) => {
       retryCountRef.current = 0;
       submittingRef.current = false;
@@ -445,10 +505,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       const conv: ConversationItem = await res.json();
       setActiveIdState(conv.id);
       activeIdRef.current = conv.id;
+      chatRequest.setConversationId(conv.id);
       mutate(`${CORE_URL}/api/conversations`);
       return conv.id;
     },
-    []
+    [chatRequest]
   );
 
   const handleSubmit = useCallback(
@@ -498,8 +559,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     (id: string | null) => {
       setActiveIdState(id);
       activeIdRef.current = id;
+      chatRequest.setConversationId(id);
     },
-    []
+    [chatRequest]
   );
 
   const startNew = useCallback(() => {

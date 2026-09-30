@@ -52,7 +52,7 @@ import { ChatMessage } from "@/components/chat/chat-message";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import { CORE_URL } from "@/lib/constants";
+import { CORE_URL, CONTAINERS_REFRESH_INTERVAL } from "@/lib/constants";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePathname } from "next/navigation";
 import type {
@@ -277,7 +277,7 @@ function ChatInput({
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 
-type PaletteMode = "search" | "chat" | "media-detail";
+export type PaletteMode = "search" | "chat" | "media-detail";
 
 /** Data for the inline media detail view (non-library items). */
 interface MediaDetailState {
@@ -290,11 +290,19 @@ interface MediaDetailState {
   tvdbId: number | null;
 }
 
-export function CommandPalette() {
-  const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<PaletteMode>("search");
+/** How the palette should open when it is mounted lazily by a first request. */
+export interface PaletteOpenRequest {
+  mode: PaletteMode;
+  prefill?: string;
+}
+
+export function CommandPalette({ initialRequest = null }: { initialRequest?: PaletteOpenRequest | null } = {}) {
+  const [open, setOpen] = useState(() => initialRequest !== null);
+  const [mode, setMode] = useState<PaletteMode>(() => initialRequest?.mode ?? "search");
   const [query, setQuery] = useState("");
-  const [chatPrefill, setChatPrefill] = useState<string | undefined>(undefined);
+  const [chatPrefill, setChatPrefill] = useState<string | undefined>(
+    () => (initialRequest?.mode === "chat" ? initialRequest.prefill : undefined),
+  );
   const [mediaDetail, setMediaDetail] = useState<MediaDetailState | null>(null);
   const [addState, setAddState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [addError, setAddError] = useState("");
@@ -345,10 +353,20 @@ export function CommandPalette() {
     }
   }, [mode, messages, isActive]);
 
-  // Live data — only fetched when palette is open
-  const { stacks } = useServiceStacks();
+  // Live data — fetched once when the palette mounts (idle preload) so the
+  // first open has no pop-in, then polled only while the palette is open.
+  const { stacks, refresh: refreshStacks } = useServiceStacks({
+    refreshInterval: open ? CONTAINERS_REFRESH_INTERVAL : 0,
+  });
   const launchableServices = extractLaunchable(stacks);
-  const { apps: installedApps } = useInstalledApps(open);
+  const { apps: installedApps } = useInstalledApps();
+  // Refresh the warm (possibly stale) list whenever the palette opens; the
+  // mount fetch already covers a palette that mounts open.
+  const stacksOpenedRef = useRef(open);
+  useEffect(() => {
+    if (open && !stacksOpenedRef.current) void refreshStacks();
+    stacksOpenedRef.current = open;
+  }, [open, refreshStacks]);
 
   // Unified entity search — fires after 3+ chars with debounce
   const { results: searchResults, isSearching } = useUnifiedSearch(

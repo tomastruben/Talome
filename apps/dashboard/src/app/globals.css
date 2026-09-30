@@ -602,11 +602,6 @@
   50%       { opacity: 0.25; }
 }
 
-@keyframes install-shimmer {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-
 @keyframes folder-highlight {
   0% { background-color: oklch(0.922 0 0 / 0.08); }
   100% { background-color: transparent; }

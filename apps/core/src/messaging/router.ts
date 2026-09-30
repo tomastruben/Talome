@@ -2,14 +2,23 @@ import { db, schema } from "../db/index.js";
 import { eq, and, desc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { createChatStream } from "../ai/agent.js";
+import { withExecutionContext, type Actor } from "../ai/execution.js";
 import { writeMemory } from "../db/memories.js";
 import type { UIMessage } from "ai";
+import { authorizeSender } from "./allowlist.js";
 
 export interface InboundMessage {
   platform: "telegram" | "discord";
+  /** The chat the reply goes to (Telegram chat id, Discord user id). */
   externalId: string;
   text: string;
   senderName?: string;
+  /**
+   * The sender's user id (Telegram `from.id`, Discord user id), checked
+   * against the allowed senders. Defaults to externalId — the same id in a
+   * Telegram private chat and for Discord.
+   */
+  senderId?: string;
 }
 
 // Find an existing conversation for this platform + externalId, or create one.
@@ -124,13 +133,25 @@ async function extractMemoriesBackground(conversationId: string, text: string) {
 export async function routeMessage(msg: InboundMessage): Promise<string> {
   const { platform, externalId, text, senderName } = msg;
 
+  // Only senders the owner allowed reach the agent (which acts owner-level).
+  // Anyone else gets the pairing instructions; nothing of theirs is stored.
+  const decision = authorizeSender(platform, msg.senderId ?? externalId, senderName);
+  if (!decision.allowed) return decision.reply;
+
   const conversationId = ensureConversation(platform, externalId, text);
   persistMessage(conversationId, "user", text);
 
   const messages = loadMessages(conversationId);
   const context = `Platform: ${platform}${senderName ? `, user: ${senderName}` : ""}. Respond in plain text (no markdown, no backtick code blocks — the user is reading this in a chat app).`;
 
-  const result = await createChatStream(messages, context);
+  // Tool calls (audit, approvals, app operations) are attributed to the
+  // messaging user, not to the dashboard chat.
+  const actor: Actor = {
+    kind: "user",
+    id: `${platform}:${externalId}`,
+    label: `${senderName?.trim() || externalId} (${platform})`,
+  };
+  const result = await withExecutionContext(actor, "chat", () => createChatStream(messages, context));
 
   // Collect all streamed text chunks
   let fullText = "";

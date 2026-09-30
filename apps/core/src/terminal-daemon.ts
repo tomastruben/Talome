@@ -24,12 +24,13 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, timingSafeEqual } from "node:crypto";
-import bcrypt from "bcryptjs";
 import Database from "better-sqlite3";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { allowsTerminalAccess, parseTokenScopes } from "./approval/grants.js";
 import { homedir } from "node:os";
 import { DAEMON_PORT } from "./terminal-constants.js";
+import { hasBackupPassword, PUBLIC_BACKUP_AUTH_PATHS, registerBackupAuthRoutes } from "./terminal-backup-auth.js";
 
 /**
  * Bind host — defaults to loopback so a misconfigured LAN exposure can't
@@ -38,9 +39,6 @@ import { DAEMON_PORT } from "./terminal-constants.js";
  * different hosts behind a trusted network).
  */
 const DAEMON_HOST = process.env.TERMINAL_DAEMON_HOST ?? "127.0.0.1";
-
-const MIN_PASSWORD_LENGTH = 8;
-const BCRYPT_COST = 12;
 
 /**
  * Internal daemon key — derived from TALOME_SECRET. The main Talome server
@@ -121,8 +119,30 @@ function verifyBearerToken(authHeader: string | null | undefined): boolean {
   const raw = authHeader.slice(7).trim();
   if (!raw) return false;
   const hash = hashToken(raw);
-  const row = sqlite.prepare("SELECT id FROM mcp_tokens WHERE token_hash = ?").get(hash) as { id: string } | undefined;
-  return !!row;
+  // A terminal is an unrestricted host shell: only live (not revoked/expired)
+  // tokens with owner-equivalent grants may open one (allowsTerminalAccess),
+  // and never while security mode is "locked". Columns come from
+  // db/migrations/trust.ts; before that migration ran, fall back to the
+  // original existence check.
+  let row: { id: string; scopes?: string | null; expires_at?: string | null; revoked_at?: string | null } | undefined;
+  try {
+    row = sqlite.prepare("SELECT id, scopes, expires_at, revoked_at FROM mcp_tokens WHERE token_hash = ?").get(hash) as typeof row;
+  } catch {
+    return !!sqlite.prepare("SELECT id FROM mcp_tokens WHERE token_hash = ?").get(hash);
+  }
+  if (!row || row.revoked_at) return false;
+  if (row.expires_at && !(Date.parse(row.expires_at) > Date.now())) return false;
+  if (isSecurityModeLocked()) return false;
+  return allowsTerminalAccess(parseTokenScopes(row.scopes));
+}
+
+function isSecurityModeLocked(): boolean {
+  try {
+    const mode = sqlite.prepare("SELECT value FROM settings WHERE key = 'security_mode'").get() as { value?: string } | undefined;
+    return mode?.value === "locked";
+  } catch {
+    return false;
+  }
 }
 
 // ── Ephemeral auth tokens (in-memory, 60s TTL) ────────────────────────────────
@@ -191,7 +211,6 @@ sqlite.exec(`
 `);
 
 const backupAuthTokens = new Map<string, number>(); // token → expiresAt
-const authAttempts = new Map<string, { count: number; blockedUntil: number }>(); // ip → attempts
 const wsAuthAttempts = new Map<string, { count: number; blockedUntil: number }>(); // ip → ws auth attempts
 
 function registerWsAuthFailure(ip: string) {
@@ -559,8 +578,7 @@ button:hover{background:#30363d}
 
   // Auth
   async function authenticate(password) {
-    const endpoint = HAS_PASSWORD ? '/backup-auth' : '/backup-auth/setup';
-    const res = await fetch(BASE + endpoint, {
+    const res = await fetch(BASE + '/backup-auth', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({password})
@@ -578,8 +596,12 @@ button:hover{background:#30363d}
     const title = document.getElementById('auth-title');
     const desc = document.getElementById('auth-desc');
     if (!HAS_PASSWORD) {
-      title.textContent = 'Set Terminal Password';
-      desc.textContent = 'Create a password for remote terminal access';
+      // Only an admin can set the password, from the dashboard.
+      title.textContent = 'Backup Terminal Not Set Up';
+      desc.textContent = 'An admin can set a backup terminal password in Talome: Settings -> Security -> Backup terminal.';
+      document.getElementById('auth-input').style.display = 'none';
+      document.getElementById('auth-submit').style.display = 'none';
+      return;
     }
     document.getElementById('auth-input').focus();
   }
@@ -761,7 +783,8 @@ app.use("*", cors({
  *
  * Unauthenticated (public) paths:
  *   - `/`                → the backup terminal HTML page
- *   - `/backup-auth*`    → the way to obtain a backup token
+ *   - `/backup-auth`     → log in with the backup password (setting the
+ *                          password is admin-only, terminal-backup-auth.ts)
  *   - `/health`          → liveness probe
  *   - `/ws`              → WebSocket endpoint (auths via first message)
  *
@@ -774,7 +797,7 @@ app.use("*", cors({
  * fall back to loopback-origin trust; in production a missing secret
  * means every protected route 401s, which fails fast and loudly.
  */
-const PUBLIC_DAEMON_PATHS = new Set(["/", "/health", "/ws", "/backup-auth", "/backup-auth/setup"]);
+const PUBLIC_DAEMON_PATHS = new Set(["/", "/health", "/ws", ...PUBLIC_BACKUP_AUTH_PATHS]);
 
 function constantTimeEq(a: string | undefined, b: string | null): boolean {
   if (!a || !b) return false;
@@ -813,61 +836,26 @@ app.use("*", async (c, next) => {
 
 // Backup terminal UI — self-contained HTML page served directly by the daemon
 app.get("/", (c) => {
-  const hasPassword = !!sqlite.prepare("SELECT value FROM daemon_auth WHERE key = 'password_hash'").get();
-  return c.html(BACKUP_TERMINAL_HTML.replace("__HAS_PASSWORD__", String(hasPassword)));
+  return c.html(BACKUP_TERMINAL_HTML.replace("__HAS_PASSWORD__", String(hasBackupPassword(sqlite))));
 });
 
 // ── Backup auth routes ──────────────────────────────────────────────────
+// Logging in is public; setting the password only through the core's
+// admin-only terminal proxy (X-Daemon-Auth).
 
-app.post("/backup-auth/setup", async (c) => {
-  const existing = sqlite.prepare("SELECT value FROM daemon_auth WHERE key = 'password_hash'").get() as { value: string } | undefined;
-  if (existing) return c.json({ error: "Password already set. Use the dashboard to change it." }, 400);
-  const { password } = await c.req.json<{ password: string }>();
-  if (!password || password.length < MIN_PASSWORD_LENGTH) {
-    return c.json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` }, 400);
-  }
-  const hash = await bcrypt.hash(password, BCRYPT_COST);
-  sqlite.prepare("INSERT OR REPLACE INTO daemon_auth (key, value) VALUES ('password_hash', ?)").run(hash);
-  return c.json({ ok: true });
+registerBackupAuthRoutes(app, {
+  sqlite,
+  isAdminProxyRequest: (c) => constantTimeEq(c.req.header("x-daemon-auth"), DAEMON_INTERNAL_KEY),
+  tokens: backupAuthTokens,
+  bootId: BOOT_ID,
 });
 
-app.post("/backup-auth", async (c) => {
-  const ip = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown";
-  const attempt = authAttempts.get(ip);
-  if (attempt && attempt.blockedUntil > Date.now()) {
-    return c.json({ error: "Too many attempts. Try again later." }, 429);
-  }
-
-  const { password } = await c.req.json<{ password: string }>();
-  const stored = sqlite.prepare("SELECT value FROM daemon_auth WHERE key = 'password_hash'").get() as { value: string } | undefined;
-  if (!stored) return c.json({ error: "No password set. POST to /backup-auth/setup first." }, 400);
-
-  // Legacy hashes (pre-bcrypt) aren't valid bcrypt strings — force re-setup.
-  if (!stored.value.startsWith("$2")) {
-    sqlite.prepare("DELETE FROM daemon_auth WHERE key = 'password_hash'").run();
-    return c.json({ error: "Password hash format upgraded. Please set a new password." }, 410);
-  }
-
-  // bcrypt.compare does constant-time comparison internally.
-  const valid = typeof password === "string" && password.length > 0
-    ? await bcrypt.compare(password, stored.value)
-    : false;
-  if (!valid) {
-    const prev = authAttempts.get(ip) || { count: 0, blockedUntil: 0 };
-    prev.count++;
-    if (prev.count >= 5) prev.blockedUntil = Date.now() + 5 * 60 * 1000;
-    authAttempts.set(ip, prev);
-    return c.json({ error: "Invalid password" }, 401);
-  }
-
-  authAttempts.delete(ip);
-  const token = `backup_${randomUUID().replace(/-/g, "")}`;
-  backupAuthTokens.set(token, Date.now() + 4 * 60 * 60 * 1000);
-  return c.json({ token, bootId: BOOT_ID });
-});
-
-// Generate ephemeral auth token — called by the main server proxy
+// Generate ephemeral auth token — called by the main server proxy (which
+// requires a logged-in admin). Never while the security mode is "locked".
 app.post("/session", (c) => {
+  if (isSecurityModeLocked()) {
+    return c.json({ error: 'The terminal is disabled while the security mode is "locked".' }, 423);
+  }
   const token = createEphemeralToken();
   return c.json({ token, expiresAt: Date.now() + 60_000, bootId: BOOT_ID });
 });
@@ -1103,7 +1091,8 @@ app.get(
               return;
             }
 
-            const validEphemeral = verifyEphemeralToken(msg.token);
+            // A token minted just before the mode switched to locked is refused too.
+            const validEphemeral = verifyEphemeralToken(msg.token) && !isSecurityModeLocked();
             const validBackup = !validEphemeral && msg.token ? verifyBackupToken(msg.token) : false;
             const validMcp =
               !validEphemeral && !validBackup && verifyBearerToken(`Bearer ${msg.token}`);

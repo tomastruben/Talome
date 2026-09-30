@@ -28,7 +28,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { createHighlighter } from "shiki";
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // biome-ignore lint/suspicious/noBitwiseOperators: shiki bitflag check
@@ -146,10 +145,14 @@ const getHighlighter = (
     return cached;
   }
 
-  const highlighterPromise = createHighlighter({
-    langs: [language],
-    themes: ["github-light", "github-dark"],
-  });
+  // shiki is imported on demand so it stays out of the initial bundle —
+  // highlighting was already asynchronous (raw tokens render first).
+  const highlighterPromise = import("shiki").then(({ createHighlighter }) =>
+    createHighlighter({
+      langs: [language],
+      themes: ["github-light", "github-dark"],
+    })
+  );
 
   highlighterCache.set(language, highlighterPromise);
   return highlighterPromise;
@@ -170,6 +173,13 @@ const createRawTokens = (code: string): TokenizedCode => ({
         ]
   ),
 });
+
+// Pure cache lookup (no side effects), safe to call during render
+const getCachedTokens = (
+  code: string,
+  language: BundledLanguage
+): TokenizedCode | null =>
+  tokensCache.get(getTokensCacheKey(code, language)) ?? null;
 
 // Synchronous highlight with callback for async results
 export const highlightCode = (
@@ -387,28 +397,36 @@ export const CodeBlockContent = ({
   // Memoized raw tokens for immediate display
   const rawTokens = useMemo(() => createRawTokens(code), [code]);
 
-  // Try to get cached result synchronously, otherwise use raw tokens
-  const [tokenized, setTokenized] = useState<TokenizedCode>(
-    () => highlightCode(code, language) ?? rawTokens
-  );
+  // Async highlight result, tagged with the input it belongs to so a stale
+  // result is never shown for newer code (no setState-in-effect reset needed).
+  const [highlighted, setHighlighted] = useState<{
+    code: string;
+    language: BundledLanguage;
+    tokens: TokenizedCode;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    // Reset to raw tokens when code changes (shows current code, not stale tokens)
-    setTokenized(highlightCode(code, language) ?? rawTokens);
-
-    // Subscribe to async highlighting result
+    // Subscribe to async highlighting result (returns early when cached)
     highlightCode(code, language, (result) => {
       if (!cancelled) {
-        setTokenized(result);
+        setHighlighted({ code, language, tokens: result });
       }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [code, language, rawTokens]);
+  }, [code, language]);
+
+  // Prefer the matching async result, then the shared cache, then raw tokens
+  const tokenized =
+    (highlighted?.code === code && highlighted.language === language
+      ? highlighted.tokens
+      : null) ??
+    getCachedTokens(code, language) ??
+    rawTokens;
 
   return (
     <div className="relative overflow-auto">

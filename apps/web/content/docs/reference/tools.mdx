@@ -13,14 +13,14 @@ Every tool is assigned a tier that controls its behavior under different securit
 |------|-------|-------------|-----------------|
 | `read` | Read | Retrieves data without side effects. Always executes in all security modes. | Yes |
 | `modify` | Modify | Changes state (start/stop containers, update settings, install apps). Blocked in `locked` mode. | Curated subset |
-| `destructive` | Destructive | Irreversible operations (uninstall, delete, prune). Requires confirmation in `cautious` mode, blocked in `locked` mode. | No |
+| `destructive` | Destructive | Irreversible operations (uninstall, delete, prune). Requires the owner's approval (Settings > Approvals) in `cautious` mode, blocked in `locked` mode. | No |
 
 ## Execution Flow
 
 Every tool call follows the same pipeline:
 
 1. **AI selection** -- the language model picks a tool based on the user's message and the tool's description
-2. **Security gateway** -- the tool's tier is checked against the active security mode (`permissive`, `cautious`, or `locked`). Destructive tools in `cautious` mode require the user to type CONFIRM.
+2. **Security gateway** -- the tool's tier is checked against the active security mode (`permissive`, `cautious`, or `locked`). Destructive tools in `cautious` mode return `approval_required` with a link; they run only after the owner approves that exact request and the AI retries with `approval_id`.
 3. **Zod validation** -- input parameters are validated against the tool's Zod schema. Invalid inputs are rejected before execution.
 4. **Tool execution** -- the tool's `execute` function runs (Docker API call, database query, HTTP request, etc.)
 5. **Audit log** -- every execution is recorded in the `audit_log` table with the tool name, tier, timestamp, and whether it was approved

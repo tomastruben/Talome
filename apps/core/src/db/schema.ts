@@ -69,6 +69,14 @@ export const auditLog = sqliteTable("audit_log", {
   tier: text("tier", { enum: ["read", "modify", "destructive"] }).notNull(),
   approved: integer("approved", { mode: "boolean" }).notNull().default(true),
   details: text("details").notNull().default(""),
+  // ── Trust columns (migration: db/migrations/trust.ts) ──
+  actorKind: text("actor_kind"),
+  actorId: text("actor_id"),
+  actorLabel: text("actor_label"),
+  source: text("source"),
+  toolName: text("tool_name"),
+  outcome: text("outcome"),
+  durationMs: integer("duration_ms"),
 });
 
 export const settings = sqliteTable("settings", {
@@ -95,6 +103,8 @@ export const storeSources = sqliteTable("store_sources", {
   lastSyncedAt: text("last_synced_at"),
   appCount: integer("app_count").notNull().default(0),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  /** git HEAD + parser version of the last catalog parse (store-compat migration) */
+  lastParsedRev: text("last_parsed_rev"),
 });
 
 export const appCatalog = sqliteTable("app_catalog", {
@@ -130,6 +140,8 @@ export const appCatalog = sqliteTable("app_catalog", {
   defaultUsername: text("default_username"),
   defaultPassword: text("default_password"),
   webPort: integer("web_port"),
+  /** Umbrel 2.0 manifest metadata as JSON (store-compat migration) */
+  umbrelMeta: text("umbrel_meta"),
 });
 
 export const installedApps = sqliteTable("installed_apps", {
@@ -156,6 +168,8 @@ export const notifications = sqliteTable("notifications", {
   read: integer("read", { mode: "boolean" }).notNull().default(false),
   sourceId: text("source_id"),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  /** Optional in-app link, e.g. /dashboard/settings/approvals?id=… (migration: db/migrations/wire-backend.ts) */
+  link: text("link"),
 });
 
 export const mcpTokens = sqliteTable("mcp_tokens", {
@@ -164,6 +178,13 @@ export const mcpTokens = sqliteTable("mcp_tokens", {
   tokenHash: text("token_hash").notNull(),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   lastUsedAt: text("last_used_at"),
+  // ── Trust columns (migration: db/migrations/trust.ts) ──
+  /** JSON-serialized TokenScopes (approval/grants.ts). NULL = read-only. */
+  scopes: text("scopes"),
+  expiresAt: text("expires_at"),
+  revokedAt: text("revoked_at"),
+  /** 1 = token predates per-token grants and was migrated to full access */
+  legacy: integer("legacy", { mode: "boolean" }).notNull().default(false),
 });
 
 export const memories = sqliteTable("memories", {
@@ -192,6 +213,10 @@ export const automations = sqliteTable("automations", {
   lastRunAt: text("last_run_at"),
   runCount: integer("run_count").notNull().default(0),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  /** Grants the automation runs under (JSON TokenScopes) when an MCP token wrote it; null = owner-level. Migration: db/migrations/wire-backend.ts */
+  actorScopes: text("actor_scopes"),
+  /** The MCP token that last wrote it: each run re-checks that token (revoked/expired → blocked, current grants apply). Migration: db/migrations/wire-backend.ts */
+  actorTokenId: text("actor_token_id"),
 });
 
 export const automationRuns = sqliteTable("automation_runs", {
@@ -202,6 +227,9 @@ export const automationRuns = sqliteTable("automation_runs", {
   error: text("error"),
   actionsRun: integer("actions_run").notNull().default(0),
   resultSummary: text("result_summary"),
+  /** running | succeeded | failed | interrupted (null on legacy rows) */
+  status: text("status"),
+  finishedAt: text("finished_at"),
 });
 
 export const automationStepRuns = sqliteTable("automation_step_runs", {
@@ -216,6 +244,12 @@ export const automationStepRuns = sqliteTable("automation_step_runs", {
   output: text("output"),
   error: text("error"),
   blocked: integer("blocked", { mode: "boolean" }).notNull().default(false),
+  /** pending | running | succeeded | failed | blocked | skipped | interrupted */
+  status: text("status"),
+  stepIndex: integer("step_index"),
+  /** `${runId}:${stepIndex}` — guards against executing the same step twice */
+  idempotencyKey: text("idempotency_key"),
+  finishedAt: text("finished_at"),
 });
 
 export const widgetManifests = sqliteTable("widget_manifests", {
@@ -429,6 +463,17 @@ export const backups = sqliteTable("backups", {
   completedAt: text("completed_at"),
   error: text("error"),
   triggeredBy: text("triggered_by", { enum: ["manual", "schedule"] }).notNull().default("manual"),
+  method: text("method", { enum: ["dump", "stop", "live"] }),
+  manifestPath: text("manifest_path"),
+  archiveSha256: text("archive_sha256"),
+  purpose: text("purpose", { enum: ["manual", "schedule", "pre-update", "pre-restore"] }),
+  scheduleId: text("schedule_id"),
+  destinationId: text("destination_id"),
+  appVersion: text("app_version"),
+  warnings: text("warnings"),
+  verifyStatus: text("verify_status", { enum: ["running", "verified", "failed"] }),
+  verifiedAt: text("verified_at"),
+  verifyDetail: text("verify_detail"),
 });
 
 export const backupSchedules = sqliteTable("backup_schedules", {
@@ -439,6 +484,11 @@ export const backupSchedules = sqliteTable("backup_schedules", {
   retentionDays: integer("retention_days").notNull().default(30),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   lastRunAt: text("last_run_at"),
+  destinationId: text("destination_id"),
+  keepLast: integer("keep_last"),
+  keepDaily: integer("keep_daily"),
+  keepWeekly: integer("keep_weekly"),
+  keepMonthly: integer("keep_monthly"),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
@@ -496,6 +546,13 @@ export const updateSnapshots = sqliteTable("update_snapshots", {
   newVersion: text("new_version"),
   rolledBack: integer("rolled_back", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  /** JSON env overrides at snapshot time */
+  previousEnv: text("previous_env"),
+  /** JSON ServiceImageState[] — per-service image ref, image id and repo digest */
+  previousImages: text("previous_images"),
+  operationId: text("operation_id"),
+  backupPath: text("backup_path"),
+  rollbackReason: text("rollback_reason"),
 });
 
 // ── Library Operations (file reorg audit/rollback log) ───────────────────────
@@ -598,3 +655,11 @@ export const communitySubmissions = sqliteTable("community_submissions", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
   publishedAt: text("published_at"),
 });
+
+export * from "./schema-trust.js";
+export * from "./schema-ops-updates.js";
+export * from "./schema-backups.js";
+export * from "./schema-store-compat.js";
+export * from "./schema-ai-chat.js";
+export * from "./schema-outcome-probes.js";
+export * from "./schema-wire-backend.js";
