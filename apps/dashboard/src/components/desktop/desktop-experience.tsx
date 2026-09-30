@@ -578,7 +578,7 @@ function DesktopClock() {
   }, []);
 
   return (
-    <time className="text-xs tabular-nums text-muted-foreground" suppressHydrationWarning>
+    <time data-desktop-clock="" className="text-xs tabular-nums text-muted-foreground" suppressHydrationWarning>
       {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
     </time>
   );
@@ -1445,6 +1445,7 @@ export function DesktopExperience() {
   return (
     <div
       data-desktop-widget-editing={desktopWidgetsEditing ? "true" : undefined}
+      data-desktop-root=""
       className="relative flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground"
       onPointerDownCapture={clearDesktopDriveSelection}
       onClickCapture={clearDesktopDriveSelection}
@@ -1484,6 +1485,7 @@ export function DesktopExperience() {
         </p>
       ) : null}
       <header
+        data-desktop-menubar=""
         aria-hidden={desktopWidgetsEditing || undefined}
         aria-disabled={desktopWidgetsEditing || undefined}
         inert={desktopWidgetsEditing}
@@ -1966,7 +1968,7 @@ export function DesktopExperience() {
           <nav
             aria-label="Desktop applications"
             className={cn(
-              "absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
+              "desktop-dock absolute bottom-4 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
               DESKTOP_FROSTED_MATERIAL_CLASS,
               draggingDockAppId && "border-foreground/20 bg-card/95 shadow-xl shadow-black/25",
             )}

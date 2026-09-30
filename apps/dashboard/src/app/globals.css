@@ -2026,6 +2026,28 @@
   }
 }
 
+/* Desktop mode full screen on iPad (a trackpad makes it available): the
+   menu bar grows by the status bar's height and lays out beneath it, the
+   wallpaper runs to every edge, and the dock sits above the home indicator. */
+@media (display-mode: standalone) {
+  [data-desktop-root] {
+    position: fixed;
+    inset: 0;
+    height: auto;
+  }
+  [data-desktop-menubar] {
+    height: calc(2.5rem + env(safe-area-inset-top, 0px));
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+  }
+  .desktop-dock {
+    bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  }
+  /* The iPad's status bar already shows the time */
+  [data-desktop-clock] { display: none; }
+}
+
 /* No hover on a touch screen: whatever would appear on hover is simply shown,
    so selection, copy, drag handles and row actions stay reachable. */
 @media (hover: none) and (pointer: coarse) {
