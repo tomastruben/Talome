@@ -21,6 +21,39 @@ function renderInlineBold(text: string): ReactNode {
   );
 }
 
+export interface ToastBridgeState {
+  /** Set once the first successful load has been seen (an empty list counts). */
+  initialized: boolean;
+  seenIds: Set<number>;
+}
+
+/**
+ * Which notifications to toast now. The first successful load only seeds
+ * what already exists, so old notifications never toast on page load. An
+ * empty first load still counts as the seed: before this, the bridge waited
+ * for a non-empty list, so the first notification that ever arrived (often
+ * a critical one) was swallowed as "already there". Mutates `state`.
+ */
+export function planNotificationToasts<T extends Pick<AppNotification, "id" | "read">>(
+  state: ToastBridgeState,
+  notifications: readonly T[],
+  loaded: boolean,
+): T[] {
+  if (!loaded) return [];
+  if (!state.initialized) {
+    for (const n of notifications) state.seenIds.add(n.id);
+    state.initialized = true;
+    return [];
+  }
+  const fresh: T[] = [];
+  for (const n of notifications) {
+    if (state.seenIds.has(n.id)) continue;
+    state.seenIds.add(n.id);
+    if (!n.read) fresh.push(n);
+  }
+  return fresh;
+}
+
 /**
  * Bridges incoming notifications to Sonner toasts based on severity.
  *
@@ -33,37 +66,17 @@ function renderInlineBold(text: string): ReactNode {
  */
 export function NotificationToastBridge() {
   // The always-mounted bridge is the single notifications poller.
-  const { notifications, isMuted } = useNotifications({ poll: true });
+  const { notifications, isMuted, isLoaded } = useNotifications({ poll: true });
   const { isAdmin } = useUser();
   const router = useRouter();
-  const seenIds = useRef<Set<number>>(new Set());
-  const initialized = useRef(false);
+  const state = useRef<ToastBridgeState>({ initialized: false, seenIds: new Set() });
 
   useEffect(() => {
-    if (notifications.length === 0) return;
-
-    // On first load, mark all existing notifications as "seen"
-    // so we only toast truly new arrivals.
-    if (!initialized.current) {
-      for (const n of notifications) {
-        seenIds.current.add(n.id);
-      }
-      initialized.current = true;
-      return;
-    }
-
-    for (const n of notifications) {
-      if (seenIds.current.has(n.id)) continue;
-      seenIds.current.add(n.id);
-
-      if (n.read) continue;
-
-      // Suppress toasts when muted
-      if (isMuted) continue;
-
-      showToast(n, { isAdmin }, (href) => router.push(href));
-    }
-  }, [notifications, isMuted, isAdmin, router]);
+    const fresh = planNotificationToasts(state.current, notifications, isLoaded);
+    // Muted: arrivals are still marked seen, so unmuting doesn't replay them.
+    if (isMuted) return;
+    for (const n of fresh) showToast(n, { isAdmin }, (href) => router.push(href));
+  }, [notifications, isLoaded, isMuted, isAdmin, router]);
 
   return null;
 }

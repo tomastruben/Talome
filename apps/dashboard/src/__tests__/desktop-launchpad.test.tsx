@@ -145,4 +145,24 @@ describe("DesktopLaunchpad", () => {
     await user.keyboard("{Enter}");
     expect(mocks.launchService).toHaveBeenCalledWith(expect.objectContaining({id:"finance-os"}));
   });
+
+  it("keeps a stopped app listed as Stopped instead of dropping it (D-P0-3)", async () => {
+    const stopped = { id: "jf", name: "jellyfin", image: "jellyfin:10", status: "stopped", labels: {}, ports: [], webUi: { port: 8096, protocol: "http", path: "/", title: "Jellyfin", source: "configured" } };
+    mocks.stacks = [{ id: "jellyfin", name: "Jellyfin", kind: "talome", primaryContainer: stopped, containers: [stopped] }];
+    await open();
+    const tile = screen.getByRole("button", { name: "Jellyfin — Stopped" });
+    expect(tile).toHaveAttribute("data-launchpad-stopped", "true");
+  });
+
+  it("launches the best match on Enter, not whichever section comes first", async () => {
+    const make = (name: string) => ({ id: name, name, image: `${name}:1`, status: "running", labels: {}, ports: [], webUi: { port: 1, protocol: "http", path: "/", title: name, source: "configured" } });
+    const a = make("My Files Browser");
+    mocks.stacks = [{ id: "fb", name: "fb", primaryContainer: a, containers: [a] }];
+    const user = await open();
+    await user.type(screen.getByRole("searchbox"), "files");
+    await user.keyboard("{Enter}");
+    // "Files" (Talome) is a prefix match; the service only contains it.
+    expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ url: "/dashboard/files" }));
+    expect(mocks.launchService).not.toHaveBeenCalled();
+  });
 });

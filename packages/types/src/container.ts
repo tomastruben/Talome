@@ -3,6 +3,12 @@ export interface Container {
   name: string;
   image: string;
   status: "running" | "stopped" | "restarting" | "paused" | "exited" | "created";
+  /**
+   * For an `exited` container, the process's exit code when Docker reported
+   * it: 0, 130 or 143 is a deliberate stop, anything else a crash. Absent
+   * when unknown.
+   */
+  exitCode?: number | null;
   ports: { host: number; container: number; protocol: "tcp" | "udp" }[];
   created: string;
   stats?: ContainerStats;

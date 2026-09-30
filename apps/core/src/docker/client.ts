@@ -265,25 +265,40 @@ export async function listContainersRaw(opts?: ListContainersOptions): Promise<r
   return fetchContainerList(requestedMaxAgeMs > 0);
 }
 
+/**
+ * The exit code of an exited container, read from Docker's list `Status`
+ * ("Exited (137) 5 minutes ago"). The list API carries no numeric exit code,
+ * and without it a deliberate `docker stop` (143) looks like a crash.
+ * Null when the text doesn't say (not exited, or an unexpected format).
+ */
+export function exitCodeFromDockerStatus(status: string | undefined | null): number | null {
+  const match = /^\s*Exited\s*\((-?\d+)\)/i.exec(status ?? "");
+  return match ? Number(match[1]) : null;
+}
+
 export async function listContainers(opts?: ListContainersOptions): Promise<Container[]> {
   const raw = await listContainersRaw(opts);
-  return raw.map((c) => ({
-    id: c.Id.slice(0, 12),
-    name: c.Names[0]?.replace(/^\//, "") ?? c.Id.slice(0, 12),
-    image: c.Image,
-    status: mapStatus(c.State),
-    ports: (c.Ports ?? [])
-      .filter((p) => p.PublicPort)
-      .map((p) => ({
-        host: p.PublicPort!,
-        container: p.PrivatePort,
-        protocol: (p.Type as "tcp" | "udp") ?? "tcp",
-      })),
-    created: new Date(c.Created * 1000).toISOString(),
-    // Copy so callers mutating labels can't corrupt the shared cache.
-    labels: { ...(c.Labels ?? {}) },
-    networkMode: c.HostConfig?.NetworkMode,
-  }));
+  return raw.map((c) => {
+    const exitCode = c.State?.toLowerCase() === "exited" ? exitCodeFromDockerStatus(c.Status) : null;
+    return {
+      id: c.Id.slice(0, 12),
+      name: c.Names[0]?.replace(/^\//, "") ?? c.Id.slice(0, 12),
+      image: c.Image,
+      status: mapStatus(c.State),
+      ...(exitCode !== null ? { exitCode } : {}),
+      ports: (c.Ports ?? [])
+        .filter((p) => p.PublicPort)
+        .map((p) => ({
+          host: p.PublicPort!,
+          container: p.PrivatePort,
+          protocol: (p.Type as "tcp" | "udp") ?? "tcp",
+        })),
+      created: new Date(c.Created * 1000).toISOString(),
+      // Copy so callers mutating labels can't corrupt the shared cache.
+      labels: { ...(c.Labels ?? {}) },
+      networkMode: c.HostConfig?.NetworkMode,
+    };
+  });
 }
 
 // ── Container stats sampler ───────────────────────────────────────────────

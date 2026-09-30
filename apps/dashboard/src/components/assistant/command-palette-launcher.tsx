@@ -5,6 +5,8 @@ import dynamic from "next/dynamic";
 import { useAssistant } from "./assistant-context";
 import type { PaletteOpenRequest } from "./command-palette";
 import { scheduleIdle } from "@/lib/idle";
+import { SHORTCUTS } from "@/lib/keymap";
+import { OPEN_PALETTE_EVENT, paletteRequestFromEvent } from "@/lib/palette";
 
 /**
  * The command palette pulls in the whole chat renderer (ChatMessage →
@@ -59,17 +61,30 @@ export function CommandPaletteLauncher() {
     });
   }, [ready, registerOpenPalette, load]);
 
+  // openPalette() requests that arrive before the palette has loaded.
+  useEffect(() => {
+    if (ready) return;
+    const handler = (event: Event) => {
+      const request = paletteRequestFromEvent(event);
+      if (!request) return;
+      setRequest(request);
+      load();
+    };
+    document.addEventListener(OPEN_PALETTE_EVENT, handler);
+    return () => document.removeEventListener(OPEN_PALETTE_EVENT, handler);
+  }, [ready, load]);
+
   // Keyboard shortcuts — mirror the palette's own handlers until it mounts.
   useEffect(() => {
     if (ready) return;
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if (SHORTCUTS.palette.matches(e)) {
         e.preventDefault();
         setRequest((prev) => (prev ? null : { mode: "search" }));
         load();
         return;
       }
-      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !isTypingTarget(e.target)) {
+      if (SHORTCUTS.chat.matches(e) && !isTypingTarget(e.target)) {
         e.preventDefault();
         setRequest({ mode: "chat" });
         load();

@@ -83,7 +83,8 @@ describe("desktop window geometry", () => {
 
     expect(restore.transform).toEqual([...minimize.transform].reverse());
     expect(restore.opacity).toEqual([...minimize.opacity].reverse());
-    expect(restore.times).toEqual([0, 0.2, 0.68, 1]);
+    // Restore runs the minimize path backwards, so its times mirror minimize's.
+    expect(restore.times).toEqual([...minimize.times].reverse().map((t) => Math.round((1 - t) * 100) / 100));
   });
 });
 

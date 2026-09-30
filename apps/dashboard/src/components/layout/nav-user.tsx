@@ -23,7 +23,9 @@ import {
   Sun01Icon,
   Moon02Icon,
 } from "@/components/icons";
-import { CORE_URL } from "@/lib/constants";
+import { toast } from "sonner";
+import { useUser } from "@/hooks/use-user";
+import { logOut, roleLabel } from "@/lib/session";
 
 const subscribeToHydration = () => () => {};
 
@@ -41,21 +43,33 @@ export function NavUser() {
     () => false,
   );
   const isDark = mounted && resolvedTheme === "dark";
+  const { user } = useUser();
+  const name = user?.username ?? user?.email ?? "Account";
+  const role = roleLabel(user?.role);
+
+  const handleLogOut = async () => {
+    const result = await logOut();
+    if (result.ok) {
+      router.push("/");
+      return;
+    }
+    toast.error(result.error, { action: { label: "Retry", onClick: () => void handleLogOut() } });
+  };
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuButton size="lg">
+            <SidebarMenuButton size="lg" tooltip={`${name} · ${role}`}>
               <div className="bg-muted flex aspect-square size-8 items-center justify-center rounded-lg">
                 <HugeiconsIcon icon={UserIcon} size={18} />
               </div>
               <div className="grid flex-1 text-left leading-tight">
-                <span className="truncate text-sm font-medium">Admin</span>
-                <span className="truncate text-sm text-muted-foreground">Local</span>
+                <span className="truncate text-sm font-medium">{name}</span>
+                <span className="truncate text-xs text-muted-foreground">{role}</span>
               </div>
-              <HugeiconsIcon icon={MoreHorizontalIcon} size={16} className="ml-auto" />
+              <HugeiconsIcon icon={MoreHorizontalIcon} size={16} className="ml-auto" aria-hidden="true" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56" side="top" align="start" sideOffset={4}>
@@ -64,15 +78,7 @@ export function NavUser() {
               <span>{isDark ? "Light mode" : "Dark mode"}</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onSelect={async () => {
-                await fetch(`${CORE_URL}/api/auth/logout`, {
-                  method: "POST",
-                  credentials: "include",
-                });
-                router.push("/");
-              }}
-            >
+            <DropdownMenuItem onSelect={() => void handleLogOut()}>
               <HugeiconsIcon icon={Logout01Icon} size={16} />
               <span>Log out</span>
             </DropdownMenuItem>

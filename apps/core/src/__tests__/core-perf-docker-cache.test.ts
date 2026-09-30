@@ -62,6 +62,7 @@ import {
   CONTAINER_LIST_CACHE_TTL_MS,
   CONTAINER_STATS_TTL_MS,
   __resetDockerClientCachesForTests,
+  exitCodeFromDockerStatus,
 } from "../docker/client.js";
 
 function rawContainer(id: string, state = "running") {
@@ -123,6 +124,31 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+// ── Exit codes ──────────────────────────────────────────────────────────────
+
+describe("listContainers exit codes", () => {
+  it("carries the exit code of an exited container, so a deliberate stop isn't read as a crash (regression)", async () => {
+    dockerMock.listContainers.mockImplementation(async () => [
+      rawContainer("aaa"),
+      { ...rawContainer("stopped", "exited"), Status: "Exited (143) 5 minutes ago" },
+      { ...rawContainer("crashed", "exited"), Status: "Exited (137) About an hour ago" },
+      { ...rawContainer("odd", "exited"), Status: "Dead" },
+    ]);
+    const byName = Object.fromEntries((await listContainers()).map((c) => [c.name, c]));
+    expect(byName.stopped).toMatchObject({ status: "exited", exitCode: 143 });
+    expect(byName.crashed).toMatchObject({ status: "exited", exitCode: 137 });
+    expect(byName.aaa).not.toHaveProperty("exitCode");
+    expect(byName.odd).not.toHaveProperty("exitCode");
+  });
+
+  it("parses Docker's status text", () => {
+    expect(exitCodeFromDockerStatus("Exited (0) 2 seconds ago")).toBe(0);
+    expect(exitCodeFromDockerStatus("Exited (-1) 2 seconds ago")).toBe(-1);
+    expect(exitCodeFromDockerStatus("Up 3 hours")).toBeNull();
+    expect(exitCodeFromDockerStatus(undefined)).toBeNull();
+  });
 });
 
 // ── Container list cache ────────────────────────────────────────────────────

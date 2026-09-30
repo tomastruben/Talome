@@ -22,7 +22,7 @@ import {
   Projector01Icon,
   ArrowDown01Icon,
   Tick01Icon,
-  Wifi01Icon,
+  RemoteControlIcon,
   SourceCodeCircleIcon,
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
@@ -40,6 +40,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { DURATION, EASE_ENTER } from "@/lib/motion";
 import {
   clampDesktopBounds,
   maximizedDesktopBounds,
@@ -78,12 +79,8 @@ interface PointerOrigin {
   bounds: DesktopBounds;
 }
 
-const WINDOW_GEOMETRY_SPRING = {
-  type: "spring",
-  stiffness: 430,
-  damping: 42,
-  mass: 0.82,
-} as const;
+/** Zoom and restore geometry: a 180ms tween on the enter curve (spec §7.4), no spring. */
+export const WINDOW_GEOMETRY_TRANSITION = { duration: DURATION.base, ease: EASE_ENTER } as const;
 
 type WindowControlGlyphKind = "close" | "minimize" | "maximize";
 
@@ -101,15 +98,24 @@ function WindowControlGlyph({ kind }: { kind: WindowControlGlyphKind }) {
       strokeWidth={3}
       aria-hidden="true"
       data-window-control-glyph={kind}
-      className="pointer-events-none absolute left-1/2 top-1/2 shrink-0 -translate-x-1/2 -translate-y-1/2 text-black/70 opacity-0 transition-opacity duration-100"
+      className={WINDOW_CONTROL_GLYPH_CLASS}
     />
   );
 }
 
+/**
+ * The glyph on a traffic light: dark on the light, saturated fill in both
+ * themes (the lights don't change with the theme). Shown on hover and focus,
+ * and always under increased contrast (the parent adds opacity-100).
+ */
+export const WINDOW_CONTROL_GLYPH_CLASS =
+  "pointer-events-none absolute left-1/2 top-1/2 shrink-0 -translate-x-1/2 -translate-y-1/2 text-black/70 opacity-0 transition-opacity duration-100";
+
 const desktopActionIcons: Record<DesktopAppActionIcon, IconSvgElement> = {
   add: Add01Icon,
   back: ArrowLeft01Icon,
-  remote: Wifi01Icon,
+  // A remote-control session, not Wi-Fi (CLAUDE.md Icons rule).
+  remote: RemoteControlIcon,
   "source-code": SourceCodeCircleIcon,
   projector: Projector01Icon,
   upload: CloudUploadIcon,
@@ -396,35 +402,28 @@ export const DesktopWindow = memo(function DesktopWindow({
             ? "bg-status-warning/10 ring-1 ring-status-warning/20"
             : "bg-muted/30 ring-1 ring-border/50",
         )}
+        role="group"
         aria-label="Terminal controls"
       >
         {autoAction && (
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoAction.active === true}
-            aria-label={autoAction.label}
-            disabled={autoAction.disabled}
-            className="flex h-7 items-center gap-1.5 rounded-l-md px-2 text-xs transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40"
+          <label
+            className={cn(
+              "flex h-7 cursor-pointer items-center gap-1.5 rounded-l-md px-2 text-xs transition-colors duration-150 hover:bg-muted/40",
+              autoAction.disabled && "pointer-events-none opacity-40",
+            )}
             onPointerDown={stopTitlebarGesture}
             onDoubleClick={(event) => event.stopPropagation()}
-            onClick={() => onAction?.(autoAction.id)}
           >
-            <span
-              className={cn(
-                "relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors",
-                autoAction.active ? "bg-status-warning" : "bg-input",
-              )}
-            >
-              <span
-                className={cn(
-                  "inline-block size-2.5 rounded-full bg-white transition-transform",
-                  autoAction.active ? "translate-x-3" : "translate-x-0.5",
-                )}
-              />
-            </span>
+            <Switch
+              size="sm"
+              checked={autoAction.active === true}
+              disabled={autoAction.disabled}
+              aria-label={autoAction.label}
+              className="data-[state=checked]:bg-status-warning"
+              onCheckedChange={() => onAction?.(autoAction.id)}
+            />
             <span className={cn("font-medium", autoAction.active ? "text-status-warning" : "text-muted-foreground")}>Auto</span>
-          </button>
+          </label>
         )}
         {remoteAction && (
           <button
@@ -433,14 +432,14 @@ export const DesktopWindow = memo(function DesktopWindow({
             aria-pressed={remoteAction.active === true}
             disabled={remoteAction.disabled}
             className={cn(
-              "relative flex size-7 items-center justify-center transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40",
-              remoteAction.active ? "text-foreground" : "text-muted-foreground/50",
+              "relative flex size-7 items-center justify-center transition-colors duration-150 hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-40",
+              remoteAction.active ? "text-foreground" : "text-muted-foreground",
             )}
             onPointerDown={stopTitlebarGesture}
             onDoubleClick={(event) => event.stopPropagation()}
             onClick={() => onAction?.(remoteAction.id)}
           >
-            <HugeiconsIcon icon={Wifi01Icon} size={13} />
+            <HugeiconsIcon icon={RemoteControlIcon} size={13} />
             {remoteAction.label === "Remote session active" && (
               <span className="absolute right-1 top-1 size-1.5 rounded-full bg-status-healthy" />
             )}
@@ -452,7 +451,7 @@ export const DesktopWindow = memo(function DesktopWindow({
               <button
                 type="button"
                 className={cn(
-                  "flex h-7 min-w-0 max-w-40 items-center gap-1.5 rounded-r-md px-2.5 text-xs transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40",
+                  "flex h-7 min-w-0 max-w-40 items-center gap-1.5 rounded-r-md px-2.5 text-xs transition-colors duration-150 hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-40",
                   autoAction?.active ? "text-status-warning/80 hover:text-status-warning" : "text-muted-foreground hover:text-foreground",
                 )}
                 disabled={agentAction.disabled}
@@ -500,13 +499,15 @@ export const DesktopWindow = memo(function DesktopWindow({
       aria-label={`${title} window`}
       aria-hidden={disabled || minimized || undefined}
       inert={disabled || minimized}
+      tabIndex={-1}
       className={cn(
-        "absolute flex min-h-0 flex-col overflow-hidden bg-card",
-        "transition-[border-color,opacity] duration-150 ease-out",
+        "absolute flex min-h-0 flex-col overflow-hidden bg-card outline-none",
+        "transition-[border-color,box-shadow] duration-150 ease-out",
         maximized
-          ? "rounded-none border-0"
+          ? "rounded-none border-0 shadow-none"
           : "rounded-xl border",
-        !maximized && (active ? "border-foreground/30" : "border-border opacity-95"),
+        // Focus is shown by border, shadow and title colour, never by dimming content.
+        !maximized && (active ? "border-foreground/20 shadow-lg" : "border-border shadow-md"),
         disabled && "pointer-events-none",
         minimized && "invisible pointer-events-none opacity-0",
       )}
@@ -519,7 +520,7 @@ export const DesktopWindow = memo(function DesktopWindow({
       }}
       transition={isManipulating || reduceMotion
         ? { duration: 0 }
-        : WINDOW_GEOMETRY_SPRING}
+        : WINDOW_GEOMETRY_TRANSITION}
       style={{
         zIndex,
       }}
@@ -529,7 +530,7 @@ export const DesktopWindow = memo(function DesktopWindow({
       <div
         className={cn(
           "group/titlebar grid h-11 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center border-b border-border/70 px-3",
-          active ? "bg-card" : "bg-card/80",
+          "bg-card",
         )}
         onPointerDown={startDrag}
         onLostPointerCapture={finishPointerGesture}
@@ -540,7 +541,8 @@ export const DesktopWindow = memo(function DesktopWindow({
               the status tokens (spec §2.4, §7): the light status values are
               darkened for text and turn the controls muddy. */}
           <div
-            className="-ml-1.5 flex shrink-0 items-center gap-0 [&:focus-within_[data-window-control-glyph]]:opacity-100 [&:hover_[data-window-control-glyph]]:opacity-100"
+            className="-ml-1.5 flex shrink-0 items-center gap-0 [&:focus-within_[data-window-control-glyph]]:opacity-100 [&:hover_[data-window-control-glyph]]:opacity-100 contrast-more:[&_[data-window-control-glyph]]:opacity-100"
+            role="group"
             aria-label="Window controls"
           >
             <button
@@ -590,13 +592,16 @@ export const DesktopWindow = memo(function DesktopWindow({
             </button>
           </div>
           {leadingActions.length > 0 && (
-            <div className="flex min-w-0 items-center gap-0.5" aria-label={`${title} navigation`}>
+            <div className="flex min-w-0 items-center gap-0.5" role="group" aria-label={`${title} navigation`}>
               {leadingActions.map(renderAction)}
             </div>
           )}
           <span
             data-title-placement="leading"
-            className="pointer-events-none min-w-0 truncate text-sm font-medium"
+            className={cn(
+              "pointer-events-none min-w-0 truncate text-sm font-medium transition-colors duration-150",
+              !active && "text-muted-foreground",
+            )}
           >
             {title}
           </span>
@@ -604,6 +609,7 @@ export const DesktopWindow = memo(function DesktopWindow({
 
         <div
           className="flex min-w-0 items-center justify-self-end gap-0.5"
+          role="group"
           aria-label={`${title} actions`}
         >
           {renderTerminalControls()}

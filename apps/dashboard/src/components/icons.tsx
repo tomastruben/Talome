@@ -192,4 +192,7 @@ export {
   Loading03Icon,
   Tick02Icon,
   Alert02Icon,
+  // Shell and desktop chrome (desktop mode switch, terminal remote session)
+  BrowserIcon,
+  RemoteControlIcon,
 } from "@hugeicons/core-free-icons";

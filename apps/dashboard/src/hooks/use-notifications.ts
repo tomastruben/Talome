@@ -17,7 +17,11 @@ export interface AppNotification {
   link?: string | null;
 }
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const fetcher = (url: string) =>
+  fetch(url).then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  });
 
 const LIST_KEY = `${CORE_URL}/api/notifications?limit=30`;
 const COUNT_KEY = `${CORE_URL}/api/notifications/unread-count`;
@@ -400,6 +404,8 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
     hasCritical: list.some((n) => !n.read && n.type === "critical"),
     isMuted: muteData?.muted ?? false,
     isLoading,
+    /** True once the list has loaded successfully (an empty list counts). */
+    isLoaded: Array.isArray(data),
     markRead,
     markAllRead,
     dismiss,

@@ -65,6 +65,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -92,13 +94,49 @@ import {
   DesktopWallpaperDialog,
   DesktopWidgetsPanel,
   normalizeDesktopWallpaperUrl,
+  reportWallpaperAccountSaveFailure,
   type DesktopWallpaperAttribution,
+  type WallpaperAccountSave,
 } from "@/components/desktop/desktop-customization";
 import {
   extractLaunchableApps,
   type LaunchableApp,
 } from "@/components/widgets/launcher-widget";
 import { NotificationsBell } from "@/components/notifications/notifications-bell";
+import { toast } from "sonner";
+import { TalomeMark } from "@/components/talome-mark";
+import { DesktopClock } from "@/components/desktop/desktop-clock";
+import { DesktopApprovalsButton } from "@/components/desktop/desktop-approvals-button";
+import { DesktopServiceUnavailable } from "@/components/desktop/desktop-service-unavailable";
+import { useIsOnline } from "@/hooks/use-is-online";
+import { diagnosePrompt, healthBannerCopy } from "@/components/system-health-banner";
+import {
+  desktopDockItemName,
+  desktopServiceStartPath,
+  desktopServiceStateLabel,
+  desktopServiceStatusLookup,
+  isServiceUnavailable,
+  withActiveOperation,
+  type DesktopServiceStatus,
+} from "@/lib/desktop-service-state";
+import { useActiveAppOperations } from "@/hooks/use-active-app-operations";
+import { useServiceWindowGates } from "@/hooks/use-service-window-gates";
+import { DESKTOP_LAYER } from "@/lib/desktop-layers";
+import {
+  DRAG_SETTLE_SPRING,
+  DURATION,
+  DURATION_MS,
+  EASE_ENTER,
+  EASE_EXIT,
+  TRAVEL,
+  enter as enterTransition,
+  exit as exitTransition,
+} from "@/lib/motion";
+import { openPalette } from "@/lib/palette";
+import { logOut as endSession, roleLabel } from "@/lib/session";
+import { reportModeSave } from "@/lib/dashboard-mode-save";
+import { talomePost } from "@/hooks/use-talome-api";
+import { SHORTCUTS } from "@/lib/keymap";
 import { ControlledWidgetGrid } from "@/components/widgets/widget-grid";
 import { allNav, type NavItem } from "@/components/layout/nav-config";
 import {
@@ -111,9 +149,13 @@ import { useUser } from "@/hooks/use-user";
 import { useServiceStacks } from "@/hooks/use-service-stacks";
 import { useDesktopWidgetLayout } from "@/hooks/use-desktop-widget-layout";
 import { useWidgetLayout } from "@/hooks/use-widget-layout";
-import { CORE_URL } from "@/lib/constants";
 import {
+  bringDesktopWindowToFront,
   clampDesktopBounds,
+  desktopCloseAction,
+  desktopWindowZIndex,
+  frontmostDesktopWindow,
+  normalizeDesktopWindowStack,
   desktopMinimizeOffset,
   desktopWindowMotionKeyframes,
   DESKTOP_DOCK_STORAGE_KEY,
@@ -203,32 +245,39 @@ type DesktopControlCenterNavigationDirection = "push" | "pop";
 const DESKTOP_WALLPAPER_STORAGE_KEY = "talome-desktop-wallpaper-v1";
 const DESKTOP_WALLPAPER_ATTRIBUTION_STORAGE_KEY = "talome-desktop-wallpaper-attribution-v1";
 const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
-const DESKTOP_WINDOW_MOTION_SECONDS = 0.32;
-const DESKTOP_WINDOW_MOTION_EASE = [0.32, 0.72, 0, 1] as const;
-const DESKTOP_DOCK_MOTION_SECONDS = 0.16;
-const DESKTOP_DOCK_MOTION_EASE = [0.22, 1, 0.36, 1] as const;
-const DESKTOP_DOCK_POINTER_CONSTRAINT = { distance: 6 } as const;
-const DESKTOP_FROSTED_MATERIAL_CLASS =
-  "border-border bg-card/90 shadow-lg shadow-black/15 backdrop-blur-md";
-const CONTROL_CENTER_PAGE_TRANSITION = {
-  duration: 0.3,
-  ease: [0.32, 0.72, 0, 1],
+/** Window minimize (an exit) and restore (an entrance), spec §7.4. */
+const DESKTOP_WINDOW_MOTION = {
+  minimize: { duration: DURATION.base, ease: EASE_EXIT },
+  restore: { duration: DURATION.sheet, ease: EASE_ENTER },
 } as const;
+/** Dock hover, active indicator and running dot: 150ms on the enter curve. */
+const DESKTOP_DOCK_TRANSITION = { duration: DURATION.fast, ease: EASE_ENTER } as const;
+const DESKTOP_DOCK_POINTER_CONSTRAINT = { distance: 6 } as const;
+/** Menu bar and dock float over live content: the one island material (opaque under reduced transparency). */
+const DESKTOP_FROSTED_MATERIAL_CLASS = "material-island border-border shadow-lg";
+/** Progress fills track real data: linear, at most 250ms per update (a token, not a class literal). */
+const DESKTOP_PROGRESS_TRANSITION = `width ${DURATION_MS.progress}ms linear`;
+/** Under reduced motion a Control Center page change is a 120ms crossfade (spec §3.4). */
+const CONTROL_CENTER_PAGE_VARIANTS_REDUCED = {
+  enter: { opacity: 0 },
+  center: { opacity: 1, transition: { duration: DURATION.exitFast, ease: EASE_ENTER } },
+  exit: { opacity: 0, transition: { duration: DURATION.exitFast, ease: EASE_EXIT } },
+};
+/** Control Center subpages: 24px push in 180ms, 12px back in 140ms (no full-width slide). */
 const CONTROL_CENTER_PAGE_VARIANTS = {
   enter: (direction: DesktopControlCenterNavigationDirection) => ({
-    x: direction === "push" ? "100%" : "-22%",
-    opacity: direction === "push" ? 1 : 0.86,
-    zIndex: direction === "push" ? 1 : 0,
+    x: direction === "push" ? TRAVEL.push : TRAVEL.pushExit,
+    opacity: 0,
   }),
-  center: (direction: DesktopControlCenterNavigationDirection) => ({
-    x: "0%",
+  center: {
+    x: 0,
     opacity: 1,
-    zIndex: direction === "push" ? 1 : 0,
-  }),
+    transition: enterTransition(DURATION.base),
+  },
   exit: (direction: DesktopControlCenterNavigationDirection) => ({
-    x: direction === "push" ? "-22%" : "100%",
-    opacity: direction === "push" ? 0.86 : 1,
-    zIndex: direction === "push" ? 0 : 1,
+    x: direction === "push" ? TRAVEL.pushExit : TRAVEL.push,
+    opacity: 0,
+    transition: exitTransition(DURATION.exit),
   }),
 };
 
@@ -263,8 +312,7 @@ async function playDesktopWindowMotion(
       opacity: keyframes.opacity,
     },
     {
-      duration: DESKTOP_WINDOW_MOTION_SECONDS,
-      ease: DESKTOP_WINDOW_MOTION_EASE,
+      ...DESKTOP_WINDOW_MOTION[direction],
       times: keyframes.times,
     },
   );
@@ -646,11 +694,12 @@ function readPersistedWindows(area: DesktopArea): DesktopWindowModel[] | null {
         restoreBounds: candidate.restoreBounds,
         minimized: candidate.minimized === true,
         maximized: candidate.maximized === true,
-        zIndex: typeof candidate.zIndex === "number" ? candidate.zIndex : 1,
+        zIndex: typeof candidate.zIndex === "number" && Number.isFinite(candidate.zIndex) ? candidate.zIndex : 1,
       }];
     });
 
-    return windows;
+    // Layouts saved by the old ever-growing counter come back as ranks 1..n.
+    return normalizeDesktopWindowStack(windows);
   } catch {
     return null;
   }
@@ -680,42 +729,6 @@ function readPersistedDock(): {
   }
 }
 
-function TalomeMark() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="12" cy="4.5" r="1.7" />
-      <circle cx="17.1" cy="7" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="9.5" r="0.72" opacity="0.12" />
-      <circle cx="6.5" cy="12" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="14.5" r="1.7" />
-      <circle cx="17.5" cy="17" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="19.5" r="0.72" opacity="0.12" />
-      <circle cx="12" cy="4.5" r="0.72" opacity="0.12" />
-      <circle cx="6.5" cy="7" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="9.5" r="1.7" />
-      <circle cx="17.5" cy="12" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="14.5" r="0.72" opacity="0.12" />
-      <circle cx="6.5" cy="17" r="1.27" opacity="0.56" />
-      <circle cx="12" cy="19.5" r="1.7" />
-    </svg>
-  );
-}
-
-function DesktopClock() {
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  return (
-    <time className="text-xs tabular-nums text-muted-foreground" suppressHydrationWarning>
-      {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-    </time>
-  );
-}
-
 interface DesktopSurfaceContextMenuContentProps {
   canEditWidgets: boolean;
   editingWidgets: boolean;
@@ -742,7 +755,7 @@ function DesktopSurfaceContextMenuContent({
           checked={showDesktopDrives}
           onCheckedChange={(checked) => onShowDesktopDrivesChange(checked === true)}
         >
-          Show Drives on Desktop
+          Show drives on desktop
         </ContextMenuCheckboxItem>
       </ContextMenuGroup>
       <ContextMenuSeparator />
@@ -755,12 +768,12 @@ function DesktopSurfaceContextMenuContent({
               icon={editingWidgets ? Tick01Icon : DashboardSquareEditIcon}
               size={16}
             />
-            {editingWidgets ? "Finish Editing Widgets" : "Edit Desktop Widgets…"}
+            {editingWidgets ? "Finish editing widgets" : "Edit desktop widgets…"}
           </ContextMenuItem>
         ) : null}
         <ContextMenuItem onSelect={onOpenWallpaper}>
           <HugeiconsIcon icon={Image01Icon} size={16} />
-          Change Wallpaper…
+          Change wallpaper…
         </ContextMenuItem>
       </ContextMenuGroup>
     </ContextMenuContent>
@@ -775,11 +788,12 @@ export function DesktopExperience() {
     if (app.adminOnly && user?.role !== "admin") return false;
     return !app.permission || hasPermission(app.permission);
   }, [hasPermission, user?.role]);
-  const defaultWindowApps = useMemo(
-    () => [appById.get("files")!, appById.get("media")!].filter(canUseApp),
-    [canUseApp],
+  const { stacks, isLoading: stacksLoading, error: stacksError, refresh: refreshStacks } = useServiceStacks();
+  const serviceStatus = useMemo(
+    () => desktopServiceStatusLookup(stacks, !stacksLoading && !stacksError),
+    [stacks, stacksError, stacksLoading],
   );
-  const { stacks } = useServiceStacks();
+  const health = useIsOnline();
   const dashboardWidgetLayoutController = useWidgetLayout();
   const desktopWidgetLayoutController = useDesktopWidgetLayout();
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -790,14 +804,11 @@ export function DesktopExperience() {
   const wallpaperAccountRestoredRef = useRef<string | undefined>(undefined);
   const minimizingWindowIdsRef = useRef(new Set<string>());
   const restoringWindowIdsRef = useRef(new Set<string>());
-  const zIndexRef = useRef(4);
   const [area, setArea] = useState<DesktopArea>(DEFAULT_AREA);
-  const [windows, setWindows] = useState<DesktopWindowModel[]>(() =>
-    defaultWindowApps.map((app, index) =>
-      createWindow(app, DEFAULT_AREA, defaultWindowApps.length - index + 1),
-    ),
-  );
-  const [activeWindowId, setActiveWindowId] = useState(() => defaultWindowApps[0]?.id ?? "");
+  // A calm first run (D-P1-9): the desktop opens empty, with the widgets in view,
+  // instead of two windows covering them.
+  const [windows, setWindows] = useState<DesktopWindowModel[]>([]);
+  const [activeWindowId, setActiveWindowId] = useState("");
   const [launchpadOpen, setLaunchpadOpen] = useState(false);
   const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [controlCenterView, setControlCenterView] = useState<DesktopControlCenterView>("main");
@@ -807,6 +818,13 @@ export function DesktopExperience() {
   const [dashboardEditing, setDashboardEditing] = useState(false);
   const [desktopWidgetsEditing, setDesktopWidgetsEditing] = useState(false);
   const [wallpaperDialogOpen, setWallpaperDialogOpen] = useState(false);
+  /** Read when an account save fails after the dialog closed: then the failure goes in a toast. */
+  const wallpaperDialogOpenRef = useRef(false);
+  useEffect(() => {
+    wallpaperDialogOpenRef.current = wallpaperDialogOpen;
+  }, [wallpaperDialogOpen]);
+  const [wallpaperAccountSave, setWallpaperAccountSave] = useState<WallpaperAccountSave>({ status: "idle" });
+  const launchpadButtonRef = useRef<HTMLButtonElement | null>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState<string>();
   const [wallpaperAttribution, setWallpaperAttribution] = useState<
     DesktopWallpaperAttribution
@@ -929,6 +947,17 @@ export function DesktopExperience() {
     () => new Map(windows.map((windowModel) => [windowModel.appId, windowModel])),
     [windows],
   );
+  // App operations are read only while a service in the dock isn't running,
+  // so an update recreating its container reads "Updating", not "Not installed".
+  const watchOperations = hasPermission("apps") && visibleDockApps.some((app) => {
+    const serviceId = app.serviceApp?.id;
+    if (!serviceId || serviceId.startsWith("native:")) return false;
+    const state = serviceStatus(serviceId).state;
+    return state !== "running" && state !== "unknown";
+  });
+  const activeOperations = useActiveAppOperations(watchOperations);
+  /** Windows whose page has loaded at least once (kept through a restart). */
+  const [loadedFrameIds, setLoadedFrameIds] = useState<ReadonlySet<string>>(() => new Set());
   const activeWindowMaximized = windows.some((windowModel) => (
     windowModel.id === activeWindowId
     && windowModel.maximized
@@ -987,17 +1016,9 @@ export function DesktopExperience() {
         );
         return app ? canUseApp(app) : false;
       });
-      setWindows(accessible);
-      const top = accessible
-        .filter((windowModel) => !windowModel.minimized)
-        .sort((a, b) => b.zIndex - a.zIndex)[0];
-      setActiveWindowId(top?.id ?? "");
-      zIndexRef.current = Math.max(4, ...accessible.map((windowModel) => windowModel.zIndex + 1));
-    } else {
-      setWindows([
-        createWindow(appById.get("files")!, area, 2),
-        createWindow(appById.get("media")!, area, 1),
-      ].filter((windowModel) => canUseApp(appById.get(windowModel.appId)!)));
+      const stack = normalizeDesktopWindowStack(accessible);
+      setWindows(stack);
+      setActiveWindowId(frontmostDesktopWindow(stack)?.id ?? "");
     }
     setRestored(true);
   // Restore once after the real workspace dimensions are available.
@@ -1195,13 +1216,24 @@ export function DesktopExperience() {
     }));
   }, [area]);
 
+  /** Moves keyboard focus into a window (its app frame) once it is on screen. */
+  const focusWindowElement = useCallback((id: string) => {
+    window.requestAnimationFrame(() => {
+      const frame = appFrameRefs.current.get(id);
+      const element = frame ?? desktopWindowRefs.current.get(id);
+      element?.focus({ preventScroll: true });
+    });
+  }, []);
+
+  // Ranks, not a global counter (D-P0-4): focusing the frontmost window is a
+  // no-op, and no window can climb above the dock however often it is focused.
   const focusWindow = useCallback((id: string) => {
-    const zIndex = zIndexRef.current++;
     setActiveWindowId(id);
-    setWindows((current) => current.map((windowModel) =>
-      windowModel.id === id
-        ? { ...windowModel, minimized: false, zIndex }
-        : windowModel,
+    setWindows((current) => bringDesktopWindowToFront(
+      current.some((windowModel) => windowModel.id === id && windowModel.minimized)
+        ? current.map((windowModel) => windowModel.id === id ? { ...windowModel, minimized: false } : windowModel)
+        : current,
+      id,
     ));
   }, []);
 
@@ -1213,19 +1245,17 @@ export function DesktopExperience() {
     if (restoringWindowIdsRef.current.has(id)) return;
     restoringWindowIdsRef.current.add(id);
 
-    const zIndex = zIndexRef.current++;
     flushSync(() => {
       setActiveWindowId(id);
-      setWindows((current) => current.map((windowModel) =>
+      setWindows((current) => bringDesktopWindowToFront(current.map((windowModel) =>
         windowModel.id === id
           ? {
             ...windowModel,
             ...(app ? { title: app.title, url: app.url, currentUrl: app.url } : {}),
             minimized: false,
-            zIndex,
           }
           : windowModel,
-      ));
+      ), id));
     });
 
     const windowElement = desktopWindowRefs.current.get(id);
@@ -1233,16 +1263,20 @@ export function DesktopExperience() {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     try {
-      if (!windowElement || !dockButton || reduceMotion) return;
+      if (!windowElement || !dockButton || reduceMotion) {
+        focusWindowElement(id);
+        return;
+      }
       const offset = desktopMinimizeOffset(
         windowElement.getBoundingClientRect(),
         dockButton.getBoundingClientRect(),
       );
       await playDesktopWindowMotion(windowElement, offset, "restore");
+      focusWindowElement(id);
     } finally {
       restoringWindowIdsRef.current.delete(id);
     }
-  }, []);
+  }, [focusWindowElement]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -1281,23 +1315,21 @@ export function DesktopExperience() {
           `/dashboard/player?${params.toString()}`,
           playerMessage.artworkUrl,
         );
-        const zIndex = zIndexRef.current++;
         setAppChromeByWindow((current) => removeWindowChrome(current, PLAYER_APP_ID));
         setWindows((current) => {
           const existing = current.find((windowModel) => windowModel.appId === PLAYER_APP_ID);
           if (existing) {
-            return current.map((windowModel) => windowModel.appId === PLAYER_APP_ID
+            return bringDesktopWindowToFront(current.map((windowModel) => windowModel.appId === PLAYER_APP_ID
               ? {
                 ...windowModel,
                 title: app.title,
                 url: app.url,
                 currentUrl: app.url,
                 minimized: false,
-                zIndex,
               }
-              : windowModel);
+              : windowModel), existing.id);
           }
-          return [...current, createWindow(app, area, zIndex)];
+          return [...current, createWindow(app, area, current.length + 1)];
         });
         setActiveWindowId(PLAYER_APP_ID);
         return;
@@ -1383,6 +1415,7 @@ export function DesktopExperience() {
         return;
       }
       focusWindow(existing.id);
+      focusWindowElement(existing.id);
       // Dock and Launchpad activate the existing app without resetting its route.
       if (!navigate) return;
       setWindows((current) => current.map((windowModel) =>
@@ -1392,11 +1425,11 @@ export function DesktopExperience() {
       ));
       return;
     }
-    const zIndex = zIndexRef.current++;
-    const next = createWindow(app, area, zIndex);
-    setWindows((current) => [...current, next]);
+    const next = createWindow(app, area, windows.length + 1);
+    setWindows((current) => normalizeDesktopWindowStack([...current, { ...next, zIndex: Number.POSITIVE_INFINITY }]));
     setActiveWindowId(next.id);
-  }, [area, canUseApp, focusWindow, restoreWindow, windows]);
+    focusWindowElement(next.id);
+  }, [area, canUseApp, focusWindow, focusWindowElement, restoreWindow, windows]);
 
   const openDashboardRoute = useCallback((url: string) => {
     const normalized = dashboardRouteFromHref(url);
@@ -1556,35 +1589,63 @@ export function DesktopExperience() {
     setDockOrder(arrayMove(reorderableDockAppIds, sourceIndex, targetIndex));
   }, [finishDockDrag, reorderableDockAppIds]);
 
+  /** After a window closes or hides, focus goes to the next window, or the dock's Launchpad button. */
+  const focusAfterClose = useCallback((nextId: string | undefined) => {
+    if (nextId) {
+      focusWindowElement(nextId);
+      return;
+    }
+    window.requestAnimationFrame(() => launchpadButtonRef.current?.focus({ preventScroll: true }));
+  }, [focusWindowElement]);
+
   const closeWindow = useCallback((id: string) => {
-    if (desktopAudiobookWindowId === id && desktopAudiobookPlayback?.book) {
-      setWindows((current) => {
-        const next = current.map((windowModel) =>
-          windowModel.id === id ? { ...windowModel, minimized: true } : windowModel,
-        );
-        const nextActive = next
-          .filter((windowModel) => !windowModel.minimized && windowModel.id !== id)
-          .sort((a, b) => b.zIndex - a.zIndex)[0];
-        setActiveWindowId(nextActive?.id ?? "");
-        return next;
+    const action = desktopCloseAction(id, desktopAudiobookPlayback
+      ? {
+        windowId: desktopAudiobookPlayback.windowId,
+        bookTitle: desktopAudiobookPlayback.book?.title,
+        isPlaying: desktopAudiobookPlayback.state.isPlaying,
+      }
+      : undefined);
+    if (action.kind === "hide") {
+      // Closing the audiobook window keeps playback running, and says so
+      // (D-P0-5): the window hides, the book keeps playing, and the toast
+      // offers Stop and Show. Never a silent minimize that looks like a close.
+      const nextActive = frontmostDesktopWindow(windows, id);
+      setWindows((current) => current.map((windowModel) =>
+        windowModel.id === id ? { ...windowModel, minimized: true } : windowModel,
+      ));
+      setActiveWindowId(nextActive?.id ?? "");
+      focusAfterClose(nextActive?.id);
+      toast(action.message, {
+        id: "desktop-audiobook-hidden",
+        action: { label: "Stop", onClick: () => sendDesktopAudiobookCommand("stop") },
+        cancel: { label: "Show", onClick: () => focusWindow(id) },
       });
       return;
     }
 
     appFrameRefs.current.delete(id);
+    setLoadedFrameIds((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
     setDesktopAudiobookPlayback((current) => current?.windowId === id ? undefined : current);
     setAppChromeByWindow((current) => {
       return removeWindowChrome(current, id);
     });
-    setWindows((current) => {
-      const remaining = current.filter((windowModel) => windowModel.id !== id);
-      const nextActive = remaining
-        .filter((windowModel) => !windowModel.minimized)
-        .sort((a, b) => b.zIndex - a.zIndex)[0];
-      setActiveWindowId(nextActive?.id ?? "");
-      return remaining;
-    });
-  }, [desktopAudiobookPlayback?.book, desktopAudiobookWindowId]);
+    const nextActive = frontmostDesktopWindow(windows, id);
+    setWindows((current) => normalizeDesktopWindowStack(current.filter((windowModel) => windowModel.id !== id)));
+    setActiveWindowId(nextActive?.id ?? "");
+    focusAfterClose(nextActive?.id);
+  }, [
+    desktopAudiobookPlayback,
+    focusAfterClose,
+    focusWindow,
+    sendDesktopAudiobookCommand,
+    windows,
+  ]);
 
   const finishMinimizingWindow = useCallback((id: string) => {
     setWindows((current) => {
@@ -1645,11 +1706,90 @@ export function DesktopExperience() {
     ?? activeWindow?.title
     ?? "Desktop";
 
+  /**
+   * Container state for a service app (never for Talome's own apps or
+   * not-yet-identified native links). An app operation in flight (an update
+   * recreating the container) reads as working, never as missing or stopped.
+   */
+  const serviceStatusFor = (app: DesktopAppDefinition): DesktopServiceStatus | undefined => {
+    const serviceId = app.serviceApp?.id;
+    if (!serviceId || serviceId.startsWith("native:")) return undefined;
+    return withActiveOperation(serviceStatus(serviceId), serviceId, activeOperations);
+  };
+
+  const windowApp = (windowModel: DesktopWindowModel): DesktopAppDefinition => resolveAppDefinition(
+    windowModel.appId,
+    windowModel.url,
+    windowModel.title,
+  ) ?? appDefinitionFromNav({
+    title: windowModel.title,
+    url: windowModel.url,
+    icon: Home01Icon,
+  });
+  const windowShowsServiceState = useServiceWindowGates(windows.map((windowModel) => ({
+    windowId: windowModel.id,
+    state: serviceStatusFor(windowApp(windowModel))?.state,
+    frameLoaded: loadedFrameIds.has(windowModel.id),
+  })));
+
+  /** Window › Zoom: the same toggle as the green traffic light, for the keyboard. */
+  const toggleZoomWindow = (id: string) => {
+    const target = windows.find((windowModel) => windowModel.id === id);
+    if (!target) return;
+    const minimum = windowApp(target).minimum;
+    updateWindow(id, (current) => current.maximized
+      ? {
+        ...current,
+        maximized: false,
+        bounds: current.restoreBounds ? clampDesktopBounds(current.restoreBounds, area, minimum) : current.bounds,
+        restoreBounds: undefined,
+      }
+      : { ...current, maximized: true, restoreBounds: current.bounds, bounds: maximizedDesktopBounds(area) });
+  };
+
+  /** "Remove from Dock" for an app that isn't installed any more: unpin it and close its window. */
+  const removeMissingService = (app: DesktopAppDefinition, windowId: string) => {
+    const serviceId = app.serviceApp?.id;
+    if (serviceId) setPinnedServiceApps((current) => current.filter((candidate) => candidate.id !== serviceId));
+    closeWindow(windowId);
+  };
+
+  const startDockService = async (name: string, service: DesktopServiceStatus) => {
+    const startPath = desktopServiceStartPath(service);
+    if (!startPath || !service.container) return;
+    try {
+      await talomePost(startPath);
+    } catch (err) {
+      toast.error(`Couldn't start ${name}${err instanceof Error && err.message ? `: ${err.message}` : ""}`, {
+        action: { label: "Retry", onClick: () => void startDockService(name, service) },
+      });
+      return;
+    }
+    const latest = await refreshStacks();
+    const state = latest
+      ? desktopServiceStatusLookup(latest, true)(service.container.name).state
+      : "unknown";
+    if (state === "running") toast.success(`Started ${name} · running`);
+    else toast(`Asked ${name} to start · not running yet`, { description: "Check Services if it doesn't come up." });
+  };
+
+  const serverHealthy = health.status === "online";
+  // The same sentence as the classic banner (one source of words).
+  const healthCopy = health.status === "online"
+    ? null
+    : healthBannerCopy(health.status, health.checks, health.since, health.reachable);
+  const healthLine = healthCopy?.title ?? "";
+
   const openSearch = () => {
     setControlCenterOpen(false);
-    document.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }),
-    );
+    openPalette({ mode: "search" });
+  };
+
+  const saveClassicMode = () => {
+    void persistDashboardModePreference(user?.userId, "classic").then((saved) => {
+      if (saved) void mutateUser();
+      reportModeSave(saved, "classic", saveClassicMode);
+    });
   };
 
   const selectClassicMode = () => {
@@ -1659,9 +1799,7 @@ export function DesktopExperience() {
       preferences: { ...current.preferences, desktopMode: "classic" },
     } : current, { revalidate: false });
     router.push("/dashboard");
-    void persistDashboardModePreference(user?.userId, "classic").then((saved) => {
-      if (saved) void mutateUser();
-    });
+    saveClassicMode();
   };
 
   const openDesktopWidgetEditor = () => {
@@ -1716,6 +1854,37 @@ export function DesktopExperience() {
     setControlCenterView("main");
   }, []);
 
+  /**
+   * Saves the wallpaper to the account and reports a failed save (D-P0-6):
+   * the new wallpaper stays on this browser, and the dialog says it wasn't
+   * saved to the account, with Retry. The old code ignored the PUT's result.
+   */
+  const saveWallpaperToAccount = useCallback(async (
+    nextWallpaperUrl?: string,
+    nextAttribution?: DesktopWallpaperAttribution,
+  ) => {
+    setWallpaperAccountSave({ status: "saving" });
+    try {
+      const response = await fetch("/api/auth/preferences/desktop", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          wallpaperUrl: nextWallpaperUrl ?? null,
+          attribution: nextAttribution ?? null,
+        }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      setWallpaperAccountSave({ status: "idle" });
+      void mutateUser();
+    } catch {
+      const retry = () => void saveWallpaperToAccount(nextWallpaperUrl, nextAttribution);
+      setWallpaperAccountSave({ status: "failed", retry });
+      // Closed already (the common flow): the inline message would never be seen.
+      reportWallpaperAccountSaveFailure(wallpaperDialogOpenRef.current, retry);
+    }
+  }, [mutateUser]);
+
   const updateWallpaper = useCallback((
     nextWallpaperUrl?: string,
     nextAttribution?: DesktopWallpaperAttribution,
@@ -1740,21 +1909,9 @@ export function DesktopExperience() {
     }
     setWallpaperUrl(nextWallpaperUrl);
     setWallpaperAttribution(nextAttribution);
-    if (user?.authenticated) {
-      void fetch("/api/auth/preferences/desktop", {
-        method: "PUT",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          wallpaperUrl: nextWallpaperUrl ?? null,
-          attribution: nextAttribution ?? null,
-        }),
-      }).then((response) => {
-        if (response.ok) void mutateUser();
-      }).catch(() => undefined);
-    }
+    if (user?.authenticated) void saveWallpaperToAccount(nextWallpaperUrl, nextAttribution);
     return savedLocally || user?.authenticated === true;
-  }, [mutateUser, user?.authenticated]);
+  }, [saveWallpaperToAccount, user?.authenticated]);
 
   const updateShowDesktopDrives = useCallback((show: boolean) => {
     try {
@@ -1781,12 +1938,14 @@ export function DesktopExperience() {
     }, true);
   }, [openApp]);
 
+  // Log out only navigates once the server confirmed it (D-P0-6).
   const logOut = async () => {
-    await fetch(`${CORE_URL}/api/auth/logout`, {
-      method: "POST",
-      credentials: "include",
-    });
-    router.push("/");
+    const result = await endSession();
+    if (result.ok) {
+      router.push("/");
+      return;
+    }
+    toast.error(result.error, { action: { label: "Retry", onClick: () => void logOut() } });
   };
 
   const triggerAppAction = useCallback((windowId: string, actionId: string) => {
@@ -1801,6 +1960,7 @@ export function DesktopExperience() {
     windowId: string,
     event: SyntheticEvent<HTMLIFrameElement>,
   ) => {
+    setLoadedFrameIds((current) => current.has(windowId) ? current : new Set(current).add(windowId));
     event.currentTarget.contentWindow?.postMessage(
       { type: DESKTOP_APP_ACTIONS_REQUEST_MESSAGE },
       window.location.origin,
@@ -1837,13 +1997,13 @@ export function DesktopExperience() {
         </div>
       ) : null}
       {wallpaperAttribution ? (
-        <p className="absolute bottom-2 left-3 z-10 rounded-md bg-black/35 px-2 py-1 text-[10px] text-white/80 shadow-sm backdrop-blur-md">
+        <p className="material-island absolute bottom-2 left-3 z-10 rounded-md px-2 py-1 text-xs text-muted-foreground">
           Photo by{" "}
           <a
             href={wallpaperAttribution.photographerUrl}
             target="_blank"
             rel="noreferrer"
-            className="text-white hover:underline"
+            className="text-foreground hover:underline"
           >
             {wallpaperAttribution.photographerName}
           </a>{" "}
@@ -1852,7 +2012,7 @@ export function DesktopExperience() {
             href={wallpaperAttribution.photoUrl}
             target="_blank"
             rel="noreferrer"
-            className="text-white hover:underline"
+            className="text-foreground hover:underline"
           >
             {wallpaperAttribution.providerName ?? "Unsplash"}
           </a>
@@ -1865,80 +2025,154 @@ export function DesktopExperience() {
         className={cn(
           "relative z-[1100] flex h-10 shrink-0 items-center gap-1 border-b px-3 transition-[background-color,border-color,box-shadow,opacity] duration-150",
           DESKTOP_FROSTED_MATERIAL_CLASS,
-          desktopWidgetsEditing && "pointer-events-none select-none opacity-35 saturate-0",
+          desktopWidgetsEditing && "pointer-events-none select-none opacity-50",
         )}
       >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="flex h-8 items-center gap-2 rounded-md px-2 text-sm font-medium transition-colors duration-150 hover:bg-muted/40"
-              aria-label="Talome menu"
+              data-desktop-health={serverHealthy ? undefined : health.status}
+              className="relative flex h-8 items-center gap-2 rounded-md px-2 text-sm font-medium transition-colors duration-150 hover:bg-muted/40 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              aria-label={serverHealthy ? "Talome menu" : `Talome menu: ${healthLine}`}
             >
-              <TalomeMark />
+              <span className="relative flex">
+                <TalomeMark />
+                {!serverHealthy ? (
+                  <span
+                    aria-hidden="true"
+                    data-desktop-health-dot
+                    className={cn(
+                      "absolute -right-0.5 -top-0.5 size-1.5 rounded-full ring-1 ring-card",
+                      healthCopy?.unreachable ? "bg-status-critical" : "bg-status-warning",
+                    )}
+                  />
+                ) : null}
+              </span>
               <span>Talome</span>
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-48">
-            <DropdownMenuLabel>Talome</DropdownMenuLabel>
+          <DropdownMenuContent align="start" className="w-72">
+            {healthCopy ? (
+              <>
+                {/* Health on the Talome mark (D-P0-2): the classic banner isn't shown here.
+                    A label, not a live region: role=menu holds only items, groups and
+                    separators. Retry is described by it, and the trigger's name carries it. */}
+                <DropdownMenuLabel id="desktop-health-line" className="grid gap-1 font-normal">
+                  <span className={cn("text-sm font-medium", healthCopy.unreachable ? "text-status-critical" : "text-status-warning")}>
+                    {healthCopy.title}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{healthCopy.detail}</span>
+                </DropdownMenuLabel>
+                <DropdownMenuItem aria-describedby="desktop-health-line" onSelect={() => health.recheck()}>Retry</DropdownMenuItem>
+                {!healthCopy.unreachable && hasPermission("chat") ? (
+                  <DropdownMenuItem
+                    onSelect={() => openPalette({ mode: "chat", prefill: diagnosePrompt(health.checks) })}
+                  >
+                    Diagnose with Talome
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
             <DropdownMenuItem onSelect={selectClassicMode}>
-              Classic mode
+              Switch to classic layout
               <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="ml-auto" />
             </DropdownMenuItem>
+            {appById.get("settings") && canUseApp(appById.get("settings")!) ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => openApp(appById.get("settings")!)}>
+                  <HugeiconsIcon icon={Settings01Icon} size={14} />
+                  Settings…
+                </DropdownMenuItem>
+              </>
+            ) : null}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => openApp(appById.get("settings")!)}>
-              <HugeiconsIcon icon={Settings01Icon} size={14} />
-              Settings
+            <DropdownMenuItem onSelect={() => void logOut()}>
+              <HugeiconsIcon icon={Logout01Icon} size={14} />
+              Log out
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
         <DropdownMenu>
-          <DropdownMenuTrigger className="h-8 rounded-md px-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground">
+          <DropdownMenuTrigger className="h-8 rounded-md px-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
             File
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-48">
-            <DropdownMenuItem onSelect={() => openApp(appById.get("files")!)}>
-              Open Files
-            </DropdownMenuItem>
+          <DropdownMenuContent align="start" className="w-52">
+            {appById.get("files") && canUseApp(appById.get("files")!) ? (
+              <DropdownMenuItem onSelect={() => openApp(appById.get("files")!)}>
+                Open Files
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onSelect={() => setLaunchpadOpen(true)}>
               Open Launchpad
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={openSearch}>
+              Search…
+              <span className="ml-auto text-xs text-dim-foreground">{SHORTCUTS.palette.hint}</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               disabled={!activeWindow}
               onSelect={() => activeWindow && closeWindow(activeWindow.id)}
             >
-              Close Window
+              Close window
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
         <DropdownMenu>
-          <DropdownMenuTrigger className="h-8 rounded-md px-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground">
+          <DropdownMenuTrigger className="h-8 rounded-md px-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
             Window
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-52">
+          <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuItem
+              disabled={!activeWindow || activeWindow.minimized}
+              onSelect={() => activeWindow && void minimizeWindow(activeWindow.id, activeWindow.appId)}
+            >
+              Minimize
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!activeWindow || activeWindow.minimized}
+              onSelect={() => activeWindow && toggleZoomWindow(activeWindow.id)}
+            >
+              {activeWindow?.maximized ? "Exit zoom" : "Zoom"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             {windows.length === 0 ? (
               <DropdownMenuItem disabled>No open windows</DropdownMenuItem>
-            ) : windows.map((windowModel) => (
-              <DropdownMenuItem
-                key={windowModel.id}
-                onSelect={() => focusWindow(windowModel.id)}
-              >
-                {windowModel.title}
-                {windowModel.id === activeWindowId && (
-                  <span className="ml-auto size-1.5 rounded-full bg-foreground" />
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
+            ) : (
+              // One active window among many: a radio group, so the state is announced natively.
+              <DropdownMenuRadioGroup value={activeWindow && !activeWindow.minimized ? activeWindow.id : ""}>
+                {windows.map((windowModel) => (
+                  <DropdownMenuRadioItem
+                    key={windowModel.id}
+                    value={windowModel.id}
+                    onSelect={() => windowModel.minimized
+                      ? void restoreWindow(windowModel.id, windowModel.appId)
+                      : focusWindow(windowModel.id)}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{windowModel.title}</span>
+                    {windowModel.minimized ? (
+                      <span className="ml-auto text-xs text-muted-foreground">Minimized</span>
+                    ) : null}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            )}
+</DropdownMenuContent>
         </DropdownMenu>
 
         <span className="mx-2 h-4 w-px bg-border" />
         <span className="truncate text-sm font-medium">{activeTitle}</span>
 
         <div className="ml-auto flex items-center gap-1">
+          <DesktopApprovalsButton
+            isAdmin={user?.role === "admin"}
+            onReviewAll={(href) => openDashboardRoute(href ?? "/dashboard/settings/approvals")}
+          />
           <AnimatePresence initial={false}>
             {desktopAudiobookPlayer.book ? (
               <motion.div
@@ -1946,10 +2180,9 @@ export function DesktopExperience() {
                 role="group"
                 aria-label={`Now playing ${desktopAudiobookPlayer.book.title}`}
                 className="relative mr-1 flex h-7 max-w-56 items-center overflow-hidden rounded-md bg-muted/45 text-xs"
-                initial={reduceMotion ? false : { opacity: 0, scale: 0.94, x: 6 }}
-                animate={{ opacity: 1, scale: 1, x: 0 }}
-                exit={reduceMotion ? undefined : { opacity: 0, scale: 0.94, x: 6 }}
-                transition={reduceMotion ? { duration: 0 } : { duration: 0.16, ease: "easeOut" }}
+                initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 6 }}
+                animate={{ opacity: 1, x: 0, transition: enterTransition(DURATION.pill) }}
+                exit={{ opacity: 0, transition: { duration: DURATION.exitFast, ease: EASE_EXIT } }}
               >
                 <button
                   type="button"
@@ -1966,7 +2199,7 @@ export function DesktopExperience() {
                 </button>
                 <button
                   type="button"
-                  className="flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-[background-color,color,transform] hover:bg-muted/70 hover:text-foreground active:scale-90"
+                  className="flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-[background-color,color,transform] duration-100 hover:bg-muted/70 hover:text-foreground motion-safe:active:scale-95"
                   aria-label={desktopAudiobookPlayer.state.isPlaying
                     ? "Pause audiobook from status bar"
                     : "Play audiobook from status bar"}
@@ -1982,8 +2215,8 @@ export function DesktopExperience() {
                   aria-hidden="true"
                 >
                   <span
-                    className="block h-full bg-foreground/55 transition-[width] duration-1000 ease-linear"
-                    style={{ width: `${desktopAudiobookProgress}%` }}
+                    className="block h-full bg-foreground/55 motion-reduce:transition-none"
+                    style={{ width: `${desktopAudiobookProgress}%`, transition: DESKTOP_PROGRESS_TRANSITION }}
                   />
                 </span>
               </motion.div>
@@ -2002,7 +2235,7 @@ export function DesktopExperience() {
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={8}>
-              Search <span className="ml-2 text-dim-foreground">⌘K</span>
+              Search <span className="ml-2 opacity-70">{SHORTCUTS.palette.hint}</span>
             </TooltipContent>
           </Tooltip>
           <Popover
@@ -2033,7 +2266,7 @@ export function DesktopExperience() {
               side="bottom"
               sideOffset={8}
               className={cn(
-                "z-[1300] w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border-border/80 bg-background/95 p-0 shadow-xl backdrop-blur-md",
+                "z-[1300] w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border-border bg-surface-popover p-0 shadow-lg",
               )}
               aria-label="Control Center"
             >
@@ -2043,7 +2276,7 @@ export function DesktopExperience() {
                 transition={{
                   layout: reduceMotion
                     ? { duration: 0 }
-                    : CONTROL_CENTER_PAGE_TRANSITION,
+                    : { duration: DURATION.fast, ease: EASE_ENTER },
                 }}
               >
                 <AnimatePresence
@@ -2054,15 +2287,12 @@ export function DesktopExperience() {
                   <motion.div
                     key={controlCenterView}
                     data-control-center-view={controlCenterView}
-                    className="relative w-full bg-background"
+                    className="relative w-full bg-surface-popover"
                     custom={controlCenterNavigationDirection}
-                    variants={CONTROL_CENTER_PAGE_VARIANTS}
-                    initial={reduceMotion ? false : "enter"}
+                    variants={reduceMotion ? CONTROL_CENTER_PAGE_VARIANTS_REDUCED : CONTROL_CENTER_PAGE_VARIANTS}
+                    initial="enter"
                     animate="center"
-                    exit={reduceMotion ? undefined : "exit"}
-                    transition={reduceMotion
-                      ? { duration: 0 }
-                      : CONTROL_CENTER_PAGE_TRANSITION}
+                    exit="exit"
                   >
                     {controlCenterView === "dashboard" && hasPermission("dashboard") ? (
                       <DesktopWidgetsPanel
@@ -2114,8 +2344,8 @@ export function DesktopExperience() {
             <DropdownMenuContent align="end" className="w-52">
               <DropdownMenuLabel className="flex items-center justify-between gap-3">
                 <span className="truncate">{user?.username ?? "Account"}</span>
-                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {user?.role === "admin" ? "Administrator" : "Member"}
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  {roleLabel(user?.role)}
                 </span>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
@@ -2135,8 +2365,10 @@ export function DesktopExperience() {
               aria-hidden={desktopWidgetsEditing || undefined}
               inert={desktopWidgetsEditing}
               tabIndex={desktopWidgetsEditing ? -1 : 0}
-              className="absolute inset-0 z-0 overflow-hidden"
-              aria-label="Desktop background"
+              role="application"
+              aria-roledescription="desktop"
+              className="absolute inset-0 z-0 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              aria-label="Desktop. Press Shift+F10 for desktop options."
               onKeyDown={(event) => {
                 if (!(
                   (event.shiftKey && event.key === "F10")
@@ -2170,12 +2402,11 @@ export function DesktopExperience() {
             <motion.div
               key="desktop-widget-edit-backdrop"
               data-desktop-widget-edit-blocker
-              className="absolute inset-0 z-[1000] bg-background/45 backdrop-blur-[2px]"
+              className="absolute inset-0 z-[1000] bg-scrim"
               aria-hidden="true"
               initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
+              animate={{ opacity: 1, transition: { duration: DURATION.fast, ease: EASE_ENTER } }}
+              exit={{ opacity: 0, transition: { duration: DURATION.exitFast, ease: EASE_EXIT } }}
             />
           ) : null}
         </AnimatePresence>
@@ -2188,10 +2419,10 @@ export function DesktopExperience() {
                 data-drive-lane-reserved={showDesktopDrives && !desktopWidgetsEditing ? "true" : "false"}
                 aria-label="Desktop widgets"
                 className={cn(
-                  "absolute top-6 left-6 opacity-90 transition-opacity duration-150",
+                  "absolute top-6 left-6",
                   desktopWidgetsEditing
-                    ? "z-[1100] max-h-[calc(100%-6rem)] overflow-y-auto overscroll-contain p-3 pb-4 pr-4 opacity-100"
-                    : "z-[1]",
+                    ? "z-[1100] max-h-[calc(100%-6rem)] overflow-y-auto overscroll-contain p-3 pb-4 pr-4"
+                    : "z-[10]",
                 )}
                 style={{
                   width: showDesktopDrives && !desktopWidgetsEditing
@@ -2228,14 +2459,13 @@ export function DesktopExperience() {
               key="desktop-widget-edit-toolbar"
               role="toolbar"
               aria-label="Desktop widget editing"
-              className="absolute bottom-6 left-1/2 z-[1200] flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-border bg-card/95 p-2 pl-3 shadow-xl backdrop-blur-md"
-              initial={{ opacity: 0, y: 10, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.97 }}
-              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="material-island absolute bottom-6 left-1/2 z-[1200] flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-border p-2 pl-3 shadow-lg"
+              initial={{ opacity: 0, y: TRAVEL.rise }}
+              animate={{ opacity: 1, y: 0, transition: { duration: DURATION.fast, ease: EASE_ENTER } }}
+              exit={{ opacity: 0, y: TRAVEL.rise, transition: { duration: DURATION.exitFast, ease: EASE_EXIT } }}
             >
               <HugeiconsIcon icon={DashboardSquareEditIcon} size={16} />
-              <span className="whitespace-nowrap text-sm font-medium">Desktop Widgets</span>
+              <span className="whitespace-nowrap text-sm font-medium">Desktop widgets</span>
               <span className="h-5 w-px bg-border" />
               <span className="whitespace-nowrap text-xs text-muted-foreground">
                 Drag to reorder · Esc to finish
@@ -2244,7 +2474,7 @@ export function DesktopExperience() {
                 ref={desktopWidgetDoneButtonRef}
                 type="button"
                 data-desktop-widget-edit-done
-                className="flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-85"
+                className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 onPointerDown={() => setDesktopWidgetsEditing(false)}
                 onClick={() => setDesktopWidgetsEditing(false)}
               >
@@ -2267,15 +2497,11 @@ export function DesktopExperience() {
 
         {windows.map((windowModel) => {
           const appChrome = appChromeByWindow[windowModel.id];
-          const app = resolveAppDefinition(
-            windowModel.appId,
-            windowModel.url,
-            windowModel.title,
-          ) ?? appDefinitionFromNav({
-            title: windowModel.title,
-            url: windowModel.url,
-            icon: Home01Icon,
-          });
+          const app = windowApp(windowModel);
+          const service = serviceStatusFor(app);
+          // A page that loaded is kept through a restart or update; it is
+          // replaced only once the service has stayed down (useServiceWindowGates).
+          const unavailable = Boolean(service && isServiceUnavailable(service.state) && windowShowsServiceState(windowModel.id));
           return (
             <DesktopWindow
               key={windowModel.id}
@@ -2289,8 +2515,8 @@ export function DesktopExperience() {
               maximized={windowModel.maximized}
               minimized={windowModel.minimized}
               disabled={desktopWidgetsEditing}
-              zIndex={windowModel.zIndex}
-              actions={appChrome?.actions}
+              zIndex={desktopWindowZIndex(windowModel.zIndex)}
+              actions={unavailable ? undefined : appChrome?.actions}
               windowRef={(element) => {
                 if (element) desktopWindowRefs.current.set(windowModel.id, element);
                 else desktopWindowRefs.current.delete(windowModel.id);
@@ -2312,25 +2538,41 @@ export function DesktopExperience() {
               }))}
               onAction={(actionId) => triggerAppAction(windowModel.id, actionId)}
             >
-              <iframe
-                ref={(frame) => {
-                  if (frame) appFrameRefs.current.set(windowModel.id, frame);
-                  else appFrameRefs.current.delete(windowModel.id);
-                }}
-                src={windowModel.url}
-                title={windowModel.title}
-                className="size-full border-0 bg-background"
-                allow="autoplay; fullscreen; picture-in-picture"
-                allowFullScreen
-                onLoad={(event) => handleAppFrameLoad(windowModel.id, event)}
-              />
+              {unavailable && service ? (
+                // Talome's own state instead of the browser's error page (D-P0-3).
+                <DesktopServiceUnavailable
+                  name={app.title}
+                  state={service.state}
+                  startPath={desktopServiceStartPath(service)}
+                  canStart={hasPermission("apps")}
+                  onStarted={() => refreshStacks()}
+                  onRemoveFromDock={service.state === "missing" ? () => removeMissingService(app, windowModel.id) : undefined}
+                  onOpenAppStore={service.state === "missing" && hasPermission("apps")
+                    ? () => openDashboardRoute("/dashboard/apps")
+                    : undefined}
+                />
+              ) : (
+                <DesktopAppFrame
+                  // A new URL (the window navigated to another app route) is a new page.
+                  key={windowModel.url}
+                  // When the page comes back after its service was down, it reopens
+                  // where the person was, not at the app's start page.
+                  initialSrc={windowModel.currentUrl ?? windowModel.url}
+                  frameRef={(frame) => {
+                    if (frame) appFrameRefs.current.set(windowModel.id, frame);
+                    else appFrameRefs.current.delete(windowModel.id);
+                  }}
+                  title={windowModel.title}
+                  onLoad={(event) => handleAppFrameLoad(windowModel.id, event)}
+                />
+              )}
             </DesktopWindow>
           );
         })}
 
         <DesktopLaunchpad
           open={launchpadOpen}
-          zIndex={Math.max(1400, ...windows.map((windowModel) => windowModel.zIndex + 1))}
+          zIndex={DESKTOP_LAYER.menus}
           onOpenChange={setLaunchpadOpen}
           onLaunch={launchNavItem}
           onLaunchService={launchService}
@@ -2342,7 +2584,7 @@ export function DesktopExperience() {
             className={cn(
               "absolute bottom-1 left-1/2 z-[1050] flex -translate-x-1/2 items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
               DESKTOP_FROSTED_MATERIAL_CLASS,
-              draggingDockAppId && "border-foreground/20 bg-card/95 shadow-xl shadow-black/25",
+              draggingDockAppId && "border-foreground/20",
             )}
             data-dock-dragging={draggingDockAppId || undefined}
           >
@@ -2353,7 +2595,9 @@ export function DesktopExperience() {
                     label="Launchpad"
                     icon={StartUp02Icon}
                     active={launchpadOpen}
+                    expanded={launchpadOpen}
                     running={false}
+                    buttonRef={(button) => { launchpadButtonRef.current = button; }}
                     onClick={() => setLaunchpadOpen((current) => !current)}
                   />
                 </span>
@@ -2379,6 +2623,12 @@ export function DesktopExperience() {
                   const windowModel = windowByAppId.get(app.id);
                   const dockIndex = reorderableDockAppIds.indexOf(app.id);
                   const canReorder = dockIndex >= 0;
+                  const service = serviceStatusFor(app);
+                  const playingHidden = Boolean(
+                    windowModel?.minimized
+                    && windowModel.id === desktopAudiobookWindowId
+                    && desktopAudiobookPlayer.state.isPlaying,
+                  );
                   const dockButton = (dragHandle?: DockDragHandle) => (
                     <DockButton
                       label={app.title}
@@ -2391,6 +2641,9 @@ export function DesktopExperience() {
                       }
                       running={!!windowModel}
                       minimized={windowModel?.minimized}
+                      serviceState={service?.state}
+                      serviceActivity={service?.activity}
+                      stateNote={playingHidden ? "playing, window hidden" : undefined}
                       dragHandle={dragHandle}
                       buttonRef={(button) => {
                         if (button) dockButtonRefs.current.set(app.id, button);
@@ -2403,6 +2656,10 @@ export function DesktopExperience() {
                     <DockAppContextMenu
                       title={app.title}
                       windowModel={windowModel}
+                      serviceState={service?.state}
+                      onStartService={service && desktopServiceStartPath(service) && hasPermission("apps") && (service.state === "stopped" || service.state === "unhealthy")
+                        ? () => void startDockService(app.title, service)
+                        : undefined}
                       pinned={app.serviceApp
                         ? pinnedServiceIds.has(app.serviceApp.id)
                         : pinnedAppIdSet.has(app.id)}
@@ -2455,8 +2712,39 @@ export function DesktopExperience() {
         wallpaperAttribution={wallpaperAttribution}
         onOpenChange={setWallpaperDialogOpen}
         onWallpaperChange={updateWallpaper}
+        accountSave={wallpaperAccountSave}
       />
     </div>
+  );
+}
+
+/**
+ * A window's page. `src` is read once when the frame mounts: in-app
+ * navigation is reported back as `currentUrl`, and writing that into `src`
+ * would reload the page on every navigation.
+ */
+function DesktopAppFrame({
+  initialSrc,
+  title,
+  frameRef,
+  onLoad,
+}: {
+  initialSrc: string;
+  title: string;
+  frameRef: (frame: HTMLIFrameElement | null) => void;
+  onLoad: (event: SyntheticEvent<HTMLIFrameElement>) => void;
+}) {
+  const [src] = useState(initialSrc);
+  return (
+    <iframe
+      ref={frameRef}
+      src={src}
+      title={title}
+      className="size-full border-0 bg-background"
+      allow="autoplay; fullscreen; picture-in-picture"
+      allowFullScreen
+      onLoad={onLoad}
+    />
   );
 }
 
@@ -2502,16 +2790,12 @@ function SortableDockItem({ id, children }: SortableDockItemProps) {
         initial={false}
         animate={reduceMotion
           ? undefined
-          : { y: isDragging ? -10 : 0, scale: isDragging ? 1.08 : 1 }}
-        transition={{
-          type: "spring",
-          stiffness: 520,
-          damping: 34,
-          mass: 0.65,
-        }}
+          : { y: isDragging ? -TRAVEL.lift : 0, scale: isDragging ? 1.04 : 1 }}
+        // Lift is a 150ms tween; the settle after release is the one allowed spring.
+        transition={isDragging ? DESKTOP_DOCK_TRANSITION : DRAG_SETTLE_SPRING}
         className={cn(
-          "relative flex transform-gpu items-center will-change-transform",
-          isDragging && "drop-shadow-xl",
+          "relative flex transform-gpu items-center rounded-xl will-change-transform",
+          isDragging && "shadow-lg",
         )}
       >
         {children({
@@ -2529,8 +2813,10 @@ interface DockAppContextMenuProps {
   title: string;
   windowModel?: DesktopWindowModel;
   pinned?: boolean;
+  serviceState?: DesktopServiceStatus["state"];
   children: ReactNode;
   onOpen: () => void;
+  onStartService?: () => void;
   onMinimize?: () => void;
   onClose?: () => void;
   onTogglePin?: () => void;
@@ -2543,8 +2829,10 @@ function DockAppContextMenu({
   title,
   windowModel,
   pinned,
+  serviceState,
   children,
   onOpen,
+  onStartService,
   onMinimize,
   onClose,
   onTogglePin,
@@ -2557,15 +2845,19 @@ function DockAppContextMenu({
       ? `Restore ${title}`
       : `Show ${title}`
     : `Open ${title}`;
+  const missing = serviceState === "missing";
 
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <span className="flex">{children}</span>
       </ContextMenuTrigger>
-      <ContextMenuContent className="z-[1200] w-48">
+      <ContextMenuContent className="z-[1400] w-52">
         <ContextMenuGroup>
-          <ContextMenuItem onSelect={onOpen}>{primaryLabel}</ContextMenuItem>
+          {onStartService ? (
+            <ContextMenuItem onSelect={onStartService}>Start {title}</ContextMenuItem>
+          ) : null}
+          {!missing ? <ContextMenuItem onSelect={onOpen}>{primaryLabel}</ContextMenuItem> : null}
           {windowModel && !windowModel.minimized && onMinimize ? (
             <ContextMenuItem onSelect={onMinimize}>Minimize {title}</ContextMenuItem>
           ) : null}
@@ -2579,11 +2871,11 @@ function DockAppContextMenu({
             <ContextMenuGroup>
               <ContextMenuItem disabled={!onMoveLeft} onSelect={onMoveLeft}>
                 <HugeiconsIcon icon={ArrowLeft01Icon} size={16} />
-                Move Left
+                Move left
               </ContextMenuItem>
               <ContextMenuItem disabled={!onMoveRight} onSelect={onMoveRight}>
                 <HugeiconsIcon icon={ArrowRight01Icon} size={16} />
-                Move Right
+                Move right
               </ContextMenuItem>
             </ContextMenuGroup>
           </>
@@ -2611,6 +2903,14 @@ interface DockButtonProps {
   active: boolean;
   running: boolean;
   minimized?: boolean;
+  /** Container state for a service app: stopped and missing dim the icon, unhealthy adds a critical dot, working breathes. */
+  serviceState?: DesktopServiceStatus["state"];
+  /** What a working service is doing ("Restarting", "Updating"). */
+  serviceActivity?: string;
+  /** For a button that opens an overlay (Launchpad): its open state, as aria-expanded. */
+  expanded?: boolean;
+  /** Extra state for the name, e.g. "playing, window hidden". */
+  stateNote?: string;
   dragHandle?: DockDragHandle;
   buttonRef?: (button: HTMLButtonElement | null) => void;
   onClick: () => void;
@@ -2623,15 +2923,21 @@ function DockButton({
   active,
   running,
   minimized,
+  serviceState,
+  serviceActivity,
+  expanded,
+  stateNote,
   dragHandle,
   buttonRef,
   onClick,
 }: DockButtonProps) {
   const reduceMotion = useReducedMotion();
-  const motionTransition = {
-    duration: reduceMotion ? 0 : DESKTOP_DOCK_MOTION_SECONDS,
-    ease: DESKTOP_DOCK_MOTION_EASE,
-  };
+  const dimmed = serviceState === "stopped" || serviceState === "missing";
+  const name = desktopDockItemName({ label, running, minimized, serviceState, serviceActivity, stateNote });
+  const serviceLabel = serviceState ? desktopServiceStateLabel(serviceState, serviceActivity) : null;
+  const tooltip = [label, serviceLabel, stateNote ? stateNote.charAt(0).toUpperCase() + stateNote.slice(1) : minimized ? "Minimized" : null]
+    .filter(Boolean)
+    .join(" · ");
   const button = (
     <motion.button
       ref={(button) => {
@@ -2641,38 +2947,30 @@ function DockButton({
       {...dragHandle?.attributes}
       {...dragHandle?.listeners}
       type="button"
-      aria-label={label}
-      aria-pressed={active}
-      aria-grabbed={dragHandle?.dragging}
+      aria-label={name}
+      // An overlay toggle says whether it is open; an app says which window is in front.
+      aria-expanded={expanded}
+      aria-haspopup={expanded === undefined ? undefined : "dialog"}
+      aria-current={expanded === undefined && active ? "true" : undefined}
+      aria-pressed={undefined}
       data-dock-drag-handle={dragHandle ? "" : undefined}
+      data-dock-service-state={serviceState}
       initial={false}
-      animate={reduceMotion ? undefined : { y: active ? -2 : 0 }}
-      whileHover={reduceMotion ? undefined : { y: -7, scale: 1.12 }}
-      whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-      transition={motionTransition}
+      whileHover={reduceMotion ? undefined : { y: -TRAVEL.nudge }}
+      whileTap={reduceMotion ? undefined : { scale: 0.96, transition: { duration: DURATION.press } }}
+      transition={DESKTOP_DOCK_TRANSITION}
       className={cn(
-        "relative isolate flex size-12 origin-bottom transform-gpu items-center justify-center rounded-xl border border-transparent bg-transparent transition-[background-color,border-color,opacity] duration-150 ease-out will-change-transform hover:border-border hover:bg-muted/40",
+        "relative isolate flex size-12 origin-bottom transform-gpu items-center justify-center rounded-xl border border-transparent bg-transparent outline-none transition-[background-color,border-color] duration-150 ease-out will-change-transform hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         dragHandle && "cursor-grab touch-none active:cursor-grabbing",
-        active ? "opacity-100" : "opacity-75 hover:opacity-100",
-        minimized && "opacity-55",
+        active && "bg-muted",
       )}
       onClick={onClick}
     >
-      <AnimatePresence initial={false}>
-        {active ? (
-          <motion.span
-            key="active"
-            layoutId="desktop-dock-active"
-            data-dock-active-indicator
-            className="pointer-events-none absolute inset-0 z-0 rounded-xl border border-black/10 bg-white/70 shadow-sm dark:border-white/25 dark:bg-white/15 dark:shadow-black/30"
-            transition={motionTransition}
-          />
-        ) : null}
-      </AnimatePresence>
       <span
+        data-dock-icon
         className={cn(
-          "relative z-10 flex transition-[filter] duration-150 ease-out",
-          active && "brightness-110 saturate-110",
+          "relative z-10 flex transition-opacity duration-150 ease-out",
+          dimmed && "opacity-50",
         )}
       >
         <DockAppIcon
@@ -2680,17 +2978,35 @@ function DockButton({
           icon={icon}
           iconUrl={iconUrl}
         />
+        {serviceState === "unhealthy" ? (
+          <span
+            aria-hidden="true"
+            data-dock-failed-indicator
+            className="absolute -right-1 -top-1 size-2 rounded-full bg-status-critical ring-2 ring-card"
+          />
+        ) : serviceState === "working" ? (
+          <span
+            aria-hidden="true"
+            data-dock-working-indicator
+            className="absolute -right-1 -top-1 size-2 rounded-full bg-status-info ring-2 ring-card motion-safe:animate-breathe"
+          />
+        ) : null}
       </span>
       <AnimatePresence initial={false}>
         {running ? (
           <motion.span
             key="running"
+            aria-hidden="true"
             data-dock-running-indicator
-            initial={reduceMotion ? false : { opacity: 0, scale: 0.5 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={reduceMotion ? undefined : { opacity: 0, scale: 0.5 }}
-            transition={motionTransition}
-            className="absolute -bottom-1 z-10 size-1 rounded-full bg-foreground/80"
+            data-minimized={minimized || undefined}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1, transition: DESKTOP_DOCK_TRANSITION }}
+            exit={{ opacity: 0, transition: { duration: DURATION.exitFast, ease: EASE_EXIT } }}
+            className={cn(
+              "absolute -bottom-1 z-10 size-1 rounded-full",
+              // Minimized is a hollow dot: state by shape, not by dimming.
+              minimized ? "ring-1 ring-foreground/70" : "bg-foreground/70",
+            )}
           />
         ) : null}
       </AnimatePresence>
@@ -2700,7 +3016,7 @@ function DockButton({
   return (
     <Tooltip>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent side="top" sideOffset={8}>{label}</TooltipContent>
+      <TooltipContent side="top" sideOffset={8}>{tooltip}</TooltipContent>
     </Tooltip>
   );
 }

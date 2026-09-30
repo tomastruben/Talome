@@ -16,7 +16,9 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
+import { toast } from "sonner";
 import { HugeiconsIcon, Cancel01Icon, Add01Icon } from "@/components/icons";
+import { UNDO_WINDOW_MS } from "@/lib/motion";
 import { DraggableWrapper } from "@/components/draggable-dashboard";
 import { useWidgetLayout } from "@/hooks/use-widget-layout";
 import {
@@ -63,30 +65,43 @@ const TWO_COL_BREAKPOINT = 370;
 
 export type WidgetLayoutController = ReturnType<typeof useWidgetLayout>;
 
-const WIDGET_LABELS: Record<BuiltinWidgetType, string> = {
+/** Sentence case, like the widgets' own headers ("Active downloads"). */
+export const WIDGET_LABELS: Record<BuiltinWidgetType, string> = {
   cpu:                  "CPU",
   memory:               "Memory",
   disk:                 "Disk",
-  "system-health":      "System Health",
+  "system-health":      "System health",
   "services":           "Services",
-  "active-downloads":   "Active Downloads",
-  "activity":           "Recent Activity",
-  "digest":             "Weekly Digest",
-  "media-calendar":     "Coming Up",
-  "quick-actions":      "Quick Actions",
-  "arr-status":         "Media Services",
+  "active-downloads":   "Active downloads",
+  "activity":           "Recent activity",
+  "digest":             "Weekly digest",
+  "media-calendar":     "Coming up",
+  "quick-actions":      "Quick actions",
+  "arr-status":         "Media services",
   "overseerr-requests": "Requests",
   "storage-mounts":     "Storage",
-  "system-info":        "System Info",
-  "system-status":      "System Status",
+  "system-info":        "System info",
+  "system-status":      "System status",
   "network":            "Network",
   "divider":            "Divider",
   "backup-status":      "Backups",
   "ollama-status":      "Local AI",
   launcher:             "Launcher",
-  audiobooks:           "Continue Listening",
-  optimization:         "Media Health",
+  audiobooks:           "Continue listening",
+  optimization:         "Media health",
 };
+
+/** A widget's name for people: its label, or a custom widget's manifest title (never its id). */
+export function widgetDisplayLabel(
+  widgetType: WidgetType,
+  manifestById: ReadonlyMap<string, { title?: string }>,
+): string {
+  if (widgetType.startsWith("widget:")) {
+    const id = widgetType.slice("widget:".length);
+    return manifestById.get(id)?.title || "custom widget";
+  }
+  return WIDGET_LABELS[widgetType as BuiltinWidgetType] ?? "widget";
+}
 
 function widgetComponent(
   widgetType: WidgetType,
@@ -245,9 +260,7 @@ const WidgetItem = React.memo(function WidgetItem({
   const hasHeightOptions = heightOptions.length > 1;
   const hasResizeControls = resizable && (hasWidthOptions || hasHeightOptions);
   const compact = effectiveSize.cols === 1 && effectiveSize.rows === 1;
-  const widgetLabel = widgetType.startsWith("widget:")
-    ? widgetType.slice("widget:".length)
-    : WIDGET_LABELS[widgetType as BuiltinWidgetType];
+  const widgetLabel = widgetDisplayLabel(widgetType, manifestById);
 
   return (
     <DraggableWrapper
@@ -461,7 +474,7 @@ export function ControlledWidgetGrid({
   maxWidgetRows?: WidgetSize["rows"];
   onEditDoneRequested?: () => void;
 }) {
-  const { layout, toggleWidget, addWidget, reorderLayout, resizeWidget } = controller;
+  const { layout, setWidgetVisible, addWidget, reorderLayout, resizeWidget } = controller;
   const [activeId, setActiveId] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [windowWidth, setWindowWidth] = useState<number>(0);
@@ -584,7 +597,17 @@ export function ControlledWidgetGrid({
             maxWidgetCols={maxWidgetCols}
             maxWidgetRows={maxWidgetRows}
             isNew={w.instanceId === newWidgetId}
-            onRemove={() => toggleWidget(w.instanceId)}
+            onRemove={() => {
+              setWidgetVisible(w.instanceId, false);
+              const label = widgetDisplayLabel(w.widgetType, manifestById);
+              // Removing only hides it: Undo brings it back where it was. It
+              // sets visible rather than toggling, so re-adding the widget
+              // before pressing Undo doesn't hide it again.
+              toast(`Removed ${label}`, {
+                duration: UNDO_WINDOW_MS,
+                action: { label: "Undo", onClick: () => setWidgetVisible(w.instanceId, true) },
+              });
+            }}
             onResize={(s) => resizeWidget(w.instanceId, s)}
           />
         );

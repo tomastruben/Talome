@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { HugeiconsIcon, Film01Icon, Tv01Icon, ArrowDown01Icon, Download01Icon } from "@/components/icons";
 import { Progress } from "@/components/ui/progress";
@@ -13,10 +14,11 @@ import type { DownloadQueueItem, DownloadTorrent } from "@talome/types";
 import { WidgetList, WidgetListState } from "./list-widget";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
-function openDownloads() {
-  if (!requestDesktopNavigation("/dashboard/media?tab=downloads")) {
-    window.location.assign("/dashboard/media?tab=downloads");
-  }
+const DOWNLOADS_ROUTE = "/dashboard/media?tab=downloads";
+
+/** Opens the downloads tab in place: a desktop window when embedded, else client navigation (never a full reload). */
+export function openDownloadsRoute(push: (href: string) => void) {
+  if (!requestDesktopNavigation(DOWNLOADS_ROUTE)) push(DOWNLOADS_ROUTE);
 }
 
 function formatSpeed(bps: number): string {
@@ -95,28 +97,34 @@ function TorrentRow({ torrent }: { torrent: DownloadTorrent }) {
 export function ActiveDownloadsWidget() {
   const { data, queue, torrents, isLoading, error, activity, retry, isValidating } = useDownloads();
   const { activeQueue: displayQueue, activeTorrents: displayTorrents, activeCount, secondary } = activity;
+  const router = useRouter();
   const previousRef = useRef<ReturnType<typeof getDownloadCompletionSnapshot> | null>(null);
 
+  // A toast only for an item this widget saw in flight and now sees verified
+  // complete (never for items that vanished, e.g. cancelled, or that were
+  // already complete when the widget first loaded).
   useEffect(() => {
     if (!data || error) return;
     const current = getDownloadCompletionSnapshot(queue, torrents);
     if (previousRef.current) {
       for (const title of getNewlyCompletedDownloads(previousRef.current, current)) {
-        toast.success(`Downloaded: ${title}`, { action: { label: "View", onClick: openDownloads } });
+        toast.success(`Downloaded ${title}`, {
+          action: { label: "View", onClick: () => openDownloadsRoute((href) => router.push(href)) },
+        });
       }
     }
     previousRef.current = current;
-  }, [data, error, torrents, queue]);
+  }, [data, error, torrents, queue, router]);
 
   return (
     <Widget>
       <WidgetHeader
-        title="Active Downloads"
+        title="Active downloads"
         href="/dashboard/media?tab=downloads"
         hrefLabel={!error && !isLoading && activeCount > 0 ? `${activeCount} active` : "View all"}
       />
       {isLoading ? (
-        <WidgetListState icon={Download01Icon} message="Loading active downloads..." />
+        <WidgetListState icon={Download01Icon} message="Loading active downloads…" />
       ) : error ? (
         <WidgetListState icon={Download01Icon} message="Download stats unavailable." action={<Button variant="outline" size="sm" onClick={() => { void retry(); }} disabled={isValidating}>Retry</Button>} />
       ) : displayQueue.length === 0 && displayTorrents.length === 0 ? (

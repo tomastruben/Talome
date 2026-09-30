@@ -31,6 +31,8 @@ import {
   type WidgetLayoutController,
 } from "@/components/widgets/widget-grid";
 import { cn } from "@/lib/utils";
+import { toastWarning } from "@/lib/toast";
+import { WINDOW_CONTROL_GLYPH_CLASS } from "@/components/desktop/desktop-window";
 
 const MAX_WALLPAPER_BYTES = 2 * 1024 * 1024;
 const WALLPAPER_DIALOG_VIEWPORT_MARGIN = 16;
@@ -558,6 +560,29 @@ export function DesktopWidgetsPanel({
   );
 }
 
+export const WALLPAPER_ACCOUNT_SAVE_FAILED = "Wallpaper saved on this browser only. Couldn't save it to your account.";
+
+/**
+ * A failed account save is shown inside the wallpaper dialog. Choosing a
+ * wallpaper and closing the dialog right away is the common flow, so when
+ * the dialog is already closed the failure goes in a warning toast instead,
+ * with the same Retry. Returns whether a toast was shown.
+ */
+export function reportWallpaperAccountSaveFailure(dialogOpen: boolean, retry: () => void): boolean {
+  if (dialogOpen) return false;
+  toastWarning(WALLPAPER_ACCOUNT_SAVE_FAILED, {
+    id: "desktop-wallpaper-account-save",
+    action: { label: "Retry", onClick: retry },
+  });
+  return true;
+}
+
+/** Whether the wallpaper reached the account (other devices), after it was applied here. */
+export type WallpaperAccountSave =
+  | { status: "idle" }
+  | { status: "saving" }
+  | { status: "failed"; retry: () => void };
+
 interface DesktopWallpaperDialogProps {
   open: boolean;
   wallpaperUrl?: string;
@@ -567,12 +592,15 @@ interface DesktopWallpaperDialogProps {
     wallpaperUrl?: string,
     attribution?: DesktopWallpaperAttribution,
   ) => boolean;
+  /** Account save state; a failure is shown inline with Retry (the change stays on this browser). */
+  accountSave?: WallpaperAccountSave;
 }
 
 function DesktopWallpaperPicker({
   wallpaperUrl,
   onOpenChange,
   onWallpaperChange,
+  accountSave,
   onTitlebarPointerDown,
 }: Omit<DesktopWallpaperDialogProps, "open"> & {
   onTitlebarPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -637,36 +665,27 @@ function DesktopWallpaperPicker({
         className="grid h-11 touch-none cursor-grab select-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-border/70 px-3 active:cursor-grabbing"
         onPointerDown={onTitlebarPointerDown}
       >
-        <div className="flex items-center gap-2" aria-label="Window controls">
+        {/* A dialog, not a window: only the close light, with the window's 28px target
+            (no disabled minimize/zoom dots that look like controls but aren't). */}
+        <div className="-ml-1.5 flex items-center" role="group" aria-label="Window controls">
           <button
             type="button"
-            aria-label="Close Desktop Wallpaper"
-            className="group/control flex size-3.5 items-center justify-center rounded-full bg-window-close ring-1 ring-inset ring-window-control-edge transition-colors duration-150"
+            aria-label="Close desktop wallpaper"
+            className="group/control relative flex size-7 items-center justify-center rounded-full outline-none before:size-3.5 before:rounded-full before:bg-window-close before:ring-1 before:ring-inset before:ring-window-control-edge focus-visible:ring-2 focus-visible:ring-ring"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => onOpenChange(false)}
           >
             <HugeiconsIcon
               icon={Cancel01Icon}
-              size={8}
-              strokeWidth={2}
-              className="text-background opacity-0 transition-opacity duration-150 group-hover/control:opacity-100"
+              size={10}
+              strokeWidth={2.5}
+              aria-hidden="true"
+              className={cn(WINDOW_CONTROL_GLYPH_CLASS, "group-hover/control:opacity-100 group-focus-visible/control:opacity-100 contrast-more:opacity-100")}
             />
           </button>
-          <button
-            type="button"
-            aria-label="Minimize Desktop Wallpaper"
-            className="size-3.5 cursor-default rounded-full bg-muted-foreground/20"
-            disabled
-          />
-          <button
-            type="button"
-            aria-label="Maximize Desktop Wallpaper"
-            className="size-3.5 cursor-default rounded-full bg-muted-foreground/20"
-            disabled
-          />
         </div>
         <DialogTitle className="pointer-events-none truncate px-2 text-center text-sm font-medium leading-normal">
-          Desktop Wallpaper
+          Desktop wallpaper
         </DialogTitle>
         <DialogDescription className="sr-only">
           Choose a Talome wallpaper or upload a custom image.
@@ -743,6 +762,15 @@ function DesktopWallpaperPicker({
         {error ? (
           <p className="text-sm text-status-critical" role="alert">{error}</p>
         ) : null}
+        {accountSave?.status === "failed" ? (
+          <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground" role="alert">
+            <span>Saved on this browser only. Couldn&apos;t save to your account.</span>
+            {/* A 24px target at least (WCAG 2.5.8), not a bare text link. */}
+            <Button type="button" variant="outline" size="xs" onClick={accountSave.retry}>
+              Retry
+            </Button>
+          </p>
+        ) : null}
       </div>
 
       <footer className="flex items-center gap-2 border-t border-border/70 px-4 py-3">
@@ -773,6 +801,7 @@ export function DesktopWallpaperDialog({
   wallpaperAttribution,
   onOpenChange,
   onWallpaperChange,
+  accountSave,
 }: DesktopWallpaperDialogProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const positionRef = useRef<WallpaperDialogPosition>({ x: 0, y: 0 });
@@ -857,6 +886,7 @@ export function DesktopWallpaperDialog({
           wallpaperAttribution={wallpaperAttribution}
           onOpenChange={onOpenChange}
           onWallpaperChange={onWallpaperChange}
+          accountSave={accountSave}
           onTitlebarPointerDown={startDrag}
         />
       </DialogContent>

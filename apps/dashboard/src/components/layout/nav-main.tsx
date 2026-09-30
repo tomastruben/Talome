@@ -16,11 +16,26 @@ import { adaptiveDownloadsInterval, useDownloads } from "@/hooks/use-downloads";
 import { useUser } from "@/hooks/use-user";
 import { CORE_URL } from "@/lib/constants";
 import { usePendingApprovals } from "@/components/trust/api";
-import { startNav, contentNav, operationsNav, systemNav, approvalsNavItem } from "./nav-config";
+import { Badge } from "@/components/ui/badge";
+import { startNav, contentNav, operationsNav, systemNav, approvalsNavItem, canSeeNavItem } from "./nav-config";
 import type { NavItem } from "./nav-config";
 
 /** Nav download badge: 10s while something is downloading, 30s otherwise. */
 const NAV_DOWNLOADS_INTERVAL = adaptiveDownloadsInterval(10_000);
+
+/**
+ * One status grammar (spec §4.6): a breathing info dot means work in flight,
+ * a plain muted number is a quantity, and only "needs you" gets the amber
+ * count badge. Every indicator carries screen-reader text.
+ */
+function WorkingDot({ label }: { label: string }) {
+  return (
+    <span className="ml-auto flex items-center" data-nav-indicator="working">
+      <span aria-hidden="true" className="size-1.5 rounded-full bg-status-info motion-safe:animate-breathe" />
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
 
 function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStreaming, isIntelligenceActive, badgeCount, onAction }: {
   item: NavItem;
@@ -29,7 +44,7 @@ function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStrea
   isActivelyDownloading?: boolean;
   isStreaming?: boolean;
   isIntelligenceActive?: boolean;
-  /** Attention count (e.g. pending approvals), shown as an amber pill. */
+  /** "Needs you" count (pending approvals): the amber count badge. */
   badgeCount?: number;
   onAction?: () => void;
 }) {
@@ -39,41 +54,21 @@ function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStrea
       <span>{item.title}</span>
       {item.title === "Media" && totalCount !== undefined && totalCount > 0 && (
         isActivelyDownloading ? (
-          <span className="ml-auto flex items-center">
-            <span className="relative flex size-1.5">
-              <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-primary/60 opacity-75" />
-              <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
-            </span>
-          </span>
+          <WorkingDot label="Downloading" />
         ) : (
-          <span className="ml-auto text-xs font-medium tabular-nums bg-primary/15 text-primary rounded-full px-1.5 py-0.5 leading-none">
+          <span className="ml-auto text-xs tabular-nums text-muted-foreground" data-nav-indicator="quantity">
             {totalCount}
+            <span className="sr-only"> in the download queue</span>
           </span>
         )
       )}
-      {item.title === "Assistant" && isStreaming && (
-        <span className="ml-auto flex items-center">
-          <span className="relative flex size-1.5">
-            <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-primary/60 opacity-75" />
-            <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
-          </span>
-        </span>
-      )}
+      {item.title === "Assistant" && isStreaming && <WorkingDot label="Assistant is replying" />}
+      {item.title === "Intelligence" && isIntelligenceActive && <WorkingDot label="Self-improvement running" />}
       {badgeCount !== undefined && badgeCount > 0 && (
-        <span
-          className="ml-auto text-xs font-medium tabular-nums bg-status-warning/15 text-status-warning rounded-full px-1.5 py-0.5 leading-none"
-          aria-label={`${badgeCount} pending`}
-        >
+        <Badge variant="count" className="ml-auto" data-nav-indicator="needs-you">
           {badgeCount}
-        </span>
-      )}
-      {item.title === "Intelligence" && isIntelligenceActive && (
-        <span className="ml-auto flex items-center">
-          <span className="relative flex size-1.5">
-            <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-status-warning/60 opacity-75" />
-            <span className="relative inline-flex size-1.5 rounded-full bg-status-warning" />
-          </span>
-        </span>
+          <span className="sr-only"> waiting</span>
+        </Badge>
       )}
     </>
   );
@@ -81,12 +76,12 @@ function NavItemRow({ item, isActive, totalCount, isActivelyDownloading, isStrea
   return (
     <SidebarMenuItem>
       {onAction ? (
-        <SidebarMenuButton isActive={isActive} onClick={onAction}>
+        <SidebarMenuButton isActive={isActive} onClick={onAction} tooltip={item.title}>
           {content}
         </SidebarMenuButton>
       ) : (
-        <SidebarMenuButton asChild isActive={isActive}>
-          <Link href={item.url}>{content}</Link>
+        <SidebarMenuButton asChild isActive={isActive} tooltip={item.title}>
+          <Link href={item.url} aria-current={isActive ? "page" : undefined}>{content}</Link>
         </SidebarMenuButton>
       )}
     </SidebarMenuItem>
@@ -124,11 +119,7 @@ export function NavMain() {
     "bug-hunt": () => bugHunt.open(),
   };
 
-  function isVisible(item: NavItem): boolean {
-    if (item.adminOnly && !isAdmin) return false;
-    if (item.permission && !hasPermission(item.permission)) return false;
-    return true;
-  }
+  const isVisible = (item: NavItem) => canSeeNavItem(item, { isAdmin, hasPermission });
 
   const filteredSystem = systemNav.filter(isVisible);
 

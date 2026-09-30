@@ -33,6 +33,8 @@ export const DURATION = {
   press: 0.1,
   /** Hover, colour, small reveals, menus and popovers in, tabs indicator, height glide. */
   fast: 0.15,
+  /** Activity pills, the now-playing chip and the header title in (spec §3.2). */
+  pill: 0.16,
   /** Dialogs, stack push, window open, sheet content, toasts in. */
   base: 0.18,
   /** Edge-anchored sheets in. The 200ms ceiling. */
@@ -49,6 +51,7 @@ export const DURATION = {
 export const DURATION_MS = {
   press: 100,
   fast: 150,
+  pill: 160,
   base: 180,
   sheet: 200,
   exit: 140,
