@@ -136,6 +136,34 @@ export const mcpTokens = sqliteTable("mcp_tokens", {
   tokenHash: text("token_hash").notNull(),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   lastUsedAt: text("last_used_at"),
+  /** JSON-serialized McpTokenScope — what this token may do. NULL is treated as read-only. */
+  scope: text("scope"),
+  /** ISO timestamp after which the token stops working; NULL = never expires */
+  expiresAt: text("expires_at"),
+});
+
+/**
+ * Server-issued approvals for destructive tool calls from non-interactive callers
+ * (MCP clients, messaging, automations, background loops). Bound to one actor,
+ * one tool and one exact set of arguments, and consumed by a single execution.
+ */
+export const toolApprovals = sqliteTable("tool_approvals", {
+  id: text("id").primaryKey(),
+  /** Short code a human can type to approve over Telegram/Discord */
+  code: text("code").notNull(),
+  toolName: text("tool_name").notNull(),
+  tier: text("tier", { enum: ["read", "modify", "destructive"] }).notNull(),
+  actorKey: text("actor_key").notNull(),
+  actorLabel: text("actor_label").notNull(),
+  argsDigest: text("args_digest").notNull(),
+  /** Redacted, truncated arguments shown to the approver */
+  argsPreview: text("args_preview").notNull().default(""),
+  status: text("status", { enum: ["pending", "approved", "denied", "used", "expired"] }).notNull().default("pending"),
+  createdAt: text("created_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  decidedAt: text("decided_at"),
+  decidedBy: text("decided_by"),
+  usedAt: text("used_at"),
 });
 
 export const memories = sqliteTable("memories", {

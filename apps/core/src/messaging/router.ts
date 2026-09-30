@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { createChatStream } from "../ai/agent.js";
 import { writeMemory } from "../db/memories.js";
 import type { UIMessage } from "ai";
+import type { ExecutionActor } from "../ai/execution-actor.js";
+import { decideApprovalByCode } from "../approval/tool-approvals.js";
 
 export interface InboundMessage {
   platform: "telegram" | "discord";
@@ -120,16 +122,36 @@ async function extractMemoriesBackground(conversationId: string, text: string) {
   }
 }
 
+/** "approve ABC123" / "deny ABC123" — typed by the person, never produced by the model. */
+const APPROVAL_REPLY = /^\s*(approve|deny)\s+([A-Za-z0-9]{6})\s*[.!]?\s*$/i;
+
 export async function routeMessage(msg: InboundMessage): Promise<string> {
   const { platform, externalId, text, senderName } = msg;
+  const actor: ExecutionActor = { kind: "messaging", platform, externalId };
 
   const conversationId = ensureConversation(platform, externalId, text);
   persistMessage(conversationId, "user", text);
 
+  // Approval replies are decided here, before the model sees the message, and
+  // only match requests raised in this same chat.
+  const approvalReply = text.match(APPROVAL_REPLY);
+  if (approvalReply) {
+    const approve = approvalReply[1].toLowerCase() === "approve";
+    const code = approvalReply[2].toUpperCase();
+    const decision = decideApprovalByCode(actor, code, approve, `${platform}:${senderName ?? externalId}`);
+    if (!decision.ok || !approve) {
+      const reply = decision.ok
+        ? `Denied — ${decision.approval.toolName} will not run (request ${code}).`
+        : `Couldn't ${approve ? "approve" : "deny"} ${code}: ${decision.error}.`;
+      persistMessage(conversationId, "assistant", reply);
+      return reply;
+    }
+  }
+
   const messages = loadMessages(conversationId);
   const context = `Platform: ${platform}${senderName ? `, user: ${senderName}` : ""}. Respond in plain text (no markdown, no backtick code blocks — the user is reading this in a chat app).`;
 
-  const result = await createChatStream(messages, context);
+  const result = await createChatStream(messages, context, undefined, undefined, undefined, actor);
 
   // Collect all streamed text chunks
   let fullText = "";

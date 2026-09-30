@@ -857,6 +857,45 @@ export function runMigrations() {
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_attempts_run_id ON setup_attempts(run_id)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_setup_runs_status ON setup_runs(status)`);
 
+  // ── MCP token scopes + server-issued tool approvals ──────────────────────
+  try {
+    db.run(sql`ALTER TABLE mcp_tokens ADD COLUMN scope TEXT`);
+  } catch {
+    // Column already exists — ignore
+  }
+  try {
+    db.run(sql`ALTER TABLE mcp_tokens ADD COLUMN expires_at TEXT`);
+  } catch {
+    // Column already exists — ignore
+  }
+  // Tokens created before scopes existed had full access; keep them working
+  // unchanged. New tokens are created with an explicit (read-only by default) scope.
+  const scopesMigrated = db.get(sql`SELECT 1 FROM schema_versions WHERE version = 16`);
+  if (!scopesMigrated) {
+    db.run(sql`UPDATE mcp_tokens SET scope = ${JSON.stringify({ maxTier: "destructive", domains: "*", apps: "*" })} WHERE scope IS NULL`);
+  }
+
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS tool_approvals (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      actor_key TEXT NOT NULL,
+      actor_label TEXT NOT NULL,
+      args_digest TEXT NOT NULL,
+      args_preview TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      decided_at TEXT,
+      decided_by TEXT,
+      used_at TEXT
+    )
+  `);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_tool_approvals_lookup ON tool_approvals(actor_key, tool_name, args_digest, status)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_tool_approvals_status ON tool_approvals(status, created_at)`);
+
   // ── Record schema versions ─────────────────────────────────────────────
   recordMigration(1, "Initial schema: users, conversations, messages, settings, audit_log");
   recordMigration(2, "App store: store_sources, app_catalog, installed_apps");
@@ -873,6 +912,7 @@ export function runMigrations() {
   recordMigration(13, "Optimization jobs: ai_diagnosis column for AI-first error handling");
   recordMigration(14, "Installed apps: display_name column for user-defined app names");
   recordMigration(15, "Setup loop: setup_runs and setup_attempts for autonomous app configuration");
+  recordMigration(16, "MCP token scopes and expiry; server-issued tool approvals");
 
   console.log("Database migrations complete");
 }

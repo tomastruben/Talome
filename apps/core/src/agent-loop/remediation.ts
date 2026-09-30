@@ -22,6 +22,8 @@ import { jellyfinGetStatusTool, jellyfinScanLibraryTool } from "../ai/tools/jell
 import { cleanupDockerTool } from "../ai/tools/storage-tools.js";
 import { searchContainerLogsTool } from "../ai/tools/log-tools.js";
 import { rollbackUpdateTool, checkDependenciesTool } from "../ai/tools/app-tools.js";
+import { gateTools } from "../ai/tool-gateway.js";
+import { getToolTier } from "../ai/agent.js";
 
 function getApiKey(): string | undefined {
   return getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
@@ -280,7 +282,7 @@ async function remediateViaApi(
     model: anthropic(model),
     system: buildSystemPrompt(autoRemediate, event.type),
     prompt: buildEventPrompt(event, triage, autoRemediate),
-    tools: REMEDIATION_TOOLS,
+    tools: gateTools(REMEDIATION_TOOLS, { kind: "background", loop: "remediation" }, getToolTier),
     stopWhen: stepCountIs(8),
     maxRetries: 1,
   });

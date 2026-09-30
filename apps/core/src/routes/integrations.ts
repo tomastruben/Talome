@@ -7,6 +7,8 @@ import { startTelegramBot, stopTelegramBot, getTelegramBotStatus } from "../mess
 import { startDiscordBot, stopDiscordBot, getDiscordBotStatus } from "../messaging/discord-bot.js";
 import { serverError } from "../middleware/request-logger.js";
 import { generateMcpToken } from "./mcp.js";
+import { DEFAULT_TOKEN_SCOPE, mcpTokenScopeSchema, parseTokenScope } from "../ai/token-scope.js";
+import { listDomains } from "../ai/tool-registry.js";
 
 const integrations = new Hono();
 
@@ -18,7 +20,20 @@ const botTokenSchema = z.object({
 
 const mcpTokenSchema = z.object({
   name: z.string().min(1).max(100).transform((s) => s.trim()),
+  /** Omitted → read-only access to everything (DEFAULT_TOKEN_SCOPE) */
+  scope: mcpTokenScopeSchema.optional(),
+  /** Omitted or null → never expires */
+  expiresInDays: z.number().int().min(1).max(3650).nullable().optional(),
 });
+
+const mcpTokenUpdateSchema = z.object({
+  name: z.string().min(1).max(100).transform((s) => s.trim()).optional(),
+  scope: mcpTokenScopeSchema.optional(),
+});
+
+function expiryFromDays(days: number | null | undefined): string | null {
+  return days ? new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString() : null;
+}
 
 // ── Telegram ─────────────────────────────────────────────────────────────────
 
@@ -110,10 +125,12 @@ integrations.get("/mcp/tokens", (c) => {
         name: schema.mcpTokens.name,
         createdAt: schema.mcpTokens.createdAt,
         lastUsedAt: schema.mcpTokens.lastUsedAt,
+        scope: schema.mcpTokens.scope,
+        expiresAt: schema.mcpTokens.expiresAt,
       })
       .from(schema.mcpTokens)
       .all();
-    return c.json(tokens);
+    return c.json(tokens.map((t) => ({ ...t, scope: parseTokenScope(t.scope) })));
   } catch (err) {
     return serverError(c, err, { message: "Failed to list MCP tokens" });
   }
@@ -124,15 +141,51 @@ integrations.post("/mcp/tokens", async (c) => {
     const parsed = mcpTokenSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ ok: false, error: parsed.error.flatten() }, 400);
     const { name } = parsed.data;
+    const scope = parsed.data.scope ?? DEFAULT_TOKEN_SCOPE;
+    const expiresAt = expiryFromDays(parsed.data.expiresInDays);
 
     const { id, plaintext, hash } = generateMcpToken(name);
     db.insert(schema.mcpTokens)
-      .values({ id, name, tokenHash: hash })
+      .values({ id, name, tokenHash: hash, scope: JSON.stringify(scope), expiresAt })
       .run();
 
-    return c.json({ ok: true, id, name, token: plaintext });
+    return c.json({ ok: true, id, name, token: plaintext, scope, expiresAt });
   } catch (err) {
     return serverError(c, err, { message: "Failed to create MCP token" });
+  }
+});
+
+integrations.patch("/mcp/tokens/:id", async (c) => {
+  try {
+    const { id } = c.req.param();
+    const parsed = mcpTokenUpdateSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ ok: false, error: parsed.error.flatten() }, 400);
+
+    const updates: { name?: string; scope?: string } = {};
+    if (parsed.data.name) updates.name = parsed.data.name;
+    if (parsed.data.scope) updates.scope = JSON.stringify(parsed.data.scope);
+    if (Object.keys(updates).length === 0) return c.json({ ok: false, error: "Nothing to update" }, 400);
+
+    const result = db.update(schema.mcpTokens).set(updates).where(eq(schema.mcpTokens.id, id)).run();
+    if (result.changes === 0) return c.json({ ok: false, error: "Token not found" }, 404);
+    return c.json({ ok: true });
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to update MCP token", context: { tokenId: c.req.param("id") } });
+  }
+});
+
+/** Domains and installed apps a token scope can be limited to. */
+integrations.get("/mcp/scope-options", (c) => {
+  try {
+    const domains = listDomains().map(({ name, toolCount }) => ({ name, toolCount }));
+    const apps = db
+      .select({ appId: schema.installedApps.appId, displayName: schema.installedApps.displayName })
+      .from(schema.installedApps)
+      .all()
+      .map((a) => ({ appId: a.appId, name: a.displayName || a.appId }));
+    return c.json({ domains, apps });
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to list MCP scope options" });
   }
 });
 

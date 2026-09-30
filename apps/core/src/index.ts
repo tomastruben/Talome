@@ -20,6 +20,7 @@ import { notifications } from "./routes/notifications.js";
 import { notificationChannels } from "./routes/notification-channels.js";
 import { memories } from "./routes/memories.js";
 import { integrations } from "./routes/integrations.js";
+import { approvals } from "./routes/approvals.js";
 import { mcp } from "./routes/mcp.js";
 import { setupTerminal } from "./routes/terminal.js";
 import { automations } from "./routes/automations.js";
@@ -385,6 +386,9 @@ app.use("/api/users/*", requireRole("admin"));
 app.use("/api/settings/*", requireRole("admin"));
 app.use("/api/evolution/*", requireRole("admin"));
 app.use("/api/stores/*", requireRole("admin"));
+// MCP tokens and bot credentials grant access to every tool — admin only
+app.use("/api/integrations/*", requireRole("admin"));
+app.use("/api/approvals/*", requireRole("admin"));
 
 // ── Feature-level permission guards ─────────────────────────────────────────
 app.use("/api/media/*", requirePermission("media"));
@@ -423,6 +427,7 @@ app.route("/api/notification-channels", notificationChannels);
 app.route("/api/memories", memories);
 app.route("/api/suggestions", suggestionsRoute);
 app.route("/api/integrations", integrations);
+app.route("/api/approvals", approvals);
 app.route("/api/widgets", widgets);
 app.route("/api/community", community);
 app.route("/api/proxy", proxy);

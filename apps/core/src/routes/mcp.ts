@@ -6,23 +6,21 @@ import { randomUUID } from "node:crypto";
 import { hashToken, verifyBearerToken } from "../middleware/auth.js";
 import { writeAuditEntry } from "../db/audit.js";
 import { getEnabledRegisteredTools, getToolTier, getDisabledToolNames } from "../ai/agent.js";
-import { checkToolPolicy, getSecurityMode } from "../ai/tool-gateway.js";
+import { authorizeToolCall } from "../ai/tool-gateway.js";
+import { getToolDomain } from "../ai/tool-registry.js";
+import { checkTokenScope, isToolInScope } from "../ai/token-scope.js";
+import { describeActor, type ExecutionActor } from "../ai/execution-actor.js";
 import { summarizeForAudit } from "../utils/redact.js";
 
 // ── MCP Server factory ─────────────────────────────────────────────────────────
 // Auto-registers tools from active domains so MCP stays in sync with the agent
 // and only exposes tools for configured apps (same filtering as dashboard chat).
-// Every call runs through the same security policy as chat and is audited with
-// the caller's identity, the tool's real tier and redacted arguments.
+// Every call is checked against the calling token's own scope, then runs through
+// the same authorization as chat (security mode + server-issued approvals), and
+// is audited with the caller's identity, the tool's real tier and redacted arguments.
 
 /** Who is calling over MCP — a bearer token (HTTP) or the local stdio process. */
-export type McpActor =
-  | { kind: "token"; tokenId: string; tokenName: string }
-  | { kind: "stdio" };
-
-function describeActor(actor: McpActor): string {
-  return actor.kind === "token" ? `token "${actor.tokenName}" (${actor.tokenId})` : "stdio (local Claude Code)";
-}
+export type McpActor = Extract<ExecutionActor, { kind: "token" } | { kind: "stdio" }>;
 
 /** Tools report failure by returning `{ error }`, `{ success: false }` or `{ ok: false }` rather than throwing. */
 export function isToolErrorResult(result: unknown): boolean {
@@ -33,9 +31,13 @@ export function isToolErrorResult(result: unknown): boolean {
 
 type McpToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
+function errorResult(message: string): McpToolResult {
+  return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+}
+
 /**
- * Run one MCP tool call: re-check that the tool is still enabled, apply the
- * security policy for the current mode, execute, and audit the outcome.
+ * Run one MCP tool call: re-check that the tool is still enabled and inside the
+ * token's scope, authorize it for the current security mode, execute, and audit.
  */
 export async function executeMcpToolCall(
   toolName: string,
@@ -49,27 +51,36 @@ export async function executeMcpToolCall(
 
   if (getDisabledToolNames().has(toolName)) {
     writeAuditEntry(`MCP BLOCKED (disabled): ${toolName}`, tier, `${who} · ${argSummary}`, false);
-    return { content: [{ type: "text", text: `Error: ${toolName} is disabled in Talome settings.` }], isError: true };
+    return errorResult(`${toolName} is disabled in Talome settings.`);
   }
 
-  const decision = checkToolPolicy(toolName, tier, getSecurityMode(), args);
+  if (actor.kind === "token") {
+    const scopeDecision = checkTokenScope(actor.scope, toolName, tier, getToolDomain(toolName), args);
+    if (!scopeDecision.allowed) {
+      writeAuditEntry(`MCP BLOCKED (token scope): ${toolName}`, tier, `${who} · ${argSummary}`, false);
+      return errorResult(scopeDecision.reason);
+    }
+  }
+
+  const decision = authorizeToolCall(toolName, tier, args, actor);
   if (!decision.allowed) {
     writeAuditEntry(`MCP ${decision.auditAction}`, tier, `${who} · ${argSummary}`, false);
-    return { content: [{ type: "text", text: `Error: ${decision.reason}` }], isError: true };
+    return errorResult(decision.reason);
   }
+  const approvalNote = decision.approvalId ? ` · approved (request ${decision.approvalId})` : "";
 
   try {
     const result = await execute(args, {});
     const failed = isToolErrorResult(result);
-    writeAuditEntry(`MCP: ${toolName}`, tier, `${who} · ${failed ? "failed" : "ok"} · ${argSummary}`);
+    writeAuditEntry(`MCP: ${toolName}`, tier, `${who} · ${failed ? "failed" : "ok"}${approvalNote} · ${argSummary}`);
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) ?? "null" }],
       ...(failed ? { isError: true } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    writeAuditEntry(`MCP: ${toolName}`, tier, `${who} · threw · ${argSummary}`);
-    return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+    writeAuditEntry(`MCP: ${toolName}`, tier, `${who} · threw${approvalNote} · ${argSummary}`);
+    return errorResult(message);
   }
 }
 
@@ -77,6 +88,9 @@ export function createMcpServer(actor: McpActor = { kind: "stdio" }): McpServer 
   const server = new McpServer({ name: "talome", version: "0.1.0" });
 
   for (const [toolName, toolDef] of Object.entries(getEnabledRegisteredTools())) {
+    // Tokens only see the tools their scope grants
+    if (actor.kind === "token" && !isToolInScope(actor.scope, getToolTier(toolName), getToolDomain(toolName))) continue;
+
     const t = toolDef as {
       description?: string;
       inputSchema?: Record<string, unknown>;
@@ -124,7 +138,7 @@ mcp.use("/*", async (c, next) => {
     c.header("WWW-Authenticate", 'Bearer realm="Talome MCP"');
     return c.json({ error: "Unauthorized — provide a valid Bearer token" }, 401);
   }
-  c.set("mcpActor", { kind: "token", tokenId: result.tokenId, tokenName: result.tokenName });
+  c.set("mcpActor", { kind: "token", tokenId: result.tokenId, tokenName: result.tokenName, scope: result.scope });
   await next();
 });
 

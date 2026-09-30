@@ -7,10 +7,11 @@ import { writeAuditEntry } from "../db/audit.js";
 import { writeNotification } from "../db/notifications.js";
 import { restartContainer } from "../docker/client.js";
 import { requiresApproval } from "../approval/engine.js";
-import { runAutomationPrompt } from "../ai/agent.js";
+import { runAutomationPrompt, getToolTier } from "../ai/agent.js";
 import { getAutomationSafeToolNames } from "../ai/automation-safe-tools.js";
 import { getAllRegisteredTools } from "../ai/tool-registry.js";
 import { createLogger } from "../utils/logger.js";
+import { authorizeToolCall } from "../ai/tool-gateway.js";
 
 const log = createLogger("automation-engine");
 const execAsync = promisify(exec);
@@ -196,9 +197,18 @@ async function runStep(
           return makeResult(false, undefined, `Tool "${step.toolName}" not found or has no execute function`);
         }
 
-        const result = await toolDef.execute(step.args ?? {}, {});
+        // Same authorization as every other caller — locked mode applies to automations too
+        const stepArgs = (step.args ?? {}) as Record<string, unknown>;
+        const tier = getToolTier(step.toolName);
+        const decision = authorizeToolCall(step.toolName, tier, stepArgs, { kind: "automation", name: ctx.automationName });
+        if (!decision.allowed) {
+          writeAuditEntry(`Automation ${decision.auditAction}`, tier, ctx.automationId, false);
+          return makeResult(false, undefined, decision.reason);
+        }
+
+        const result = await toolDef.execute(stepArgs, {});
         const output = typeof result === "string" ? result : JSON.stringify(result, null, 2).slice(0, 4000);
-        writeAuditEntry(`Automation step: ${step.toolName}`, "modify", ctx.automationId);
+        writeAuditEntry(`Automation step: ${step.toolName}`, tier, ctx.automationId);
         return makeResult(true, output);
       }
 

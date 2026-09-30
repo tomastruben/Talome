@@ -28,6 +28,8 @@ import { testAppConnectivityTool, wireAppsTool, appApiCallTool } from "../ai/too
 import { readAppConfigFileTool, listAppConfigFilesTool } from "../ai/tools/config-tools.js";
 import { execContainerTool, getContainerLogsTool, listContainersTool } from "../ai/tools/docker-tools.js";
 import { jellyfinCreateApiKeyTool } from "../ai/tools/jellyfin-tools.js";
+import { gateTools } from "../ai/tool-gateway.js";
+import { getToolTier } from "../ai/agent.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -254,7 +256,7 @@ async function executeSetupLoop(
           model,
           system: systemPrompt,
           prompt: `Iteration ${iteration}. Current health score: ${health.overall}%. Pick the most impactful action to improve the score. Focus on apps with the lowest scores whose dependencies are met.`,
-          tools: SETUP_TOOLS,
+          tools: gateTools(SETUP_TOOLS, { kind: "background", loop: "setup" }, getToolTier),
           stopWhen: stepCountIs(5),
           maxRetries: 1,
           onStepFinish: ({ toolCalls, toolResults }) => {
