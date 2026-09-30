@@ -12,6 +12,7 @@ import { join, resolve, dirname } from "node:path";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { APP_DATA_DIR } from "../stores/compose-exec.js";
+import { hasLiveOperation } from "./operations.js";
 
 /** A plain folder name: what an app id must be before it is joined onto a path. */
 const APP_ID_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -26,12 +27,17 @@ export function appDataDirFor(appId: string): string | null {
 
 export type RemoveAppDataResult =
   | { removed: true; path: string }
-  | { removed: false; path: string | null; reason: "invalid_id" | "still_installed" | "not_found" | "failed"; error?: string };
+  | { removed: false; path: string | null; reason: "invalid_id" | "still_installed" | "busy" | "containers_running" | "not_found" | "failed"; error?: string };
 
-/** Erase an uninstalled app's data folder. Never throws. */
-export async function removeAppData(appId: string): Promise<RemoveAppDataResult> {
+/**
+ * Erase an uninstalled app's data folder. Never throws. Refuses while any
+ * operation runs on the app (an install could be writing into the folder),
+ * unless the caller is that operation (`ownOperation`, the uninstall itself).
+ */
+export async function removeAppData(appId: string, opts: { ownOperation?: boolean } = {}): Promise<RemoveAppDataResult> {
   const dir = appDataDirFor(appId);
   if (!dir) return { removed: false, path: null, reason: "invalid_id" };
+  if (!opts.ownOperation && hasLiveOperation(appId)) return { removed: false, path: dir, reason: "busy" };
 
   const installed = db
     .select({ appId: schema.installedApps.appId })

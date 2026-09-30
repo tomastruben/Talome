@@ -70,6 +70,7 @@ import {
 import { isPreUpdateBackupEnabled, takePreUpdateBackup, findPreUpdateBackupId, backupTriggerForActor, type PreUpdateBackupResult } from "../ops/pre-update-backup.js";
 import { getSemanticBaseline, hasSemanticProbe, runSemanticVerification, type SemanticVerification } from "../ops/semantic-verify.js";
 import { holdAppMaintenance } from "../backup/state.js";
+import { appDataDirFor, removeAppData, type RemoveAppDataResult } from "../ops/app-data.js";
 import { reconcileUmbrelDependencies, applyUmbrelV2Install, getSavedDependencySelections } from "./umbrel-v2-install.js";
 import {
   clearImagePins,
@@ -580,11 +581,32 @@ async function installAppInner(
 
 // ── Uninstall ─────────────────────────────────────────────────────────────
 
-export function uninstallApp(appId: string, opts?: LifecycleOptions): Promise<{ success: boolean; error?: string } & OperationResultMeta> {
-  return runAppOperation(appId, "uninstall", opts, (ctx) => uninstallAppInner(appId, ctx));
+export interface UninstallOptions extends LifecycleOptions {
+  /**
+   * false also erases the app's own data folder (~/.talome/app-data/<appId>)
+   * as the last step of the uninstall operation, under its lock, and only
+   * once its containers are confirmed gone.
+   */
+  keepData?: boolean;
 }
 
-async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<{ success: boolean; error?: string }> {
+export interface UninstallResult {
+  success: boolean;
+  error?: string;
+  /** What happened to the data folder when keepData was false. */
+  dataErase?: RemoveAppDataResult;
+}
+
+export function uninstallApp(appId: string, opts?: UninstallOptions): Promise<UninstallResult & OperationResultMeta> {
+  return runAppOperation(appId, "uninstall", opts, (ctx) => uninstallAppInner(appId, ctx, opts?.keepData !== false));
+}
+
+/** The data folder was kept because its containers may still be using it. */
+function eraseSkipped(appId: string, why: string): RemoveAppDataResult {
+  return { removed: false, path: appDataDirFor(appId), reason: "containers_running", error: why };
+}
+
+async function uninstallAppInner(appId: string, ctx: OperationContext, keepData = true): Promise<UninstallResult> {
   const installed = getInstalledApp(appId);
   if (!installed) return { success: false, error: "App is not installed" };
 
@@ -593,7 +615,8 @@ async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<
     db.delete(schema.installedApps)
       .where(eq(schema.installedApps.appId, appId))
       .run();
-    return { success: true };
+    // No compose file, so no containers were stopped: never erase under them.
+    return keepData ? { success: true } : { success: true, dataErase: eraseSkipped(appId, "its containers could not be stopped (its catalog entry is missing), so they may still use it") };
   }
 
   // Execute preUninstall hook (best-effort)
@@ -603,6 +626,7 @@ async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<
   await executeHook("preUninstall", appId, app.hooks, { composePath: app.composePath, env: envUninst }).catch((err) => log.warn(`preUninstall hook failed for ${appId}`, err));
 
   ctx.step("remove_containers", 30, "Stopping and removing containers");
+  let containersRemoved = true;
   try {
     const effectiveCompose = installed.overrideComposePath ?? app.composePath;
     const projectDir = dirname(effectiveCompose);
@@ -611,7 +635,9 @@ async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<
       timeout: 60_000,
     });
   } catch {
-    // Continue even if compose down fails
+    // Continue even if compose down fails, but never erase data under containers
+    // that may still be running.
+    containersRemoved = false;
   }
 
   // Clean up app-specific networks (not the shared talome network)
@@ -634,7 +660,14 @@ async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<
     .where(eq(schema.installedApps.appId, appId))
     .run();
 
-  return { success: true };
+  if (keepData) return { success: true };
+  if (!containersRemoved) {
+    return { success: true, dataErase: eraseSkipped(appId, "its containers could not be confirmed stopped, so they may still use it") };
+  }
+  // Still inside this operation and its compose lock: an install of the same
+  // app can't start writing into the folder while it is erased.
+  ctx.step("erase_data", 90, "Erasing app data");
+  return { success: true, dataErase: await removeAppData(appId, { ownOperation: true }) };
 }
 
 // ── Start / Stop / Restart ────────────────────────────────────────────────

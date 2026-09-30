@@ -81,6 +81,21 @@ async function smartctlJson(args: string[]): Promise<unknown> {
   return JSON.parse(stdout);
 }
 
+/**
+ * A scanned name smartctl can be queried with (one argv entry, never a
+ * shell): a /dev path, or the IOService path smartctl reports for some
+ * drives on macOS. Neither can be read as an option or climb out with "..".
+ */
+export function isQueryableScannedDevice(name: string): boolean {
+  if (isValidSmartDevice(name)) return true;
+  return /^IOService:\/[A-Za-z0-9_@,.:\/ ()-]+$/.test(name) && !name.split("/").includes("..");
+}
+
+/** A scan entry that can't be a drive at all (a flag, control characters) is not listed. */
+function isPlausibleDeviceName(name: string): boolean {
+  return name.length > 0 && name.length <= 512 && !name.startsWith("-") && !/[\0\r\n]/.test(name);
+}
+
 // SMART disk health
 storage.get("/smart", async (c) => {
   let devices: { name: string; type: string; protocol: string }[];
@@ -88,17 +103,21 @@ storage.get("/smart", async (c) => {
     const data = (await smartctlJson(["--scan", "--json"])) as { devices?: unknown };
     devices = Array.isArray(data.devices)
       ? (data.devices as { name: string; type: string; protocol: string }[]).filter(
-          (d) => d && typeof d.name === "string" && isValidSmartDevice(d.name),
+          (d) => d && typeof d.name === "string" && isPlausibleDeviceName(d.name),
         )
       : [];
   } catch {
     return c.json({ error: "smartctl not available" }, 503);
   }
 
-  // Every scanned drive is reported: a drive whose details can't be read is
-  // "unknown", never silently dropped (and never "failing").
+  // Every scanned drive is reported: a drive whose details can't be read (or
+  // whose name Talome won't hand to smartctl) is "unknown", never silently
+  // dropped (and never "failing").
   const results = await Promise.all(
     devices.map(async (dev) => {
+      if (!isQueryableScannedDevice(dev.name)) {
+        return { ...smartDriveReport(dev, null), reason: "Talome can't query this drive by the name smartctl reported." };
+      }
       try {
         return smartDriveReport(dev, await smartctlJson(["--json", "-a", dev.name]));
       } catch {

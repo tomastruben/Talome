@@ -177,10 +177,12 @@ describe("PATCH rename and ports", () => {
 });
 
 describe("DELETE keeps or erases app data", () => {
+  // Mirrors the engine: keepData=false erases inside the uninstall operation.
   function fakeUninstall(appId: string) {
-    lifecycle.uninstallApp.mockImplementationOnce(async () => {
+    lifecycle.uninstallApp.mockImplementationOnce(async (_id: string, opts?: { keepData?: boolean }) => {
       db.delete(schema.installedApps).run();
-      return { success: true, operationId: `op-${appId}` };
+      const dataErase = opts?.keepData === false ? await removeAppData(appId, { ownOperation: true }) : undefined;
+      return { success: true, operationId: `op-${appId}`, ...(dataErase ? { dataErase } : {}) };
     });
   }
 
@@ -210,9 +212,31 @@ describe("DELETE keeps or erases app data", () => {
     fakeUninstall("lidarr");
     const res = await apps.request("/talome-store/lidarr?keepData=false", { method: "DELETE" });
     const body = (await res.json()) as Record<string, unknown>;
+    // The erase is asked of the uninstall operation, not done after its lock is released.
+    expect(lifecycle.uninstallApp).toHaveBeenLastCalledWith("lidarr", expect.objectContaining({ keepData: false }));
     expect(body.dataRemoved).toBe(true);
     expect(existsSync(dir)).toBe(false);
     expect(existsSync(sibling)).toBe(true);
+  });
+
+  it("reports a kept folder when the engine couldn't confirm the containers stopped", async () => {
+    catalog("talome-store", "lidarr");
+    install("lidarr", "talome-store");
+    const dir = seedData("lidarr");
+    lifecycle.uninstallApp.mockImplementationOnce(async () => {
+      db.delete(schema.installedApps).run();
+      return {
+        success: true,
+        operationId: "op-lidarr",
+        dataErase: { removed: false, path: dir, reason: "containers_running", error: "its containers could not be confirmed stopped" },
+      };
+    });
+    const res = await apps.request("/talome-store/lidarr?keepData=false", { method: "DELETE" });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.dataRemoved).toBe(false);
+    expect(body.dataKept).toBe(true);
+    expect(String(body.dataError)).toContain("couldn't erase its data folder");
+    expect(existsSync(dir)).toBe(true);
   });
 
   it("does not erase anything when the uninstall failed", async () => {
@@ -232,6 +256,22 @@ describe("removeAppData", () => {
     expect(appDataDirFor("a/b")).toBeNull();
     expect(appDataDirFor("..")).toBeNull();
     expect((await removeAppData("../../home")).removed).toBe(false);
+  });
+
+  it("refuses while an operation runs on the app (regression: erase racing an install)", async () => {
+    mkdirSync(join(APP_DATA_DIR, "bazarr"), { recursive: true });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const running = withAppOperation("bazarr", "install", "user:1", async () => {
+      await gate;
+      return { success: true };
+    });
+    const result = await removeAppData("bazarr");
+    expect(result).toMatchObject({ removed: false, reason: "busy" });
+    expect(existsSync(join(APP_DATA_DIR, "bazarr"))).toBe(true);
+    release();
+    await running;
+    expect((await removeAppData("bazarr")).removed).toBe(true);
   });
 
   it("refuses while the app is still installed", async () => {

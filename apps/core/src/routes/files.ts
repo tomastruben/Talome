@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { readdir, stat, readFile, writeFile, unlink, mkdir, rename, rm } from "node:fs/promises";
+import { readdir, stat, lstat, readFile, writeFile, unlink, mkdir, rename, rm } from "node:fs/promises";
 import { join, resolve, basename, dirname, extname } from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
@@ -1414,6 +1414,33 @@ files.delete("/", async (c) => {
 
 // ── Rename / move file ──────────────────────────────────────────────────
 
+type LstatFn = (path: string) => Promise<{ dev: number | bigint; ino: number | bigint }>;
+
+/**
+ * Whether renaming absOld to absNew would replace a different item (rename(2)
+ * silently overwrites). A case-only rename ("photo.JPG" → "photo.jpg") is
+ * fine only when the "existing" target is the item itself, as on a
+ * case-insensitive disk: same device and inode. On a case-sensitive disk
+ * (ext4, xfs…) "report.txt" and "Report.txt" can be two files, and the
+ * other one must not be replaced.
+ */
+export async function renameWouldOverwrite(absOld: string, absNew: string, lstatFn: LstatFn = lstat): Promise<boolean> {
+  if (absNew === absOld) return false;
+  let target: { dev: number | bigint; ino: number | bigint };
+  try {
+    target = await lstatFn(absNew);
+  } catch {
+    return false; // nothing there
+  }
+  if (absNew.toLowerCase() !== absOld.toLowerCase()) return true;
+  try {
+    const source = await lstatFn(absOld);
+    return !(source.dev === target.dev && source.ino === target.ino);
+  } catch {
+    return true;
+  }
+}
+
 files.post("/rename", async (c) => {
   const body = await c.req.json<{ oldPath: string; newName: string }>();
   if (!body.oldPath || !body.newName) return c.json({ error: "oldPath and newName required" }, 400);
@@ -1427,9 +1454,8 @@ files.post("/rename", async (c) => {
   if (!isAllowed(absNew)) return c.json({ error: "Access denied" }, 403);
 
   // rename(2) silently replaces an existing file: never overwrite on rename.
-  // A case-only rename ("photo.JPG" → "photo.jpg") is allowed, since on a
-  // case-insensitive disk the "existing" target is the item itself.
-  if (absNew !== absOld && absNew.toLowerCase() !== absOld.toLowerCase() && existsSync(absNew)) {
+  // A case-only rename is allowed only when the target is the item itself.
+  if (await renameWouldOverwrite(absOld, absNew)) {
     return c.json({ error: `An item named "${body.newName}" already exists here. Choose another name.`, exists: true }, 409);
   }
 

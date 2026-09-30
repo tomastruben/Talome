@@ -99,13 +99,30 @@ describe("GET /smart", () => {
     expect(body[1].reason).toMatch(/couldn't read/i);
   });
 
-  it("never passes a scanned device name to smartctl that is not a /dev path", async () => {
+  it("never passes a scanned device name to smartctl that is not a /dev or IOService path", async () => {
     scan(["/dev/sda", "--scan-open", "/dev/../etc/shadow"]);
     replies.set("/dev/sda", { stdout: JSON.stringify({ smart_status: { passed: true } }) });
     const { body } = await getSmart();
-    expect(body.map((d) => d.device)).toEqual(["/dev/sda"]);
+    // A flag is not a drive; an odd name is listed as unknown, not dropped and not queried.
+    expect(body.map((d) => [d.device, d.health])).toEqual([
+      ["/dev/sda", "healthy"],
+      ["/dev/../etc/shadow", "unknown"],
+    ]);
+    expect(body[1].reason).toMatch(/can't query/i);
     expect(execFileCalls.every((c) => c.file === "smartctl")).toBe(true);
     expect(execFileCalls.filter((c) => !c.args.includes("--scan")).map((c) => c.args.at(-1))).toEqual(["/dev/sda"]);
+  });
+
+  it("queries a macOS IOService drive instead of dropping it (regression)", async () => {
+    const nvme = "IOService:/AppleARMPE/arm-io@10F00000/AppleT810xIO/ans@8A000000/AppleASCWrapV4/iop-ans-nub/RTBuddy(ANS2)/RTBuddyService/AppleANS3NVMeController/NS_01@1";
+    scan(["/dev/disk0", nvme]);
+    replies.set("/dev/disk0", { stdout: JSON.stringify({ smart_status: { passed: true } }) });
+    replies.set(nvme, { stdout: JSON.stringify({ model_name: "APPLE SSD", smart_status: { passed: true } }) });
+    const { body } = await getSmart();
+    expect(body.map((d) => [d.device, d.health])).toEqual([
+      ["/dev/disk0", "healthy"],
+      [nvme, "healthy"],
+    ]);
   });
 
   it("answers 503 when smartctl is missing", async () => {

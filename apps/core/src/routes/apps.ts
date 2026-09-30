@@ -16,7 +16,6 @@ import {
 } from "../stores/lifecycle.js";
 import { installProgress, emitProgress, type InstallProgressEvent } from "../stores/install-emitter.js";
 import { listAppOperations, hasLiveOperation, getOperation } from "../ops/operations.js";
-import { removeAppData } from "../ops/app-data.js";
 import { UmbrelInstallOptionsSchema } from "../stores/umbrel-v2.js";
 import { getInstallAccessWarnings, runWithUmbrelInstallOptions } from "../stores/umbrel-v2-install.js";
 import { volumeMountsError, volumeMountsNeedingApproval } from "../stores/host-mounts.js";
@@ -690,12 +689,14 @@ apps.patch("/:storeId/:appId", async (c) => {
 apps.delete("/:storeId/:appId", async (c) => {
   const { appId } = c.req.param();
   const keepData = c.req.query("keepData") !== "false";
-  const result = await uninstallApp(appId, { actor: actorFor(c) });
+  // The erase runs inside the uninstall operation (under its lock), only once
+  // the containers are confirmed gone.
+  const result = await uninstallApp(appId, { actor: actorFor(c), keepData });
   if (!result.success) return operationError(c, result);
   if (keepData) {
     return c.json({ ok: true, message: `${appId} uninstalled`, operationId: result.operationId, dataKept: true });
   }
-  const erased = await removeAppData(appId);
+  const erased = result.dataErase ?? { removed: false as const, path: null, reason: "failed" as const, error: "the uninstall didn't report on it" };
   const failed = !erased.removed && erased.reason !== "not_found";
   return c.json({
     ok: true,

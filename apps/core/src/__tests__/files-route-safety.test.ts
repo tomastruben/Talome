@@ -68,6 +68,45 @@ describe("POST /rename", () => {
     expect(readFileSync(join(root, "a.txt"), "utf-8")).toBe("A");
   });
 
+  it("never replaces a different file on a case-only rename (regression: case-sensitive disks)", async () => {
+    const { renameWouldOverwrite } = await import("../routes/files.js");
+    // Two distinct files whose names differ only in case (ext4, xfs…).
+    const inodes: Record<string, { dev: number; ino: number }> = {
+      "/d/report.txt": { dev: 1, ino: 10 },
+      "/d/Report.txt": { dev: 1, ino: 11 },
+    };
+    const fakeLstat = async (p: string) => {
+      const hit = inodes[p];
+      if (!hit) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return hit;
+    };
+    expect(await renameWouldOverwrite("/d/report.txt", "/d/Report.txt", fakeLstat)).toBe(true);
+    // Case-insensitive disk: both names resolve to the same item.
+    inodes["/d/Report.txt"] = { dev: 1, ino: 10 };
+    expect(await renameWouldOverwrite("/d/report.txt", "/d/Report.txt", fakeLstat)).toBe(false);
+    // Free name, and a plain rename onto an existing item.
+    expect(await renameWouldOverwrite("/d/report.txt", "/d/new.txt", fakeLstat)).toBe(false);
+    inodes["/d/new.txt"] = { dev: 1, ino: 12 };
+    expect(await renameWouldOverwrite("/d/report.txt", "/d/new.txt", fakeLstat)).toBe(true);
+  });
+
+  it("allows a case-only rename of the item itself on this disk", async () => {
+    writeFileSync(join(root, "photo.JPG"), "P");
+    const res = await post("/rename", { oldPath: join(root, "photo.JPG"), newName: "photo.jpg" });
+    expect(res.status).toBe(200);
+    expect(readFileSync(join(root, "photo.jpg"), "utf-8")).toBe("P");
+  });
+
+  it("refuses a case-only rename onto another file on a case-sensitive disk", async () => {
+    writeFileSync(join(root, "report.txt"), "lower");
+    writeFileSync(join(root, "Report.txt"), "upper");
+    // On a case-insensitive disk both names are one file; the fake-lstat test covers that branch.
+    if (readFileSync(join(root, "report.txt"), "utf-8") !== "lower") return;
+    const res = await post("/rename", { oldPath: join(root, "report.txt"), newName: "Report.txt" });
+    expect(res.status).toBe(409);
+    expect(readFileSync(join(root, "Report.txt"), "utf-8")).toBe("upper");
+  });
+
   it("renames when the name is free", async () => {
     writeFileSync(join(root, "a.txt"), "A");
     const res = await post("/rename", { oldPath: join(root, "a.txt"), newName: "c.txt" });
