@@ -1,14 +1,243 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
+import { AnimatePresence, motion, useAnimationFrame, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
 import type { ChatStatus } from "ai";
+import useSWR from "swr";
 import { useTheme } from "next-themes";
 import { ThinkingOrb, type OrbState } from "thinking-orbs";
 import { VoiceBeam } from "voice-glow";
 import { HugeiconsIcon, Cancel01Icon } from "@/components/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useSpeechOutput } from "@/hooks/use-speech-output";
+import { useLiveVoice, type LiveHistoryItem } from "@/hooks/use-live-voice";
+import { CORE_URL } from "@/lib/constants";
+
+export interface LastAssistant {
+  id: string;
+  text: string;
+  /** Name of a tool waiting for the user's approval, if any */
+  pendingApproval?: string;
+}
+
+export interface VoiceModeProps {
+  open: boolean;
+  onClose: () => void;
+  /** Send a transcribed message to the assistant */
+  onSend: (text: string) => void;
+  status: ChatStatus;
+  /** Latest assistant message, to read aloud when a reply finishes */
+  lastAssistant: LastAssistant | null;
+  /** Recent conversation, for full-duplex sessions that start mid-chat */
+  history?: () => LiveHistoryItem[];
+}
+
+interface VoiceStatus {
+  live: { model: string; voice: string } | null;
+}
+
+/**
+ * Voice conversation. With an OpenAI key, Talome talks through GPT-Live — full
+ * duplex, so you can interrupt and it can acknowledge while you speak. Without
+ * one it falls back to listen → send after a pause → read the reply aloud.
+ */
+export function VoiceMode(props: VoiceModeProps) {
+  const { data } = useSWR<VoiceStatus>(
+    props.open ? `${CORE_URL}/api/voice/status` : null,
+    (url: string) => fetch(url).then((r) => (r.ok ? r.json() : { live: null })),
+    { revalidateOnFocus: false },
+  );
+
+  useEffect(() => {
+    if (!props.open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") props.onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [props]);
+
+  return (
+    <AnimatePresence>
+      {props.open && data && (
+        <motion.div
+          key="voice"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Voice conversation"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
+          className="fixed inset-0 z-[1300] flex flex-col items-center justify-center gap-8 bg-background/85 p-6 backdrop-blur-xl"
+        >
+          {data.live ? <LiveSession {...props} model={data.live.model} /> : <ClassicSession {...props} />}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ── Shared stage ─────────────────────────────────────────────────────────────
+
+interface StageProps {
+  /** Voice level 0–1, sampled every frame */
+  level: () => number;
+  processing: boolean;
+  orb: OrbState;
+  label: string;
+  caption: string;
+  footnote: string | null;
+  orbLabel: string;
+  onOrbTap?: () => void;
+  onClose: () => void;
+}
+
+function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onClose }: StageProps) {
+  const reduceMotion = useReducedMotion();
+  const { resolvedTheme } = useTheme();
+  const sampled = useMotionValue(0);
+  useAnimationFrame(() => sampled.set(level()));
+  const target = useTransform(sampled, (v) => (reduceMotion ? 1 : 1 + v * 0.12));
+  const scale = useSpring(target, { stiffness: 380, damping: 36, mass: 0.5 });
+
+  return (
+    <>
+      {/* The glow rises from the bottom edge with the voice and sweeps while the reply is prepared */}
+      <div className="pointer-events-none absolute inset-0" aria-hidden>
+        <VoiceBeam
+          type="mobile"
+          level={level}
+          processing={processing}
+          theme={resolvedTheme === "light" ? "light" : "dark"}
+          borderRadius={0}
+          className="size-full"
+        >
+          <div className="size-full" />
+        </VoiceBeam>
+      </div>
+
+      <button
+        type="button"
+        onClick={onOrbTap}
+        aria-label={orbLabel}
+        className="relative flex size-40 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-foreground/40"
+      >
+        <motion.span style={{ scale }} className="flex">
+          <ThinkingOrb state={orb} size={64} aria-hidden />
+        </motion.span>
+      </button>
+
+      <div className="relative flex min-h-16 max-w-md flex-col items-center gap-2 text-center">
+        {/* Status swaps in place: the old line lifts away as the new one rises */}
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.p
+            key={label}
+            initial={{ opacity: 0, y: 6, filter: "blur(2px)" }}
+            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+            exit={{ opacity: 0, y: -6, filter: "blur(2px)" }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            className="text-lg font-medium"
+            aria-live="polite"
+          >
+            {label}
+          </motion.p>
+        </AnimatePresence>
+        <p className="line-clamp-3 text-sm text-muted-foreground">{caption}</p>
+      </div>
+
+      <div className="relative flex flex-col items-center gap-3">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="End voice conversation"
+          className="flex size-12 items-center justify-center rounded-full bg-muted text-foreground transition-[background-color,transform] duration-150 hover:bg-muted/70 active:scale-95"
+        >
+          <HugeiconsIcon icon={Cancel01Icon} size={18} />
+        </button>
+        {footnote && <p className="text-xs text-muted-foreground">{footnote}</p>}
+      </div>
+    </>
+  );
+}
+
+// ── Ask Talome and wait for the reply ────────────────────────────────────────
+
+/** Sends through the chat and resolves when that reply is complete. */
+function useChatReply({ onSend, status, lastAssistant }: Pick<VoiceModeProps, "onSend" | "status" | "lastAssistant">) {
+  const pending = useRef<{ resolve: (text: string) => void; after: string | null; sawBusy: boolean } | null>(null);
+
+  useEffect(() => {
+    const p = pending.current;
+    if (!p) return;
+    if (status === "submitted" || status === "streaming") {
+      p.sawBusy = true;
+      return;
+    }
+    if (!p.sawBusy) return;
+    pending.current = null;
+    if (status === "error") {
+      p.resolve("Talome ran into an error with that. It's shown in the chat.");
+    } else if (lastAssistant?.pendingApproval) {
+      p.resolve(`Talome needs the user's approval on screen to run ${lastAssistant.pendingApproval}.`);
+    } else if (lastAssistant && lastAssistant.id !== p.after) {
+      p.resolve(lastAssistant.text);
+    } else {
+      p.resolve("Talome didn't answer that. Say so briefly and suggest checking the chat.");
+    }
+  }, [status, lastAssistant]);
+
+  const lastId = lastAssistant?.id ?? null;
+  return useCallback(
+    (text: string) =>
+      new Promise<string>((resolve) => {
+        pending.current?.resolve("");
+        pending.current = { resolve, after: lastId, sawBusy: false };
+        onSend(text);
+      }),
+    [onSend, lastId],
+  );
+}
+
+// ── GPT-Live: full duplex ────────────────────────────────────────────────────
+
+const LIVE_ORB: Record<string, OrbState> = { listening: "listening", speaking: "composing", working: "working" };
+const LIVE_LABEL: Record<string, string> = { listening: "Listening", speaking: "Talome", working: "Working on it" };
+
+function LiveSession({ onClose, onSend, status, lastAssistant, history, model }: VoiceModeProps & { model: string }) {
+  const ask = useChatReply({ onSend, status, lastAssistant });
+  const live = useLiveVoice({ onDelegate: ask, history });
+  const { start, stop } = live;
+
+  useEffect(() => {
+    void start();
+    return () => stop();
+  }, [start, stop]);
+
+  const speaking = live.activity === "speaking";
+  const { agentLevel, userLevel } = live;
+  const level = useCallback(() => (speaking ? agentLevel.get() : userLevel.get()), [speaking, agentLevel, userLevel]);
+  const label = live.state === "connecting" ? "Connecting…" : live.error ? "Voice ended" : LIVE_LABEL[live.activity];
+  const caption = live.error
+    ?? live.caption?.text
+    ?? (live.state === "live" ? "Just talk — interrupt any time." : "");
+
+  return (
+    <VoiceStage
+      level={level}
+      processing={live.state === "connecting" || live.activity === "working"}
+      orb={live.state === "connecting" ? "connecting" : LIVE_ORB[live.activity]}
+      label={label}
+      caption={caption}
+      footnote={`Full-duplex with ${model}`}
+      orbLabel="End voice conversation"
+      onOrbTap={onClose}
+      onClose={onClose}
+    />
+  );
+}
+
+// ── Fallback: turn by turn ───────────────────────────────────────────────────
 
 type Phase = "listening" | "transcribing" | "thinking" | "speaking";
 
@@ -26,22 +255,7 @@ const PHASE_LABEL: Record<Phase, string> = {
   speaking: "Speaking",
 };
 
-export interface VoiceModeProps {
-  open: boolean;
-  onClose: () => void;
-  /** Send a transcribed message to the assistant */
-  onSend: (text: string) => void;
-  status: ChatStatus;
-  /** Latest assistant message, to read aloud when a reply finishes */
-  lastAssistant: { id: string; text: string } | null;
-}
-
-/**
- * Hands-free conversation: listen → send after a pause → read the reply aloud →
- * listen again. Tap the orb to finish speaking early or to interrupt a reply.
- */
-export function VoiceMode({ open, onClose, onSend, status, lastAssistant }: VoiceModeProps) {
-  const reduceMotion = useReducedMotion();
+function ClassicSession({ onClose, onSend, status, lastAssistant }: VoiceModeProps) {
   const [phase, setPhase] = useState<Phase>("listening");
   const [transcript, setTranscript] = useState("");
   const awaitingReplyAfter = useRef<string | null | undefined>(undefined);
@@ -83,18 +297,17 @@ export function VoiceMode({ open, onClose, onSend, status, lastAssistant }: Voic
     finishListeningRef.current = () => void finishListening();
   }, [finishListening]);
 
-  // Start listening when opened; stop everything when closed
+  // Start listening when shown; stop everything when closed
   useEffect(() => {
-    if (!open) return;
     void listen();
     return () => {
       voice.cancel();
       speech.cancel();
       awaitingReplyAfter.current = undefined;
     };
-    // Only on open/close
+    // Only on mount/unmount
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, []);
 
   // When the reply is complete, read it aloud, then listen again
   useEffect(() => {
@@ -110,20 +323,9 @@ export function VoiceMode({ open, onClose, onSend, status, lastAssistant }: Voic
     }
     if (lastAssistant && lastAssistant.id !== awaitingReplyAfter.current) {
       setPhase("speaking");
-      void speech.speak(lastAssistant.text).then(() => {
-        if (open) void listen();
-      });
+      void speech.speak(lastAssistant.text).then(() => void listen());
     }
-  }, [phase, status, lastAssistant, speech, listen, open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [phase, status, lastAssistant, speech, listen]);
 
   const tapOrb = () => {
     if (phase === "listening") void finishListening();
@@ -133,89 +335,26 @@ export function VoiceMode({ open, onClose, onSend, status, lastAssistant }: Voic
     }
   };
 
-  // Orb and glow follow the microphone while listening and the words while speaking
-  const { resolvedTheme } = useTheme();
-  const driver = useTransform(() => (phase === "speaking" ? speechPulse.get() : voice.level.get()));
-  const target = useTransform(driver, (v) => (reduceMotion ? 1 : 1 + v * 0.12));
-  const scale = useSpring(target, { stiffness: 380, damping: 36, mass: 0.5 });
-  const readLevel = useCallback(() => driver.get(), [driver]);
+  const micLevel = voice.level;
+  const level = useCallback(() => (phase === "speaking" ? speechPulse.get() : micLevel.get()), [phase, speechPulse, micLevel]);
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Voice conversation"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.18, ease: "easeOut" }}
-          className="fixed inset-0 z-[1300] flex flex-col items-center justify-center gap-8 bg-background/85 p-6 backdrop-blur-xl"
-        >
-          {/* The glow rises from the bottom edge with the voice and sweeps while the reply is prepared */}
-          <div className="pointer-events-none absolute inset-0" aria-hidden>
-            <VoiceBeam
-              type="mobile"
-              level={readLevel}
-              processing={phase === "transcribing" || phase === "thinking"}
-              theme={resolvedTheme === "light" ? "light" : "dark"}
-              borderRadius={0}
-              className="size-full"
-            >
-              <div className="size-full" />
-            </VoiceBeam>
-          </div>
-
-          <button
-            type="button"
-            onClick={tapOrb}
-            aria-label={phase === "speaking" ? "Stop speaking" : phase === "listening" ? "Send now" : PHASE_LABEL[phase]}
-            className="relative flex size-40 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-foreground/40"
-          >
-            <motion.span style={{ scale }} className="flex">
-              <ThinkingOrb state={PHASE_ORB[phase]} size={64} aria-hidden />
-            </motion.span>
-          </button>
-
-          <div className="relative flex min-h-16 max-w-md flex-col items-center gap-2 text-center">
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.p
-                key={phase}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15, ease: "easeOut" }}
-                className="text-lg font-medium"
-                aria-live="polite"
-              >
-                {PHASE_LABEL[phase]}
-              </motion.p>
-            </AnimatePresence>
-            <p className="line-clamp-3 text-sm text-muted-foreground">
-              {transcript || (phase === "listening" ? "Say something — I'll answer when you pause." : "")}
-            </p>
-          </div>
-
-          <div className="relative flex flex-col items-center gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="End voice conversation"
-              className="flex size-12 items-center justify-center rounded-full bg-muted text-foreground transition-colors duration-150 hover:bg-muted/70"
-            >
-              <HugeiconsIcon icon={Cancel01Icon} size={18} />
-            </button>
-            <p className="text-xs text-muted-foreground">
-              {voice.engine === "browser"
-                ? "Using this browser's speech recognition"
-                : voice.engine === "server"
-                  ? "Transcribed by your Talome server"
-                  : voice.unavailableReason}
-            </p>
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    <VoiceStage
+      level={level}
+      processing={phase === "transcribing" || phase === "thinking"}
+      orb={PHASE_ORB[phase]}
+      label={PHASE_LABEL[phase]}
+      caption={transcript || (phase === "listening" ? "Say something — I'll answer when you pause." : "")}
+      footnote={
+        voice.engine === "browser"
+          ? "Using this browser's speech recognition"
+          : voice.engine === "server"
+            ? "Transcribed by your Talome server"
+            : voice.unavailableReason
+      }
+      orbLabel={phase === "speaking" ? "Stop speaking" : phase === "listening" ? "Send now" : PHASE_LABEL[phase]}
+      onOrbTap={tapOrb}
+      onClose={onClose}
+    />
   );
 }

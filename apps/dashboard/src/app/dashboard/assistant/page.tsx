@@ -657,8 +657,22 @@ export default function AssistantPage() {
       .map((part) => (part.type === "text" ? part.text : ""))
       .join("")
       .trim();
-    return { id: message.id, text };
+    const waiting = message.parts.find((part) => (part as { state?: string }).state === "approval-requested");
+    const pendingApproval = waiting
+      ? (waiting.type === "dynamic-tool" ? (waiting as { toolName: string }).toolName : waiting.type.replace(/^tool-/, "")).replace(/_/g, " ")
+      : undefined;
+    return { id: message.id, text, pendingApproval };
   }, [messages]);
+  const voiceHistory = useCallback(
+    () =>
+      messages
+        .map((m) => ({
+          role: m.role,
+          content: m.parts.map((part) => (part.type === "text" ? part.text : "")).join("").trim().slice(0, 2000),
+        }))
+        .filter((m): m is { role: "user" | "assistant"; content: string } => (m.role === "user" || m.role === "assistant") && m.content.length > 0),
+    [messages],
+  );
   const sendVoiceMessage = useCallback((text: string) => {
     setDismissed(false);
     handleSubmit(text, `Current page: ${pathname}. The user is speaking in voice mode — answer briefly and conversationally, without tables or code unless asked.`);
@@ -873,6 +887,7 @@ export default function AssistantPage() {
         onSend={sendVoiceMessage}
         status={status as ChatStatus}
         lastAssistant={lastAssistant}
+        history={voiceHistory}
       />
       {!embeddedFrame && (
         <AssistantHeader showingChat={showingChat} onBack={handleBack} onNew={handleNew} />

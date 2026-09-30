@@ -47,7 +47,7 @@ async function app() {
 describe("voice transcription", () => {
   it("reports that no server is configured and refuses to transcribe", async () => {
     const a = await app();
-    expect(await (await a.request("/api/voice/status")).json()).toEqual({ server: false, model: null });
+    expect(await (await a.request("/api/voice/status")).json()).toMatchObject({ server: false, model: null, live: null });
     const res = await a.request("/api/voice/transcribe", { method: "POST", body: "audio", headers: { "Content-Type": "audio/webm" } });
     expect(res.status).toBe(404);
   });
@@ -59,7 +59,7 @@ describe("voice transcription", () => {
     setSetting("voice_stt_model", "Systran/faster-whisper-small");
     const a = await app();
 
-    expect(await (await a.request("/api/voice/status")).json()).toEqual({ server: true, model: "Systran/faster-whisper-small" });
+    expect(await (await a.request("/api/voice/status")).json()).toMatchObject({ server: true, model: "Systran/faster-whisper-small", live: null });
 
     const res = await a.request("/api/voice/transcribe?language=en", {
       method: "POST",

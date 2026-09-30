@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { getSetting } from "../utils/settings.js";
 import { serverError } from "../middleware/request-logger.js";
+import { liveConfig, LIVE_VOICES } from "./voice-live.js";
 
 /**
  * Speech-to-text for the assistant's voice input.
@@ -28,7 +29,14 @@ function sttConfig() {
 
 voice.get("/status", (c) => {
   const config = sttConfig();
-  return c.json({ server: config !== null, model: config?.model ?? null });
+  const live = liveConfig();
+  return c.json({
+    server: config !== null,
+    model: config?.model ?? null,
+    // Full-duplex conversations through GPT-Live, when an OpenAI key is set
+    live: live ? { model: live.model, voice: live.voice } : null,
+    liveVoices: LIVE_VOICES,
+  });
 });
 
 voice.post("/transcribe", async (c) => {
