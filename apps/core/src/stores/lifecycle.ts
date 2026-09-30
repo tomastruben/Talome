@@ -50,6 +50,7 @@ import {
   type ConfigConflict,
 } from "./catalog-sync.js";
 import { recordInstallError } from "./compose-errors.js";
+import { fillGeneratedUpdateEnv } from "./generated-env.js";
 import {
   checkPortConflicts,
   resolvePortMappings,
@@ -1694,8 +1695,8 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   if (!app) return { success: false, error: "App not found in catalog" };
 
   let effectiveCompose = installed.overrideComposePath ?? app.composePath;
-  const envOverrides = JSON.parse(installed.envConfig) as Record<string, string>;
-  const env = buildEnv(appId, envOverrides);
+  let envOverrides = JSON.parse(installed.envConfig) as Record<string, string>;
+  let env = buildEnv(appId, envOverrides);
   ctx.setDetail({ fromVersion: installed.version, toVersion: app.version, composePath: effectiveCompose });
 
   // ── 1. Snapshot (before pull — tags move once new images land) ─────────
@@ -1768,11 +1769,15 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   const notAdopted: string[] = [];
   /** The override was merged with this catalog compose (so it may become the recorded base). */
   let merged = false;
+  let currentOverride: string | null = null;
+  /** Generated secrets the planned compose newly references (persisted when it is applied). */
+  let generatedEnv: string[] = [];
   const hasOverride = effectiveCompose !== app.composePath;
   if (hasOverride) {
     try {
       catalogContent = readFileSync(app.composePath, "utf-8");
-      const override = yaml.load(readFileSync(effectiveCompose, "utf-8")) as OverrideDoc | null;
+      currentOverride = readFileSync(effectiveCompose, "utf-8");
+      const override = yaml.load(currentOverride) as OverrideDoc | null;
       if (!override || typeof override !== "object") throw new Error("the app's compose file is empty or not a mapping");
       const catalogDoc = yaml.load(catalogContent) as OverrideDoc | null;
       const refState = readImageRefState(appId);
@@ -1805,6 +1810,18 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
       merged = false;
     }
     if (notAdopted.length > 0) ctx.setDetail({ notAdopted });
+    if (pendingCompose && currentOverride !== null) {
+      // A catalog env entry such as `JWT_SECRET: ${JWT_SECRET}` merged in above
+      // refers to a secret the manifest generates at install: fill it here too,
+      // or it would be interpolated as an empty string.
+      const filled = fillGeneratedUpdateEnv(appId, app.composePath, envOverrides, currentOverride, pendingCompose);
+      generatedEnv = [...filled.generated, ...filled.reused];
+      if (generatedEnv.length > 0) {
+        envOverrides = filled.env;
+        env = buildEnv(appId, envOverrides);
+        ctx.setDetail({ generatedEnv });
+      }
+    }
     if (imageRefChanges.length > 0) ctx.setDetail({ imageRefChanges });
     if (imagesKept.length > 0) ctx.setDetail({ imagesKept });
     if (configChanges.length > 0 || configKept.length > 0) {
@@ -1910,6 +1927,14 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
 
   // Apply the planned compose (restored from the snapshot on any failure).
   if (pendingCompose) {
+    if (generatedEnv.length > 0) {
+      // Kept even if the update is rolled back: a retry must reuse the same secret.
+      db.update(schema.installedApps)
+        .set({ envConfig: JSON.stringify(envOverrides), updatedAt: new Date().toISOString() })
+        .where(eq(schema.installedApps.appId, appId))
+        .run();
+      writeAppDotEnv(appId, envOverrides);
+    }
     atomicWriteFileSync(effectiveCompose, pendingCompose, "utf-8");
     if (imageRefChanges.length > 0) {
       // Both are Talome's now: `from` was judged movable (a first record for an

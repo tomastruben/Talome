@@ -560,6 +560,38 @@ describe("updates carry catalog configuration changes", () => {
     expect(overrideWeb().healthcheck).toEqual(CATALOG_V1.services.web.healthcheck);
   });
 
+  it("fills a generated secret the catalog's env newly references, so it is not interpolated as empty", async () => {
+    recordCatalogBase(overridePath, yaml.dump(CATALOG_V1));
+    writeFileSync(join(catalogPath, "..", "manifest.json"), JSON.stringify({
+      id: PROBE,
+      env: [
+        { key: "NEW_SECRET", secret: true, generate: "alnum32" },
+        // Referenced before the update without a value: an old install that runs as it is.
+        { key: "OLD_SECRET", secret: true, generate: "hex64" },
+      ],
+    }));
+    writeFileSync(overridePath, yaml.dump({
+      ...OVERRIDE,
+      services: { web: { ...OVERRIDE.services.web, environment: { A: "1", B: "mine", OLD: "${OLD_SECRET}" } } },
+    }));
+    writeFileSync(catalogPath, yaml.dump({
+      services: { web: { ...CATALOG_V2.services.web, environment: { ...CATALOG_V2.services.web.environment, OLD: "${OLD_SECRET}", JWT: "${NEW_SECRET}" } } },
+    }));
+
+    const result = await updateApp(PROBE);
+
+    expect(result.outcome).toBe("updated");
+    expect(overrideWeb().environment).toMatchObject({ JWT: "${NEW_SECRET}" });
+    const up = m.run.mock.calls.find((c) => String(c[0]).includes(" up -d"))!;
+    const upEnv = (up[1] as { env: Record<string, string> }).env;
+    expect(upEnv.NEW_SECRET).toMatch(/^[A-Za-z0-9]{32}$/);
+    expect(upEnv.OLD_SECRET).toBeUndefined();
+    const stored = JSON.parse(installedRow(PROBE)!.envConfig) as Record<string, string>;
+    expect(stored.NEW_SECRET).toBe(upEnv.NEW_SECRET);
+    expect(stored.OLD_SECRET).toBeUndefined();
+    rmSync(join(catalogPath, "..", "manifest.json"));
+  });
+
   it("merges list-style environments in their own format", () => {
     const override = { services: { web: { environment: ["A=1", "KEEP=me", "FLAG"] } } };
     const result = mergeCatalogConfig(
