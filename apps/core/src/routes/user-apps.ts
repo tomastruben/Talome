@@ -38,7 +38,9 @@ userApps.post("/", async (c) => {
 
 userApps.delete("/:appId", async (c) => {
   const appId = c.req.param("appId");
-  const result = await deleteUserApp(appId);
+  // The uninstall it runs is journaled and audited as the signed-in user.
+  const userId = c.get("sessionUser" as never) as string | undefined;
+  const result = await deleteUserApp(appId, { actor: userId ? `user:${userId}` : "user" });
   if (!result.success) {
     return c.json({ error: result.error }, 400);
   }

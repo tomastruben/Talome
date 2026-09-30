@@ -100,7 +100,8 @@ import {
   selectComposeContainers,
 } from "../stores/compose-exec.js";
 import { mergeCatalogConfig, readCatalogBase, recordCatalogBase } from "../stores/catalog-sync.js";
-import { runInActorContext } from "../ai/actor-context.js";
+import { runInActorContext, runInToolCallContext } from "../ai/actor-context.js";
+import { userApps } from "../routes/user-apps.js";
 import { __resetActiveOperationsForTests } from "../ops/operations.js";
 import type { ServiceImageState } from "../ops/docker-probe.js";
 import { apps } from "../routes/apps.js";
@@ -491,8 +492,42 @@ describe("audit of lifecycle operations started outside a tool call", () => {
 
     db.delete(schema.auditLog).run();
     m.run.mockResolvedValue({ stdout: "", stderr: "" });
-    await runInActorContext({ kind: "mcp_token", id: "tok-1", label: "MCP token" }, "mcp", () => stopApp(APP));
+    await runInToolCallContext({ kind: "mcp_token", id: "tok-1", label: "MCP token" }, "mcp", () => stopApp(APP));
     expect(db.select().from(schema.auditLog).all()).toEqual([]);
+  });
+
+  it("audits operations inside an execution context that no tool started (a chat turn, an MCP request)", async () => {
+    await runInActorContext({ kind: "mcp_token", id: "tok-1", label: "MCP token" }, "mcp", () => stopApp(APP));
+    expect(db.select().from(schema.auditLog).all()).toMatchObject([{ action: "Stopped app", actorKind: "mcp_token", actorId: "tok-1" }]);
+  });
+
+  it("audits every operation of a tool call except the one the tool started directly (e.g. a dependency start)", async () => {
+    const depCompose = addApp("dep-app", "services:\n  web:\n    image: nginx:1.29-alpine\n", { status: "stopped" });
+    live.push(container("dep000000001", "dep-app-web-1", projectLabels("dep-app", depCompose), "exited"));
+    await runInToolCallContext({ kind: "mcp_token", id: "tok-1", label: "MCP token" }, "mcp", async () => {
+      await startApp(APP);
+      await startApp("dep-app");
+    });
+    const rows = db.select().from(schema.auditLog).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].details).toContain("dep-app");
+    expect(rows[0]).toMatchObject({ action: "Started app", actorKind: "mcp_token", actorId: "tok-1" });
+  });
+
+  it("attributes the uninstall run by deleting a user app to the signed-in user", async () => {
+    live = [container("db0000000001", "bkrs-db", projectLabels(APP, composePath))];
+    const app = new Hono();
+    app.use(async (c, next) => {
+      c.set("sessionUser" as never, "u1" as never);
+      await next();
+    });
+    app.route("/api/user-apps", userApps);
+
+    const res = await app.request(`/api/user-apps/${APP}`, { method: "DELETE", headers: { "Content-Type": "application/json" } });
+
+    expect(res.status).toBe(200);
+    const rows = db.select().from(schema.auditLog).all().filter((r) => r.action === "Uninstalled app");
+    expect(rows).toMatchObject([{ actorKind: "user", actorId: "u1", actorLabel: "alice", source: "api" }]);
   });
 });
 

@@ -45,6 +45,13 @@ interface ActorContextStore {
    * `runWithActor(actor, fn)` API. Wins over `actor` for the journal.
    */
   operationActor?: string;
+  /**
+   * Set by executeTool() for the tool's own execution. The first app
+   * operation the tool starts claims it (that operation is covered by the
+   * tool's audit row); anything else started meanwhile — a dependency
+   * auto-start, a second app — is audited on its own.
+   */
+  toolCall?: { operationClaimed: boolean };
 }
 
 const storage = new AsyncLocalStorage<ActorContextStore>();
@@ -52,6 +59,24 @@ const storage = new AsyncLocalStorage<ActorContextStore>();
 /** Run `fn` (and everything it awaits or spawns) as `actor` from `source`. The innermost context wins. */
 export function runInActorContext<T>(actor: Actor, source: ExecutionSource, fn: () => T): T {
   return storage.run({ actor, source }, fn);
+}
+
+/** executeTool() only: run a tool's execute() as `actor`, marked as that tool call (see claimToolCallOperation). */
+export function runInToolCallContext<T>(actor: Actor, source: ExecutionSource, fn: () => T): T {
+  return storage.run({ actor, source, toolCall: { operationClaimed: false } }, fn);
+}
+
+/**
+ * True exactly once per tool call: for the first app operation started
+ * directly by an executeTool() call (audited by executeTool itself). False
+ * outside a tool call — e.g. a chat turn, an MCP request or an automation run
+ * that starts an operation without a tool — and for later operations.
+ */
+export function claimToolCallOperation(): boolean {
+  const call = storage.getStore()?.toolCall;
+  if (!call || call.operationClaimed) return false;
+  call.operationClaimed = true;
+  return true;
 }
 
 /**

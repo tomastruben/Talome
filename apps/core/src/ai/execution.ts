@@ -56,6 +56,7 @@ import { hostMountsNeedApproval } from "../stores/host-mounts.js";
 import {
   getExecutionContext,
   runInActorContext,
+  runInToolCallContext,
   type Actor,
   type ExecutionContext,
   type ExecutionSource,
@@ -681,7 +682,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<ExecuteToo
   // The tool (and any app operation it starts) runs as this actor.
   let output: unknown;
   try {
-    output = await runInActorContext(actor, source, () =>
+    output = await runInToolCallContext(actor, source, () =>
       execute(args, params.toolCallOptions ?? { toolCallId: `${source}-${randomUUID()}`, messages: [] }),
     );
   } catch (err) {

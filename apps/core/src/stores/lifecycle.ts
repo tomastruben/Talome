@@ -13,7 +13,7 @@ import type { InstalledAppStatus, AppVolume } from "@talome/types";
 import { fireTrigger } from "../automation/engine.js";
 import { writeNotification } from "../db/notifications.js";
 import { writeAuditEntry } from "../db/audit.js";
-import { getExecutionContext } from "../ai/actor-context.js";
+import { claimToolCallOperation } from "../ai/actor-context.js";
 import { createLogger } from "../utils/logger.js";
 import { encryptSetting } from "../utils/crypto.js";
 
@@ -163,13 +163,16 @@ async function runAppOperation<T extends { success: boolean; error?: string }>(
   }
   const actor = opts?.actor ?? currentActor();
   let operationId: string | undefined;
+  // The operation a tool call starts directly is audited by executeTool().
+  let auditedByTool = false;
   try {
     const result = await withAppOperation(appId, kind, actor, (ctx) => {
       operationId = ctx.id;
+      auditedByTool = claimToolCallOperation();
       // The compose lock still serializes against non-journaled writers (e.g. env edits).
       return withAppLock(appId, () => fn(ctx));
     });
-    auditLifecycleOperation(appId, kind, actor, operationId, result);
+    if (!auditedByTool) auditLifecycleOperation(appId, kind, actor, operationId, result);
     return { ...result, operationId };
   } catch (err) {
     if (err instanceof OperationConflictError) {
@@ -181,7 +184,7 @@ async function runAppOperation<T extends { success: boolean; error?: string }>(
       };
       return conflict as unknown as T & OperationResultMeta;
     }
-    if (operationId) {
+    if (operationId && !auditedByTool) {
       auditLifecycleOperation(appId, kind, actor, operationId, { success: false, error: err instanceof Error ? err.message : String(err) });
     }
     throw err;
@@ -189,10 +192,11 @@ async function runAppOperation<T extends { success: boolean; error?: string }>(
 }
 
 // ── Audit of lifecycle operations ─────────────────────────────────────────
-// A tool call (chat, MCP, automation, agent loop) is audited by executeTool()
-// with its actor. A lifecycle operation started anywhere else — the REST API
-// (dashboard buttons), schedulers, dependency auto-starts — writes its own
-// attributed row when it finishes.
+// The operation a tool call starts directly (chat, MCP, automation, agent
+// loop) is audited by executeTool() with its actor. Every other lifecycle
+// operation — the REST API (dashboard buttons), schedulers, a dependency
+// auto-start inside a tool call, anything run in a chat/MCP/automation
+// context without a tool — writes its own attributed row when it finishes.
 
 const LIFECYCLE_AUDIT: Partial<Record<OperationKind, { done: string; failed: string; tier: "modify" | "destructive" }>> = {
   install: { done: "Installed app", failed: "Install failed", tier: "modify" },
@@ -234,8 +238,6 @@ function auditLifecycleOperation(
 ): void {
   const labels = LIFECYCLE_AUDIT[kind];
   if (!labels) return;
-  // executeTool() audits tool calls itself (with the tool name and arguments).
-  if (getExecutionContext()) return;
   try {
     const outcomeNote = typeof result.outcome === "string" ? ` [${result.outcome}]` : "";
     const details = result.success

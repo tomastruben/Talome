@@ -444,7 +444,7 @@ export function listUserApps() {
     }));
 }
 
-export async function deleteUserApp(appId: string): Promise<{ success: boolean; error?: string }> {
+export async function deleteUserApp(appId: string, opts: { actor?: string } = {}): Promise<{ success: boolean; error?: string }> {
   try {
     const storeId = "user-apps";
     const registryPath = join(USER_APPS_DIR, "registry.json");
@@ -455,7 +455,7 @@ export async function deleteUserApp(appId: string): Promise<{ success: boolean; 
     if (installed) {
       // Keep the catalog/registry entry when uninstall did not happen (e.g. an
       // update is running): deleting it would orphan a still-installed app.
-      const uninstall = await uninstallApp(appId);
+      const uninstall = await uninstallApp(appId, opts.actor ? { actor: opts.actor } : undefined);
       if (!uninstall.success) {
         return { success: false, error: uninstall.error ?? `Could not uninstall ${appId}` };
       }
