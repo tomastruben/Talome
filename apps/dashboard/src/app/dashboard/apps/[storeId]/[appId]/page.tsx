@@ -565,7 +565,7 @@ export default function AppDetailPage() {
     if (!app) return;
     const name = app.installed?.displayName || app.name;
     const dataDir = `~/.talome/app-data/${appId}`;
-    await confirm<{ dataRemoved?: boolean; dataError?: string }>({
+    await confirm<{ dataKept?: boolean; dataRemoved?: boolean; dataError?: string }>({
       tier: "destructive",
       title: `Uninstall ${name}?`,
       consequence: `${name} stops and its containers are removed. Anything that depends on it stops working.`,
@@ -580,7 +580,7 @@ export default function AppDetailPage() {
       run: async ({ optionChecked }) => {
         setActionLoading("uninstall");
         try {
-          const result = await talomeDelete<{ dataRemoved?: boolean; dataError?: string }>(
+          const result = await talomeDelete<{ dataKept?: boolean; dataRemoved?: boolean; dataError?: string }>(
             `/api/apps/${encodeURIComponent(storeId)}/${encodeURIComponent(appId)}${optionChecked ? "" : "?keepData=false"}`,
           );
           await mutate();
@@ -604,7 +604,13 @@ export default function AppDetailPage() {
           void operations.refresh();
         }
       },
-      receipt: (result) => (result.dataRemoved ? `Uninstalled ${name} · data erased` : `Uninstalled ${name} · data kept`),
+      // The server says what happened to the data folder; nothing is claimed it didn't confirm.
+      receipt: (result) =>
+        result.dataRemoved
+          ? `Uninstalled ${name} · data erased`
+          : result.dataKept
+            ? `Uninstalled ${name} · data kept`
+            : `Uninstalled ${name}`,
     });
   };
 
@@ -748,11 +754,18 @@ export default function AppDetailPage() {
   const originalWebPort = app.webPort ?? (appStack ? getContainerWebPort(appStack.primaryContainer) : undefined);
   const openUrl = originalWebPort ? openUrlFor(originalWebPort, appStack?.primaryContainer) : null;
   const canAskTalome = hasPermission("chat");
+  const realIconUrl = resolveApplicationIconUrl(app.iconUrl);
+  const isUserCreated = storeId === "user-apps";
+  const requiresSetup = !isInstalled && !installUnsupported && needsAiSetup(app);
   const retryFailure = (() => {
-    if (!settledFailure || actionInFlight) return undefined;
+    if (!settledFailure) return undefined;
     switch (settledFailure.kind) {
       case "install":
-        return isInstalled ? undefined : () => void startInstall();
+        // Setup-first apps, blocked or unsupported installs and another
+        // store's copy can't simply run again: Ask Talome stays available.
+        return isInstalled || installedFrom || requiresSetup || installBlocked || installUnsupported
+          ? undefined
+          : () => void startInstall();
       case "update":
         return isInstalled ? () => void runAction("update") : undefined;
       case "uninstall":
@@ -765,9 +778,6 @@ export default function AppDetailPage() {
         return undefined;
     }
   })();
-  const realIconUrl = resolveApplicationIconUrl(app.iconUrl);
-  const isUserCreated = storeId === "user-apps";
-  const requiresSetup = !isInstalled && !installUnsupported && needsAiSetup(app);
   const validScreenshots = (app.screenshots || []).filter(
     (s) => !s.startsWith("file://"),
   );
@@ -1009,6 +1019,7 @@ export default function AppDetailPage() {
               operation={settledFailure}
               appName={displayName}
               onRetry={retryFailure}
+              retryBusy={actionInFlight}
               canAskTalome={canAskTalome}
               onDismiss={() => dismissFailure(settledFailure.operationId)}
             />
