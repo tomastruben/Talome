@@ -646,7 +646,7 @@ export default function MediaDetailPage() {
               <Image
                 src={resolveBackdropUrl(item.backdrop, 1280)!}
                 alt=""
-                className="object-cover"
+                className="object-cover tm-hero-in"
                 fill
                 priority
                 sizes="100vw"
@@ -720,7 +720,7 @@ export default function MediaDetailPage() {
                 type="button"
                 onClick={playMovie}
                 aria-label={`Play ${item.title}`}
-                className="absolute z-10 right-4 bottom-4 lg:right-6 lg:bottom-6 shrink-0 flex items-center justify-center w-14 h-14 lg:w-16 lg:h-16 rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-colors"
+                className="absolute z-10 right-4 bottom-4 lg:right-6 lg:bottom-6 shrink-0 flex items-center justify-center w-14 h-14 lg:w-16 lg:h-16 rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 hover:scale-105 active:scale-95 transition-[background-color,transform] duration-150"
               >
                 <HugeiconsIcon icon={PlayIcon} size={24} className="text-white ml-0.5" />
               </button>
@@ -734,8 +734,8 @@ export default function MediaDetailPage() {
 
             {/* Bottom metadata overlay — minimal on mobile, richer on desktop */}
             <div className="absolute bottom-0 left-0 right-0 p-4 lg:p-6 pr-20 lg:pr-24">
-              <h2 className="text-lg lg:text-2xl font-medium text-white mb-1.5 lg:mb-2 line-clamp-2 lg:line-clamp-1">{item.title}</h2>
-              <div className="flex items-center gap-1.5 lg:gap-2 flex-wrap">
+              <h2 className="tm-rise text-lg lg:text-2xl font-medium text-white mb-1.5 lg:mb-2 line-clamp-2 lg:line-clamp-1">{item.title}</h2>
+              <div className="tm-rise tm-rise-2 flex items-center gap-1.5 lg:gap-2 flex-wrap">
                 {item.rating != null && item.rating > 0 && (
                   <span className="flex items-center gap-1 text-xs lg:text-sm text-amber-400">
                     <HugeiconsIcon icon={StarIcon} size={12} />

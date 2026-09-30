@@ -16,6 +16,7 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
+import { AnimatePresence, motion } from "motion/react";
 import { HugeiconsIcon, Cancel01Icon, Add01Icon } from "@/components/icons";
 import { DraggableWrapper } from "@/components/draggable-dashboard";
 import { useWidgetLayout } from "@/hooks/use-widget-layout";
@@ -361,6 +362,39 @@ function DragGhost({
 
 // ── Widget Picker ─────────────────────────────────────────────────────────────
 
+const EMPTY_MANIFESTS = new Map<string, ReturnType<typeof useWidgetManifests>["widgets"][number]>();
+
+/** One widget in the gallery: a live, half-size preview you can add with a click. */
+function WidgetPreviewTile({ label, onAdd, children }: { label: string; onAdd: () => void; children?: React.ReactNode }) {
+  return (
+    <motion.button
+      layout
+      type="button"
+      onClick={onAdd}
+      aria-label={`Add ${label} widget`}
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.9, filter: "blur(3px)" }}
+      transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+      className="group/tile flex flex-col gap-2 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+    >
+      <span className="relative block h-[5.5rem] w-full overflow-hidden rounded-xl border border-border/60 bg-card transition-[border-color,transform] duration-150 group-hover/tile:-translate-y-px group-hover/tile:border-border group-active/tile:scale-[0.98]">
+        {children ? (
+          <span className="pointer-events-none absolute left-0 top-0 block h-[11rem] w-[200%] origin-top-left scale-50" aria-hidden inert>
+            {children}
+          </span>
+        ) : (
+          <span className="flex size-full items-center justify-center text-xs text-muted-foreground">{label}</span>
+        )}
+        <span className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-foreground text-background opacity-0 shadow-sm transition-[opacity,transform] duration-150 group-hover/tile:opacity-100 group-focus-visible/tile:opacity-100 scale-90 group-hover/tile:scale-100">
+          <HugeiconsIcon icon={Add01Icon} size={12} />
+        </span>
+      </span>
+      <span className="truncate px-0.5 text-xs text-muted-foreground transition-colors group-hover/tile:text-foreground">{label}</span>
+    </motion.button>
+  );
+}
+
 export function WidgetAddDock({
   hiddenWidgetTypes,
   hiddenCustomIds,
@@ -405,7 +439,7 @@ export function WidgetAddDock({
           align="end"
           side={inline ? "left" : "top"}
           sideOffset={10}
-          className="z-[1400] w-[min(28rem,calc(100vw-2rem))] rounded-xl border border-border/70 bg-background/95 p-3 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-background/80"
+          className="z-[1400] w-[min(34rem,calc(100vw-2rem))] rounded-2xl border border-border/70 bg-background/95 p-3 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-background/80"
           onPointerDownOutside={(event) => {
             const target = event.target;
             if (
@@ -420,30 +454,19 @@ export function WidgetAddDock({
           <p className="mb-3 text-xs font-medium uppercase tracking-widest text-muted-foreground">
             Add widget
           </p>
-          <div className="max-h-60 overflow-y-auto pr-1">
-            <div className="flex flex-wrap gap-2">
-              {addableIds.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => onAdd(id)}
-                  className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-border hover:bg-muted/30 hover:text-foreground"
-                >
-                  <HugeiconsIcon icon={Add01Icon} size={12} />
-                  {WIDGET_LABELS[id]}
-                </button>
-              ))}
-              {DECLARATIVE_WIDGETS_ENABLED && addableCustomIds.map((id) => (
-                <button
-                  key={`widget:${id}`}
-                  type="button"
-                  onClick={() => onAdd(`widget:${id}`)}
-                  className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-border hover:bg-muted/30 hover:text-foreground"
-                >
-                  <HugeiconsIcon icon={Add01Icon} size={12} />
-                  {id}
-                </button>
-              ))}
+          {/* A gallery of live previews: you see what you'll get before adding it */}
+          <div className="max-h-[26rem] overflow-y-auto pr-1">
+            <div className="grid grid-cols-2 gap-3">
+              <AnimatePresence initial={false} mode="popLayout">
+                {addableIds.map((id) => (
+                  <WidgetPreviewTile key={id} label={WIDGET_LABELS[id]} onAdd={() => onAdd(id)}>
+                    {id === "divider" ? null : widgetComponent(id, EMPTY_MANIFESTS, false)}
+                  </WidgetPreviewTile>
+                ))}
+                {DECLARATIVE_WIDGETS_ENABLED && addableCustomIds.map((id) => (
+                  <WidgetPreviewTile key={`widget:${id}`} label={id} onAdd={() => onAdd(`widget:${id}`)} />
+                ))}
+              </AnimatePresence>
             </div>
           </div>
         </PopoverContent>

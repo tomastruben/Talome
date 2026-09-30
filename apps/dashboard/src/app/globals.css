@@ -1936,6 +1936,19 @@
 }
 .tm-tilt[data-tilting]::after { opacity: 1; }
 
+/* Hero: a backdrop settles into place; the text over it rises in sequence */
+@keyframes tm-hero-in {
+  from { opacity: 0; transform: scale(1.04); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.tm-hero-in { animation: tm-hero-in 600ms var(--ease-out-quint) both; }
+@keyframes tm-rise {
+  from { opacity: 0; transform: translateY(12px); filter: blur(3px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
+.tm-rise { animation: tm-rise 500ms var(--ease-out-quint) 120ms both; }
+.tm-rise-2 { animation-delay: 160ms; }
+
 /* Selection mark: ring fills, then the check draws; unselecting reverses fast */
 .tm-select-mark .tm-select-ring {
   fill: transparent;
@@ -1981,6 +1994,8 @@
   .tm-select-mark *,
   .tm-tilt,
   .tm-tilt::after,
+  .tm-hero-in,
+  .tm-rise,
   .tm-shake,
   .tm-shake-again,
   .tm-success-check,
