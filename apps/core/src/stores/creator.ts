@@ -1,11 +1,13 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { atomicWriteFileSync } from "../utils/filesystem.js";
-import { join } from "node:path";
+import { join, relative, resolve, isAbsolute } from "node:path";
+import { parse as parseYaml } from "yaml";
 import { homedir } from "node:os";
 import { db, schema } from "../db/index.js";
 import { eq, and } from "drizzle-orm";
 import { talomeAdapter } from "./adapters/talome-adapter.js";
 import { uninstallApp } from "./lifecycle.js";
+import { createLogger } from "../utils/logger.js";
 import type {
   AppBlueprint,
   InstructionPackSummary,
@@ -18,6 +20,8 @@ import { createDefaultAppSpec, TalomeAppSpecSchema } from "../app-specs/schema.j
 import { assertNoPublicationConflicts, copyGeneratedArtifactSync, publicationValidationClaims } from "./creator-artifacts.js";
 
 const USER_APPS_DIR = join(homedir(), ".talome", "user-apps");
+const log = createLogger("creator");
+const APP_ID_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 function ensureUserAppsStore(): string {
   const storeId = "user-apps";
@@ -178,7 +182,7 @@ export function createUserApp(input: CreateAppInput, options: { validatedScaffol
 } {
   // Every entry point, including raw user-app API calls, reaches this check
   // before an ID can become a filesystem path or a registry key.
-  if (typeof input.id !== "string" || input.id.length > 96 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(input.id)) {
+  if (typeof input.id !== "string" || input.id.length > 96 || !APP_ID_SLUG.test(input.id)) {
     return { success: false, appId: input.id, storeId: "", error: "App ID must be a slug of 1–96 lowercase letters, numbers, and single hyphens between words." };
   }
   // This second argument is supplied only by the server's fresh validation path;
@@ -480,7 +484,7 @@ export function listUserApps() {
     }));
 }
 
-export async function deleteUserApp(appId: string): Promise<{ success: boolean; error?: string }> {
+export async function deleteUserApp(appId: string): Promise<{ success: boolean; error?: string; keptData?: string[] }> {
   try {
     const storeId = "user-apps";
     const registryPath = join(USER_APPS_DIR, "registry.json");
@@ -513,8 +517,90 @@ export async function deleteUserApp(appId: string): Promise<{ success: boolean; 
       .run();
 
     deleteAppSpec("user-apps", appId);
-    return { success: true };
+    const cleanup = removeUserAppDir(appId);
+    return { success: true, ...(cleanup.kept.length > 0 ? { keptData: cleanup.kept } : {}) };
   } catch (err: any) {
     return { success: false, error: err.message };
+  }
+}
+
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * Host paths inside `appDir` that the app's compose file bind-mounts (its
+ * runtime data when the compose ran from this directory). Returns null when
+ * the compose cannot be read or a source cannot be resolved (e.g. ${VAR}) —
+ * the caller must then keep everything.
+ */
+function boundPathsInAppDir(appDir: string): string[] | null {
+  const composePath = ["docker-compose.yml", "docker-compose.yaml"].map((f) => join(appDir, f)).find((p) => existsSync(p));
+  if (!composePath) return [];
+  let doc: { services?: Record<string, { volumes?: unknown[] } | null> } | null;
+  try {
+    doc = parseYaml(readFileSync(composePath, "utf-8")) as typeof doc;
+  } catch {
+    return null;
+  }
+  const out: string[] = [];
+  for (const svc of Object.values(doc?.services ?? {})) {
+    for (const vol of (Array.isArray(svc?.volumes) ? svc.volumes : []) as unknown[]) {
+      let source: string | null = null;
+      if (typeof vol === "string") {
+        const parts = vol.split(":");
+        if (parts.length >= 2) source = parts[0];
+      } else if (vol && typeof vol === "object") {
+        const v = vol as { type?: unknown; source?: unknown };
+        if (typeof v.source === "string" && v.type !== "volume" && v.type !== "tmpfs") source = v.source;
+      }
+      if (!source) continue;
+      if (source.includes("$")) return null;
+      if (isNamedVolumeSource(source)) continue;
+      if (source.startsWith("/") || source.startsWith("~")) continue;
+      const abs = resolve(appDir, source);
+      if (isInside(appDir, abs)) out.push(abs);
+    }
+  }
+  return out;
+}
+
+/**
+ * Remove a deleted user app's directory (manifest, compose, creator files,
+ * generated source). Data the compose bind-mounts from inside the directory
+ * is never deleted — the top-level entries holding it are kept. Backups live
+ * elsewhere and are not touched.
+ */
+function removeUserAppDir(appId: string): { removed: boolean; kept: string[] } {
+  if (typeof appId !== "string" || appId.length > 96 || !APP_ID_SLUG.test(appId)) return { removed: false, kept: [] };
+  const appsRoot = join(USER_APPS_DIR, "apps");
+  const appDir = join(appsRoot, appId);
+  if (!isInside(appsRoot, appDir) || appDir === appsRoot || !existsSync(appDir)) return { removed: false, kept: [] };
+  try {
+    const bound = boundPathsInAppDir(appDir);
+    if (bound === null || bound.includes(appDir)) {
+      log.warn(`${appId}: kept ${appDir} — it may hold app data (its compose mounts it, or could not be read)`);
+      return { removed: false, kept: [appDir] };
+    }
+    const existing = bound.filter((p) => existsSync(p));
+    if (existing.length === 0) {
+      rmSync(appDir, { recursive: true, force: true });
+      return { removed: true, kept: [] };
+    }
+    const kept: string[] = [];
+    for (const name of readdirSync(appDir)) {
+      const entry = join(appDir, name);
+      if (existing.some((p) => isInside(entry, p))) {
+        kept.push(entry);
+        continue;
+      }
+      rmSync(entry, { recursive: true, force: true });
+    }
+    log.info(`${appId}: removed the app files, kept its data at ${kept.join(", ")}`);
+    return { removed: false, kept };
+  } catch (err) {
+    log.warn(`${appId}: could not remove ${appDir}`, err);
+    return { removed: false, kept: [] };
   }
 }
