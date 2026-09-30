@@ -40,14 +40,31 @@ export async function resolveUploadTarget(targetDir: string, relativePath: strin
   }
 
   const fileName = segments[segments.length - 1];
-  const dir = join(base, ...segments.slice(0, -1));
-  if (!isAllowed(dir)) return { ok: false, status: 403, error: "Access denied" };
-  await mkdir(dir, { recursive: true });
 
-  // Re-check after creation: the real path must still be inside an allowed root
-  const realDir = realpathSync(dir);
-  if (!isAllowed(realDir)) return { ok: false, status: 403, error: "Access denied" };
-  return { ok: true, dir: realDir, fileName };
+  // Walk the folders one level at a time. Each existing component is resolved
+  // (following symlinks) and checked before anything is created inside it, so a
+  // symlink can never lead to folders being created outside an allowed root.
+  let current: string;
+  try {
+    current = realpathSync(base);
+  } catch {
+    return { ok: false, status: 400, error: "Target folder does not exist" };
+  }
+  if (!isAllowed(current)) return { ok: false, status: 403, error: "Access denied" };
+
+  for (const segment of segments.slice(0, -1)) {
+    const next = join(current, segment);
+    try {
+      await mkdir(next);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+    const real = realpathSync(next);
+    if (!isAllowed(real)) return { ok: false, status: 403, error: "Access denied" };
+    if (!(await stat(real)).isDirectory()) return { ok: false, status: 400, error: `Not a folder: ${segment}` };
+    current = real;
+  }
+  return { ok: true, dir: current, fileName };
 }
 
 async function exists(path: string): Promise<boolean> {

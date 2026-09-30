@@ -257,6 +257,26 @@ describe("server-issued approvals", () => {
   });
 });
 
+describe("approvals satisfy a tool's own confirmed flag", () => {
+  it("passes confirmed: true once the call was approved", async () => {
+    let received: Record<string, unknown> = {};
+    const execute = (a: unknown) => { received = a as Record<string, unknown>; return { success: true }; };
+    await m.mcp.executeMcpToolCall("uninstall_app", execute, { appId: "a", confirmed: false }, tokenActor);
+    const [request] = pendingApprovals();
+    m.approvals.decideApproval(request.id, true, "admin");
+
+    const result = await m.mcp.executeMcpToolCall("uninstall_app", execute, { appId: "a", confirmed: false }, tokenActor);
+    expect(result.isError).toBeUndefined();
+    expect(received).toMatchObject({ appId: "a", confirmed: true });
+  });
+
+  it("does not add confirmed when nobody approved the call", async () => {
+    let received: Record<string, unknown> = {};
+    await m.mcp.executeMcpToolCall("restart_app", (a) => { received = a as Record<string, unknown>; return {}; }, { appId: "a" }, tokenActor);
+    expect(received).toEqual({ appId: "a" });
+  });
+});
+
 describe("gateToolExecution per caller", () => {
   const fakeTool = (onRun: () => void) =>
     ({ description: "t", inputSchema: {}, execute: async () => { onRun(); return { success: true }; } }) as never;
@@ -301,6 +321,24 @@ describe("per-token scopes", () => {
     expect((await m.mcp.executeMcpToolCall("restart_container", execute, { id: "abc" }, token)).isError).toBe(true);
     // Reads without an app target still work
     expect((await m.mcp.executeMcpToolCall("list_containers", execute, {}, token)).isError).toBeUndefined();
+  });
+
+  it("resolves containers to their app for app-restricted tokens", async () => {
+    m.db.delete(m.schema.installedApps).run();
+    m.db.insert(m.schema.installedApps).values([
+      { appId: "jellyfin", storeSourceId: "s", containerIds: JSON.stringify(["abc123def4567890"]) },
+      { appId: "vaultwarden", storeSourceId: "s", containerIds: "[]" },
+    ] as (typeof m.schema.installedApps.$inferInsert)[]).run();
+    const token = tokenWith({ maxTier: "read", apps: ["jellyfin"] });
+    const execute = () => ({ success: true });
+
+    expect((await m.mcp.executeMcpToolCall("get_container_logs", execute, { containerId: "jellyfin" }, token)).isError).toBeUndefined();
+    expect((await m.mcp.executeMcpToolCall("get_container_logs", execute, { containerId: "abc123def456" }, token)).isError).toBeUndefined();
+    expect((await m.mcp.executeMcpToolCall("get_container_logs", execute, { containerId: "vaultwarden" }, token)).isError).toBe(true);
+    // Containers that belong to no known app are outside any app grant
+    expect((await m.mcp.executeMcpToolCall("get_container_logs", execute, { containerId: "mystery" }, token)).isError).toBe(true);
+    // Unrestricted tokens are unaffected
+    expect((await m.mcp.executeMcpToolCall("get_container_logs", execute, { containerId: "vaultwarden" }, tokenActor)).isError).toBeUndefined();
   });
 
   it("restricts a token to its granted domains", () => {

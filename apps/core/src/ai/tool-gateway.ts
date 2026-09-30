@@ -94,6 +94,15 @@ export function authorizeToolCall(
   };
 }
 
+/**
+ * Some destructive tools also check their own `confirmed` argument. Once a person
+ * approved the call (in chat or through a server-issued approval), that is the
+ * confirmation — pass it through so the tool doesn't refuse and waste the approval.
+ */
+export function withConfirmation(args: Record<string, unknown>, approvedByPerson: boolean): Record<string, unknown> {
+  return approvedByPerson ? { ...args, confirmed: true } : args;
+}
+
 function auditDetails(actor: ExecutionActor, toolName: string, args: Record<string, unknown>, extra?: string): string {
   const summary = summarizeToolArgs(toolName, redactSecrets(args) as Record<string, unknown>);
   return [describeActor(actor), extra, summary].filter(Boolean).join(" · ");
@@ -132,7 +141,7 @@ export function gateToolExecution(
         ? `approved (request ${decision.approvalId})`
         : needsChatApproval ? "approved in chat" : undefined;
       writeAuditEntry(`AI: ${toolName}`, tier, auditDetails(actor, toolName, args, approvalNote));
-      return execute(args, ctx);
+      return execute(withConfirmation(args, decision.approvalId !== undefined || needsChatApproval), ctx);
     },
   } as Tool;
 }

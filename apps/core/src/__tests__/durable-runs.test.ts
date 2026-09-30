@@ -9,7 +9,7 @@ process.env.DATABASE_PATH = join(tempDir, "talome.db");
 process.env.TALOME_SECRET = "d".repeat(64);
 
 // Fake side effects for two real, automation-safe tools: restart_app (modify) and list_containers (read)
-const calls = vi.hoisted(() => ({ restart: 0, list: 0, hangRestart: false, hangList: false }));
+const calls = vi.hoisted(() => ({ restart: 0, list: 0, hangRestart: false, hangList: false, lastRestartArgs: {} as Record<string, unknown> }));
 const never = () => new Promise<never>(() => {});
 vi.mock("../ai/tool-registry.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../ai/tool-registry.js")>();
@@ -17,7 +17,7 @@ vi.mock("../ai/tool-registry.js", async (importOriginal) => {
     ...real,
     getAllRegisteredTools: () => ({
       ...real.getAllRegisteredTools(),
-      restart_app: { execute: async () => { calls.restart++; if (calls.hangRestart) await never(); return { success: true }; } },
+      restart_app: { execute: async (args: Record<string, unknown>) => { calls.restart++; calls.lastRestartArgs = args; if (calls.hangRestart) await never(); return { success: true }; } },
       list_containers: { execute: async () => { calls.list++; if (calls.hangList) await never(); return { success: true, containers: [] }; } },
     }),
   };
@@ -92,6 +92,8 @@ beforeEach(() => {
   calls.list = 0;
   calls.hangRestart = false;
   calls.hangList = false;
+  calls.lastRestartArgs = {};
+  db.delete(schema.notifications).run();
   db.delete(schema.automationStepRuns).run();
   db.delete(schema.automationRuns).run();
   db.delete(schema.automations).run();
@@ -272,6 +274,91 @@ describe("approval-gated steps", () => {
     expect(report.cancelled).toEqual([run.id]);
     expect(run.status).toBe("failed");
     expect(calls.restart).toBe(0);
+  });
+});
+
+describe("review fixes", () => {
+  const gated = [
+    { id: "g0", type: "notify", level: "info", title: "Before" },
+    { id: "g1", type: "tool_action", toolName: "restart_app", args: { appId: "sonarr" }, approvalPolicy: "require_approval" },
+  ];
+
+  async function approvals() {
+    return import("../approval/tool-approvals.js");
+  }
+
+  it("counts a run that waited for approval once", async () => {
+    addAutomation("c1", gated);
+    await engine.fireTrigger("manual", { automationId: "c1", manual: true });
+    const autoAfterWait = db.select().from(schema.automations).where(eq(schema.automations.id, "c1")).get()!;
+    expect(autoAfterWait.runCount).toBe(0);
+    expect(autoAfterWait.lastRunAt).toBeNull();
+
+    const { listApprovals, decideApproval } = await approvals();
+    decideApproval(listApprovals({ status: "pending" })[0].id, true, "admin");
+    await engine.reconcileAutomationRuns();
+    expect(db.select().from(schema.automations).where(eq(schema.automations.id, "c1")).get()!.runCount).toBe(1);
+  });
+
+  it("does not start new runs while one waits for approval", async () => {
+    addAutomation("c2", gated);
+    await engine.fireTrigger("manual", { automationId: "c2", manual: true });
+    const again = await engine.fireTrigger("manual", { automationId: "c2", manual: true });
+    expect(again).toEqual([]);
+    expect(runsOf("c2")).toHaveLength(1);
+
+    const { listApprovals, decideApproval } = await approvals();
+    decideApproval(listApprovals({ status: "pending" })[0].id, true, "admin");
+    await engine.reconcileAutomationRuns();
+    expect(runsOf("c2").map((r) => r.status)).toEqual(["succeeded"]);
+  });
+
+  it("passes the person's approval to tools that check confirmed themselves", async () => {
+    addAutomation("c3", gated);
+    await engine.fireTrigger("manual", { automationId: "c3", manual: true });
+    const { listApprovals, decideApproval } = await approvals();
+    decideApproval(listApprovals({ status: "pending" })[0].id, true, "admin");
+    await engine.reconcileAutomationRuns();
+    expect(calls.lastRestartArgs).toMatchObject({ appId: "sonarr", confirmed: true });
+  });
+
+  it("fails a run whose pending approval expired, with a notification", async () => {
+    addAutomation("c4", gated);
+    await engine.fireTrigger("manual", { automationId: "c4", manual: true });
+    db.update(schema.toolApprovals).set({ expiresAt: new Date(Date.now() - 1000).toISOString() }).run();
+
+    const report = await engine.reconcileAutomationRuns();
+    const [run] = runsOf("c4");
+    expect(report.cancelled).toEqual([run.id]);
+    expect(run.status).toBe("failed");
+    const notes = db.select().from(schema.notifications).all();
+    expect(notes.some((n) => n.title === 'Automation "Automation c4" failed')).toBe(true);
+  });
+
+  it("does not ask for approval for a step that could never run", async () => {
+    addAutomation("c5", [{ id: "x", type: "tool_action", toolName: "uninstall_app", args: { appId: "a" }, approvalPolicy: "require_approval" }]);
+    const [result] = await engine.fireTrigger("manual", { automationId: "c5", manual: true });
+    expect(result.error).toContain("not allowed in automations");
+    const { listApprovals } = await approvals();
+    expect(listApprovals({ status: "pending" })).toHaveLength(0);
+
+    setSetting("security_mode", "locked");
+    addAutomation("c6", gated);
+    const [locked] = await engine.fireTrigger("manual", { automationId: "c6", manual: true });
+    expect(locked.error).toContain("locked");
+    expect(listApprovals({ status: "pending" })).toHaveLength(0);
+  });
+
+  it("never repeats an interrupted AI prompt step that may use modify tools", async () => {
+    const steps = [{ id: "ai", type: "ai_prompt", promptTemplate: "check things", allowedTools: [], approvalPolicy: "auto" }];
+    addAutomation("c7", steps);
+    const runId = store.createRun({ automationId: "c7", workflowVersion: 2, triggerType: "manual", triggerData: {}, steps });
+    store.beginStep(runId, "c7", 0, "ai", "ai_prompt");
+    expireLease(runId);
+
+    const report = await engine.reconcileAutomationRuns();
+    expect(report.interrupted).toEqual([runId]);
+    expect(store.getRun(runId)?.status).toBe("interrupted");
   });
 });
 

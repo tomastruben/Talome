@@ -82,9 +82,10 @@ automations.get("/", (c) => {
           automation_id: string;
           triggered_at: string;
           success: number;
+          status: string | null;
           error: string | null;
         }>(sql`
-          SELECT r.automation_id, r.triggered_at, r.success, r.error
+          SELECT r.automation_id, r.triggered_at, r.success, r.status, r.error
           FROM automation_runs r
           INNER JOIN (
             SELECT automation_id, MAX(triggered_at) AS max_t
@@ -97,6 +98,8 @@ automations.get("/", (c) => {
     const runByAutomation = new Map(
       latestRuns.map((r) => [r.automation_id, {
         lastRunSuccess: !!r.success,
+        // running | succeeded | failed | waiting_approval | interrupted (null for older runs)
+        lastRunStatus: r.status ?? (r.success ? "succeeded" : "failed"),
         lastRunError: r.error,
         lastRunTriggeredAt: r.triggered_at,
       }]),

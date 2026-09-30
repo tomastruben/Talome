@@ -108,7 +108,10 @@ export function renewLease(runId: string): boolean {
   return result.changes === 1;
 }
 
-/** True when another run of this automation is executing under a live lease. */
+/**
+ * True when another run of this automation is executing under a live lease, or
+ * is paused waiting for an approval.
+ */
 export function hasActiveRun(automationId: string): boolean {
   const now = new Date().toISOString();
   const row = db
@@ -117,8 +120,10 @@ export function hasActiveRun(automationId: string): boolean {
     .where(
       and(
         eq(schema.automationRuns.automationId, automationId),
-        eq(schema.automationRuns.status, "running"),
-        gt(schema.automationRuns.leaseExpiresAt, now),
+        or(
+          and(eq(schema.automationRuns.status, "running"), gt(schema.automationRuns.leaseExpiresAt, now)),
+          eq(schema.automationRuns.status, "waiting_approval"),
+        ),
       ),
     )
     .get();

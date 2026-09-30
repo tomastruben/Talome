@@ -718,6 +718,11 @@ const server = serve({ fetch: app.fetch, hostname: "::", port }, (info) => {
   }
 });
 
+// Node aborts any request still receiving its body after 5 minutes by default,
+// which would cut off large streaming uploads. Allow long transfers; slow-header
+// attacks are still bounded by headersTimeout.
+if ("requestTimeout" in server) server.requestTimeout = 24 * 60 * 60 * 1000;
+
 let triedIpv4Fallback = false;
 server.on("error", (err: NodeJS.ErrnoException) => {
   // No IPv6 on this host (common in containers): listen on IPv4 instead. The

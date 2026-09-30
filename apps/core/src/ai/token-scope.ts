@@ -46,14 +46,30 @@ export function isToolInScope(scope: McpTokenScope, tier: ToolTier, domain: stri
 
 /** Argument names tools use to name the app they act on. */
 const APP_ARG_KEYS = ["appId", "app_id", "appIds", "app_ids"] as const;
+/** Argument names tools use to name a container. */
+const CONTAINER_ARG_KEYS = ["containerId", "container", "containerName"] as const;
 
-/** App ids named in a tool call's arguments. */
-export function targetAppIds(args: Record<string, unknown>): string[] {
+/** Maps a container name or id to the app that owns it, or null when unknown. */
+export type ContainerResolver = (containerRef: string) => string | null;
+
+function stringsOf(value: unknown): string[] {
+  if (typeof value === "string" && value) return [value];
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string" && v.length > 0);
+  return [];
+}
+
+/**
+ * App ids a tool call targets: named directly, or through a container it names.
+ * A container that can't be matched to an app yields a `container:<ref>` marker,
+ * which never matches a granted app — unknown containers are outside any grant.
+ */
+export function targetAppIds(args: Record<string, unknown>, resolveContainer?: ContainerResolver): string[] {
   const ids: string[] = [];
-  for (const key of APP_ARG_KEYS) {
-    const value = args[key];
-    if (typeof value === "string" && value) ids.push(value);
-    if (Array.isArray(value)) ids.push(...value.filter((v): v is string => typeof v === "string" && v.length > 0));
+  for (const key of APP_ARG_KEYS) ids.push(...stringsOf(args[key]));
+  if (resolveContainer) {
+    for (const key of CONTAINER_ARG_KEYS) {
+      for (const ref of stringsOf(args[key])) ids.push(resolveContainer(ref) ?? `container:${ref}`);
+    }
   }
   return ids;
 }
@@ -73,6 +89,7 @@ export function checkTokenScope(
   tier: ToolTier,
   domain: string | undefined,
   args: Record<string, unknown>,
+  resolveContainer?: ContainerResolver,
 ): ScopeDecision {
   if (TIER_RANK[tier] > TIER_RANK[scope.maxTier]) {
     return {
@@ -87,7 +104,7 @@ export function checkTokenScope(
     };
   }
   if (scope.apps !== "*") {
-    const targets = targetAppIds(args);
+    const targets = targetAppIds(args, resolveContainer);
     const outside = targets.filter((id) => !(scope.apps as string[]).includes(id));
     if (outside.length > 0) {
       return {

@@ -6,9 +6,10 @@ import { randomUUID } from "node:crypto";
 import { hashToken, verifyBearerToken } from "../middleware/auth.js";
 import { writeAuditEntry } from "../db/audit.js";
 import { getEnabledRegisteredTools, getToolTier, getDisabledToolNames } from "../ai/agent.js";
-import { authorizeToolCall } from "../ai/tool-gateway.js";
+import { authorizeToolCall, withConfirmation } from "../ai/tool-gateway.js";
 import { getToolDomain } from "../ai/tool-registry.js";
-import { checkTokenScope, isToolInScope } from "../ai/token-scope.js";
+import { checkTokenScope, isToolInScope, type ContainerResolver } from "../ai/token-scope.js";
+import { db, schema } from "../db/index.js";
 import { describeActor, type ExecutionActor } from "../ai/execution-actor.js";
 import { summarizeForAudit } from "../utils/redact.js";
 
@@ -27,6 +28,31 @@ export function isToolErrorResult(result: unknown): boolean {
   if (!result || typeof result !== "object" || Array.isArray(result)) return false;
   const r = result as Record<string, unknown>;
   return (typeof r.error === "string" && r.error.length > 0) || r.success === false || r.ok === false;
+}
+
+/**
+ * Resolve a container name or id to the installed app that owns it: the app id
+ * itself, "<appId>-…"/"<appId>_…" compose names, or one of its recorded container ids.
+ */
+export function installedAppContainerResolver(): ContainerResolver {
+  const apps = db.select({ appId: schema.installedApps.appId, containerIds: schema.installedApps.containerIds }).from(schema.installedApps).all();
+  return (ref) => {
+    const needle = ref.toLowerCase().replace(/^\//, "");
+    for (const app of apps) {
+      const id = app.appId.toLowerCase();
+      if (needle === id || needle.startsWith(`${id}-`) || needle.startsWith(`${id}_`)) return app.appId;
+      let containerIds: unknown = [];
+      try {
+        containerIds = JSON.parse(app.containerIds);
+      } catch {
+        /* malformed — no ids */
+      }
+      if (Array.isArray(containerIds) && needle.length >= 12 && containerIds.some((cid) => typeof cid === "string" && (cid.startsWith(needle) || needle.startsWith(cid)))) {
+        return app.appId;
+      }
+    }
+    return null;
+  };
 }
 
 type McpToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -55,7 +81,14 @@ export async function executeMcpToolCall(
   }
 
   if (actor.kind === "token") {
-    const scopeDecision = checkTokenScope(actor.scope, toolName, tier, getToolDomain(toolName), args);
+    const scopeDecision = checkTokenScope(
+      actor.scope,
+      toolName,
+      tier,
+      getToolDomain(toolName),
+      args,
+      actor.scope.apps === "*" ? undefined : installedAppContainerResolver(),
+    );
     if (!scopeDecision.allowed) {
       writeAuditEntry(`MCP BLOCKED (token scope): ${toolName}`, tier, `${who} · ${argSummary}`, false);
       return errorResult(scopeDecision.reason);
@@ -70,7 +103,7 @@ export async function executeMcpToolCall(
   const approvalNote = decision.approvalId ? ` · approved (request ${decision.approvalId})` : "";
 
   try {
-    const result = await execute(args, {});
+    const result = await execute(withConfirmation(args, decision.approvalId !== undefined), {});
     const failed = isToolErrorResult(result);
     writeAuditEntry(`MCP: ${toolName}`, tier, `${who} · ${failed ? "failed" : "ok"}${approvalNote} · ${argSummary}`);
     return {

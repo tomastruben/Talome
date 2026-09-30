@@ -43,6 +43,10 @@ describe("resolveUploadTarget", () => {
     symlinkSync(outside, join(root, "files", "link-out"));
     const target = await upload.resolveUploadTarget(join(root, "files"), "link-out/x.txt");
     expect(target.ok).toBe(false);
+    // Nested folders under the symlink must not be created outside the root either
+    const nested = await upload.resolveUploadTarget(join(root, "files"), "link-out/evil/deeper/x.txt");
+    expect(nested.ok).toBe(false);
+    expect(readdirSync(outside)).toEqual([]);
     rmSync(outside, { recursive: true, force: true });
   });
 });

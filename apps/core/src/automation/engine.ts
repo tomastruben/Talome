@@ -11,8 +11,8 @@ import { getAutomationSafeToolNames } from "../ai/automation-safe-tools.js";
 import { getAllRegisteredTools } from "../ai/tool-registry.js";
 import { createLogger } from "../utils/logger.js";
 import * as runStore from "./run-store.js";
-import { authorizeToolCall, checkToolPolicy, getSecurityMode } from "../ai/tool-gateway.js";
-import { consumeApproval, requestApproval } from "../approval/tool-approvals.js";
+import { authorizeToolCall, checkToolPolicy, getSecurityMode, withConfirmation } from "../ai/tool-gateway.js";
+import { consumeApproval, expireStaleApprovals, requestApproval } from "../approval/tool-approvals.js";
 
 const log = createLogger("automation-engine");
 const execAsync = promisify(exec);
@@ -202,35 +202,42 @@ async function runStep(
       }
 
       case "tool_action": {
-        const policy = step.approvalPolicy ?? "require_approval";
-        if (policy === "require_approval") {
-          const waiting = waitForApproval(step.toolName, getToolTier(step.toolName), (step.args ?? {}) as Record<string, unknown>);
-          if (waiting) return waiting;
-        }
-
-        // Validate tool is in the automation-safe list
+        // Everything that could refuse the step is checked before a person is
+        // asked to approve it, so an approval is never spent on a step that can't run.
         const safeTools = getAutomationSafeToolNames();
         if (!safeTools.has(step.toolName)) {
           return makeResult(false, undefined, `Tool "${step.toolName}" is not allowed in automations`);
         }
 
-        // Look up and execute the tool dynamically
         const allTools = getAllRegisteredTools();
         const toolDef = allTools[step.toolName] as { execute?: (args: unknown, ctx: unknown) => Promise<unknown> } | undefined;
         if (!toolDef?.execute) {
           return makeResult(false, undefined, `Tool "${step.toolName}" not found or has no execute function`);
         }
 
-        // Same authorization as every other caller — locked mode applies to automations too
         const stepArgs = (step.args ?? {}) as Record<string, unknown>;
         const tier = getToolTier(step.toolName);
+        if (checkToolPolicy(tier, getSecurityMode()) === "block") {
+          writeAuditEntry(`Automation BLOCKED (locked mode): ${step.toolName}`, tier, ctx.automationId, false);
+          return makeResult(false, undefined, `Step "${step.toolName}" is blocked — security mode is locked`);
+        }
+
+        const policy = step.approvalPolicy ?? "require_approval";
+        let approvedByPerson = false;
+        if (policy === "require_approval") {
+          const waiting = waitForApproval(step.toolName, tier, stepArgs);
+          if (waiting) return waiting;
+          approvedByPerson = true;
+        }
+
+        // Same authorization as every other caller
         const decision = authorizeToolCall(step.toolName, tier, stepArgs, actor);
         if (!decision.allowed) {
           writeAuditEntry(`Automation ${decision.auditAction}`, tier, ctx.automationId, false);
           return makeResult(false, undefined, decision.reason);
         }
 
-        const result = await toolDef.execute(stepArgs, {});
+        const result = await toolDef.execute(withConfirmation(stepArgs, approvedByPerson || decision.approvalId !== undefined), {});
         const output = typeof result === "string" ? result : JSON.stringify(result, null, 2).slice(0, 4000);
         writeAuditEntry(`Automation step: ${step.toolName}`, tier, ctx.automationId);
         return makeResult(true, output);
@@ -424,8 +431,14 @@ function isRetrySafe(step: AutomationStep): boolean {
       return true;
     case "tool_action":
       return getToolTier(step.toolName) === "read";
-    case "ai_prompt":
-      return step.allowedTools.every((name) => getToolTier(name) === "read");
+    case "ai_prompt": {
+      // Mirrors runStep: unsafe names are dropped, and an empty list means the
+      // prompt may use every automation-safe tool (which includes modify tools).
+      const safe = getAutomationSafeToolNames();
+      const effective = step.allowedTools.filter((name) => safe.has(name));
+      const tools = effective.length > 0 ? effective : [...safe];
+      return tools.every((name) => getToolTier(name) === "read");
+    }
   }
 }
 
@@ -471,7 +484,10 @@ function onRunFinished(runId: string, automationName: string, automationId: stri
     writeNotification("warning", `Automation "${automationName}" failed`, result.error, automationId);
   }
   if (status === "waiting_approval") {
+    // Not finished yet: counted once, when the run reaches its final state
     writeNotification("info", `Automation "${automationName}" is waiting for approval`, result.error ?? "", automationId);
+    writeAuditEntry(`Automation waiting_approval: ${automationName}`, "modify", `${automationId} · run ${runId}`);
+    return;
   }
   const auto = db.select().from(schema.automations).where(eq(schema.automations.id, automationId)).get();
   if (auto) {
@@ -546,8 +562,9 @@ export async function executeDurableRun(runId: string): Promise<RunResult> {
 /** Run one automation now, durably. Skips if a run of it is already in progress. */
 async function startAutomationRun(auto: AutomationRow, type: string, data: Record<string, unknown>): Promise<RunResult | null> {
   if (runStore.hasActiveRun(auto.id)) {
-    log.warn(`Automation "${auto.name}" is already running — skipping overlapping trigger`);
-    writeAuditEntry(`Automation skipped (already running): ${auto.name}`, "read", auto.id, false);
+    // Includes a run waiting for approval: new triggers would otherwise pile up
+    // runs that all wait on (and then race for) the same approval.
+    log.warn(`Automation "${auto.name}" already has a run in progress or waiting for approval — skipping trigger`);
     return null;
   }
 
@@ -691,6 +708,7 @@ export async function reconcileAutomationRuns(): Promise<ReconcileReport> {
     await executeDurableRun(run.id);
   }
 
+  expireStaleApprovals();
   for (const run of runStore.listRunsWaitingForApproval()) {
     const blockedStep = runStore.getStepRuns(run.id).filter((r) => r.status === "blocked").at(-1);
     const approval = blockedStep?.approvalId
@@ -708,11 +726,11 @@ export async function reconcileAutomationRuns(): Promise<ReconcileReport> {
     }
     // Denied, expired, used elsewhere, or missing
     if (!runStore.acquireRun(run.id, ["waiting_approval"])) continue;
-    runStore.finishRun(run.id, "failed", {
-      error: `Approval ${status ?? "missing"} — the step did not run`,
-      actionsRun: run.actionsRun,
-      resultSummary: completedRunResult(runStore.getStepRuns(run.id)),
-    });
+    const error = `Approval ${status ?? "missing"} — the step did not run`;
+    const results = completedRunResult(runStore.getStepRuns(run.id));
+    runStore.finishRun(run.id, "failed", { error, actionsRun: run.actionsRun, resultSummary: results });
+    const auto = db.select().from(schema.automations).where(eq(schema.automations.id, run.automationId)).get();
+    onRunFinished(run.id, auto?.name ?? run.automationId, run.automationId, { success: false, error, actionsRun: run.actionsRun, results }, "failed");
     report.cancelled.push(run.id);
   }
 
