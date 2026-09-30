@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, rmSync } from "node:fs";
 import { atomicWriteFileSync } from "../utils/filesystem.js";
 import { join, dirname } from "node:path";
 import yaml from "js-yaml";
@@ -12,6 +12,8 @@ import { getAppCapabilities } from "../app-registry/index.js";
 import type { InstalledAppStatus, AppVolume } from "@talome/types";
 import { fireTrigger } from "../automation/engine.js";
 import { writeNotification } from "../db/notifications.js";
+import { writeAuditEntry } from "../db/audit.js";
+import { getExecutionContext } from "../ai/actor-context.js";
 import { createLogger } from "../utils/logger.js";
 import { encryptSetting } from "../utils/crypto.js";
 
@@ -30,7 +32,21 @@ import {
   getCatalogApp,
   getInstalledApp,
   withAppLock,
+  listProjectContainers,
+  probeDockerCompose,
+  isComposeMissingError,
+  COMPOSE_MISSING_MESSAGE,
 } from "./compose-exec.js";
+import {
+  describeKeptConfig,
+  isConfigSyncSource,
+  mergeCatalogConfig,
+  readCatalogBase,
+  recordCatalogBase,
+  restorePreviousCatalogBase,
+  type ConfigChange,
+  type ConfigConflict,
+} from "./catalog-sync.js";
 import { recordInstallError } from "./compose-errors.js";
 import {
   checkPortConflicts,
@@ -118,19 +134,37 @@ export interface OperationResultMeta {
   conflict?: boolean;
 }
 
+/**
+ * Refuses a lifecycle call that cannot apply (app not installed / already
+ * installed…) BEFORE a journal row is written, so a no-op call does not leave
+ * a failed operation in the app's history. Skipped while an operation is live
+ * on the app: that call must still get the conflict (409 + running op id).
+ */
+type OperationPrecheck = () => string | null;
+
+const requireInstalled: (appId: string) => OperationPrecheck = (appId) => () =>
+  getInstalledApp(appId) ? null : "App is not installed";
+
 async function runAppOperation<T extends { success: boolean; error?: string }>(
   appId: string,
   kind: OperationKind,
   opts: LifecycleOptions | undefined,
   fn: (ctx: OperationContext) => Promise<T>,
+  precheck?: OperationPrecheck,
 ): Promise<T & OperationResultMeta> {
+  if (precheck && !hasLiveOperation(appId)) {
+    const refusal = precheck();
+    if (refusal) return { success: false, error: refusal } as T & OperationResultMeta;
+  }
+  const actor = opts?.actor ?? currentActor();
   let operationId: string | undefined;
   try {
-    const result = await withAppOperation(appId, kind, opts?.actor ?? currentActor(), (ctx) => {
+    const result = await withAppOperation(appId, kind, actor, (ctx) => {
       operationId = ctx.id;
       // The compose lock still serializes against non-journaled writers (e.g. env edits).
       return withAppLock(appId, () => fn(ctx));
     });
+    auditLifecycleOperation(appId, kind, actor, operationId, result);
     return { ...result, operationId };
   } catch (err) {
     if (err instanceof OperationConflictError) {
@@ -142,7 +176,72 @@ async function runAppOperation<T extends { success: boolean; error?: string }>(
       };
       return conflict as unknown as T & OperationResultMeta;
     }
+    if (operationId) {
+      auditLifecycleOperation(appId, kind, actor, operationId, { success: false, error: err instanceof Error ? err.message : String(err) });
+    }
     throw err;
+  }
+}
+
+// ── Audit of lifecycle operations ─────────────────────────────────────────
+// A tool call (chat, MCP, automation, agent loop) is audited by executeTool()
+// with its actor. A lifecycle operation started anywhere else — the REST API
+// (dashboard buttons), schedulers, dependency auto-starts — writes its own
+// attributed row when it finishes.
+
+const LIFECYCLE_AUDIT: Partial<Record<OperationKind, { done: string; failed: string; tier: "modify" | "destructive" }>> = {
+  install: { done: "Installed app", failed: "Install failed", tier: "modify" },
+  uninstall: { done: "Uninstalled app", failed: "Uninstall failed", tier: "destructive" },
+  start: { done: "Started app", failed: "Start failed", tier: "modify" },
+  stop: { done: "Stopped app", failed: "Stop failed", tier: "modify" },
+  restart: { done: "Restarted app", failed: "Restart failed", tier: "modify" },
+  update: { done: "Updated app", failed: "Update failed", tier: "modify" },
+  rollback: { done: "Rolled back app update", failed: "Rollback failed", tier: "destructive" },
+};
+
+/** Split a journal actor string (`<kind>:<id> (<label>)`, `user:<id>`, `system`) into audit columns. */
+export function auditActorFromOperationActor(actor: string): { actorKind: string; actorId?: string; actorLabel?: string; source: string } {
+  const m = /^([A-Za-z_]+)(?::(\S+?))?(?:\s+\((.*)\))?$/.exec(actor.trim());
+  const actorKind = m?.[1] ?? "system";
+  const actorId = m?.[2];
+  let actorLabel = m?.[3];
+  if (actorKind === "user" && actorId && !actorLabel) {
+    try {
+      actorLabel = db.select({ username: schema.users.username }).from(schema.users).where(eq(schema.users.id, actorId)).get()?.username;
+    } catch {
+      // Label is advisory
+    }
+  }
+  return {
+    actorKind,
+    ...(actorId ? { actorId } : {}),
+    ...(actorLabel ? { actorLabel } : {}),
+    source: actorKind === "user" ? "api" : "system",
+  };
+}
+
+function auditLifecycleOperation(
+  appId: string,
+  kind: OperationKind,
+  actor: string,
+  operationId: string | undefined,
+  result: { success: boolean; error?: string; outcome?: unknown },
+): void {
+  const labels = LIFECYCLE_AUDIT[kind];
+  if (!labels) return;
+  // executeTool() audits tool calls itself (with the tool name and arguments).
+  if (getExecutionContext()) return;
+  try {
+    const outcomeNote = typeof result.outcome === "string" ? ` [${result.outcome}]` : "";
+    const details = result.success
+      ? `${appId}${outcomeNote}${operationId ? ` (operation ${operationId})` : ""}`
+      : `${appId}${outcomeNote}: ${(result.error ?? "failed").slice(0, 300)}${operationId ? ` (operation ${operationId})` : ""}`;
+    writeAuditEntry(result.success ? labels.done : labels.failed, labels.tier, details, true, {
+      ...auditActorFromOperationActor(actor),
+      outcome: result.success ? "success" : "error",
+    });
+  } catch (err) {
+    log.warn(`Could not audit ${kind} of ${appId}`, err);
   }
 }
 
@@ -281,6 +380,10 @@ export function installApp(
       onProgress?.(stage, message);
     };
     return installAppInner(appId, storeSourceId, envOverrides, volumeMounts, progress);
+  }, () => {
+    if (!getCatalogApp(appId, storeSourceId)) return "App not found in catalog";
+    if (getInstalledApp(appId)) return "App is already installed";
+    return null;
   });
 }
 
@@ -440,6 +543,11 @@ async function installAppInner(
     const validation = await validateCompose(composePath, { cwd: projectDir, env });
     if (!validation.valid) {
       db.delete(schema.installedApps).where(eq(schema.installedApps.appId, appId)).run();
+      // A missing compose plugin is not a problem with the app's compose file.
+      const compose = await probeDockerCompose();
+      if (!compose.available || isComposeMissingError(validation.error ?? "")) {
+        return { success: false, error: `${COMPOSE_MISSING_MESSAGE}${compose.error ? ` (${compose.error.slice(0, 200)})` : ""}` };
+      }
       return {
         success: false,
         error: `Compose file validation failed: ${validation.error?.slice(0, 500)}`,
@@ -481,7 +589,7 @@ async function installAppInner(
       }
     }
 
-    const containers = await discoverContainers(appId);
+    const containers = await discoverContainers(appId, composePath);
 
     db.update(schema.installedApps)
       .set({
@@ -498,6 +606,14 @@ async function installAppInner(
     pinImageDigest(appId, composePath);
     // Every image ref in this compose is Talome's: updates may move them (ops/image-refs.ts).
     resetImageRefState(appId, composeServiceImages(composePath));
+    // The catalog compose this override was derived from: updates merge catalog changes against it.
+    if (effectiveCompose && effectiveCompose !== app.composePath) {
+      try {
+        recordCatalogBase(effectiveCompose, readFileSync(app.composePath, "utf-8"));
+      } catch (err: unknown) {
+        log.warn(`Could not record the catalog base of ${appId}`, err);
+      }
+    }
 
     // Execute postInstall hook (best-effort)
     void executeHook("postInstall", appId, app.hooks, { composePath, env });
@@ -580,38 +696,154 @@ async function installAppInner(
 
 // ── Uninstall ─────────────────────────────────────────────────────────────
 
-export function uninstallApp(appId: string, opts?: LifecycleOptions): Promise<{ success: boolean; error?: string } & OperationResultMeta> {
-  return runAppOperation(appId, "uninstall", opts, (ctx) => uninstallAppInner(appId, ctx));
+export function uninstallApp(appId: string, opts?: LifecycleOptions): Promise<{ success: boolean; error?: string; warning?: string } & OperationResultMeta> {
+  return runAppOperation(appId, "uninstall", opts, (ctx) => uninstallAppInner(appId, ctx), requireInstalled(appId));
 }
 
-async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<{ success: boolean; error?: string }> {
+// Docker object names interpolated into shell commands: ids and names only.
+const DOCKER_OBJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/;
+
+/**
+ * Anonymous volumes mounted by the given containers — the ones Docker created
+ * for an image's VOLUME or a bare `- /path` mount. Named volumes (declared in
+ * the compose file, external, or created by hand) are never included: they
+ * are user data. Best effort: [] when Docker cannot tell.
+ */
+async function collectAnonymousVolumes(containerIds: string[]): Promise<string[]> {
+  const ids = containerIds.filter((id) => DOCKER_OBJECT_NAME.test(id));
+  if (ids.length === 0) return [];
+  try {
+    const { stdout } = await run(`docker inspect --format '{{json .Mounts}}' ${ids.join(" ")}`, { timeout: 30_000 });
+    const candidates = new Set<string>();
+    for (const line of stdout.split("\n")) {
+      if (!line.trim()) continue;
+      const mounts = JSON.parse(line) as Array<{ Type?: string; Name?: string }> | null;
+      for (const m of mounts ?? []) {
+        if (m.Type === "volume" && typeof m.Name === "string" && DOCKER_OBJECT_NAME.test(m.Name)) candidates.add(m.Name);
+      }
+    }
+    if (candidates.size === 0) return [];
+    const { stdout: volumes } = await run(
+      `docker volume inspect --format '{{.Name}} {{json .Labels}}' ${[...candidates].join(" ")}`,
+      { timeout: 30_000 },
+    );
+    const anonymous: string[] = [];
+    for (const line of volumes.split("\n")) {
+      const sp = line.indexOf(" ");
+      if (sp <= 0) continue;
+      const name = line.slice(0, sp).trim();
+      const labels = (JSON.parse(line.slice(sp + 1)) ?? {}) as Record<string, string>;
+      if (!candidates.has(name)) continue;
+      // Compose-declared volumes carry com.docker.compose.volume: user data, never anonymous.
+      if ("com.docker.compose.volume" in labels) continue;
+      const markedAnonymous = "com.docker.volume.anonymous" in labels;
+      // Older engines do not mark them: a 64-hex name with no labels at all.
+      const legacyAnonymous = /^[0-9a-f]{64}$/.test(name) && Object.keys(labels).length === 0;
+      if (markedAnonymous || legacyAnonymous) anonymous.push(name);
+    }
+    return anonymous;
+  } catch (err: unknown) {
+    log.warn(`Could not read the volumes of containers ${ids.join(", ")}`, err);
+    return [];
+  }
+}
+
+async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<{ success: boolean; error?: string; warning?: string }> {
   const installed = getInstalledApp(appId);
   if (!installed) return { success: false, error: "App is not installed" };
 
   const app = getCatalogApp(appId, installed.storeSourceId);
-  if (!app) {
-    db.delete(schema.installedApps)
-      .where(eq(schema.installedApps.appId, appId))
-      .run();
-    return { success: true };
-  }
+  const effectiveCompose = installed.overrideComposePath ?? app?.composePath ?? null;
+  const composeUsable = effectiveCompose !== null && existsSync(effectiveCompose);
 
   // Execute preUninstall hook (best-effort)
-  ctx.step("pre_uninstall_hook", 10, "Running pre-uninstall hook");
-  const envOverridesUninst = JSON.parse(installed.envConfig) as Record<string, string>;
-  const envUninst = buildEnv(appId, envOverridesUninst);
-  await executeHook("preUninstall", appId, app.hooks, { composePath: app.composePath, env: envUninst }).catch((err) => log.warn(`preUninstall hook failed for ${appId}`, err));
+  if (app) {
+    ctx.step("pre_uninstall_hook", 10, "Running pre-uninstall hook");
+    const envOverridesUninst = JSON.parse(installed.envConfig) as Record<string, string>;
+    const envUninst = buildEnv(appId, envOverridesUninst);
+    await executeHook("preUninstall", appId, app.hooks, { composePath: app.composePath, env: envUninst }).catch((err) => log.warn(`preUninstall hook failed for ${appId}`, err));
+  }
 
   ctx.step("remove_containers", 30, "Stopping and removing containers");
+  // The project's containers and their anonymous volumes, recorded BEFORE they
+  // are removed (afterwards nothing links the volumes to the app any more).
+  let before: Awaited<ReturnType<typeof listProjectContainers>> = [];
   try {
-    const effectiveCompose = installed.overrideComposePath ?? app.composePath;
-    const projectDir = dirname(effectiveCompose);
-    await run(`docker compose -f "${effectiveCompose}" down`, {
-      cwd: projectDir,
-      timeout: 60_000,
-    });
-  } catch {
-    // Continue even if compose down fails
+    before = await listProjectContainers(appId, effectiveCompose);
+  } catch (err: unknown) {
+    // Without a container listing, removal cannot be verified: refuse, keep tracking the app.
+    const reason = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Could not list ${appId}'s containers from Docker (${reason}). Nothing was removed; the app is still installed.` };
+  }
+  const anonymousVolumes = await collectAnonymousVolumes(before.map((c) => c.id));
+
+  let downError: string | null = null;
+  if (composeUsable) {
+    try {
+      // Never `down -v`: that also deletes the compose file's named volumes (user data).
+      await run(`docker compose -f "${effectiveCompose}" down`, {
+        cwd: dirname(effectiveCompose!),
+        timeout: 60_000,
+      });
+    } catch (err: any) {
+      downError = String(err?.stderr || err?.message || err).trim();
+    }
+  } else {
+    downError = effectiveCompose ? `compose file ${effectiveCompose} not found` : "no compose file recorded";
+  }
+
+  // Whatever `down` left behind (compose missing, a broken compose file, a
+  // timeout): remove the project's containers directly, by compose label.
+  let remaining: Awaited<ReturnType<typeof listProjectContainers>>;
+  try {
+    remaining = await listProjectContainers(appId, effectiveCompose);
+    if (remaining.length > 0) {
+      if (downError) log.warn(`compose down for ${appId} failed (${downError}); removing its containers by label`);
+      const ids = remaining.map((c) => c.id).filter((id) => DOCKER_OBJECT_NAME.test(id));
+      if (ids.length > 0) {
+        // `rm -f` without -v: volumes are handled below (anonymous ones only).
+        await run(`docker rm -f ${ids.join(" ")}`, { timeout: 60_000 }).catch((err: unknown) =>
+          log.warn(`Failed to remove the containers of ${appId}`, err),
+        );
+      }
+      remaining = await listProjectContainers(appId, effectiveCompose);
+    }
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err);
+    const error = `Could not confirm that ${appId}'s containers were removed (${reason}). The app is still tracked; try again.`;
+    ctx.setDetail({ downError });
+    return { success: false, error };
+  }
+
+  if (remaining.length > 0) {
+    // Keep the installed_apps row: forgetting an app whose containers still
+    // run would leave them untracked (and invisible to the store).
+    const names = remaining.map((c) => c.name).join(", ");
+    const error = `Could not remove ${appId}: container(s) ${names} still exist` +
+      `${downError ? ` (docker compose down failed: ${downError.slice(0, 300)})` : ""}. The app is still installed.`;
+    ctx.setDetail({ downError, remainingContainers: remaining.map((c) => ({ id: c.id, name: c.name })) });
+    db.update(schema.installedApps)
+      .set({ containerIds: JSON.stringify(remaining.map((c) => c.id)), updatedAt: new Date().toISOString() })
+      .where(eq(schema.installedApps.appId, appId))
+      .run();
+    return { success: false, error };
+  }
+
+  // Anonymous volumes belonged to the removed containers only. Named volumes
+  // and bind-mounted data (app-data) are kept.
+  if (anonymousVolumes.length > 0) {
+    ctx.step("remove_anonymous_volumes", 60, `Removing ${anonymousVolumes.length} anonymous volume(s)`);
+    const removed: string[] = [];
+    const kept: string[] = [];
+    for (const volume of anonymousVolumes) {
+      try {
+        await run(`docker volume rm ${volume}`, { timeout: 30_000 });
+        removed.push(volume);
+      } catch {
+        kept.push(volume); // e.g. still used by another container
+      }
+    }
+    ctx.setDetail({ anonymousVolumesRemoved: removed, ...(kept.length > 0 ? { anonymousVolumesKept: kept } : {}) });
   }
 
   // Clean up app-specific networks (not the shared talome network)
@@ -634,7 +866,7 @@ async function uninstallAppInner(appId: string, ctx: OperationContext): Promise<
     .where(eq(schema.installedApps.appId, appId))
     .run();
 
-  return { success: true };
+  return { success: true, ...(downError ? { warning: `docker compose down failed (${downError.slice(0, 200)}); the containers were removed directly.` } : {}) };
 }
 
 // ── Start / Stop / Restart ────────────────────────────────────────────────
@@ -712,7 +944,7 @@ function composeAction(
   action: "start" | "stop" | "restart",
   opts?: LifecycleOptions,
 ): Promise<{ success: boolean; error?: string } & OperationResultMeta> {
-  return runAppOperation(appId, action, opts, (ctx) => composeActionInner(appId, action, ctx));
+  return runAppOperation(appId, action, opts, (ctx) => composeActionInner(appId, action, ctx), requireInstalled(appId));
 }
 
 async function composeActionInner(
@@ -787,14 +1019,12 @@ async function composeActionInner(
         }
       }
 
-      // Clean up any leftover containers from this compose project
+      // `up -d` alone: it starts the project's stopped containers as they are
+      // (and recreates only those whose configuration changed, carrying their
+      // anonymous volumes over). Never `down` first — removing the containers
+      // detaches their anonymous volumes, and `up` would then start the app on
+      // new, empty ones (an image VOLUME such as a database's data dir).
       ctx.step("start_containers", 40, "Starting containers");
-      await run(`docker compose -f "${effectiveCompose}" down --remove-orphans`, {
-        cwd: projectDir,
-        env,
-        timeout: 30_000,
-      }).catch((err) => log.warn(`Failed to clean up old containers for ${appId}`, err));
-
       try {
         await run(`docker compose -f "${effectiveCompose}" up -d`, {
           cwd: projectDir,
@@ -837,7 +1067,7 @@ async function composeActionInner(
     const newStatus: InstalledAppStatus = action === "stop" ? "stopped" : "running";
     const containerIds = action === "stop"
       ? JSON.parse(installed.containerIds) as string[]
-      : await discoverContainers(appId);
+      : await discoverContainers(appId, effectiveCompose);
 
     if (action !== "stop" && containerIds.length === 0) {
       throw new Error(`${app.name} started but its recreated container could not be discovered`);
@@ -859,7 +1089,8 @@ async function composeActionInner(
 
     return { success: true };
   } catch (err: any) {
-    const errorDetail = err?.stderr || err.message;
+    let errorDetail = err?.stderr || err.message;
+    if (isComposeMissingError(String(errorDetail))) errorDetail = COMPOSE_MISSING_MESSAGE;
     recordInstallError(appId, `docker compose ${action}`, err, effectiveCompose, env);
 
     if (action !== "stop") {
@@ -1064,8 +1295,24 @@ export function syncOverrideImageRefs(
   opts: { decide?: (service: string, from: string, to: string) => ImageRefDecision; kept?: KeptImageRef[] } = {},
 ): { service: string; from: string; to: string }[] {
   if (overridePath === catalogPath || !existsSync(overridePath) || !existsSync(catalogPath)) return [];
-  const override = yaml.load(readFileSync(overridePath, "utf-8")) as { services?: Record<string, Record<string, unknown> | null> } | null;
-  const catalog = yaml.load(readFileSync(catalogPath, "utf-8")) as { services?: Record<string, Record<string, unknown> | null> } | null;
+  const override = yaml.load(readFileSync(overridePath, "utf-8")) as OverrideDoc | null;
+  const catalog = yaml.load(readFileSync(catalogPath, "utf-8")) as OverrideDoc | null;
+  if (!override) return [];
+  const changes = planOverrideImageRefs(override, catalog, opts);
+  if (changes.length > 0) {
+    atomicWriteFileSync(overridePath, yaml.dump(override, { lineWidth: -1 }), "utf-8");
+  }
+  return changes;
+}
+
+type OverrideDoc = { services?: Record<string, Record<string, unknown> | null> } & Record<string, unknown>;
+
+/** The in-memory part of syncOverrideImageRefs: moves `override`'s refs (mutated) and returns the changes. */
+function planOverrideImageRefs(
+  override: OverrideDoc,
+  catalog: OverrideDoc | null,
+  opts: { decide?: (service: string, from: string, to: string) => ImageRefDecision; kept?: KeptImageRef[] } = {},
+): { service: string; from: string; to: string }[] {
   const overrideServices = override?.services;
   const catalogServices = catalog?.services;
   if (!overrideServices || !catalogServices) return [];
@@ -1083,9 +1330,6 @@ export function syncOverrideImageRefs(
       svc.image = to;
       changes.push({ service: name, from, to });
     }
-  }
-  if (changes.length > 0) {
-    atomicWriteFileSync(overridePath, yaml.dump(override, { lineWidth: -1 }), "utf-8");
   }
   return changes;
 }
@@ -1172,7 +1416,7 @@ export function rollbackUpdate(appId: string, opts?: LifecycleOptions): Promise<
     } finally {
       releaseMaintenance();
     }
-  });
+  }, requireInstalled(appId));
 }
 
 function dataRestoreHint(backupId: string): string {
@@ -1224,7 +1468,7 @@ async function rollbackUpdateInner(appId: string, ctx: OperationContext): Promis
     });
     ctx.setDetail({ verification: summarizeVerification(verification) });
 
-    const containers = await discoverContainers(appId);
+    const containers = await discoverContainers(appId, effectiveCompose);
     const unrestored = describeUnrestoredImages(snapshotImages, imagesRestored);
 
     if (unrestored) {
@@ -1259,6 +1503,8 @@ async function rollbackUpdateInner(appId: string, ctx: OperationContext): Promis
       .set({ rolledBack: true, rollbackReason: "Manual rollback" })
       .where(eq(schema.updateSnapshots.id, snapshot.id))
       .run();
+    // The compose went back to what the previous catalog compose produced.
+    if (effectiveCompose !== app.composePath) restorePreviousCatalogBase(effectiveCompose);
 
     if (!verification.healthy) {
       // The rollback ran, but the journal must not say "succeeded" for an app left unhealthy.
@@ -1318,7 +1564,7 @@ export function updateApp(appId: string, opts?: UpdateOptions): Promise<UpdateRe
     } finally {
       maintenance.release?.();
     }
-  });
+  }, requireInstalled(appId));
 }
 
 interface UpdateRunOptions {
@@ -1327,15 +1573,15 @@ interface UpdateRunOptions {
   beginMaintenance: (keys: Array<string | null | undefined>) => void;
 }
 
-/** Journal progress for the pre-update backup's engine stages (inside the 6–9% band). */
+/** Journal progress for the pre-update backup's engine stages (inside the 33–38% band, after the pull). */
 const PRE_UPDATE_BACKUP_PROGRESS: Record<string, number> = {
-  preparing: 6,
-  dumping: 7,
-  pausing: 7,
-  archiving: 8,
-  resuming: 9,
-  validating: 9,
-  uploading: 9,
+  preparing: 33,
+  dumping: 34,
+  pausing: 34,
+  archiving: 35,
+  resuming: 36,
+  validating: 37,
+  uploading: 38,
 };
 
 function summarizeSemantic(v: SemanticVerification): UpdateResult["semanticVerification"] {
@@ -1398,25 +1644,105 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
     ...(runOpts.force ? { force: true } : {}),
   });
 
-  // ── 2. Pre-update backup ────────────────────────────────────────────────
-  // Taken before anything changes — before the compose image refs move and
-  // before new images are pulled — so the archive (and its compose snapshot
-  // and manifest version) captures the version that is actually running, and
-  // an abort leaves nothing half-applied (no moved tags, no edited compose).
-  // It runs while holding this operation: the engine uses its own per-app lock
-  // and Docker directly (never a lifecycle entry point), so it cannot conflict
-  // with or deadlock on this update.
   db.update(schema.installedApps)
     .set({ status: "updating", updatedAt: new Date().toISOString() })
     .where(eq(schema.installedApps.appId, appId))
     .run();
 
+  // ── 2. Plan the new override compose (in memory) ────────────────────────
+  // The override compose written at install froze the catalog's image refs
+  // and service configuration. The update moves the refs to the catalog's
+  // current ones (refs the user pinned or customised stay unless they asked
+  // for the catalog's) and merges the catalog's other service changes
+  // (environment, healthcheck, command, …) without undoing Talome's or the
+  // user's edits (stores/catalog-sync.ts). Nothing is written to the live
+  // compose until the images are downloaded and the backup is taken.
+  let imageRefChanges: { service: string; from: string; to: string }[] = [];
+  const imagesKept: KeptImageRef[] = [];
+  let configChanges: ConfigChange[] = [];
+  let configKept: ConfigConflict[] = [];
+  let pendingCompose: string | null = null;
+  let catalogContent: string | null = null;
+  const hasOverride = effectiveCompose !== app.composePath;
+  if (hasOverride) {
+    try {
+      catalogContent = readFileSync(app.composePath, "utf-8");
+      const override = yaml.load(readFileSync(effectiveCompose, "utf-8")) as OverrideDoc | null;
+      if (override && typeof override === "object") {
+        const refState = readImageRefState(appId);
+        imageRefChanges = planOverrideImageRefs(override, yaml.load(catalogContent) as OverrideDoc | null, {
+          decide: (service, from, to) => decideImageRef(refState, service, from, to, { adoptCatalog: runOpts.useCatalogImages }),
+          kept: imagesKept,
+        });
+        if (isConfigSyncSource(app.source)) {
+          const sync = mergeCatalogConfig(override, catalogContent, readCatalogBase(effectiveCompose));
+          configChanges = sync.changes;
+          configKept = sync.kept;
+        } else {
+          ctx.setDetail({ configSync: { applied: false, reason: `not applied to ${app.source} apps` } });
+        }
+        if (imageRefChanges.length > 0 || configChanges.length > 0) {
+          pendingCompose = yaml.dump(override, { lineWidth: -1 });
+        }
+      }
+    } catch (err: unknown) {
+      log.warn(`Could not sync the override compose of ${appId} with the catalog compose`, err);
+    }
+    if (imageRefChanges.length > 0) ctx.setDetail({ imageRefChanges });
+    if (imagesKept.length > 0) ctx.setDetail({ imagesKept });
+    if (configChanges.length > 0 || configKept.length > 0) {
+      ctx.setDetail({ configChanges, ...(configKept.length > 0 ? { configKept } : {}) });
+    }
+  }
+
+  // ── 3. Pull new images while the app keeps running ─────────────────────
+  // Before the backup: a backup may stop the app, and a pull that fails (a
+  // bad tag, no network) must leave the app completely untouched.
+  ctx.step("pull", 10, "Downloading new images (app keeps running)");
+  const pullCompose = pendingCompose ? join(dirname(effectiveCompose), ".talome-update-pull.yml") : effectiveCompose;
+  try {
+    if (pendingCompose) atomicWriteFileSync(pullCompose, pendingCompose, "utf-8");
+    await run(`docker compose -f "${pullCompose}" pull`, {
+      cwd: dirname(effectiveCompose),
+      env,
+      timeout: 600_000,
+    });
+  } catch (err: any) {
+    const errorDetail = String(err?.stderr || err?.message || err);
+    db.update(schema.installedApps)
+      .set({ status: previousStatus, updatedAt: new Date().toISOString() })
+      .where(eq(schema.installedApps.appId, appId))
+      .run();
+    // The update never touched the app — drop the snapshot so a later
+    // "rollback" does not target a state that was never left.
+    db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
+    ctx.setDetail({ snapshotId: null, appTouched: false });
+    writeNotification(
+      "warning",
+      `Update of ${app.name} failed`,
+      `Could not download the new images, so nothing was changed and the app kept running. ${errorDetail.slice(0, 500)}`,
+      appId,
+    );
+    return { success: false, error: `Image pull failed; app left unchanged: ${errorDetail}`, outcome: "failed" };
+  } finally {
+    if (pendingCompose) rmSync(pullCompose, { force: true });
+  }
+  ctx.step("pull", 30, "New images downloaded");
+
+  // ── 4. Pre-update backup ────────────────────────────────────────────────
+  // Taken after the pull (a failed pull never stops the app for a backup) but
+  // before anything changes — the live compose still has the running
+  // version's refs, so the archive (and its compose snapshot and manifest
+  // version) captures the version that is actually running, and an abort
+  // leaves nothing half-applied. It runs while holding this operation: the
+  // engine uses its own per-app lock and Docker directly (never a lifecycle
+  // entry point), so it cannot conflict with or deadlock on this update.
   let backup: PreUpdateBackupResult;
   if (isPreUpdateBackupEnabled(appId)) {
-    ctx.step("backup", 6, "Backing up app data before switching versions");
+    ctx.step("backup", 32, "Backing up app data before switching versions");
     backup = await takePreUpdateBackup(appId, {
       triggeredBy: backupTriggerForActor(ctx.actor),
-      onStage: (stage) => ctx.step(`backup:${stage}`, PRE_UPDATE_BACKUP_PROGRESS[stage] ?? 7),
+      onStage: (stage) => ctx.step(`backup:${stage}`, PRE_UPDATE_BACKUP_PROGRESS[stage] ?? 34),
     });
   } else {
     backup = { attempted: false, success: false, reason: "Not enabled in the app's update policy (preBackup)" };
@@ -1425,7 +1751,7 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   if (backup.attempted && !backup.success && !backup.skipped) {
     const backupError = backup.error ?? "unknown error";
     if (!runOpts.force) {
-      // Nothing was changed yet (no compose edit, no pull, no recreate).
+      // Nothing was changed yet (the new images were only downloaded).
       db.update(schema.installedApps)
         .set({ status: previousStatus, updatedAt: new Date().toISOString() })
         .where(eq(schema.installedApps.appId, appId))
@@ -1452,19 +1778,10 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
     }
   }
 
-  // The override compose froze the image refs at install — move them to the
-  // catalog's current refs (restored from the snapshot on any failure).
-  // Refs the user pinned or customised stay unless they asked for the catalog's.
-  let imageRefChanges: { service: string; from: string; to: string }[] = [];
-  const imagesKept: KeptImageRef[] = [];
-  try {
-    const refState = readImageRefState(appId);
-    imageRefChanges = syncOverrideImageRefs(effectiveCompose, app.composePath, {
-      decide: (service, from, to) => decideImageRef(refState, service, from, to, { adoptCatalog: runOpts.useCatalogImages }),
-      kept: imagesKept,
-    });
+  // Apply the planned compose (restored from the snapshot on any failure).
+  if (pendingCompose) {
+    atomicWriteFileSync(effectiveCompose, pendingCompose, "utf-8");
     if (imageRefChanges.length > 0) {
-      ctx.setDetail({ imageRefChanges });
       // Both are Talome's now: `from` was judged movable (a first record for an
       // app installed before records existed must keep treating it so, e.g.
       // after this update fails and the compose is restored), `to` is written here.
@@ -1472,52 +1789,9 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
       recordManagedImages(appId, Object.fromEntries(imageRefChanges.map((c) => [c.service, c.to])));
       if (runOpts.useCatalogImages) clearImagePins(appId, imageRefChanges.map((c) => c.service));
     }
-    if (imagesKept.length > 0) ctx.setDetail({ imagesKept });
-  } catch (err: unknown) {
-    log.warn(`Could not sync image refs from the catalog compose for ${appId}`, err);
   }
 
-  const restoreSnapshotCompose = () => {
-    if (imageRefChanges.length === 0) return;
-    const snap = db.select().from(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).get();
-    if (snap?.previousCompose) atomicWriteFileSync(effectiveCompose, snap.previousCompose, "utf-8");
-  };
-
-  // ── 3. Pull new images while the app keeps running ─────────────────────
-  ctx.step("pull", 10, "Downloading new images (app keeps running)");
-
-  try {
-    await run(`docker compose -f "${effectiveCompose}" pull`, {
-      cwd: dirname(effectiveCompose),
-      env,
-      timeout: 600_000,
-    });
-  } catch (err: any) {
-    const errorDetail = String(err?.stderr || err?.message || err);
-    try {
-      restoreSnapshotCompose();
-    } catch (restoreErr: unknown) {
-      log.warn(`Could not restore the compose file of ${appId} after a failed pull`, restoreErr);
-    }
-    db.update(schema.installedApps)
-      .set({ status: previousStatus, updatedAt: new Date().toISOString() })
-      .where(eq(schema.installedApps.appId, appId))
-      .run();
-    // The update never touched the app — drop the snapshot so a later
-    // "rollback" does not target a state that was never left.
-    db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
-    ctx.setDetail({ snapshotId: null, appTouched: false });
-    writeNotification(
-      "warning",
-      `Update of ${app.name} failed`,
-      `Could not download the new images, so nothing was changed and the app kept running. ${errorDetail.slice(0, 500)}`,
-      appId,
-    );
-    return { success: false, error: `Image pull failed; app left unchanged: ${errorDetail}`, outcome: "failed" };
-  }
-  ctx.step("pull", 40, "New images downloaded");
-
-  // ── 4. Recreate on the new images ───────────────────────────────────────
+  // ── 5. Recreate on the new images ───────────────────────────────────────
   // From here until the operation ends, container stops/recreates are intended.
   runOpts.beginMaintenance(baselineImages.flatMap((i) => [i.containerId, i.containerName]));
   ctx.step("recreate", 55, "Recreating containers on the new version");
@@ -1576,6 +1850,8 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   }
 
   let imagesChanged = true;
+  /** Containers recreated by `up -d` — it recreates only on a new image or a changed configuration. */
+  let recreated = true;
   if (!failureReason) {
     let afterImages: ServiceImageState[] = [];
     try {
@@ -1584,9 +1860,14 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
       // Unknown — treated as changed below
     }
     const before = new Map(baselineImages.map((i) => [i.service, i.imageId]));
+    const beforeContainers = new Set(baselineImages.map((i) => i.containerId));
     imagesChanged = baselineImages.length === 0 || afterImages.length === 0 ||
       afterImages.some((i) => before.get(i.service) !== i.imageId);
+    recreated = baselineImages.length === 0 || afterImages.length === 0 ||
+      afterImages.some((i) => !beforeContainers.has(i.containerId));
   }
+  /** New images, or new service configuration that reached the containers. */
+  const appChanged = imagesChanged || recreated || configChanges.length > 0;
 
   // ── 5b. Semantic verification (apps with outcome probes) ────────────────
   // Only once the new version passed container/HTTP verification. A regression
@@ -1605,7 +1886,7 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   let semantic: SemanticVerification | null = null;
   /** Why a semantic regression was not rolled back automatically (null when there is none). */
   let semanticNotRolledBack: string | null = null;
-  if (!failureReason && imagesChanged && verification?.healthy && semanticProbe) {
+  if (!failureReason && appChanged && verification?.healthy && semanticProbe) {
     ctx.step("semantic_verify", 75, "Checking the app still does its job (outcome probes)");
     semantic = await runSemanticVerification(appId, { baseline: semanticBaseline });
     ctx.setDetail({ semanticVerification: semantic });
@@ -1628,30 +1909,47 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   const backupLine = backup.success && backup.backupFile
     ? ` A pre-update backup is available at ${backup.backupFile}${backup.backupId ? ` (backup ${backup.backupId})` : ""}.`
     : " No pre-update backup was taken.";
-  const keptNote = describeKeptImages(imagesKept);
+  const keptNote = [describeKeptImages(imagesKept), describeKeptConfig(configKept)].filter(Boolean).join(" ");
   const keptLine = keptNote ? ` ${keptNote}` : "";
   const keptResult = imagesKept.length > 0 ? { imagesKept } : {};
 
   if (!failureReason) {
     ctx.step("finalize", 95, "Recording new version");
-    const containers = await discoverContainers(appId);
-    ctx.setDetail({ imagesChanged });
+    const containers = await discoverContainers(appId, effectiveCompose);
+    ctx.setDetail({ imagesChanged, recreated });
 
-    if (!imagesChanged) {
-      // Same bytes as before: do not claim an update or bump the version.
+    if (!appChanged) {
+      // Same images and same configuration: nothing was recreated, so do not
+      // claim an update. The catalog's version does describe what runs now,
+      // though — record it (unless the user held images back), or the update
+      // would be offered forever.
+      const recordVersion = app.version !== installed.version && imagesKept.length === 0;
       db.delete(schema.updateSnapshots).where(eq(schema.updateSnapshots.id, snapshotId)).run();
       db.update(schema.installedApps)
-        .set({ status: "running", containerIds: JSON.stringify(containers), updatedAt: new Date().toISOString() })
+        .set({
+          status: "running",
+          containerIds: JSON.stringify(containers),
+          ...(recordVersion ? { version: app.version } : {}),
+          updatedAt: new Date().toISOString(),
+        })
         .where(eq(schema.installedApps.appId, appId))
         .run();
-      ctx.setDetail({ outcome: "no_change", snapshotId: null });
+      if (hasOverride && catalogContent !== null && isConfigSyncSource(app.source)) {
+        recordCatalogBase(effectiveCompose, catalogContent, { previous: "keep" });
+      }
+      ctx.setDetail({ outcome: "no_change", snapshotId: null, ...(recordVersion ? { versionRecorded: app.version } : {}) });
       const note = (imagesKept.length > 0 && imageRefChanges.length === 0
         ? `${app.name} still runs version ${installed.version}.`
-        : app.version !== installed.version
-          ? `No new image was published for ${app.name} ${app.version}, so it still runs version ${installed.version}.`
+        : recordVersion
+          ? `${app.name} ${app.version} uses the same images and configuration as ${installed.version}, so nothing was recreated; version ${app.version} is recorded.`
           : `${app.name} is already on the latest image.`) + keptLine;
       writeNotification("info", `${app.name} unchanged`, note, appId);
       return { success: true, verified: verification?.healthy ?? false, outcome: "no_change", warning: note, ...keptResult };
+    }
+
+    if (hasOverride && catalogContent !== null && isConfigSyncSource(app.source)) {
+      // The override now derives from this catalog compose (the previous base is kept for a rollback).
+      recordCatalogBase(effectiveCompose, catalogContent, { previous: "rotate" });
     }
 
     db.update(schema.updateSnapshots)
@@ -1721,7 +2019,7 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
     const error = `${failureReason}. Automatic rollback is unavailable: the previous images were not recorded (the app had no containers before the update).`;
     ctx.setDetail({ outcome: "failed", rollback: { attempted: false, reason: "no image baseline" } });
     db.update(schema.installedApps)
-      .set({ status: "error", containerIds: JSON.stringify(await discoverContainers(appId)), updatedAt: new Date().toISOString() })
+      .set({ status: "error", containerIds: JSON.stringify(await discoverContainers(appId, effectiveCompose)), updatedAt: new Date().toISOString() })
       .where(eq(schema.installedApps.appId, appId))
       .run();
     ctx.markFailed(error);
@@ -1764,7 +2062,7 @@ async function updateAppInner(appId: string, ctx: OperationContext, runOpts: Upd
   }
 
   const rolledBack = rollbackVerified && imagesFullyRestored && snapshot !== undefined;
-  const containers = await discoverContainers(appId);
+  const containers = await discoverContainers(appId, effectiveCompose);
   db.update(schema.installedApps)
     .set({
       status: rollbackVerified ? "running" : "error",

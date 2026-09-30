@@ -21,6 +21,7 @@ import { getInstallAccessWarnings, runWithUmbrelInstallOptions } from "../stores
 import { volumeMountsError, volumeMountsNeedingApproval } from "../stores/host-mounts.js";
 import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus, TalomeNativeSurfaceDescriptor } from "@talome/types";
 import { listContainers } from "../docker/client.js";
+import { isAppComposeContainer } from "../stores/compose-exec.js";
 import os from "node:os";
 import type { Context } from "hono";
 
@@ -359,6 +360,8 @@ apps.get("/:storeId/:appId", async (c) => {
       const containers = await listContainers();
       const id = result.id.toLowerCase();
       result.detectedRunning = containers.some((ct) => {
+        // Compose project label: containers of an app Talome no longer tracks, whatever their names.
+        if (isAppComposeContainer(ct, result.id, row.composePath)) return true;
         if (ct.name.toLowerCase() === id) return true;
         const img = ct.image.split("/").pop()?.split(":")[0] ?? "";
         return img.replace(/-/g, "").toLowerCase() === id.replace(/-/g, "");
@@ -491,6 +494,7 @@ apps.post("/:storeId/:appId/update", async (c) => {
       error: result.error,
       operationId: result.operationId,
       rolledBack: result.rolledBack ?? false,
+      ...(result.outcome ? { outcome: result.outcome } : {}),
       ...(result.backupFailed ? { backupFailed: true } : {}),
       ...(result.preUpdateBackupId ? { preUpdateBackupId: result.preUpdateBackupId, dataRestoreHint: result.dataRestoreHint } : {}),
     }, 400);
@@ -499,7 +503,10 @@ apps.post("/:storeId/:appId/update", async (c) => {
     ok: true,
     operationId: result.operationId,
     verified: result.verified ?? false,
-    ...(result.imagesKept ? { imagesKept: result.imagesKept, warning: result.warning } : {}),
+    // updated | no_change | unverified — callers must not report "no_change" as an update.
+    ...(result.outcome ? { outcome: result.outcome } : {}),
+    ...(result.warning ? { warning: result.warning } : {}),
+    ...(result.imagesKept ? { imagesKept: result.imagesKept } : {}),
   });
 });
 

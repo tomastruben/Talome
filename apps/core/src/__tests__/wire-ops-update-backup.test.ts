@@ -200,8 +200,9 @@ describe("pre-update backup through the backup engine", () => {
     expect(upCall).toBeGreaterThanOrEqual(0);
     const order = m.observed.map((o) => o.at);
     expect(order.indexOf("backup-stop")).toBeGreaterThanOrEqual(0);
-    expect(order.indexOf("backup-stop")).toBeLessThan(order.indexOf("pull"));
-    expect(order.indexOf("pull")).toBeLessThan(order.indexOf("recreate"));
+    // Pull first (a failed pull never stops the app), then the backup, then the recreate
+    expect(order.indexOf("pull")).toBeLessThan(order.indexOf("backup-stop"));
+    expect(order.indexOf("backup-stop")).toBeLessThan(order.indexOf("recreate"));
 
     // Backup id recorded on the operation and the archive on the update snapshot
     const op = getOperation(result.operationId!)!;
@@ -224,8 +225,7 @@ describe("pre-update backup through the backup engine", () => {
     expect(result.backupFailed).toBe(true);
     expect(result.error).toContain("Pre-update backup failed");
     expect(result.error).toContain("force");
-    // The backup runs before anything changes: no images pulled (no moved tags), nothing recreated
-    expect(commands().some((c) => c.includes(" pull"))).toBe(false);
+    // The backup runs before anything changes: images were only downloaded, nothing recreated
     expect(commands().some((c) => c.includes(" up -d"))).toBe(false);
     // The backup engine started the container it tried to stop again
     expect(dockerState.events).toContain("start:c1");
@@ -269,16 +269,17 @@ describe("pre-update backup through the backup engine", () => {
     expect((op.detail?.backup as { success: boolean }).success).toBe(false);
   });
 
-  it("backs up the running version before moving image refs or pulling, so restoring it after a rollback keeps the old version", async () => {
+  it("backs up the running version before moving image refs (after pulling), so restoring it after a rollback keeps the old version", async () => {
     await setupApp(COMPOSE, true, COMPOSE.replace("example/web:1", "example/web:2"));
 
     const updated = await updateApp(APP);
     expect(updated).toMatchObject({ success: true, outcome: "updated" });
-    // At backup time the compose still ran the old image, and nothing was pulled yet
+    // The new images were pulled first, but at backup time the live compose still ran the old image
     const stopAt = m.observed.findIndex((o) => o.at === "backup-stop");
     const pullAt = m.observed.findIndex((o) => o.at === "pull");
     expect(stopAt).toBeGreaterThanOrEqual(0);
-    expect(pullAt).toBeGreaterThan(stopAt);
+    expect(pullAt).toBeGreaterThanOrEqual(0);
+    expect(pullAt).toBeLessThan(stopAt);
     expect(m.observed[stopAt].compose).toContain("example/web:1");
     expect(readFileSync(appComposePath, "utf-8")).toContain("example/web:2");
 
@@ -305,7 +306,8 @@ describe("pre-update backup through the backup engine", () => {
 
     expect(result.backupFailed).toBe(true);
     expect(readFileSync(appComposePath, "utf-8")).toContain("example/web:1");
-    expect(commands().some((c) => c.includes(" pull"))).toBe(false);
+    expect(readFileSync(appComposePath, "utf-8")).not.toContain("example/web:2");
+    expect(commands().some((c) => c.includes(" up -d"))).toBe(false);
   });
 
   it("journals backup progress and records who triggered it", async () => {

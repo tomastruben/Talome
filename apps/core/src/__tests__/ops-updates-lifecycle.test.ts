@@ -194,8 +194,8 @@ describe("safe update pipeline", () => {
     const cmds = commands();
     expect(cmds.every((c) => c.includes(" pull"))).toBe(true);
     expect(cmds.some((c) => /\b(up|down|stop|restart|rm)\b/.test(c))).toBe(false);
-    // The pre-update backup runs before anything changes (before the pull)
-    expect(m.takePreUpdateBackup.mock.invocationCallOrder[0]).toBeLessThan(m.run.mock.invocationCallOrder[0]);
+    // The pull comes first: a failed pull never stops the app for a pre-update backup
+    expect(m.takePreUpdateBackup).not.toHaveBeenCalled();
     expect(m.restoreServiceImages).not.toHaveBeenCalled();
 
     const row = installedRow()!;
@@ -221,9 +221,10 @@ describe("safe update pipeline", () => {
     expect(pullCall).toBeGreaterThanOrEqual(0);
     expect(upCall).toBeGreaterThan(pullCall);
     expect(m.captureServiceImages.mock.invocationCallOrder[0]).toBeLessThan(m.run.mock.invocationCallOrder[pullCall]);
-    // Backup of the running version before the pull (no moved tags, no edited compose in the archive)
+    // Backup after the pull (a failed pull never stops the app) but before the recreate
     expect(m.takePreUpdateBackup.mock.invocationCallOrder[0]).toBeGreaterThan(m.captureServiceImages.mock.invocationCallOrder[0]);
-    expect(m.takePreUpdateBackup.mock.invocationCallOrder[0]).toBeLessThan(m.run.mock.invocationCallOrder[pullCall]);
+    expect(m.takePreUpdateBackup.mock.invocationCallOrder[0]).toBeGreaterThan(m.run.mock.invocationCallOrder[pullCall]);
+    expect(m.takePreUpdateBackup.mock.invocationCallOrder[0]).toBeLessThan(m.run.mock.invocationCallOrder[upCall]);
 
     const snapshot = db.select().from(schema.updateSnapshots).get()!;
     expect(snapshot.previousCompose).toBe(ORIGINAL_COMPOSE);
@@ -256,7 +257,7 @@ describe("safe update pipeline", () => {
     const result = await updateApp(APP_ID);
     const steps = listOperationSteps(result.operationId!);
     expect(steps.map((s) => s.step)).toEqual([
-      "starting", "preflight", "snapshot", "backup", "pull", "pull", "recreate", "verify", "finalize", "done",
+      "starting", "preflight", "snapshot", "pull", "pull", "backup", "recreate", "verify", "finalize", "done",
     ]);
     const progress = steps.map((s) => s.progress);
     expect(progress).toEqual([...progress].sort((a, b) => a - b));
@@ -356,18 +357,22 @@ describe("safe update pipeline", () => {
     expect(m.writeNotification).toHaveBeenCalledWith("warning", "Sonarr updated, not yet verified", expect.any(String), APP_ID);
   });
 
-  it("does not claim an update or bump the version when no image changed", async () => {
+  it("does not claim an update when nothing changed, but records the catalog version so it is not offered forever", async () => {
     m.verifyAppHealth.mockResolvedValue(healthy);
     m.captureServiceImages.mockReset();
     m.captureServiceImages.mockResolvedValue(BASELINE);
 
     const result = await updateApp(APP_ID);
     expect(result).toMatchObject({ success: true, outcome: "no_change" });
-    expect(installedRow()!.version).toBe("4.0.0");
+    expect(result.warning).toContain("same images and configuration");
+    // Same images, same configuration: version 4.1.0 is what runs.
+    expect(installedRow()!.version).toBe("4.1.0");
     expect(db.select().from(schema.updateSnapshots).all()).toHaveLength(0);
     expect(m.writeNotification).not.toHaveBeenCalledWith("info", "Sonarr updated", expect.anything(), APP_ID);
-    expect(m.writeNotification).toHaveBeenCalledWith("info", "Sonarr unchanged", expect.stringContaining("still runs version 4.0.0"), APP_ID);
-    expect(getOperation(result.operationId!)!.detail?.outcome).toBe("no_change");
+    expect(m.writeNotification).toHaveBeenCalledWith("info", "Sonarr unchanged", expect.stringContaining("version 4.1.0 is recorded"), APP_ID);
+    const op = getOperation(result.operationId!)!;
+    expect(op.detail?.outcome).toBe("no_change");
+    expect(op.detail?.versionRecorded).toBe("4.1.0");
   });
 
   it("a rollback whose images could not be restored is reported as failed, not rolled back", async () => {
@@ -416,16 +421,21 @@ describe("safe update pipeline", () => {
     writeFileSync(composePath, "services:\n  sonarr:\n    image: linuxserver/sonarr:4.1\n");
     db.update(schema.installedApps).set({ overrideComposePath: overridePath }).where(eq(schema.installedApps.appId, APP_ID)).run();
 
+    const seenAtPull: { pulled: string; live: string }[] = [];
     m.run.mockImplementation(async (cmd: string) => {
       if (cmd.includes(" pull")) {
-        // The pull already sees the new ref
-        expect(readFileSync(overridePath, "utf-8")).toContain("linuxserver/sonarr:4.1");
+        // The pull sees the new ref; the live compose is untouched until after the pull and backup
+        const pulled = /-f "([^"]+)"/.exec(cmd)![1];
+        seenAtPull.push({ pulled: readFileSync(pulled, "utf-8"), live: readFileSync(overridePath, "utf-8") });
         throw Object.assign(new Error("pull failed"), { stderr: "timeout" });
       }
       return { stdout: "", stderr: "" };
     });
     const failed = await updateApp(APP_ID);
     expect(failed.success).toBe(false);
+    expect(seenAtPull).toHaveLength(1);
+    expect(seenAtPull[0].pulled).toContain("linuxserver/sonarr:4.1");
+    expect(seenAtPull[0].live).toBe(overrideCompose);
     expect(readFileSync(overridePath, "utf-8")).toBe(overrideCompose);
 
     m.run.mockResolvedValue({ stdout: "", stderr: "" });
