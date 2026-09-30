@@ -28,7 +28,9 @@ import {
   SecurityCheckIcon,
   Settings01Icon,
 } from "@/components/icons";
-import { relativeTime } from "@/components/settings/settings-primitives";
+import { relativeTime } from "@/lib/format";
+import { fetchJson } from "@/lib/fetch-json";
+import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
 import { useUser } from "@/hooks/use-user";
 import { cn } from "@/lib/utils";
 import {
@@ -48,11 +50,7 @@ import { RestoreDialog } from "./_components/restore-dialog";
 import { BackupSettingsSheet } from "./_components/backup-settings-sheet";
 import { StorageSheet } from "./_components/storage-sheet";
 
-const fetcher = (url: string) =>
-  fetch(url).then((r) => {
-    if (!r.ok) throw new Error(`Request failed (${r.status})`);
-    return r.json();
-  });
+const fetcher = (url: string) => fetchJson<AppBackupOverview[]>(url);
 
 async function postJson(url: string, body?: unknown): Promise<void> {
   const res = await fetch(url, {
@@ -138,15 +136,45 @@ export default function BackupsPage() {
   // Backups whose verification this page started: backupId → app name (for the result toast)
   const pendingVerify = useRef(new Map<string, string>());
 
-  const { data, error, isLoading, mutate } = useSWR<AppBackupOverview[]>(`${CORE_URL}/api/backups/apps`, fetcher, {
+  // Backups this page started: appId → the last backup id before it (for the receipt toast)
+  const pendingBackup = useRef(new Map<string, string | null>());
+  const { loadedAt, markLoaded } = useLoadedAt();
+  const { data, error, isLoading, isValidating, mutate } = useSWR<AppBackupOverview[]>(`${CORE_URL}/api/backups/apps`, fetcher, {
+    onSuccess: markLoaded,
     // Poll quickly while anything is running, slowly otherwise
     refreshInterval: (latest?: AppBackupOverview[]) =>
       (latest ?? []).some((a) => a.operation !== null || a.lastSuccessfulBackup?.verifyStatus === "running") ||
-      pendingVerify.current.size > 0
+      pendingVerify.current.size > 0 ||
+      pendingBackup.current.size > 0
         ? 2_500
         : 30_000,
   });
   const apps = useMemo(() => data ?? [], [data]);
+  // Nothing for the first 200ms of the first load, then a skeleton.
+  const loadingPhase = useLoadingPhase(isLoading && !data);
+  const showSkeleton = isLoading && !data;
+
+  // A backup this page started finished: say so, with what was recorded.
+  useEffect(() => {
+    for (const [appId, previousId] of pendingBackup.current) {
+      const app = apps.find((a) => a.appId === appId);
+      if (!app) {
+        pendingBackup.current.delete(appId);
+        continue;
+      }
+      if (app.operation) continue;
+      const last = app.lastBackup;
+      if (!last || last.id === previousId || last.status === "running") continue;
+      pendingBackup.current.delete(appId);
+      if (last.status === "completed") {
+        toast.success(`Backed up ${app.name} · checksums recorded`, {
+          description: last.sizeBytes != null ? formatBytes(last.sizeBytes) : undefined,
+        });
+      } else {
+        toast.error(`Couldn't back up ${app.name}`, { description: last.error ?? "Check the notifications for details." });
+      }
+    }
+  }, [apps]);
 
   // Announce verification results once they land
   useEffect(() => {
@@ -176,7 +204,8 @@ export default function BackupsPage() {
   async function backupNow(app: AppBackupOverview) {
     try {
       await postJson(`${CORE_URL}/api/backups/trigger`, { appId: app.appId });
-      toast.success(`Backing up ${app.name}`);
+      // Started, not done: the receipt comes when the backup has finished.
+      pendingBackup.current.set(app.appId, app.lastBackup?.id ?? null);
       refresh();
     } catch (e) {
       actionFailed(e, "Backup failed to start");
@@ -210,9 +239,9 @@ export default function BackupsPage() {
       <div className="grid gap-6">
         {/* Summary */}
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          {isLoading ? (
-            <Skeleton className="h-5 w-72" />
-          ) : (
+          {showSkeleton ? (
+            loadingPhase === "skeleton" ? <Skeleton className="h-5 w-72" /> : <div className="h-5" />
+          ) : !data ? null : (
             <p className="text-sm text-muted-foreground">
               <span className="text-foreground">{protectedCount}</span> of {apps.length} apps backed up
               <span className="mx-2">·</span>
@@ -232,8 +261,19 @@ export default function BackupsPage() {
           )}
         </div>
 
-        {error ? (
-          <ErrorState title="Couldn't load backups" description="Check that the Talome server is reachable." onRetry={refresh} />
+        {/* The promise, where it's read first. */}
+        <p className="-mt-3 text-sm text-muted-foreground">
+          Every backup records a checksum for each file, and Talome test-restores it once a week.
+        </p>
+
+        {error && data && (
+          <StaleRow loadedAt={loadedAt} subject="backups" onRetry={refresh} retrying={isValidating} />
+        )}
+
+        {error && !data ? (
+          <ErrorState title="Couldn't load backups" description="Check that the Talome server is reachable, then retry." onRetry={refresh} />
+        ) : showSkeleton && loadingPhase !== "skeleton" ? (
+          <div className="min-h-64" aria-busy="true" />
         ) : !isLoading && apps.length === 0 ? (
           <EmptyState
             icon={ArchiveIcon}
@@ -257,7 +297,7 @@ export default function BackupsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading
+                {showSkeleton
                   ? Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} actions={canManage} />)
                   : sorted.map((app) => {
                       const ok = app.lastSuccessfulBackup;
@@ -291,6 +331,16 @@ export default function BackupsPage() {
                                   variant="ghost"
                                   size="sm"
                                   className="hidden sm:inline-flex"
+                                  disabled={busyApp}
+                                  onClick={() => void backupNow(app)}
+                                >
+                                  <HugeiconsIcon icon={ArchiveIcon} size={16} />
+                                  Back up now
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="hidden sm:inline-flex"
                                   disabled={!ok?.hasManifest || verifying || busyApp}
                                   onClick={() => void verifyNow(app)}
                                 >
@@ -314,7 +364,7 @@ export default function BackupsPage() {
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end" className="min-w-44">
-                                    <DropdownMenuItem disabled={busyApp} onSelect={() => void backupNow(app)}>
+                                    <DropdownMenuItem className="sm:hidden" disabled={busyApp} onSelect={() => void backupNow(app)}>
                                       <HugeiconsIcon icon={ArchiveIcon} size={16} />
                                       Back up now
                                     </DropdownMenuItem>
@@ -334,7 +384,7 @@ export default function BackupsPage() {
                                       <HugeiconsIcon icon={DatabaseRestoreIcon} size={16} />
                                       Restore
                                     </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
+                                    <DropdownMenuSeparator className="sm:hidden" />
                                     <DropdownMenuItem onSelect={() => setSettingsApp(app)}>
                                       <HugeiconsIcon icon={Settings01Icon} size={16} />
                                       Backup settings
@@ -352,9 +402,9 @@ export default function BackupsPage() {
           </div>
         )}
 
-        <p className={cn("text-sm text-muted-foreground", isLoading && "invisible")}>
-          Every backup records a checksum for each file. Verification unpacks it into a scratch folder, compares every
-          file and checks each database, and runs automatically once a week.
+        <p className={cn("text-sm text-muted-foreground", showSkeleton && "invisible")}>
+          Verification unpacks a backup into a scratch folder, compares every file with its checksum and checks each
+          database.
           {!canManage && " Only an admin can back up, verify or restore apps."}
         </p>
       </div>

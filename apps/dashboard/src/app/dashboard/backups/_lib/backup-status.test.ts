@@ -137,3 +137,34 @@ describe("backup API errors", () => {
     expect(isForbiddenError(new Error("x"))).toBe(false);
   });
 });
+
+describe("formatSchedule", () => {
+  it("writes common schedules in words instead of cron", async () => {
+    const { formatSchedule } = await import("./backup-status");
+    expect(formatSchedule("0 3 * * *")).toBe("Daily at 03:00");
+    expect(formatSchedule("30 4 * * 0")).toBe("Sundays at 04:30");
+    expect(formatSchedule("30 4 * * 7")).toBe("Sundays at 04:30");
+    expect(formatSchedule("0 2 1 * *")).toBe("Monthly on day 1 at 02:00");
+    expect(formatSchedule("0 */6 * * *")).toBe("Every 6 hours");
+    expect(formatSchedule("15 * * * *")).toBe("Every hour at :15");
+    expect(formatSchedule("0 1 * * 1-5")).toBe("Weekdays at 01:00");
+  });
+
+  it("returns null for patterns it doesn't know, so they're shown verbatim", async () => {
+    const { formatSchedule } = await import("./backup-status");
+    expect(formatSchedule("0 3 * 1 *")).toBeNull();
+    expect(formatSchedule("*/5 3,4 * * *")).toBeNull();
+    expect(formatSchedule("nonsense")).toBeNull();
+    expect(formatSchedule(null)).toBeNull();
+  });
+
+  it("summarises schedule and retention on one line", async () => {
+    const { scheduleSummary } = await import("./backup-status");
+    expect(
+      scheduleSummary({ cron: "0 3 * * *", keep_last: null, keep_daily: 7, keep_weekly: null, keep_monthly: null, retention_days: 30 }),
+    ).toBe("Daily at 03:00 · keep 7 daily");
+    expect(
+      scheduleSummary({ cron: "0 3 * * *", enabled: 0, keep_last: null, keep_daily: null, keep_weekly: null, keep_monthly: null, retention_days: 14 }),
+    ).toBe("Daily at 03:00 · keep 14 days · paused");
+  });
+});

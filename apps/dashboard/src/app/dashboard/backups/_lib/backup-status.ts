@@ -151,6 +151,57 @@ export function retentionSummary(s: {
   return parts.length > 0 ? `Keep ${parts.join(", ")}` : `Keep ${s.retention_days} days`;
 }
 
+// ── Schedules in words ────────────────────────────────────────────────────────
+
+const WEEKDAYS = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+
+function isInt(value: string, min: number, max: number): boolean {
+  if (!/^\d+$/.test(value)) return false;
+  const n = Number(value);
+  return n >= min && n <= max;
+}
+
+function clock(hour: string, minute: string): string {
+  return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+}
+
+/**
+ * A cron schedule in words ("Daily at 03:00", "Sundays at 04:30"). Returns
+ * null for a pattern it doesn't recognise, so the caller shows the cron
+ * verbatim (in mono) rather than guessing.
+ */
+export function formatSchedule(cron: string | null | undefined): string | null {
+  if (!cron) return null;
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [minute, hour, dom, month, dow] = parts;
+  if (month !== "*") return null;
+
+  if (isInt(minute, 0, 59) && hour === "*" && dom === "*" && dow === "*") {
+    return minute === "0" ? "Every hour" : `Every hour at :${minute.padStart(2, "0")}`;
+  }
+  const everyHours = /^\*\/(\d+)$/.exec(hour);
+  if (isInt(minute, 0, 59) && everyHours && dom === "*" && dow === "*") {
+    const n = Number(everyHours[1]);
+    return n === 1 ? "Every hour" : `Every ${n} hours`;
+  }
+  if (!isInt(minute, 0, 59) || !isInt(hour, 0, 23)) return null;
+  const at = clock(hour, minute);
+  if (dom === "*" && dow === "*") return `Daily at ${at}`;
+  if (dom === "*" && isInt(dow, 0, 7)) return `${WEEKDAYS[Number(dow) % 7]} at ${at}`;
+  if (dom === "*" && dow === "1-5") return `Weekdays at ${at}`;
+  if (isInt(dom, 1, 31) && dow === "*") return `Monthly on day ${dom} at ${at}`;
+  return null;
+}
+
+/** "Daily at 03:00 · keep 7 daily" — the schedule and its retention on one line. */
+export function scheduleSummary(s: Parameters<typeof retentionSummary>[0] & { cron: string; enabled?: boolean | number }): string {
+  const when = formatSchedule(s.cron) ?? s.cron;
+  const keep = retentionSummary(s);
+  const paused = s.enabled === false || s.enabled === 0 ? " · paused" : "";
+  return `${when} · ${keep.charAt(0).toLowerCase()}${keep.slice(1)}${paused}`;
+}
+
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 /** Every change to backups is admin-only on the server; reads are open to everyone. */
