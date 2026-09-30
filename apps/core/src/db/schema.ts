@@ -565,18 +565,6 @@ export const updateSnapshots = sqliteTable("update_snapshots", {
 
 // ── Library Operations (file reorg audit/rollback log) ───────────────────────
 
-export const libraryOperations = sqliteTable("library_operations", {
-  id: text("id").primaryKey(),
-  planId: text("plan_id").notNull(),
-  type: text("type", { enum: ["move", "rename", "delete"] }).notNull(),
-  sourcePath: text("source_path").notNull(),
-  targetPath: text("target_path"),
-  sizeBytes: integer("size_bytes").notNull().default(0),
-  status: text("status", { enum: ["pending", "completed", "failed", "undone"] }).notNull().default("pending"),
-  error: text("error"),
-  executedAt: text("executed_at").notNull().$defaultFn(() => new Date().toISOString()),
-});
-
 export const optimizationJobs = sqliteTable("optimization_jobs", {
   id: text("id").primaryKey(),
   sourcePath: text("source_path").notNull(),
@@ -636,7 +624,7 @@ export const supervisorEvents = sqliteTable("supervisor_events", {
 
 export const schemaVersions = sqliteTable("schema_versions", {
   version: integer().primaryKey(),
-  appliedAt: text().notNull(),
+  appliedAt: text("applied_at").notNull(),
   description: text(),
 });
 
