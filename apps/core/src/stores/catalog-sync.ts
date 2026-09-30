@@ -17,9 +17,16 @@
 // (keys and environment variables the override does not have yet); the base
 // is recorded after their next update.
 //
-// Never touched here: `image` (see syncOverrideImageRefs and ops/image-refs.ts),
-// and the keys Talome resolves at install — ports, volumes, networks,
-// network_mode, container_name, build. Services the catalog adds or removes
+// Only an allow-list of keys that cannot widen what the container may do is
+// synced (SYNCED_KEYS: environment, command, healthcheck, restart, …). A
+// catalog change to anything else — privileges and host access (privileged,
+// cap_add/cap_drop, devices, pid/ipc, security_opt, volumes_from, env_file,
+// user, …) or keys the Talome hardening rewrites at install — is never applied
+// by an update; it is reported as `requires_review`, so the owner re-approves
+// it (an update may run unattended). `image` is handled separately (see
+// syncOverrideImageRefs and ops/image-refs.ts), and the keys Talome resolves
+// at install — ports, volumes, networks, network_mode, container_name, build —
+// are left as they are without a report. Services the catalog adds or removes
 // are not added or removed.
 
 import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
@@ -33,8 +40,38 @@ const log = createLogger("catalog-sync");
 
 type ComposeDoc = { services?: Record<string, Record<string, unknown> | null> } & Record<string, unknown>;
 
-/** Service keys an update never syncs from the catalog. */
-const UNSYNCED_KEYS = new Set(["image", "ports", "volumes", "networks", "network_mode", "container_name", "build"]);
+/**
+ * Service keys an update may take from the catalog. Everything else is kept
+ * as installed: it can grant privileges or host access (privileged, cap_add,
+ * devices, pid, security_opt, volumes_from, env_file, user, deploy's device
+ * reservations, …) or is rewritten by Talome's install-time hardening
+ * (cap_drop [ALL] next to the catalog's cap_add).
+ */
+const SYNCED_KEYS = new Set([
+  "environment",
+  "command",
+  "entrypoint",
+  "healthcheck",
+  "working_dir",
+  "labels",
+  "restart",
+  "stop_grace_period",
+  "stop_signal",
+  "init",
+  "tmpfs",
+  "shm_size",
+  "ulimits",
+  "logging",
+  "hostname",
+  "expose",
+  "mem_limit",
+  "mem_reservation",
+  "cpus",
+  "pids_limit",
+]);
+
+/** Keys Talome resolves at install (and image, synced separately): never synced, and not reported. */
+const INSTALL_RESOLVED_KEYS = new Set(["image", "ports", "volumes", "networks", "network_mode", "container_name", "build"]);
 
 /** Store sources whose override is the catalog compose plus plain edits (no source-specific rewriting). */
 const SYNCABLE_SOURCES = new Set(["talome", "user-created"]);
@@ -55,8 +92,13 @@ export interface ConfigConflict {
   service: string;
   key: string;
   variable?: string;
-  /** Why the override's value was kept */
-  reason: "edited" | "no_base";
+  /**
+   * Why the override's value was kept: "edited" (the app's compose changed it
+   * too), "no_base" (no record of what the app was installed from, so an edit
+   * cannot be told apart), "requires_review" (a key an update never applies,
+   * e.g. privileges or host access — reinstall or edit the app to adopt it).
+   */
+  reason: "edited" | "no_base" | "requires_review";
 }
 
 export interface ConfigSyncResult {
@@ -241,9 +283,19 @@ export function mergeCatalogConfig(
     const serviceHasBase = hasBase && baseSvc !== null && typeof baseSvc === "object";
     const keys = new Set([...Object.keys(catSvc), ...(serviceHasBase ? Object.keys(baseSvc!) : [])]);
     for (const key of keys) {
-      if (UNSYNCED_KEYS.has(key)) continue;
+      if (INSTALL_RESOLVED_KEYS.has(key)) continue;
       const catVal = catSvc[key];
       const baseVal = serviceHasBase ? baseSvc![key] : undefined;
+      if (!SYNCED_KEYS.has(key)) {
+        // Never applied by an update — reported when the catalog changed it.
+        const catalogChanged = serviceHasBase
+          ? !isDeepStrictEqual(catVal, baseVal)
+          : catVal !== undefined && !isDeepStrictEqual(svc[key], catVal);
+        if (catalogChanged && !isDeepStrictEqual(svc[key], catVal)) {
+          result.kept.push({ service, key, reason: "requires_review" });
+        }
+        continue;
+      }
       if (key === "environment") {
         mergeEnvironment(service, svc, baseVal, catVal, serviceHasBase, result);
         continue;
@@ -279,7 +331,27 @@ export function mergeCatalogConfig(
 /** One sentence for results/notifications about catalog changes that were not applied ("" when none). */
 export function describeKeptConfig(kept: ConfigConflict[]): string {
   if (kept.length === 0) return "";
-  const items = kept.slice(0, 8).map((k) => `${k.service}.${k.key}${k.variable ? `.${k.variable}` : ""}`);
-  const more = kept.length > items.length ? ` and ${kept.length - items.length} more` : "";
-  return `Catalog changes to ${items.join(", ")}${more} were not applied because the app's compose has its own value there.`;
+  const list = (group: ConfigConflict[]): string => {
+    const items = group.slice(0, 8).map((k) => `${k.service}.${k.key}${k.variable ? `.${k.variable}` : ""}`);
+    const more = group.length > items.length ? ` and ${group.length - items.length} more` : "";
+    return `${items.join(", ")}${more}`;
+  };
+  const edited = kept.filter((k) => k.reason === "edited");
+  const noBase = kept.filter((k) => k.reason === "no_base");
+  const review = kept.filter((k) => k.reason === "requires_review");
+  const parts: string[] = [];
+  if (edited.length > 0) parts.push(`Catalog changes to ${list(edited)} were not applied because the app's compose has its own value there.`);
+  if (noBase.length > 0) {
+    parts.push(
+      `Catalog changes to ${list(noBase)} were not applied: the app's value differs and Talome has no record of whether it was edited ` +
+      `(the app was installed before catalog changes were tracked).`,
+    );
+  }
+  if (review.length > 0) {
+    parts.push(
+      `Catalog changes to ${list(review)} were not applied because updates never change a container's privileges or host access; ` +
+      `review them and reinstall or edit the app to adopt them.`,
+    );
+  }
+  return parts.join(" ");
 }
