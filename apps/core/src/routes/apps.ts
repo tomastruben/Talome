@@ -21,7 +21,7 @@ import { getInstallAccessWarnings, runWithUmbrelInstallOptions } from "../stores
 import { volumeMountsError, volumeMountsNeedingApproval } from "../stores/host-mounts.js";
 import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus, TalomeNativeSurfaceDescriptor } from "@talome/types";
 import { listContainers } from "../docker/client.js";
-import { isAppComposeContainer } from "../stores/compose-exec.js";
+import { appComposeProjects, isAppComposeContainer } from "../stores/compose-exec.js";
 import os from "node:os";
 import type { Context } from "hono";
 
@@ -359,9 +359,10 @@ apps.get("/:storeId/:appId", async (c) => {
     try {
       const containers = await listContainers();
       const id = result.id.toLowerCase();
+      const projects = appComposeProjects(result.id, row.composePath);
       result.detectedRunning = containers.some((ct) => {
         // Compose project label: containers of an app Talome no longer tracks, whatever their names.
-        if (isAppComposeContainer(ct, result.id, row.composePath)) return true;
+        if (isAppComposeContainer(ct, result.id, row.composePath, projects)) return true;
         if (ct.name.toLowerCase() === id) return true;
         const img = ct.image.split("/").pop()?.split(":")[0] ?? "";
         return img.replace(/-/g, "").toLowerCase() === id.replace(/-/g, "");

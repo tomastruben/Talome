@@ -756,4 +756,22 @@ describe("store detection of containers Talome does not track", () => {
     expect(res.status).toBe(200);
     expect((await res.json() as { detectedRunning?: boolean }).detectedRunning).toBe(true);
   });
+
+  it("reads the app's compose file once per request, not once per container", async () => {
+    db.delete(schema.installedApps).run();
+    const app = new Hono().route("/api/apps", apps);
+    const loads = vi.spyOn(yaml, "load");
+    const other = (i: number) => container(`other${i}`, `other-${i}`, projectLabels(`other${i}`, `/x/${i}.yml`));
+    try {
+      live = [other(0)];
+      await app.request(`/api/apps/${STORE}/${APP}`);
+      const withOne = loads.mock.calls.length;
+      loads.mockClear();
+      live = Array.from({ length: 8 }, (_, i) => other(i));
+      await app.request(`/api/apps/${STORE}/${APP}`);
+      expect(loads.mock.calls.length).toBe(withOne);
+    } finally {
+      loads.mockRestore();
+    }
+  });
 });
