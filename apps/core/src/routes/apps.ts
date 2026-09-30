@@ -21,6 +21,7 @@ import { getInstallAccessWarnings, runWithUmbrelInstallOptions } from "../stores
 import { volumeMountsError, volumeMountsNeedingApproval } from "../stores/host-mounts.js";
 import type { CatalogApp, AppManifest, InstalledApp, StoreType, InstalledAppStatus, TalomeNativeSurfaceDescriptor } from "@talome/types";
 import { listContainers } from "../docker/client.js";
+import { appComposeProjects, isAppComposeContainer } from "../stores/compose-exec.js";
 import os from "node:os";
 import type { Context } from "hono";
 
@@ -358,7 +359,10 @@ apps.get("/:storeId/:appId", async (c) => {
     try {
       const containers = await listContainers();
       const id = result.id.toLowerCase();
+      const projects = appComposeProjects(result.id, row.composePath);
       result.detectedRunning = containers.some((ct) => {
+        // Compose project label: containers of an app Talome no longer tracks, whatever their names.
+        if (isAppComposeContainer(ct, result.id, row.composePath, projects)) return true;
         if (ct.name.toLowerCase() === id) return true;
         const img = ct.image.split("/").pop()?.split(":")[0] ?? "";
         return img.replace(/-/g, "").toLowerCase() === id.replace(/-/g, "");
@@ -491,6 +495,7 @@ apps.post("/:storeId/:appId/update", async (c) => {
       error: result.error,
       operationId: result.operationId,
       rolledBack: result.rolledBack ?? false,
+      ...(result.outcome ? { outcome: result.outcome } : {}),
       ...(result.backupFailed ? { backupFailed: true } : {}),
       ...(result.preUpdateBackupId ? { preUpdateBackupId: result.preUpdateBackupId, dataRestoreHint: result.dataRestoreHint } : {}),
     }, 400);
@@ -499,7 +504,10 @@ apps.post("/:storeId/:appId/update", async (c) => {
     ok: true,
     operationId: result.operationId,
     verified: result.verified ?? false,
-    ...(result.imagesKept ? { imagesKept: result.imagesKept, warning: result.warning } : {}),
+    // updated | no_change | unverified — callers must not report "no_change" as an update.
+    ...(result.outcome ? { outcome: result.outcome } : {}),
+    ...(result.warning ? { warning: result.warning } : {}),
+    ...(result.imagesKept ? { imagesKept: result.imagesKept } : {}),
   });
 });
 
@@ -625,9 +633,17 @@ apps.patch("/:storeId/:appId", async (c) => {
 
 apps.delete("/:storeId/:appId", async (c) => {
   const { appId } = c.req.param();
-  const result = await uninstallApp(appId, { actor: actorFor(c) });
+  // Anonymous volumes may hold the app's only data: deleted only on explicit opt-in.
+  const removeAnonymousVolumes = c.req.query("removeAnonymousVolumes") === "true";
+  const result = await uninstallApp(appId, { actor: actorFor(c), removeAnonymousVolumes });
   if (!result.success) return operationError(c, result);
-  return c.json({ ok: true, message: `${appId} uninstalled`, operationId: result.operationId });
+  return c.json({
+    ok: true,
+    message: `${appId} uninstalled`,
+    operationId: result.operationId,
+    ...(result.warning ? { warning: result.warning } : {}),
+    ...(result.anonymousVolumes ? { anonymousVolumes: result.anonymousVolumes } : {}),
+  });
 });
 
 /* ── Serve local store assets (icons, screenshots, covers) ─────────── */

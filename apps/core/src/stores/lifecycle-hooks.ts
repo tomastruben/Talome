@@ -1,7 +1,7 @@
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname } from "node:path";
-import { listContainers } from "../docker/client.js";
+import { discoverContainers } from "./compose-exec.js";
 import type { AppHook, AppHooks } from "@talome/types";
 
 const exec = promisify(execCb);
@@ -15,21 +15,6 @@ export function parseHooks(hooksJson: string | null | undefined): AppHooks | nul
   }
 }
 
-async function discoverContainersForHook(appId: string): Promise<string[]> {
-  try {
-    const containers = await listContainers();
-    return containers
-      .filter((c) => {
-        const name = c.name.toLowerCase();
-        const id = appId.toLowerCase();
-        return name === id || name.startsWith(`${id}-`) || name.startsWith(`${id}_`);
-      })
-      .map((c) => c.id);
-  } catch {
-    return [];
-  }
-}
-
 async function runHook(
   hook: AppHook,
   appId: string,
@@ -40,7 +25,8 @@ async function runHook(
   try {
     switch (hook.type) {
       case "shell": {
-        const containers = await discoverContainersForHook(appId);
+        // By compose project label: container names need not start with the app id.
+        const containers = await discoverContainers(appId, context.composePath);
         if (containers.length === 0) {
           return { success: false, error: "No containers found for shell hook" };
         }

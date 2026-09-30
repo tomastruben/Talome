@@ -119,26 +119,71 @@ export function fillGeneratedInstallEnv(
   composePath: string,
   envOverrides: Record<string, string>,
 ): GeneratedEnvResult {
-  const result: GeneratedEnvResult = { env: envOverrides, generated: [], reused: [] };
   try {
-    const specs = readGeneratedEnvSpecs(composePath).filter((s) => !envOverrides[s.key]);
-    if (specs.length === 0) return result;
-    const previous = readPreviousDotEnv(appId);
-    const env = { ...envOverrides };
-    for (const { key, kind } of specs) {
-      const prior = previous[key];
-      if (prior) {
-        env[key] = prior;
-        result.reused.push(key);
-      } else {
-        env[key] = generateEnvValue(kind);
-        result.generated.push(key);
-      }
-    }
-    result.env = env;
-    return result;
+    return fillSpecs(appId, readGeneratedEnvSpecs(composePath), envOverrides);
   } catch (err: unknown) {
     log.warn(`generating install env for ${appId}`, err);
+    return { env: envOverrides, generated: [], reused: [] };
+  }
+}
+
+/** Fill `specs` the env leaves empty: a previous install's value, else a new random one. */
+function fillSpecs(
+  appId: string,
+  specs: Array<{ key: string; kind: GeneratedEnvKind }>,
+  envOverrides: Record<string, string>,
+): GeneratedEnvResult {
+  const result: GeneratedEnvResult = { env: envOverrides, generated: [], reused: [] };
+  const missing = specs.filter((s) => !envOverrides[s.key]);
+  if (missing.length === 0) return result;
+  const previous = readPreviousDotEnv(appId);
+  const env = { ...envOverrides };
+  for (const { key, kind } of missing) {
+    const prior = previous[key];
+    if (prior) {
+      env[key] = prior;
+      result.reused.push(key);
+    } else {
+      env[key] = generateEnvValue(kind);
+      result.generated.push(key);
+    }
+  }
+  result.env = env;
+  return result;
+}
+
+/** Variables a compose text interpolates (`${VAR…}` / `$VAR`; `$$` is a literal dollar). */
+function referencedVariables(composeText: string): Set<string> {
+  const names = new Set<string>();
+  const text = composeText.replace(/\$\$/g, "");
+  for (const m of text.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)/g)) names.add(m[1]);
+  for (const m of text.matchAll(/\$([A-Za-z_][A-Za-z0-9_]*)/g)) names.add(m[1]);
+  return names;
+}
+
+/**
+ * An update whose compose starts referencing a manifest-declared generated
+ * secret (e.g. a new `JWT_SECRET: ${JWT_SECRET}` merged from the catalog):
+ * fill it like an install would, or compose interpolates it as an empty
+ * string. Only secrets the running compose did not reference yet are filled —
+ * an older install that runs without one keeps running as it is (its data may
+ * have been initialised without it). Explicit env values always win. Never throws.
+ */
+export function fillGeneratedUpdateEnv(
+  appId: string,
+  catalogComposePath: string,
+  envOverrides: Record<string, string>,
+  currentCompose: string,
+  nextCompose: string,
+): GeneratedEnvResult {
+  const result: GeneratedEnvResult = { env: envOverrides, generated: [], reused: [] };
+  try {
+    const before = referencedVariables(currentCompose);
+    const after = referencedVariables(nextCompose);
+    const specs = readGeneratedEnvSpecs(catalogComposePath).filter((s) => after.has(s.key) && !before.has(s.key));
+    return fillSpecs(appId, specs, envOverrides);
+  } catch (err: unknown) {
+    log.warn(`generating update env for ${appId}`, err);
     return result;
   }
 }
