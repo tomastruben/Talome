@@ -15,7 +15,7 @@ import {
 } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import { SettingsGroup, SettingsRow, SaveRow, settingsRequest } from "@/components/settings/settings-primitives";
-import { ClaudeCodePromptsGroup, useSecurityProfile, type SecurityMode } from "@/components/settings/autonomy";
+import { ClaudeCodePromptsGroup, StaleSettingsLine, useSecurityProfile, type SecurityMode } from "@/components/settings/autonomy";
 import { RadioCardGroup, type RadioCardOption } from "@/components/ui/radio-card-group";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -39,7 +39,7 @@ const MODES: RadioCardOption<SecurityMode>[] = [
   {
     value: "cautious",
     title: "Cautious",
-    description: "Agents read freely and make everyday changes. Destructive actions wait for your approval, and the shell only runs the commands listed below.",
+    description: "Agents read freely and make everyday changes. Destructive actions wait for your approval, and the shell only runs the commands in the shell allowlist.",
     icon: SecurityCheckIcon,
     badge: "Recommended",
   },
@@ -284,11 +284,15 @@ export function SecuritySection() {
               aria-labelledby="security-mode-label"
               value={saving ?? profile.mode}
               disabled={saving !== null}
+              // Moving through the modes must never apply one: only Space,
+              // Enter or a click chooses.
+              activation="manual"
               onValueChange={(next) => void choose(next)}
               options={MODES}
             />
           </SettingsRow>
         )}
+        {error && profile ? <StaleSettingsLine onRetry={() => void mutate()} /> : null}
       </SettingsGroup>
 
       {profile?.mode === "cautious" && (

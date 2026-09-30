@@ -128,6 +128,37 @@ describe("NativeAppRuntime", () => {
     expect(JSON.parse(String(call[1].body))).toMatchObject({ confirmed: true });
   });
 
+  it("shows the AppSpec's own confirmation sentence and names what ran in the receipt", async () => {
+    const { toast } = await import("sonner");
+    const spec = appSpec("budget-cache", [{ id: "snapshot", kind: "static", value: { remaining: 1, spent: 1, budget: 2 } }]);
+    spec.actions.push({
+      id: "clear",
+      label: "Clear cache",
+      description: "Removes cached data.",
+      kind: "talome-api",
+      method: "POST",
+      path: "/api/apps/user-apps/budget-cache/restart",
+      confirmation: "This clears every cached thumbnail.",
+    });
+    spec.surfaces[0].blocks = spec.surfaces[0].blocks.map((block) =>
+      block.id === "actions" ? { ...block, actionIds: ["ask-budget", "clear"] } : block,
+    );
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => (
+      url.includes("/actions/")
+        ? new Response(JSON.stringify({ ok: true, kind: "result", data: {} }), { status: 200, headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify(specResponse(spec)), { status: 200, headers: { "content-type": "application/json" } })
+    )));
+
+    render(<NativeAppRuntime storeId="user-apps" appId="budget-cache" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Clear cache" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveAccessibleName("Clear cache?");
+    expect(dialog).toHaveTextContent("This clears every cached thumbnail.");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear cache" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Ran Clear cache in Budget Compass"));
+  });
+
   it("renders Talome-native blocks and hands context to the desktop Assistant", async () => {
     const spec = appSpec("budget-compass", [{
       id: "snapshot",

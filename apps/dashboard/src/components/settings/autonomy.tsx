@@ -36,6 +36,28 @@ export function useSecurityProfile(enabled = true) {
   });
 }
 
+/**
+ * Shown under settings that loaded once but failed to refresh (§4.8 stale
+ * data): the values on screen may be out of date, so say so and offer Retry.
+ */
+export function StaleSettingsLine({ onRetry }: { onRetry: () => void }) {
+  return (
+    <SettingsRow className="py-2">
+      <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+        <HugeiconsIcon icon={AlertCircleIcon} size={12} strokeWidth={1.5} className="shrink-0 text-status-warning" aria-hidden="true" />
+        Couldn&apos;t refresh. These may be out of date.
+        <button
+          type="button"
+          className="rounded-sm underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={onRetry}
+        >
+          Retry
+        </button>
+      </p>
+    </SettingsRow>
+  );
+}
+
 /** Settings keys for the two Claude Code permission-prompt choices (core ai/autonomy.ts). */
 export const PROMPT_SETTING_KEYS = {
   builds: "creator_skip_permission_prompts",
@@ -142,6 +164,7 @@ export function ClaudeCodePromptsGroup() {
           );
         })
       )}
+      {error && data ? <StaleSettingsLine onRetry={() => void mutate()} /> : null}
       <SettingsRow className="py-2.5">
         <p className="text-xs text-muted-foreground">
           Headless runs (automatic evolution, the build autofix, remediation) never skip prompts. The terminal&apos;s own

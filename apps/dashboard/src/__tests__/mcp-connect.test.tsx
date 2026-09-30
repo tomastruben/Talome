@@ -15,13 +15,41 @@ describe("MCP server URL (P0-9)", () => {
     expect(mcpServerUrl("https://talome.example.com", "https://core.example.com/")).toBe("https://core.example.com/api/mcp");
   });
 
+  it("skips the documented localhost core URL when the page was reached on a real host", () => {
+    // .env.example sets NEXT_PUBLIC_CORE_URL=http://localhost:4000.
+    expect(mcpServerUrl("http://192.168.1.20:3000", "http://localhost:4000")).toBe("http://192.168.1.20:3000/api/mcp");
+    expect(mcpServerUrl("https://nas.tail1234.ts.net", "http://127.0.0.1:4000")).toBe("https://nas.tail1234.ts.net/api/mcp");
+    // On the server itself, localhost is right.
+    expect(mcpServerUrl("http://localhost:3000", "http://localhost:4000")).toBe("http://localhost:4000/api/mcp");
+  });
+
+  it("drops a trailing /api from the configured URL instead of doubling it", () => {
+    expect(mcpServerUrl("https://talome.example.com", "https://talome.example.com/api")).toBe("https://talome.example.com/api/mcp");
+    expect(mcpServerUrl("https://talome.example.com", "https://talome.example.com/api/")).toBe("https://talome.example.com/api/mcp");
+  });
+
   it("masks secrets and embeds the token only in copied configs", () => {
     expect(maskSecret(TOKEN)).toBe(`tlm_${"•".repeat(12)}6789`);
     expect(maskSecret(TOKEN)).not.toContain("abcdefgh");
-    const config = JSON.parse(mcpClientConfig("claude-desktop", "https://t.example/api/mcp", TOKEN)) as {
+    const config = JSON.parse(mcpClientConfig("claude-code", "https://t.example/api/mcp", TOKEN)) as {
       mcpServers: { talome: { type: string; url: string; headers: { Authorization: string } } };
     };
     expect(config.mcpServers.talome).toEqual({ type: "http", url: "https://t.example/api/mcp", headers: { Authorization: `Bearer ${TOKEN}` } });
+  });
+
+  it("gives Claude Desktop a local (stdio) server that bridges to Talome, since its config file can't hold a remote one", () => {
+    const https = JSON.parse(mcpClientConfig("claude-desktop", "https://t.example/api/mcp", TOKEN)) as {
+      mcpServers: { talome: { command: string; args: string[]; env: Record<string, string>; url?: string; type?: string } };
+    };
+    expect(https.mcpServers.talome.command).toBe("npx");
+    expect(https.mcpServers.talome.args).toEqual(["-y", "mcp-remote", "https://t.example/api/mcp", "--header", "Authorization:${TALOME_AUTH}"]);
+    expect(https.mcpServers.talome.env).toEqual({ TALOME_AUTH: `Bearer ${TOKEN}` });
+    expect(https.mcpServers.talome.type).toBeUndefined();
+
+    const lan = JSON.parse(mcpClientConfig("claude-desktop", "http://192.168.1.20:3000/api/mcp", TOKEN)) as {
+      mcpServers: { talome: { args: string[] } };
+    };
+    expect(lan.mcpServers.talome.args).toContain("--allow-http");
   });
 });
 

@@ -520,7 +520,7 @@ export function UsersSection() {
         return;
       }
       const data = await res.json() as { updated: number };
-      toast.success(`Updated permissions for ${data.updated} user(s)`);
+      toast.success(`Updated feature access for ${data.updated} ${data.updated === 1 ? "member" : "members"}`);
       mutate();
     } catch {
       toast.error("Couldn't reach the Talome server. Check that it's running, then try again.");

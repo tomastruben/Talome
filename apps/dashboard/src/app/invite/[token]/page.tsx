@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { RecoveryCodeReveal } from "@/components/trust/recovery-code";
 
 interface InvitationPreview {
   email: string;
@@ -23,7 +24,6 @@ export default function AcceptInvitationPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [recoveryCode, setRecoveryCode] = useState("");
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -62,12 +62,6 @@ export default function AcceptInvitationPage() {
     }
   }
 
-  async function copyRecoveryCode() {
-    await navigator.clipboard.writeText(recoveryCode);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
-  }
-
   return (
     <main className="min-h-screen flex items-center justify-center bg-background p-6">
       <div className="w-full max-w-sm">
@@ -80,7 +74,7 @@ export default function AcceptInvitationPage() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             {recoveryCode
-              ? "Your account is ready. Save your recovery code before continuing."
+              ? "Your account is ready. If you forget your password, this recovery code lets you set a new one, so save it before you go on."
               : invitation
                 ? `${invitation.email} was invited as ${invitation.role === "admin" ? "an admin" : "a family member"}.`
                 : "Checking your invitation…"}
@@ -90,18 +84,14 @@ export default function AcceptInvitationPage() {
         {loading ? (
           <div className="h-36 rounded-2xl bg-muted/30 motion-safe:animate-pulse" />
         ) : recoveryCode ? (
-          <div className="space-y-4">
-            <div className="rounded-xl border border-border bg-muted/30 p-4">
-              <p className="text-xs text-muted-foreground mb-2">One-time recovery code</p>
-              <code className="font-mono text-sm break-all">{recoveryCode}</code>
-            </div>
-            <Button variant="secondary" className="w-full" onClick={() => void copyRecoveryCode()}>
-              {copied ? "Copied" : "Copy recovery code"}
-            </Button>
-            <Button className="w-full" onClick={() => { router.replace("/dashboard"); router.refresh(); }}>
-              Open Talome
-            </Button>
-          </div>
+          // The same reveal as first-run setup: grouped code, Copy with a
+          // fallback, Download, Print, and "type the last group" before going on.
+          <RecoveryCodeReveal
+            code={recoveryCode}
+            username={username.trim() || undefined}
+            continueLabel="Open Talome"
+            onContinue={() => { router.replace("/dashboard"); router.refresh(); }}
+          />
         ) : invitation ? (
           <form onSubmit={acceptInvitation} className="space-y-4">
             <Input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Choose a username" autoComplete="username" autoFocus />

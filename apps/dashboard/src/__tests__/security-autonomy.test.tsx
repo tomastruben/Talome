@@ -13,6 +13,7 @@ import { SecuritySection } from "@/components/settings/sections/security";
 import { ConfirmDialogHost, confirmStore } from "@/components/ui/confirm-dialog";
 import { useUndoableDelete } from "@/components/chat/use-undoable-delete";
 import { renderHook } from "@testing-library/react";
+import { toast } from "sonner";
 
 const fetchMock = vi.fn();
 
@@ -89,6 +90,66 @@ describe("Security settings (P0-7)", () => {
     expect(mode).toBe("permissive");
   });
 
+  it("arrow keys only move through the modes; Enter applies one", async () => {
+    let mode = "cautious";
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes("security-profile")) return json({ ...PROFILE, mode });
+      if (url === "http://core/api/settings" && init?.method === "POST") {
+        mode = JSON.parse(String(init.body)).security_mode;
+        return json({ ok: true });
+      }
+      return json({ hasPassword: true });
+    });
+    render(<SecuritySection />, { wrapper });
+    const cautious = await screen.findByRole("radio", { name: /Cautious/ });
+    cautious.focus();
+
+    // ArrowDown from Cautious lands on Locked (narrowing) without applying it.
+    fireEvent.keyDown(cautious, { key: "ArrowDown" });
+    const locked = screen.getByRole("radio", { name: /Locked/ });
+    expect(locked).toHaveFocus();
+    expect(locked).toHaveAttribute("tabindex", "0");
+    expect(cautious).toHaveAttribute("aria-checked", "true");
+    // ArrowUp twice passes Permissive (widening) without opening a confirm.
+    fireEvent.keyDown(locked, { key: "ArrowUp" });
+    fireEvent.keyDown(screen.getByRole("radio", { name: /Cautious/ }), { key: "ArrowUp" });
+    expect(screen.getByRole("radio", { name: /Permissive/ })).toHaveFocus();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toBe(false);
+
+    // Enter on Locked applies it (narrowing applies at once).
+    fireEvent.keyDown(screen.getByRole("radio", { name: /Permissive/ }), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByRole("radio", { name: /Cautious/ }), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByRole("radio", { name: /Locked/ }), { key: "Enter" });
+    await waitFor(() => expect(mode).toBe("locked"));
+  });
+
+  it("says when the mode on screen failed to refresh", async () => {
+    let fail = false;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("security-profile")) return fail ? json({ error: "down" }, 500) : json(PROFILE);
+      return json({ hasPassword: true });
+    });
+    render(<SecuritySection />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0, focusThrottleInterval: 0, shouldRetryOnError: false }}>
+          {children}
+          <ConfirmDialogHost />
+        </SWRConfig>
+      ),
+    });
+    expect(await screen.findByRole("radio", { name: /Cautious/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByText(/Couldn't refresh/)).not.toBeInTheDocument();
+
+    fail = true;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect((await screen.findAllByText(/Couldn't refresh/)).length).toBeGreaterThan(0);
+    // The last known mode stays on screen, marked as possibly out of date.
+    expect(screen.getByRole("radio", { name: /Cautious/ })).toHaveAttribute("aria-checked", "true");
+  });
+
   it("turning off Claude Code prompts for builds asks first; turning them back on doesn't", async () => {
     let builds = false;
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
@@ -136,9 +197,22 @@ describe("useUndoableDelete (P0-16)", () => {
     expect(remove).toHaveBeenCalledWith("b");
     expect(result.current.pending.has("b")).toBe(false);
 
-    // Leaving the page finishes a pending delete instead of dropping it.
+    // Leaving the page finishes a pending delete instead of dropping it, with
+    // keepalive so the browser doesn't cancel it as the page goes away.
     act(() => result.current.request("c", "Old chat"));
     unmount();
-    expect(remove).toHaveBeenCalledWith("c");
+    expect(remove).toHaveBeenCalledWith("c", { keepalive: true });
+  });
+
+  it("closing the tab sends pending deletes with keepalive and removes their Undo", async () => {
+    const dismiss = vi.spyOn(toast, "dismiss");
+    const remove = vi.fn(async () => true);
+    const { result } = renderHook(() => useUndoableDelete(remove));
+    act(() => result.current.request("d", "Tab closes"));
+    await act(async () => { window.dispatchEvent(new Event("pagehide")); });
+    expect(remove).toHaveBeenCalledWith("d", { keepalive: true });
+    // An Undo that can no longer work isn't left on screen.
+    expect(dismiss).toHaveBeenCalled();
+    dismiss.mockRestore();
   });
 });

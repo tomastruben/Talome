@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useId, useState, type ComponentProps, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { HugeiconsIcon, ViewIcon, ViewOffSlashIcon, AlertCircleIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,21 @@ export const AuthField = forwardRef<
 >(function AuthField({ label, hint, error, revealable = false, type, className, ...props }, ref) {
   const id = useId();
   const [revealed, setRevealed] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const setRefs = useCallback(
+    (node: HTMLInputElement | null) => {
+      inputRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+    },
+    [ref],
+  );
+  // A new error moves focus to its field, so a keyboard or screen-reader user
+  // who pressed submit lands where the fix is (the message is also announced).
+  const hasError = Boolean(error);
+  useEffect(() => {
+    if (hasError) inputRef.current?.focus();
+  }, [hasError]);
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
@@ -79,7 +94,7 @@ export const AuthField = forwardRef<
       </label>
       <div className="relative">
         <Input
-          ref={ref}
+          ref={setRefs}
           id={id}
           type={inputType}
           aria-invalid={error ? true : undefined}
@@ -108,7 +123,7 @@ export const AuthField = forwardRef<
         </p>
       ) : null}
       {error ? (
-        <p id={errorId} className="text-xs text-status-critical">
+        <p id={errorId} role="alert" className="text-xs text-status-critical">
           {error}
         </p>
       ) : null}

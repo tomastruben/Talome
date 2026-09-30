@@ -180,4 +180,21 @@ describe("AssistantProvider", () => {
     expect(sessionStorage.getItem("talome-chat-auto-approve")).toBeNull();
     localStorage.removeItem("talome-auto-mode");
   });
+
+  it("asks the browser to keep a delete alive when it is sent as the page goes away", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssistantProvider>
+        <Probe />
+      </AssistantProvider>,
+    );
+    await act(async () => { await api!.deleteConversation("c1", { keepalive: true }); });
+    await act(async () => { await api!.deleteConversation("c2"); });
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    const byUrl = (id: string) => calls.find(([url]) => url === `http://core/api/conversations/${id}`)?.[1];
+    expect(byUrl("c1")).toMatchObject({ method: "DELETE", keepalive: true });
+    expect(byUrl("c2")?.keepalive).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
 });

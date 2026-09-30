@@ -168,9 +168,14 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
     const declared = "confirmation" in action ? action.confirmation : undefined;
     const needsConfirm = Boolean(declared) || destructive;
     if (needsConfirm) {
+      // The AppSpec's confirmation is the one sentence its author wrote for
+      // this dialog: a question becomes the title, anything else is the
+      // consequence line under "{label}?".
+      const declaredText = declared?.trim();
+      const declaredIsQuestion = Boolean(declaredText?.endsWith("?"));
       const confirmed = await confirmAction({
-        title: declared && declared.trim().endsWith("?") ? declared : `${action.label}?`,
-        description: action.description,
+        title: declaredIsQuestion ? declaredText! : `${action.label}?`,
+        description: !declaredIsQuestion && declaredText ? declaredText : action.description,
         recovery: destructive
           ? "This can't be undone."
           : `${spec.name} keeps its data. You can run this again at any time.`,
@@ -203,7 +208,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
       }
       if (result.kind === "assistant" && result.prompt) openAssistant(result.prompt);
       else {
-        toast.success(`${action.label}: done`);
+        toast.success(`Ran ${action.label} in ${spec.name}`);
         await refreshData();
       }
     } catch (error) {

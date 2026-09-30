@@ -53,6 +53,46 @@ describe("tool card actions (P0-6)", () => {
     expect(await screen.findByRole("link", { name: "Review" })).toHaveAttribute("href", "/dashboard/settings/approvals?id=ap_1");
   });
 
+  it("pressing the held action again after approval runs it; until then it keeps waiting", async () => {
+    const held = {
+      outcome: "approval_required",
+      approval: { approvalId: "ap_1", approveUrl: "/dashboard/settings/approvals?id=ap_1", expiresAt: "2099-01-01T00:00:00Z", approvalStatus: "pending" },
+    };
+    fetchMock
+      .mockResolvedValueOnce(json(held))
+      .mockResolvedValueOnce(json(held))
+      .mockResolvedValueOnce(json({ outcome: "success", result: { success: true } }));
+    render(<ToolOutput toolName="list_containers" errorText={undefined} output={[{ id: "abc", name: "sonarr", status: "running" }]} />);
+    const stop = screen.getByRole("button", { name: "Stop" });
+    stop.focus();
+    fireEvent.click(stop);
+    expect(await screen.findByText(/^Waiting for approval/)).toBeInTheDocument();
+    // The button stays (and keeps focus) so the approved request can be used.
+    const stopNow = screen.getByRole("button", { name: "Stop now" });
+    await waitFor(() => expect(stopNow).toHaveFocus());
+
+    fireEvent.click(stopNow);
+    expect(await screen.findByText(/^Still waiting for approval/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop now" }));
+    const done = await screen.findByText("Stopped sonarr");
+    // Focus moves to the outcome line instead of falling to <body>.
+    await waitFor(() => expect(done).toHaveFocus());
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(lastBody().body).toEqual({ tool: "stop_container", args: { containerId: "abc" } });
+  });
+
+  it("shows the whole failure message, wrapped, instead of truncating the fix", async () => {
+    const message = "Talome can't restart the container right now: the tool is turned off or its app isn't set up.";
+    fetchMock.mockResolvedValueOnce(json({ error: message }, 404));
+    render(<ToolOutput toolName="list_containers" errorText={undefined} output={[{ id: "abc", name: "sonarr", status: "running" }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Restart" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(message);
+    expect(alert.className).not.toMatch(/\btruncate\b/);
+    expect(screen.getByRole("button", { name: "Retry" }).className).toContain("pointer-coarse:min-h-11");
+  });
+
   it("names the reason when the action is blocked or fails, and offers Retry", async () => {
     fetchMock.mockResolvedValueOnce(json({ outcome: "blocked", error: { message: "Locked mode allows reading only.", hint: "Switch modes in Settings." } }));
     render(<ToolOutput toolName="list_containers" errorText={undefined} output={[{ id: "abc", name: "sonarr", status: "exited", exitCode: 1 }]} />);
@@ -97,6 +137,8 @@ describe("tool card actions (P0-6)", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   });
 
+  // A guard, not a regression test: these cards have no hooks after an early
+  // return today; this keeps it that way if one gains a hook.
   it("re-renders result cards from empty to full without breaking hook order", () => {
     const { rerender } = render(<ToolOutput toolName="audiobook_search_releases" errorText={undefined} output={{ releases: [] }} />);
     expect(screen.getByText("No releases found")).toBeInTheDocument();

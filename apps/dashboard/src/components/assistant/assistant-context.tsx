@@ -55,7 +55,8 @@ export interface AssistantContextValue {
   activeId: string | null;
   setActiveId: (id: string | null) => void;
   /** Deletes on the server. Resolves false (and restores the list) when it failed. */
-  deleteConversation: (id: string) => Promise<boolean>;
+  /** `keepalive` lets the request finish after the page unloads. */
+  deleteConversation: (id: string, options?: { keepalive?: boolean }) => Promise<boolean>;
 
   // Chat state
   messages: UIMessage[];
@@ -588,7 +589,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   }, [stop, clearError, setActiveId, setMessages]);
 
   const deleteConversation = useCallback(
-    async (id: string): Promise<boolean> => {
+    async (id: string, options?: { keepalive?: boolean }): Promise<boolean> => {
       // Optimistic removal from conversation list
       mutate(
         `${CORE_URL}/api/conversations`,
@@ -601,6 +602,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         const res = await fetch(`${CORE_URL}/api/conversations/${id}`, {
           method: "DELETE",
           credentials: "include",
+          ...(options?.keepalive ? { keepalive: true } : {}),
         });
 
         if (!res.ok) {

@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/ui/copy-button";
 import { CheckboxField } from "@/components/ui/checkbox";
 import { GrantEditor } from "@/components/trust/grant-editor";
-import { createMcpToken, maskSecret, mcpClientConfig, mcpServerUrl, updateMcpToken, type CreatedToken } from "@/components/trust/api";
+import { createMcpToken, maskSecret, MCP_CLIENT_FILES, mcpClientConfig, mcpServerUrl, updateMcpToken, type CreatedToken } from "@/components/trust/api";
 import {
   EXPIRY_OPTIONS,
   expiryPresetDays,
@@ -146,22 +146,17 @@ function TokenReveal({
       <div className="grid gap-2">
         <p className="text-sm font-medium text-foreground">Or copy a config with the token filled in</p>
         <div className="flex flex-wrap gap-2">
-          <CopyButton
-            value={() => mcpClientConfig("claude-desktop", serverUrl, created.token)}
-            label="Copy Claude Desktop config"
-            text="Claude Desktop"
-            size="sm"
-            variant="outline"
-            onCopied={onSaved}
-          />
-          <CopyButton
-            value={() => mcpClientConfig("cursor", serverUrl, created.token)}
-            label="Copy Cursor config"
-            text="Cursor"
-            size="sm"
-            variant="outline"
-            onCopied={onSaved}
-          />
+          {(["claude-code", "claude-desktop", "cursor"] as const).map((client) => (
+            <CopyButton
+              key={client}
+              value={() => mcpClientConfig(client, serverUrl, created.token)}
+              label={`Copy ${MCP_CLIENT_FILES[client].name} config`}
+              text={MCP_CLIENT_FILES[client].name}
+              size="sm"
+              variant="outline"
+              onCopied={onSaved}
+            />
+          ))}
         </div>
       </div>
       {!saved && revealed ? (

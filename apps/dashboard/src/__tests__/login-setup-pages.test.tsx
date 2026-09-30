@@ -109,6 +109,32 @@ describe("sign-in and setup integrity (P0-3)", () => {
     expect(replaceMock).toHaveBeenCalledWith("/dashboard");
   });
 
+  it("announces a field error and moves focus to the field that needs fixing", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ passwordConfigured: false }));
+    render(<SetupPage />);
+    await screen.findByRole("heading", { name: "Set up Talome" });
+
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "owner" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "a-long-password" } });
+    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "a-different-one" } });
+    const submit = screen.getByRole("button", { name: "Create account" });
+    submit.focus();
+    fireEvent.click(submit);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The passwords don't match.");
+    await waitFor(() => expect(screen.getByLabelText("Confirm password")).toHaveFocus());
+  });
+
+  it("sign-in focuses the username field when it's missing", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ passwordConfigured: true }));
+    render(<LoginPage />);
+    await screen.findByRole("heading", { name: "Welcome back" });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter your username.");
+    await waitFor(() => expect(screen.getByLabelText("Username")).toHaveFocus());
+  });
+
   it("setup sends people to sign in when an account already exists", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ passwordConfigured: true }));
     render(<SetupPage />);

@@ -14,9 +14,11 @@ interface PendingDelete {
  * Delete with Undo instead of a dialog: the item disappears at once, a toast
  * offers Undo for 6s, and only then is it deleted on the server. Leaving the
  * page (or unmounting) deletes whatever is still pending, so nothing is left
- * half-done. A failed delete brings the item back with an error that says so.
+ * half-done: those requests ask for `keepalive` so the browser finishes them
+ * after the tab closes, and their Undo toasts go away (Undo can't work any
+ * more). A failed delete brings the item back with an error that says so.
  */
-export function useUndoableDelete(remove: (id: string) => Promise<boolean>) {
+export function useUndoableDelete(remove: (id: string, options?: { keepalive?: boolean }) => Promise<boolean>) {
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
   const entries = useRef(new Map<string, PendingDelete>());
   const removeRef = useRef(remove);
@@ -34,12 +36,13 @@ export function useUndoableDelete(remove: (id: string) => Promise<boolean>) {
     });
   }, []);
 
-  const commit = useCallback(async (id: string) => {
+  const commit = useCallback(async (id: string, leaving = false) => {
     const entry = entries.current.get(id);
     if (!entry) return;
     clearTimeout(entry.timer);
     entries.current.delete(id);
-    const ok = await removeRef.current(id).catch(() => false);
+    if (leaving) toast.dismiss(entry.toastId);
+    const ok = await (leaving ? removeRef.current(id, { keepalive: true }) : removeRef.current(id)).catch(() => false);
     drop(id);
     if (!ok) toast.error(`Couldn't delete "${entry.label}", so it's back in the list. Try again.`);
   }, [drop]);
@@ -67,7 +70,7 @@ export function useUndoableDelete(remove: (id: string) => Promise<boolean>) {
   useEffect(() => {
     const map = entries.current;
     const flush = () => {
-      for (const id of [...map.keys()]) void commit(id);
+      for (const id of [...map.keys()]) void commit(id, true);
     };
     window.addEventListener("pagehide", flush);
     return () => {

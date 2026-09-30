@@ -15,11 +15,15 @@ const LEVELS = ["warning", "critical"] as const;
 export function LevelPicker({
   value,
   onChange,
+  busy = false,
 }: {
   value: string[];
   onChange: (levels: string[]) => void;
+  /** A save is in flight: further changes wait, and the picker says so. */
+  busy?: boolean;
 }) {
   const toggle = (level: string) => {
+    if (busy) return;
     if (value.includes(level)) {
       onChange(value.filter((l) => l !== level));
     } else {
@@ -28,13 +32,14 @@ export function LevelPicker({
   };
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1.5" aria-busy={busy || undefined}>
       {LEVELS.map((level) => {
         const active = value.includes(level);
         return (
           <button
             key={level}
             type="button"
+            aria-pressed={active}
             onClick={() => toggle(level)}
             className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
               active

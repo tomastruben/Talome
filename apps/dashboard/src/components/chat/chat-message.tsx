@@ -118,12 +118,8 @@ function LiveToolOutput({ isRunning }: { isRunning: boolean }) {
   const outputRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!isRunning) {
-      setConnected(false);
-      return;
-    }
+    if (!isRunning) return;
 
-    setLines([]);
     const es = new EventSource("/api/evolution/stream");
 
     es.onmessage = (e) => {
@@ -150,7 +146,12 @@ function LiveToolOutput({ isRunning }: { isRunning: boolean }) {
 
     es.onerror = () => setConnected(false);
 
-    return () => es.close();
+    // Reset on the way out, so the next run starts empty and "Connecting…".
+    return () => {
+      es.close();
+      setConnected(false);
+      setLines([]);
+    };
   }, [isRunning]);
 
   useEffect(() => {

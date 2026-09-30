@@ -770,7 +770,7 @@ export default function AssistantPage() {
                               size="icon-sm"
                               aria-label={`Delete "${conv.title}"`}
                               onClick={() => requestDelete(conv.id, conv.title || "Untitled conversation")}
-                              className="mr-1 shrink-0 text-muted-foreground hover:text-status-critical sm:opacity-0 sm:group-hover/item:opacity-100 sm:focus-visible:opacity-100 pointer-coarse:size-11 pointer-coarse:opacity-100"
+                              className="mr-1 shrink-0 text-muted-foreground hover:text-status-critical sm:opacity-0 sm:group-hover/item:opacity-100 sm:group-focus-within/item:opacity-100 sm:focus-visible:opacity-100 pointer-coarse:size-11 pointer-coarse:opacity-100"
                             >
                               <HugeiconsIcon icon={Delete01Icon} size={14} strokeWidth={1.5} aria-hidden="true" />
                             </Button>

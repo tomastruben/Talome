@@ -10,7 +10,7 @@ import { HugeiconsIcon, ArrowDown01Icon, ArrowRight01Icon, Add01Icon, Plug02Icon
 import { SettingsGroup, SettingsRow, relativeTime } from "@/components/settings/settings-primitives";
 import { ConfigureWithAI } from "@/components/settings/configure-with-ai";
 import { TokenDialog, type TokenDialogMode } from "@/components/trust/token-dialog";
-import { MCP_CATALOG_URL, MCP_TOKENS_URL, mcpServerUrl, revokeMcpToken, trustFetcher } from "@/components/trust/api";
+import { MCP_CATALOG_URL, MCP_CLIENT_FILES, MCP_TOKENS_URL, mcpClientConfig, mcpServerUrl, revokeMcpToken, trustFetcher } from "@/components/trust/api";
 import { CopyButton } from "@/components/ui/copy-button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { AlertCircleIcon } from "@/components/icons";
@@ -223,33 +223,21 @@ export function McpSection() {
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="mt-3 space-y-4">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Cursor &mdash; .cursor/mcp.json</p>
-              <pre className="text-xs font-mono bg-muted/40 rounded-xl border border-border px-4 py-3 overflow-x-auto max-w-full">{JSON.stringify({
-                mcpServers: {
-                  talome: {
-                    url: serverUrl,
-                    headers: { Authorization: "Bearer YOUR_TOKEN" },
-                  },
-                },
-              }, null, 2)}</pre>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Claude Desktop &mdash; claude_desktop_config.json</p>
-              <pre className="text-xs font-mono bg-muted/40 rounded-xl border border-border px-4 py-3 overflow-x-auto max-w-full">{JSON.stringify({
-                mcpServers: {
-                  talome: {
-                    type: "http",
-                    url: serverUrl,
-                    headers: { Authorization: "Bearer YOUR_TOKEN" },
-                  },
-                },
-              }, null, 2)}</pre>
-            </div>
+            {(["claude-code", "claude-desktop", "cursor"] as const).map((client) => (
+              <div key={client}>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5 px-1">
+                  {MCP_CLIENT_FILES[client].name} &mdash; {MCP_CLIENT_FILES[client].file}
+                </p>
+                <pre className="text-xs font-mono bg-muted/40 rounded-xl border border-border px-4 py-3 overflow-x-auto max-w-full">
+                  {mcpClientConfig(client, serverUrl, "YOUR_TOKEN")}
+                </pre>
+              </div>
+            ))}
             <p className="text-xs text-muted-foreground px-1">
               Replace <span className="font-mono">YOUR_TOKEN</span> with the access token. When you connect a new agent,
-              Talome offers these snippets with the token already filled in. Claude Code running in the Talome repo on
-              this machine connects over stdio and needs no token.
+              Talome offers these snippets with the token already filled in. Claude Desktop only starts local servers, so
+              it connects through mcp-remote, which needs Node.js on that computer. Claude Code running in the Talome
+              repo on this machine connects over stdio and needs no token.
             </p>
           </div>
         </CollapsibleContent>

@@ -378,6 +378,13 @@ export function BackupsSection() {
     if (confirmed) await mutateSchedules();
   }
 
+  /** "12 Sep, 03:00": an absolute moment reads correctly inside a sentence. */
+  function backupDateLabel(iso: string): string {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "this time";
+    return date.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  }
+
   async function handleDeleteBackup(id: string, label: string) {
     const { confirmed } = await confirm({
       tier: "destructive",
@@ -592,7 +599,7 @@ export function BackupsSection() {
                         className="size-8 p-0 text-muted-foreground hover:text-status-critical shrink-0"
                         aria-label="Delete backup"
                         title="Delete backup"
-                        onClick={() => void handleDeleteBackup(b.id, relativeTime(b.started_at))}
+                        onClick={() => void handleDeleteBackup(b.id, backupDateLabel(b.started_at))}
                       >
                         <HugeiconsIcon icon={Delete01Icon} size={16} aria-hidden="true" />
                       </Button>

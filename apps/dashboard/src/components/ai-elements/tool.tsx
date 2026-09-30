@@ -46,7 +46,7 @@ import {
   ArrowDown01Icon,
   Settings01Icon,
 } from "@/components/icons";
-import { createContext, useContext, useState, isValidElement } from "react";
+import { createContext, useContext, useEffect, useRef, useState, isValidElement } from "react";
 import Link from "next/link";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { containerHealth, CONTAINER_HEALTH_DOT_CLASS } from "@/lib/container-status";
@@ -77,7 +77,14 @@ export interface CardActionResult {
   tier?: ToolTier;
   result?: unknown;
   error?: { code?: string; message: string; hint?: string };
-  approval?: { approvalId: string; approveUrl: string; expiresAt: string; summary?: string };
+  approval?: {
+    approvalId: string;
+    approveUrl: string;
+    expiresAt: string;
+    summary?: string;
+    /** "approved" when the owner approved but this call didn't use it yet. */
+    approvalStatus?: "pending" | "approved";
+  };
 }
 
 /**
@@ -123,7 +130,7 @@ type CardActionState =
   | { kind: "idle" }
   | { kind: "running" }
   | { kind: "done"; message: string }
-  | { kind: "approval"; href: string }
+  | { kind: "approval"; href: string; stillWaiting: boolean }
   | { kind: "failed"; message: string };
 
 function approvalHref(url: string): string {
@@ -159,9 +166,23 @@ function CardActionButton({
   const confirm = useConfirm();
   const [state, setState] = useState<CardActionState>({ kind: "idle" });
 
+  const statusRef = useRef<HTMLSpanElement>(null);
+  const actionRef = useRef<HTMLButtonElement>(null);
+  // Where keyboard focus goes once the outcome replaces the button's content.
+  const refocus = useRef<"status" | "action" | null>(null);
+
+  useEffect(() => {
+    const target = refocus.current;
+    refocus.current = null;
+    if (target === "status") statusRef.current?.focus();
+    else if (target === "action") actionRef.current?.focus();
+  }, [state]);
+
   const run = async () => {
     if (state.kind === "running") return;
-    if (stale) {
+    const heldForApproval = state.kind === "approval";
+    const hadFocus = actionRef.current !== null && actionRef.current === document.activeElement;
+    if (stale && !heldForApproval) {
       const { confirmed } = await confirm({
         tier: "soft",
         title: confirmTitle,
@@ -172,58 +193,65 @@ function CardActionButton({
       if (!confirmed) return;
     }
     setState({ kind: "running" });
+    let next: CardActionState;
     try {
+      // Re-running a held action is how an owner-approved request gets used:
+      // core runs it when this user's identical request was approved.
       const outcome = await runCardAction(tool, args);
       if (outcome.outcome === "approval_required" && outcome.approval) {
-        setState({ kind: "approval", href: approvalHref(outcome.approval.approveUrl) });
+        next = { kind: "approval", href: approvalHref(outcome.approval.approveUrl), stillWaiting: heldForApproval };
       } else if (outcome.outcome === "success") {
         const failure = resultFailure(outcome.result);
-        setState(failure ? { kind: "failed", message: failure } : { kind: "done", message: doneMessage });
+        next = failure ? { kind: "failed", message: failure } : { kind: "done", message: doneMessage };
       } else {
         const message = outcome.error
           ? [outcome.error.message, outcome.error.hint].filter(Boolean).join(" ")
           : "The action didn't run.";
-        setState({ kind: "failed", message });
+        next = { kind: "failed", message };
       }
     } catch (err) {
-      setState({ kind: "failed", message: err instanceof Error ? err.message : "The action didn't run. Try again." });
+      next = { kind: "failed", message: err instanceof Error ? err.message : "The action didn't run. Try again." };
     }
+    // Keep a keyboard or screen-reader user's place: the outcome line takes
+    // focus when the button goes away, the button keeps it otherwise.
+    if (hadFocus) refocus.current = next.kind === "done" ? "status" : "action";
+    setState(next);
   };
 
   if (state.kind === "done") {
     return (
-      <span role="status" className="shrink-0 text-xs text-status-healthy">
+      <span ref={statusRef} tabIndex={-1} role="status" className="shrink-0 rounded-sm text-xs text-status-healthy outline-none focus-visible:ring-2 focus-visible:ring-ring">
         {state.message}
       </span>
     );
   }
-  if (state.kind === "approval") {
-    return (
-      <span role="status" className="shrink-0 text-xs text-status-warning">
-        Waiting for approval ·{" "}
-        <Link href={state.href} className="rounded-sm underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          Review
-        </Link>
-      </span>
-    );
-  }
   return (
-    <span className="inline-flex shrink-0 items-center gap-2">
+    <span className="inline-flex max-w-full shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
       {state.kind === "failed" ? (
-        <span role="alert" className="max-w-48 truncate text-xs text-status-critical" title={state.message}>
+        // The message names the fix, so it wraps instead of truncating.
+        <span role="alert" className="max-w-72 text-right text-xs break-words text-status-critical">
           {state.message}
         </span>
       ) : null}
+      {state.kind === "approval" ? (
+        <span role="status" className="text-xs text-status-warning">
+          {state.stillWaiting ? "Still waiting for approval" : "Waiting for approval"} ·{" "}
+          <Link href={state.href} className="rounded-sm underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            Review
+          </Link>
+        </span>
+      ) : null}
       <Button
+        ref={actionRef}
         type="button"
         variant="outline"
         size="xs"
         busy={state.kind === "running"}
         busyLabel={busyLabel}
         onClick={() => void run()}
-        className={cn("rounded-full", className)}
+        className={cn("rounded-full pointer-coarse:min-h-11 pointer-coarse:px-3", className)}
       >
-        {state.kind === "failed" ? "Retry" : label}
+        {state.kind === "failed" ? "Retry" : state.kind === "approval" ? `${label} now` : label}
       </Button>
     </span>
   );

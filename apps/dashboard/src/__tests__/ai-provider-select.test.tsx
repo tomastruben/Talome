@@ -12,6 +12,8 @@ import { ConfirmDialogHost, confirmStore } from "@/components/ui/confirm-dialog"
 const fetchMock = vi.fn();
 let server = { provider: "anthropic", model: "claude-a" };
 let testOk = true;
+let kimiConfigured = false;
+let testGate: Promise<void> | null = null;
 
 function json(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -34,6 +36,8 @@ describe("AI provider selection (P0-8)", () => {
   beforeEach(() => {
     server = { provider: "anthropic", model: "claude-a" };
     testOk = true;
+    kimiConfigured = false;
+    testGate = null;
     fetchMock.mockReset();
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === "http://core/api/ai/models") {
@@ -43,7 +47,7 @@ describe("AI provider selection (P0-8)", () => {
           providers: [
             { provider: "anthropic", configured: true, models: [{ id: "claude-a", name: "Claude A", description: "" }] },
             { provider: "openai", configured: true, models: [{ id: "gpt-a", name: "GPT A", description: "" }] },
-            { provider: "kimi", configured: false, models: [] },
+            { provider: "kimi", configured: kimiConfigured, models: kimiConfigured ? [{ id: "kimi-a", name: "Kimi A", description: "" }] : [] },
             { provider: "ollama", configured: false, models: [] },
           ],
         });
@@ -54,7 +58,10 @@ describe("AI provider selection (P0-8)", () => {
         return json({ ok: true });
       }
       if (url === "http://core/api/settings") return json({ anthropic_key: "(configured)", openai_key: "(configured)" });
-      if (url === "http://core/api/ai/test") return testOk ? json({ ok: true }) : json({ ok: false, error: "HTTP 401" });
+      if (url === "http://core/api/ai/test") {
+        if (testGate) await testGate;
+        return testOk ? json({ ok: true }) : json({ ok: false, error: "HTTP 401" });
+      }
       if (url === "http://core/api/ollama/models") return json({ models: [] });
       return json({});
     });
@@ -91,6 +98,27 @@ describe("AI provider selection (P0-8)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Test OpenAI" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("OpenAI rejected the API key");
     expect(screen.getByRole("button", { name: "Use OpenAI" })).toBeDisabled();
+    expect(settingsPosts()).toHaveLength(0);
+  });
+
+  it("a test still running when another card is selected never passes for that card", async () => {
+    kimiConfigured = true;
+    let release!: () => void;
+    testGate = new Promise<void>((resolve) => { release = resolve; });
+    render(<AiProviderSection />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: /OpenAI/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Test OpenAI" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "http://core/api/ai/test")).toBe(true));
+
+    // Switch to Kimi while OpenAI's test is in flight, then let it pass.
+    fireEvent.click(screen.getByRole("button", { name: /Kimi/ }));
+    expect(await screen.findByRole("button", { name: "Use Kimi" })).toBeDisabled();
+    release();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Test Kimi" })).toBeEnabled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText(/Test passed/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use Kimi" })).toBeDisabled();
     expect(settingsPosts()).toHaveLength(0);
   });
 

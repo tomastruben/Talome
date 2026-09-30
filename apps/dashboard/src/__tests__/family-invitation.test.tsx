@@ -33,7 +33,7 @@ describe("family invitation recipient journey", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ recoveryCode: "one-time-recovery-code" }),
+        json: async () => ({ recoveryCode: "7K3M-Q9TD-X2PA-HB4N-C8WE-R6FZ" }),
       });
 
     render(<AcceptInvitationPage />);
@@ -44,9 +44,20 @@ describe("family invitation recipient journey", () => {
     fireEvent.change(screen.getByPlaceholderText("Confirm password"), { target: { value: "long-password" } });
     fireEvent.click(screen.getByRole("button", { name: "Create my account" }));
 
-    expect(await screen.findByText("one-time-recovery-code")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Talome" })).toBeInTheDocument();
+    // The same reveal as first-run setup: grouped code with Copy, Download, Print.
+    expect(await screen.findByRole("group", { name: /Recovery code: 7K3M, Q9TD/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy recovery code" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Print" })).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1][0]).toContain("/api/auth/invitations/secure-invitation-token-1234567890/accept");
+
+    // Open Talome waits until the last group is typed back.
+    fireEvent.click(screen.getByRole("button", { name: "Open Talome" }));
+    expect(replaceMock).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alert")).toHaveTextContent("doesn't match the last group");
+    fireEvent.change(screen.getByLabelText("Last group of the code"), { target: { value: "r6fz" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open Talome" }));
+    expect(replaceMock).toHaveBeenCalledWith("/dashboard");
   });
 });

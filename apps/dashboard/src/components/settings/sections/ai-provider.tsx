@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import useSWR from "swr";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -216,7 +216,7 @@ export function AiProviderSection() {
       if (providerScope === "anthropic" || !providerScope) setAnthropicEditing(false);
       if (providerScope === "openai" || !providerScope) setOpenaiEditing(false);
       if (providerScope === "kimi" || !providerScope) setKimiEditing(false);
-      setTestResult(null);
+      setLastTest(null);
       toast.success(providerScope ? `Saved ${PROVIDER_META[providerScope].label} settings. Test them next.` : "Saved");
       await mutateModels();
     } catch (err) {
@@ -253,6 +253,8 @@ export function AiProviderSection() {
   const handleProviderChange = useCallback((provider: AiProvider) => {
     setSelectedProvider(provider === serverProvider ? null : provider);
     setStagedModel("");
+    // Each card starts untested; a result for another card never carries over.
+    setLastTest((prev) => (prev?.provider === provider ? prev : null));
   }, [serverProvider]);
 
   const handleModelChange = useCallback((model: string) => {
@@ -296,32 +298,38 @@ export function AiProviderSection() {
   }
 
   // ── Test connection ─────────────────────────────────────────────────────
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
-
-  // Reset test result when provider changes
-  useEffect(() => {
-    setTestResult(null);
-  }, [activeProvider]);
+  // A result belongs to the provider that was tested: a test still running
+  // when another card is selected must never pass for that card (P0-8).
+  const [testingProvider, setTestingProvider] = useState<AiProvider | null>(null);
+  const [lastTest, setLastTest] = useState<{ provider: AiProvider; ok: boolean; error?: string } | null>(null);
+  const testRequestId = useRef(0);
+  const testResult = lastTest?.provider === activeProvider ? lastTest : null;
+  const testing = testingProvider === activeProvider;
 
   const testConnection = async () => {
-    setTesting(true);
-    setTestResult(null);
+    const provider = activeProvider;
+    const requestId = ++testRequestId.current;
+    setTestingProvider(provider);
+    setLastTest(null);
+    let result: { provider: AiProvider; ok: boolean; error?: string };
     try {
       const res = await fetch(`${CORE_URL}/api/ai/test`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: activeProvider }),
+        body: JSON.stringify({ provider }),
       });
       const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-      if (res.ok && data?.ok === true) setTestResult({ ok: true });
-      else setTestResult({ ok: false, error: describeTestFailure(activeProvider, data?.error) });
+      result = res.ok && data?.ok === true
+        ? { provider, ok: true }
+        : { provider, ok: false, error: describeTestFailure(provider, data?.error) };
     } catch {
-      setTestResult({ ok: false, error: "Couldn't reach the Talome server. Check that it's running, then test again." });
-    } finally {
-      setTesting(false);
+      result = { provider, ok: false, error: "Couldn't reach the Talome server. Check that it's running, then test again." };
     }
+    // A newer test (for this or another card) supersedes this one.
+    if (requestId !== testRequestId.current) return;
+    setLastTest(result);
+    setTestingProvider(null);
   };
 
   const switchToSelectedProvider = async () => {
