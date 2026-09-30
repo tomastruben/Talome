@@ -429,6 +429,13 @@ auth.post("/recover", async (c) => {
   // A password reset ends every existing session; the new one below gets
   // the new session version.
   bumpSessionVersion(user.id);
+  writeAuditEntry("user_password_recovered", "modify", `user=${user.username} id=${user.id} (recovery code)`, true, {
+    actorKind: "user",
+    actorId: user.id,
+    actorLabel: user.username,
+    source: "recovery",
+    outcome: "success",
+  });
 
   // Log the user in
   const token = await createSessionToken(user.id, user.role as "admin" | "member", user.username);

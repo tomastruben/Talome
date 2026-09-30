@@ -149,6 +149,10 @@ users.post("/", async (c) => {
       createdAt: now,
     })
     .run();
+  writeAuditEntry("user_created", "modify", `user=${username} id=${id} role=${userRole}`, true, {
+    ...sessionAuditActor(c),
+    outcome: "success",
+  });
 
   return c.json(
     {
@@ -336,6 +340,19 @@ users.put("/:id", async (c) => {
   // are returned so the dashboard can offer to revoke them.
   const activeMcpTokens = demotedAdmin ? liveMcpTokensCreatedBy(userId).map((t) => t.name) : [];
 
+  const changedFields = [
+    ...(updates.username !== undefined && updates.username !== user.username
+      ? [`username ${user.username} -> ${updates.username}`]
+      : []),
+    ...(updates.email !== undefined && updates.email !== user.email ? ["email"] : []),
+  ];
+  if (changedFields.length > 0) {
+    writeAuditEntry("user_updated", "modify", `user=${user.username} id=${userId} ${changedFields.join(", ")}`, true, {
+      ...sessionAuditActor(c),
+      outcome: "success",
+    });
+  }
+
   if (roleChanged) {
     writeAuditEntry(
       "user_role_changed",
@@ -428,6 +445,12 @@ users.post("/:id/recovery-code", async (c) => {
     .set({ recoveryCodeHash })
     .where(eq(schema.users.id, userId))
     .run();
+  // A recovery code resets the password and signs in: record who minted one
+  // (never the code itself).
+  writeAuditEntry("user_recovery_code_regenerated", "modify", `user=${user.username} id=${userId}`, true, {
+    ...sessionAuditActor(c),
+    outcome: "success",
+  });
 
   return c.json({ ok: true, recoveryCode });
 });
@@ -454,6 +477,10 @@ users.put("/:id/permissions", async (c) => {
     .set({ permissions: JSON.stringify(body.permissions) })
     .where(eq(schema.users.id, userId))
     .run();
+  writeAuditEntry("user_permissions_changed", "modify", `user=${user.username} id=${userId}`, true, {
+    ...sessionAuditActor(c),
+    outcome: "success",
+  });
 
   return c.json({ ok: true });
 });
@@ -470,7 +497,7 @@ users.post("/bulk-permissions", async (c) => {
   }
 
   const serialized = JSON.stringify(body.permissions);
-  let updated = 0;
+  const updatedNames: string[] = [];
 
   for (const uid of body.userIds) {
     const user = db.select().from(schema.users).where(eq(schema.users.id, uid)).get();
@@ -479,11 +506,17 @@ users.post("/bulk-permissions", async (c) => {
         .set({ permissions: serialized })
         .where(eq(schema.users.id, uid))
         .run();
-      updated++;
+      updatedNames.push(user.username);
     }
   }
+  if (updatedNames.length > 0) {
+    writeAuditEntry("user_permissions_changed", "modify", `users=${updatedNames.join(", ")} (bulk)`, true, {
+      ...sessionAuditActor(c),
+      outcome: "success",
+    });
+  }
 
-  return c.json({ ok: true, updated });
+  return c.json({ ok: true, updated: updatedNames.length });
 });
 
 export { users };
