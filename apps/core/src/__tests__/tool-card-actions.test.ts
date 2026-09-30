@@ -3,10 +3,10 @@ import { rmSync } from "node:fs";
 import { Hono } from "hono";
 import { desc } from "drizzle-orm";
 
-const { tempDir, restartCalls } = vi.hoisted(() => {
+const { tempDir, restartCalls, revertCalls } = vi.hoisted(() => {
   const dir = `${process.cwd()}/data/test-tool-actions-${process.pid}-${Date.now()}`;
   process.env.DATABASE_PATH = `${dir}/talome.db`;
-  return { tempDir: dir, restartCalls: [] as unknown[] };
+  return { tempDir: dir, restartCalls: [] as unknown[], revertCalls: [] as unknown[] };
 });
 
 vi.mock("../ai/tool-registry.js", async (importOriginal) => {
@@ -21,13 +21,22 @@ vi.mock("../ai/tool-registry.js", async (importOriginal) => {
       return { success: true, containerId: args.containerId };
     },
   });
-  return { ...actual, getActiveRegisteredTools: () => ({ restart_container: restart }) };
+  const revert = makeTool({
+    description: "revert",
+    inputSchema: zod.object({ key: zod.string(), approval_id: zod.string().optional() }),
+    execute: async (args: { key: string }) => {
+      revertCalls.push(args);
+      return { success: true, key: args.key };
+    },
+  });
+  return { ...actual, getActiveRegisteredTools: () => ({ restart_container: restart, revert_setting: revert }) };
 });
 
 import { db, schema } from "../db/index.js";
 import { runMigrations } from "../db/migrate.js";
 import { setSetting } from "../utils/settings.js";
 import { toolActions } from "../routes/tool-actions.js";
+import { decideApproval } from "../approval/approvals.js";
 
 function appAs(role: "admin" | "member", permissions?: Record<string, boolean>) {
   const app = new Hono();
@@ -54,6 +63,7 @@ function post(app: Hono, body: unknown) {
 beforeAll(() => runMigrations());
 beforeEach(() => {
   restartCalls.length = 0;
+  revertCalls.length = 0;
   setSetting("security_mode", "cautious");
 });
 afterAll(() => {
@@ -81,6 +91,42 @@ describe("POST /api/chat/actions (P0-6)", () => {
     expect(body.outcome).toBe("blocked");
     expect(body.error?.message).toBeTruthy();
     expect(restartCalls).toEqual([]);
+  });
+
+  it("validates card args against the tool's input schema before anything runs", async () => {
+    const res = await post(appAs("admin"), { tool: "restart_container", args: { containerId: { $ne: "" } } });
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toContain("containerId");
+    expect(restartCalls).toEqual([]);
+
+    // Unknown keys are dropped instead of reaching execute().
+    const ok = await post(appAs("admin"), { tool: "restart_container", args: { containerId: "sonarr", extra: 1 } });
+    expect(ok.status).toBe(200);
+    expect(restartCalls).toEqual([{ containerId: "sonarr" }]);
+  });
+
+  it("runs an action held for approval once the owner approves it and the card is pressed again", async () => {
+    const app = appAs("admin");
+    const first = await post(app, { tool: "revert_setting", args: { key: "security_mode" } });
+    const held = await first.json() as { outcome: string; approval: { approvalId: string; approvalStatus: string } };
+    expect(held.outcome).toBe("approval_required");
+    expect(held.approval.approvalStatus).toBe("pending");
+    expect(revertCalls).toEqual([]);
+
+    // Still pending: pressing again keeps waiting, nothing runs.
+    const again = await post(app, { tool: "revert_setting", args: { key: "security_mode" } });
+    expect((await again.json() as { outcome: string }).outcome).toBe("approval_required");
+    expect(revertCalls).toEqual([]);
+
+    expect(decideApproval(held.approval.approvalId, "approved", "admin-id").ok).toBe(true);
+    const approved = await post(app, { tool: "revert_setting", args: { key: "security_mode" } });
+    expect((await approved.json() as { outcome: string }).outcome).toBe("success");
+    expect(revertCalls).toEqual([{ key: "security_mode" }]);
+
+    // The approval is used up: the next press asks again.
+    const next = await post(app, { tool: "revert_setting", args: { key: "security_mode" } });
+    expect((await next.json() as { outcome: string }).outcome).toBe("approval_required");
+    expect(revertCalls).toHaveLength(1);
   });
 
   it("accepts only the card allow-list", async () => {

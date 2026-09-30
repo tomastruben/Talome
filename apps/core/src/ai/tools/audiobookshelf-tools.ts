@@ -532,6 +532,37 @@ export const audiobookSearchReleasesTool = tool({
 
 // ── audiobook_download ────────────────────────────────────────────────────────
 
+/**
+ * Hand a release to qBittorrent. Prowlarr's download URLs usually point at
+ * Prowlarr on localhost, which qBittorrent (often inside a VPN container)
+ * can't reach, so an http(s) URL is fetched here and uploaded as the
+ * .torrent file itself (as the Audiobooks page does). Magnet links go as-is.
+ */
+export async function addAudiobookTorrent(downloadUrl: string, category: string): Promise<Response> {
+  await qbtFetch("/api/v2/torrents/createCategory", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `category=${encodeURIComponent(category)}`,
+  }).catch(() => undefined);
+
+  if (!/^https?:\/\//i.test(downloadUrl)) {
+    const form = new URLSearchParams({ urls: downloadUrl, category });
+    return qbtFetch("/api/v2/torrents/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    });
+  }
+
+  const torrentRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(30000) });
+  if (!torrentRes.ok) throw new Error(`Couldn't fetch the release from the indexer (${torrentRes.status}).`);
+  const torrent = new Uint8Array(await torrentRes.arrayBuffer());
+  const form = new FormData();
+  form.set("torrents", new Blob([torrent], { type: "application/x-bittorrent" }), "download.torrent");
+  form.set("category", category);
+  return qbtFetch("/api/v2/torrents/add", { method: "POST", body: form, signal: AbortSignal.timeout(30000) });
+}
+
 export const audiobookDownloadTool = tool({
   description:
     "Download an audiobook release via qBittorrent. Takes a download URL from audiobook_search_releases results and sends it to qBittorrent with the 'audiobooks' category. After downloading completes, trigger an Audiobookshelf library scan to pick up the new files.",
@@ -545,15 +576,7 @@ export const audiobookDownloadTool = tool({
       return { success: false, error: "qBittorrent is not configured. Add qbittorrent_url in Settings." };
     }
     try {
-      const formData = new URLSearchParams();
-      formData.set("urls", downloadUrl);
-      formData.set("category", "audiobooks");
-
-      const res = await qbtFetch("/api/v2/torrents/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formData.toString(),
-      });
+      const res = await addAudiobookTorrent(downloadUrl, "audiobooks");
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");

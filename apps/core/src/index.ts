@@ -74,6 +74,7 @@ import { eq } from "drizzle-orm";
 import { startTelegramBot } from "./messaging/telegram.js";
 // discord-bot.js is imported dynamically below to avoid loading discord.js at startup
 import { checkDockerConnection, startPeriodicPrune } from "./docker/client.js";
+import { registerAuthAttemptLimit } from "./middleware/auth-rate-limit.js";
 import { safeRoute, rateLimit, requireSession, requireRole, requireAnyPermission, requirePermission, requestLogger } from "./middleware/index.js";
 import { errorTracker } from "./middleware/error-tracker.js";
 import { getRequestId, getRequestStart } from "./middleware/request-logger.js";
@@ -424,6 +425,9 @@ app.use("/api/audit-log", requireAnyPermission("dashboard", "intelligence"));
 app.use("/api/audit-log/*", requireAnyPermission("dashboard", "intelligence"));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
+// Brute-force protection for the password, recovery-code and invite endpoints.
+// Must come before the auth routes: a route handler ends the chain.
+registerAuthAttemptLimit(app);
 app.route("/api/auth", auth);
 app.route("/api/users", users);
 app.route("/api/system", system);
@@ -438,8 +442,6 @@ app.use("/api/chat/*", rateLimit(20, 60_000));
 app.route("/api/chat/actions", toolActions);
 app.route("/api/chat", chat);
 
-// Rate-limit auth endpoints: 10 requests per 60 seconds per IP (brute-force protection)
-app.use("/api/auth/*", rateLimit(10, 60_000));
 // Rate-limit webhook endpoints: 30 requests per 60 seconds per IP
 app.use("/api/webhooks/*", rateLimit(30, 60_000));
 

@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
+import { asSchema, type Tool } from "ai";
 import type { FeaturePermission } from "@talome/types";
 import { executeTool, sessionChatActor, withExecutionContext, type ExecuteToolResult } from "../ai/execution.js";
 import { getActiveRegisteredTools } from "../ai/tool-registry.js";
@@ -62,6 +63,33 @@ async function permitted(c: Context, permission: CardAction["permission"]): Prom
   return allowed ? null : (response ?? c.json({ error: "You don't have access to this feature." }, 403));
 }
 
+/**
+ * Card args come from the browser, not from a model call the AI SDK already
+ * validated: parse them with the tool's own input schema (types, defaults,
+ * unknown keys dropped) before anything runs.
+ */
+export async function parseToolArgs(
+  tool: Tool,
+  args: Record<string, unknown>,
+): Promise<{ ok: true; args: Record<string, unknown> } | { ok: false; message: string }> {
+  const schema = (tool as { inputSchema?: unknown }).inputSchema;
+  if (!schema) return { ok: true, args };
+  const zodLike = schema as { safeParse?: (value: unknown) => { success: boolean; data?: unknown; error?: { issues?: Array<{ path?: PropertyKey[]; message?: string }> } } };
+  if (typeof zodLike.safeParse === "function") {
+    const parsed = zodLike.safeParse(args);
+    if (parsed.success) return { ok: true, args: (parsed.data ?? {}) as Record<string, unknown> };
+    const issue = parsed.error?.issues?.[0];
+    const field = issue?.path?.length ? issue.path.map(String).join(".") : "";
+    return { ok: false, message: field ? `${field}: ${issue?.message ?? "invalid value"}` : (issue?.message ?? "invalid value") };
+  }
+  const validate = asSchema(schema as Parameters<typeof asSchema>[0]).validate;
+  if (!validate) return { ok: true, args };
+  const result = await validate(args);
+  return result.success
+    ? { ok: true, args: result.value as Record<string, unknown> }
+    : { ok: false, message: result.error.message };
+}
+
 /** What the card needs: the outcome, the tool's result, or why it didn't run. */
 function toResponse(result: ExecuteToolResult) {
   return {
@@ -89,6 +117,11 @@ toolActions.post("/", async (c) => {
     return c.json({ error: `Talome can't ${action.label} right now: the tool is turned off or its app isn't set up.` }, 404);
   }
 
+  const checked = await parseToolArgs(tool, args);
+  if (!checked.ok) {
+    return c.json({ error: `Talome can't ${action.label}: the card sent an invalid value (${checked.message}).` }, 400);
+  }
+
   // The session user acts, exactly as in chat: same audit actor, approvals and mode.
   const actor = sessionChatActor(c.get("sessionUser" as never), c.get("sessionUsername" as never), c.get("sessionRole" as never));
   const result = await withExecutionContext(actor, "chat", () =>
@@ -96,9 +129,12 @@ toolActions.post("/", async (c) => {
       actor,
       source: "chat",
       toolName,
-      args: approvalId ? { ...args, approval_id: approvalId } : args,
+      args: approvalId ? { ...checked.args, approval_id: approvalId } : checked.args,
       tool,
       baseTier: action.tier,
+      // Pressing the card again after the owner approved this user's exact
+      // request runs it: the approval is bound to this actor, tool and args.
+      autoConsumeApproved: true,
     }),
   );
   return c.json(toResponse(result));

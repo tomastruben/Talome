@@ -213,6 +213,9 @@ auth.post("/setup", async (c) => {
 });
 
 /** POST /api/auth/login — { username: string, password: string }. Never creates an account. */
+/** One message for an unknown user and a wrong password, so neither is revealed. */
+export const SIGN_IN_MISMATCH = "That username and password don't match. Check both, or reset your password.";
+
 auth.post("/login", async (c) => {
   const parsed = loginSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Invalid credentials" }, 400);
@@ -229,12 +232,12 @@ auth.post("/login", async (c) => {
   const user = db.select().from(schema.users).where(eq(schema.users.username, name)).get();
 
   if (!user) {
-    return c.json({ error: "Invalid username or password" }, 401);
+    return c.json({ error: SIGN_IN_MISMATCH }, 401);
   }
 
   const valid = await bcryptCompare(password, user.passwordHash);
   if (!valid) {
-    return c.json({ error: "Invalid username or password" }, 401);
+    return c.json({ error: SIGN_IN_MISMATCH }, 401);
   }
 
   // Update last login

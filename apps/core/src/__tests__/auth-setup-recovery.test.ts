@@ -131,6 +131,12 @@ describe("first-run setup and sign-in", () => {
     expect(await blank.json()).toEqual(expect.objectContaining({ field: "username" }));
     const wrong = await post("/login", { username: "admin", password: "a-long-password" });
     expect(wrong.status).toBe(401);
+    // The same fix-naming message for an unknown user and a wrong password.
+    const unknownBody = await wrong.json() as { error: string };
+    const badPassword = await post("/login", { username: "owner", password: "not-the-password" });
+    expect(badPassword.status).toBe(401);
+    expect(await badPassword.json()).toEqual({ error: unknownBody.error });
+    expect(unknownBody.error).toBe("That username and password don't match. Check both, or reset your password.");
     const ok = await post("/login", { username: "owner", password: "a-long-password" });
     expect(ok.status).toBe(200);
   });
