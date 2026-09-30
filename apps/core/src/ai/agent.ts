@@ -1,5 +1,5 @@
 import { streamText, generateText, convertToModelMessages, stepCountIs } from "ai";
-import type { UIMessage, SystemModelMessage, LanguageModel } from "ai";
+import type { UIMessage, SystemModelMessage, LanguageModel, Tool } from "ai";
 import { createAnthropic, anthropic as anthropicProvider } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { AiProvider } from "../routes/ai-models.js";
@@ -459,6 +459,9 @@ registerDomain({
     get_smart_status: "read",
     cleanup_docker: "destructive",
     get_storage_breakdown: "read",
+    get_reclaimable_space: "read",
+    analyze_watched_media: "read",
+    cleanup_hls_cache: "modify",
     list_apps: "read",
     search_apps: "read",
     start_container: "modify",
@@ -471,6 +474,9 @@ registerDomain({
     update_app: "modify",
     add_store: "modify",
     rollback_update: "destructive",
+    check_dependencies: "read",
+    bulk_app_action: "modify",
+    bulk_update_apps: "modify",
     list_groups: "read",
     create_group: "modify",
     update_group: "modify",
@@ -540,6 +546,8 @@ registerDomain({
     browse_files: "read",
     read_user_file: "read",
     delete_file: "destructive",
+    run_shell: "destructive",
+    create_tool: "destructive",
     rename_file: "modify",
     create_directory: "modify",
     get_file_info: "read",
@@ -1194,15 +1202,44 @@ function getResolvedSystemPrompt(pageContext?: string): string {
 }
 
 // ── Tool access ─────────────────────────────────────────────────────────────
-// activeTools: only tools from configured domains — used by MCP server + dashboard chat
+// getEnabledRegisteredTools(): configured domains minus disabled tools — MCP server
+// getActiveTools(): the same plus custom tools, gated — dashboard chat and automations
 // getAllRegisteredTools(): full set — only for builtin-name registration
-
-export const activeTools = getActiveRegisteredTools();
 
 // Register built-in tool names so custom tools cannot shadow them (needs full set)
 setBuiltinToolNames(Object.keys(getAllRegisteredTools()));
 
 const TOOL_TIERS = getAllTiers();
+
+/** Security tier for a tool. Unknown tools default to "read", matching chat. */
+export function getToolTier(toolName: string): "read" | "modify" | "destructive" {
+  return TOOL_TIERS[toolName] ?? "read";
+}
+
+/** Names the user has switched off in Settings; excluded from every execution path. */
+export function getDisabledToolNames(): Set<string> {
+  const raw = getSetting("disabled_tools");
+  if (!raw) return new Set();
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Tools from configured domains, minus the ones the user disabled. Resolved per
+ * call so domains configured after startup appear without restarting a
+ * long-running process (e.g. the MCP stdio server). Not gated — callers must run
+ * each call through checkToolPolicy or gateToolExecution.
+ */
+export function getEnabledRegisteredTools(): Record<string, Tool> {
+  const disabled = getDisabledToolNames();
+  return Object.fromEntries(
+    Object.entries(getActiveRegisteredTools()).filter(([name]) => !disabled.has(name)),
+  );
+}
 
 /** Produce a concise, human-readable details string for audit log entries. */
 function summarizeToolArgs(toolName: string, args: Record<string, unknown>): string {

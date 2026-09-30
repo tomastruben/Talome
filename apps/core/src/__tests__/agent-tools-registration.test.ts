@@ -27,7 +27,7 @@ vi.mock("../db/memories.js", () => ({
   getTopMemories: vi.fn().mockResolvedValue([]),
 }));
 
-import { getAllRegisteredTools } from "../ai/tool-registry.js";
+import { getAllRegisteredTools, getAllTiers } from "../ai/tool-registry.js";
 
 // Import agent.js to trigger domain registrations
 import "../ai/agent.js";
@@ -39,6 +39,12 @@ describe("allTools registration", () => {
 
   it("has more than 70 tools registered", () => {
     expect(toolNames.length).toBeGreaterThan(70);
+  });
+
+  // Untiered tools default to "read", which lets them run even in locked mode.
+  it("declares a security tier for every registered tool", () => {
+    const tiers = getAllTiers();
+    expect(toolNames.filter((name) => !(name in tiers))).toEqual([]);
   });
 
   // Phase 17B tools

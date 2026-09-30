@@ -1,7 +1,7 @@
 import { generateText, stepCountIs } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { spawn } from "node:child_process";
-import { activeTools } from "./ai/agent.js";
+import { getEnabledRegisteredTools, getToolTier } from "./ai/agent.js";
 import { db, schema } from "./db/index.js";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -42,6 +42,13 @@ async function generateViaClaudeCode(prompt: string, cwd: string): Promise<strin
   });
 }
 
+/** The digest only reports on the server, so it never gets tools that change it. */
+function getReadOnlyTools() {
+  return Object.fromEntries(
+    Object.entries(getEnabledRegisteredTools()).filter(([name]) => getToolTier(name) === "read"),
+  );
+}
+
 async function generateWeeklyDigest() {
   const apiKey = getSetting("anthropic_key") || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return; // No key — skip silently
@@ -78,7 +85,7 @@ Keep it focused, honest, and under 300 words. No fluff. Lead with anything criti
         model: createAnthropic({ apiKey })(DIGEST_MODEL),
         system: DIGEST_PROMPT,
         messages: [{ role: "user", content: "Generate this week's server digest." }],
-        tools: activeTools,
+        tools: getReadOnlyTools(),
         stopWhen: stepCountIs(6),
       });
       logAiUsage({
