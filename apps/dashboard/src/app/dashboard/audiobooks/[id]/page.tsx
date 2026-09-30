@@ -22,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 /** Lazy-load DOMPurify — only needed on this detail page */
 let _purify: { sanitize: (dirty: string) => string } | null = null;
 function sanitizeHtml(dirty: string): string {
@@ -117,6 +118,7 @@ export default function AudiobookDetailPage() {
 
   const [imgFailed, setImgFailed] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const confirmAction = useConfirm();
   const activeChapterRef = useRef<HTMLDivElement>(null);
 
   // Global player state
@@ -408,22 +410,34 @@ export default function AudiobookDetailPage() {
   );
 
   async function handleDeleteItem() {
-    if (!confirm("Remove this audiobook from your library? The files will be deleted.")) return;
-    setDeleting(true);
-    try {
-      const res = await fetch(`${CORE_URL}/api/audiobooks/items/${id}`, { method: "DELETE" });
-      const data = await res.json();
-      if (data.ok) {
-        toast.success("Removed from library");
-        router.push("/dashboard/audiobooks");
-      } else {
-        toast.error(data.error ?? "Failed to remove");
-      }
-    } catch {
-      toast.error("Failed to remove audiobook");
-    } finally {
-      setDeleting(false);
-    }
+    const title = item?.media?.metadata?.title ?? "this audiobook";
+    // Files are deleted: a destructive confirmation (never a native confirm()).
+    const { confirmed } = await confirmAction({
+      tier: "destructive",
+      title: `Remove ${title}?`,
+      consequence: `${title} is removed from your library and its files are deleted.`,
+      recovery: "This can't be undone.",
+      irreversible: true,
+      confirmLabel: "Remove and delete files",
+      busyLabel: `Removing ${title}…`,
+      run: async () => {
+        setDeleting(true);
+        try {
+          let res: Response;
+          try {
+            res = await fetch(`${CORE_URL}/api/audiobooks/items/${id}`, { method: "DELETE", credentials: "include" });
+          } catch {
+            throw new Error(`Couldn't remove ${title}: the Talome server didn't answer. Retry.`);
+          }
+          const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (!res.ok || !data?.ok) throw new Error(`Couldn't remove ${title}${data?.error ? `: ${data.error}` : ""}.`);
+        } finally {
+          setDeleting(false);
+        }
+      },
+      receipt: `Removed ${title} from your library`,
+    });
+    if (confirmed) router.push("/dashboard/audiobooks");
   }
 
   const removeButton = (
@@ -431,10 +445,10 @@ export default function AudiobookDetailPage() {
       type="button"
       onClick={handleDeleteItem}
       disabled={deleting}
-      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground/50 hover:text-destructive transition-colors disabled:opacity-50 cursor-pointer"
+      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-status-critical transition-colors disabled:opacity-50 cursor-pointer"
     >
       <HugeiconsIcon icon={Delete02Icon} size={12} />
-      {deleting ? "Removing..." : "Remove from library"}
+      {deleting ? "Removing…" : "Remove from library…"}
     </button>
   );
 

@@ -160,7 +160,7 @@ export function VerificationPanel({
           </div>
           <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5 shrink-0" onClick={runVerification} disabled={running}>
             {running && <Spinner className="size-3.5" />}
-            {running ? "Verifying..." : "Verify now"}
+            {running ? "Verifying…" : "Verify now"}
           </Button>
         </div>
 

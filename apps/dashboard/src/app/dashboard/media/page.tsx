@@ -355,7 +355,7 @@ function DownloadQueueRow({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="left">
-                  {retryingId === item.id ? "Retrying..." : "Retry"}
+                  {retryingId === item.id ? "Retrying…" : "Retry"}
                 </TooltipContent>
               </Tooltip>
             )}
@@ -1656,7 +1656,7 @@ function MediaPageInner({
             }}
           >
             {scanning ? <Spinner className="h-3 w-3" /> : <HugeiconsIcon icon={Search01Icon} size={14} />}
-            {scanning ? "Scanning..." : "Scan"}
+            {scanning ? "Scanning…" : "Scan"}
           </Button>
         </div>
       )}
@@ -1714,7 +1714,7 @@ function MediaPageInner({
           <div className="flex items-center gap-3 mb-4">
             <div className="h-px flex-1 bg-border" />
             <span className="text-xs text-muted-foreground tracking-wide shrink-0">
-              {discoveryLoading ? "Searching..." : "Not in your library"}
+              {discoveryLoading ? "Searching…" : "Not in your library"}
             </span>
             <div className="h-px flex-1 bg-border" />
           </div>
@@ -1780,7 +1780,7 @@ function MediaPageInner({
           <div className="flex items-center gap-3 mb-4">
             <div className="h-px flex-1 bg-border" />
             <span className="text-xs text-muted-foreground tracking-wide shrink-0">
-              {discoveryLoading ? "Searching..." : "Not in your library"}
+              {discoveryLoading ? "Searching…" : "Not in your library"}
             </span>
             <div className="h-px flex-1 bg-border" />
           </div>

@@ -330,7 +330,7 @@ function FormatStatRow({ container, filePath, codec, audioCodec }: {
               disabled={prioritizing}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             >
-              {prioritizing ? "Moving..." : "Move to front"}
+              {prioritizing ? "Moving…" : "Move to front"}
             </button>
           )}
           {isUpNext && (
@@ -339,7 +339,7 @@ function FormatStatRow({ container, filePath, codec, audioCodec }: {
               disabled={starting}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             >
-              {starting ? "Starting..." : "Convert now"}
+              {starting ? "Starting…" : "Convert now"}
             </button>
           )}
         </div>
@@ -370,7 +370,7 @@ function FormatStatRow({ container, filePath, codec, audioCodec }: {
               disabled={optimizing}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              {optimizing ? "Queuing..." : "Retry"}
+              {optimizing ? "Queuing…" : "Retry"}
             </button>
           </div>
         </div>
@@ -399,7 +399,7 @@ function FormatStatRow({ container, filePath, codec, audioCodec }: {
             disabled={optimizing}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            {optimizing ? "Queuing..." : "Optimize"}
+            {optimizing ? "Queuing…" : "Optimize"}
           </button>
         )}
       </div>

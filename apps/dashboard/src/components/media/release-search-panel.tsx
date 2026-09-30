@@ -129,7 +129,7 @@ export function ReleaseSearchPanel({
               onClick={onSearch}
               disabled={loading}
             >
-              {loading ? "Searching..." : releases.length > 0 ? "Refresh" : "Search"}
+              {loading ? "Searching…" : releases.length > 0 ? "Refresh" : "Search"}
             </Button>
           )}
           {onClose && (

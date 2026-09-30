@@ -330,7 +330,7 @@ export default function SharePage() {
           className="rounded-full self-start px-6"
           size="sm"
         >
-          {generating ? "Preparing..." : "Prepare share package"}
+          {generating ? "Preparing…" : "Prepare share package"}
         </Button>
       )}
 

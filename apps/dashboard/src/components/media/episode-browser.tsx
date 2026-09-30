@@ -173,7 +173,7 @@ export function EpisodeBrowser({
             onClick={() => void optimizeSeason()}
           >
             {optimizingSeason ? <Spinner className="h-3 w-3" /> : null}
-            {optimizingSeason ? "Queuing..." : `Optimize ${needsOptEpisodes.length} episodes`}
+            {optimizingSeason ? "Queuing…" : `Optimize ${needsOptEpisodes.length} episodes`}
           </Button>
         )}
       </div>

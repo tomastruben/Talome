@@ -1560,15 +1560,18 @@ export function VideoPlayer({
             </svg>
           )}
         </div>
-        <p className="text-sm text-white/25">
+        {/* The player is always on black: white text never below /70 (contrast). */}
+        <p className="text-sm text-white/70" role="status">
           {loadingMessage}{isSwitchingAudio && selectedAudioTrack ? ` · ${trackLabel(selectedAudioTrack, "Audio")}` : ""}
         </p>
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={handleCancelProcessing}
-          className="text-xs text-white/15 hover:text-white/40 transition-colors"
+          className="text-white/70 hover:bg-white/10 hover:text-white"
         >
           Cancel
-        </button>
+        </Button>
       </div>
     );
   }
@@ -1607,10 +1610,10 @@ export function VideoPlayer({
           <HugeiconsIcon icon={PlayIcon} size={22} className="text-white/20" />
         </div>
         <div>
-          <p className={cn("font-medium text-white/60", cinemaMode ? "text-lg" : "text-sm")}>
+          <p className={cn("font-medium text-white/90", cinemaMode ? "text-lg" : "text-sm")}>
             This video couldn&rsquo;t be played
           </p>
-          <p className={cn("text-white/25 mt-1.5 max-w-xs", cinemaMode ? "text-base" : "text-xs")}>
+          <p className={cn("text-white/70 mt-1.5 max-w-xs", cinemaMode ? "text-base" : "text-xs")}>
             All playback methods were attempted automatically.
           </p>
         </div>

@@ -214,7 +214,7 @@ function FormatBadge({ format, filePath }: { format: string | null | undefined; 
           disabled={optimizing}
           className="text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
-          {optimizing ? "Queuing..." : "Convert to MP4"}
+          {optimizing ? "Queuing…" : "Convert to MP4"}
         </button>
       )}
     </span>
