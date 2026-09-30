@@ -35,7 +35,9 @@ import {
   listProjectContainers,
   probeDockerCompose,
   isComposeMissingError,
+  isAppComposeContainer,
   COMPOSE_MISSING_MESSAGE,
+  COMPOSE_PROJECT_LABEL,
 } from "./compose-exec.js";
 import {
   describeKeptConfig,
@@ -574,22 +576,14 @@ async function installAppInner(
         timeout: 180_000,
       });
     } catch (upErr: any) {
-      // If a container name conflict exists, remove the conflicting container and retry
-      if (upErr.message?.includes("is already in use")) {
-        const nameMatch = upErr.message.match(/container name "\/([^"]+)"/);
-        if (nameMatch) {
-          await run(`docker rm -f ${nameMatch[1]}`, { cwd: projectDir, timeout: 15_000 }).catch((err) => log.warn(`Failed to remove conflicting container ${nameMatch[1]}`, err));
-          await run(`docker compose -f "${composePath}" up -d`, {
-            cwd: projectDir,
-            env,
-            timeout: 180_000,
-          });
-        } else {
-          throw upErr;
-        }
-      } else {
-        throw upErr;
-      }
+      // A container name conflict: only a leftover of this app that holds no
+      // anonymous volumes is removed (then retried); anything else is reported.
+      if (!(await resolveContainerNameConflict(appId, composePath, upErr))) throw upErr;
+      await run(`docker compose -f "${composePath}" up -d`, {
+        cwd: projectDir,
+        env,
+        timeout: 180_000,
+      });
     }
 
     const containers = await discoverContainers(appId, composePath);
@@ -773,6 +767,54 @@ async function collectAnonymousVolumes(containerIds: string[]): Promise<string[]
     log.warn(`Could not read the volumes of containers ${ids.join(", ")}`, err);
     return [];
   }
+}
+
+/**
+ * `up -d` failed because a container already has a name the compose file
+ * sets. Only a leftover container of this app's own compose project that
+ * holds no anonymous volumes is removed (`rm -f`, never -v) — returns true so
+ * the caller retries. Returns false when the error is not a name conflict.
+ * Throws a clear error when the container belongs to something else (another
+ * app may use the same container_name) or would lose anonymous-volume data.
+ */
+async function resolveContainerNameConflict(appId: string, composePath: string, upErr: unknown): Promise<boolean> {
+  const e = upErr as { stderr?: unknown; message?: unknown } | null;
+  const message = `${String(e?.stderr ?? "")}\n${String(e?.message ?? "")}`;
+  if (!message.includes("is already in use")) return false;
+  const name = /container name "\/([^"]+)"/.exec(message)?.[1];
+  if (!name || !DOCKER_OBJECT_NAME.test(name)) return false;
+
+  let id = "";
+  let labels: Record<string, string> = {};
+  try {
+    const { stdout } = await run(`docker inspect --type container --format '{{.Id}} {{json .Config.Labels}}' ${name}`, { timeout: 15_000 });
+    const line = stdout.trim();
+    const sp = line.indexOf(" ");
+    id = sp > 0 ? line.slice(0, sp) : line;
+    labels = (sp > 0 ? JSON.parse(line.slice(sp + 1)) : null) ?? {};
+  } catch (err: unknown) {
+    throw new Error(`The container name "${name}" is already in use and Talome could not inspect that container (${err instanceof Error ? err.message : String(err)}). Nothing was removed.`);
+  }
+  if (!DOCKER_OBJECT_NAME.test(id)) throw new Error(`The container name "${name}" is already in use by a container Talome could not identify. Nothing was removed.`);
+
+  if (!isAppComposeContainer({ labels }, appId, composePath)) {
+    const owner = labels[COMPOSE_PROJECT_LABEL] ? `compose project "${labels[COMPOSE_PROJECT_LABEL]}"` : "a container Talome did not create";
+    throw new Error(
+      `The container name "${name}" is already used by ${owner}, not by ${appId}. Talome did not remove it: it may belong to another app. ` +
+      `Change container_name in ${appId}'s compose file, or remove or rename that container yourself.`,
+    );
+  }
+  const anonymous = await collectAnonymousVolumes([id]);
+  if (anonymous.length > 0) {
+    throw new Error(
+      `The container name "${name}" is used by an older container of ${appId} that keeps data in ${anonymous.length} anonymous volume(s) ` +
+      `(${anonymous.map((v) => v.slice(0, 12)).join(", ")}). Recreating it would start on new, empty volumes, so Talome did not remove it. ` +
+      `Copy the data out (or start that container again) before removing it.`,
+    );
+  }
+  log.warn(`Removing leftover container ${name} of ${appId} (no anonymous volumes) to resolve a name conflict`);
+  await run(`docker rm -f ${id}`, { timeout: 15_000 });
+  return true;
 }
 
 async function uninstallAppInner(
@@ -1092,21 +1134,14 @@ async function composeActionInner(
           timeout: 180_000,
         });
       } catch (upErr: any) {
-        if (upErr.message?.includes("is already in use")) {
-          const nameMatch = upErr.message.match(/container name "\/([^"]+)"/);
-          if (nameMatch) {
-            await run(`docker rm -f ${nameMatch[1]}`, { cwd: projectDir, timeout: 15_000 }).catch((err) => log.warn(`Failed to remove conflicting container ${nameMatch[1]}`, err));
-            await run(`docker compose -f "${effectiveCompose}" up -d`, {
-              cwd: projectDir,
-              env,
-              timeout: 180_000,
-            });
-          } else {
-            throw upErr;
-          }
-        } else {
-          throw upErr;
-        }
+        // Never remove a container that is not provably this app's, or that
+        // holds anonymous volumes (a recreate would start on empty ones).
+        if (!(await resolveContainerNameConflict(appId, effectiveCompose, upErr))) throw upErr;
+        await run(`docker compose -f "${effectiveCompose}" up -d`, {
+          cwd: projectDir,
+          env,
+          timeout: 180_000,
+        });
       }
     } else if (action === "restart") {
       ctx.step("recreate_containers", 40, "Recreating containers");

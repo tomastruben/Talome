@@ -211,6 +211,58 @@ describe("start keeps the app's containers (and their anonymous volumes)", () =>
   });
 });
 
+describe("start never removes a container it cannot prove is a disposable leftover of the app", () => {
+  const OTHER_ID = "f".repeat(64);
+  const conflict = () => Object.assign(new Error("Command failed"), {
+    stderr: `Error response from daemon: Conflict. The container name "/bkrs-db" is already in use by container "${OTHER_ID}". You have to remove (or rename) that container to be able to reuse that name.`,
+  });
+
+  function mockConflict(labels: Record<string, string>, mounts: unknown[] = []): void {
+    let ups = 0;
+    m.run.mockImplementation(async (cmd: string) => {
+      if (cmd.includes(" up -d") && ups++ === 0) throw conflict();
+      if (cmd.startsWith("docker inspect --type container")) return { stdout: `${OTHER_ID} ${JSON.stringify(labels)}\n`, stderr: "" };
+      if (cmd.startsWith("docker inspect --format")) return { stdout: JSON.stringify(mounts) + "\n", stderr: "" };
+      if (cmd.startsWith("docker volume inspect")) return { stdout: `${"e".repeat(64)} {"com.docker.volume.anonymous":""}`, stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+  }
+
+  it("refuses when the name belongs to another compose project (another app's container_name)", async () => {
+    mockConflict(projectLabels("other-app", "/elsewhere/docker-compose.yml"));
+
+    const result = await startApp(APP);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('compose project "other-app"');
+    expect(commands().some((c) => c.startsWith("docker rm"))).toBe(false);
+  });
+
+  it("refuses when a container Talome did not create holds the name", async () => {
+    mockConflict({});
+    const result = await startApp(APP);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("a container Talome did not create");
+    expect(commands().some((c) => c.startsWith("docker rm"))).toBe(false);
+  });
+
+  it("refuses when the app's own older container keeps data in anonymous volumes", async () => {
+    mockConflict(projectLabels(APP, composePath), [{ Type: "volume", Name: "e".repeat(64) }]);
+    const result = await startApp(APP);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("anonymous volume");
+    expect(commands().some((c) => c.startsWith("docker rm"))).toBe(false);
+  });
+
+  it("removes the app's own leftover without anonymous volumes (never -v) and retries", async () => {
+    mockConflict(projectLabels(APP, composePath));
+    const result = await startApp(APP);
+    expect(result.success).toBe(true);
+    expect(commands()).toContain(`docker rm -f ${OTHER_ID}`);
+    expect(commands().filter((c) => c.includes(" up -d"))).toHaveLength(2);
+  });
+});
+
 describe("container selection by compose project", () => {
   const file = "/data/apps/Some_Dir/docker-compose.yml";
 
