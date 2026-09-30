@@ -1,4 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// verifySessionToken re-reads the session's user; the DB mock below returns
+// this row (null = no such user).
+const dbState = vi.hoisted(() => ({ row: null as Record<string, unknown> | null }));
 import {
   createSessionToken,
   SESSION_TTL_SECONDS,
@@ -7,6 +11,31 @@ import {
 
 // ── Session token tests ───────────────────────────────────────────────────────
 describe("session JWT", () => {
+  beforeEach(() => {
+    dbState.row = { id: "test-user-id", username: "admin", role: "admin", sessionVersion: 0 };
+  });
+  afterEach(() => {
+    dbState.row = null;
+  });
+
+  it("verifySessionToken returns null when the user no longer exists", async () => {
+    const token = await createSessionToken("test-user-id", "admin", "admin");
+    dbState.row = null;
+    expect(await verifySessionToken(token)).toBeNull();
+  });
+
+  it("verifySessionToken takes the role from the user row, not the token", async () => {
+    const token = await createSessionToken("test-user-id", "admin", "admin");
+    dbState.row = { id: "test-user-id", username: "admin", role: "member", sessionVersion: 0 };
+    expect((await verifySessionToken(token))?.role).toBe("member");
+  });
+
+  it("verifySessionToken returns null after the session version was bumped", async () => {
+    const token = await createSessionToken("test-user-id", "admin", "admin");
+    dbState.row = { id: "test-user-id", username: "admin", role: "admin", sessionVersion: 1 };
+    expect(await verifySessionToken(token)).toBeNull();
+  });
+
   it("createSessionToken produces a non-empty string", async () => {
     const token = await createSessionToken("test-user-id", "admin", "admin");
     expect(typeof token).toBe("string");
@@ -49,7 +78,7 @@ vi.mock("../db/index.js", () => ({
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
-          get: vi.fn().mockReturnValue(null), // no password set
+          get: vi.fn(() => dbState.row), // no password set / session user
         }),
       }),
     }),
@@ -63,6 +92,7 @@ vi.mock("../db/index.js", () => ({
   },
   schema: {
     settings: { key: "key" },
+    users: { id: "id", username: "username", role: "role", sessionVersion: "session_version" },
   },
 }));
 

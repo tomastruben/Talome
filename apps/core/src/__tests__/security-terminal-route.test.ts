@@ -19,6 +19,7 @@ vi.mock("../terminal-spawn.js", () => ({ ensureDaemonRunning: m.ensureDaemonRunn
 
 import { Hono } from "hono";
 import { runMigrations } from "../db/migrate.js";
+import { db, schema } from "../db/index.js";
 import { setSetting } from "../utils/settings.js";
 import { requireSession, createSessionToken, SESSION_COOKIE } from "../middleware/session.js";
 import { setupTerminal } from "../routes/terminal.js";
@@ -34,6 +35,11 @@ function buildApp(): Hono {
 }
 
 async function cookieFor(role: "admin" | "member"): Promise<string> {
+  // Sessions are re-validated against the users table on every request.
+  db.insert(schema.users)
+    .values({ id: `user-${role}`, username: role, passwordHash: "x", role, createdAt: new Date().toISOString() })
+    .onConflictDoNothing()
+    .run();
   const token = await createSessionToken(`user-${role}`, role, role);
   return `${SESSION_COOKIE}=${token}`;
 }

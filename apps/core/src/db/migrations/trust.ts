@@ -35,6 +35,8 @@ export function runTrustMigrations(): void {
   addColumnIfMissing("mcp_tokens", "expires_at", "TEXT");
   addColumnIfMissing("mcp_tokens", "revoked_at", "TEXT");
   addColumnIfMissing("mcp_tokens", "legacy", "INTEGER NOT NULL DEFAULT 0");
+  // Creator (users.id), so a deleted or demoted admin's tokens can be revoked.
+  addColumnIfMissing("mcp_tokens", "created_by", "TEXT");
 
   // Tokens created before per-token grants existed keep full access (flagged
   // legacy so the UI can nudge the owner to narrow them). Completion is

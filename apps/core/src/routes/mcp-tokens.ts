@@ -106,7 +106,16 @@ mcpTokens.post("/", async (c) => {
 
     const { id, plaintext, hash } = generateMcpToken(name);
     db.insert(schema.mcpTokens)
-      .values({ id, name, tokenHash: hash, scopes: JSON.stringify(scopes), expiresAt, legacy: false })
+      .values({
+        id,
+        name,
+        tokenHash: hash,
+        scopes: JSON.stringify(scopes),
+        expiresAt,
+        legacy: false,
+        // Revoked when this admin is deleted or demoted (routes/users.ts).
+        createdBy: (c.get("sessionUser" as never) as string | undefined) ?? null,
+      })
       .run();
 
     return c.json({ ok: true, id, name, token: plaintext, scopes, expiresAt });

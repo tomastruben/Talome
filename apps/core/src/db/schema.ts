@@ -14,6 +14,12 @@ export const users = sqliteTable("users", {
   recoveryCodeHash: text("recovery_code_hash"),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   lastLoginAt: text("last_login_at"),
+  /**
+   * Session version. Session JWTs carry the version they were issued under;
+   * bumping it (role change, password change) ends every existing session
+   * of the user. Migration: db/migrate.ts.
+   */
+  sessionVersion: integer("session_version").notNull().default(0),
 });
 
 export const userInvitations = sqliteTable("user_invitations", {
@@ -185,6 +191,8 @@ export const mcpTokens = sqliteTable("mcp_tokens", {
   revokedAt: text("revoked_at"),
   /** 1 = token predates per-token grants and was migrated to full access */
   legacy: integer("legacy", { mode: "boolean" }).notNull().default(false),
+  /** User id of the admin who created the token (NULL for older tokens). */
+  createdBy: text("created_by"),
 });
 
 export const memories = sqliteTable("memories", {

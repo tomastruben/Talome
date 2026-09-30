@@ -3,12 +3,13 @@ import { z } from "zod";
 import { hash as bcryptHash } from "bcryptjs";
 import { generateRecoveryCode } from "./auth.js";
 import { db, schema } from "../db/index.js";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { UserPermissions } from "@talome/types";
 import { getDefaultPermissions } from "@talome/types";
 import { writeAuditEntry } from "../db/audit.js";
 import { generateInvitationToken, hashInvitationToken } from "../auth/invitations.js";
+import { bumpSessionVersion, sessionAuditActor } from "../middleware/session.js";
 
 const createUserSchema = z.object({
   username: z.string().min(2).max(100),
@@ -43,6 +44,27 @@ function parsePermissions(raw: string | null): UserPermissions | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Revoke the (not yet revoked) MCP tokens a user created. A token is an
+ * owner-level credential minted with admin authority; it must not outlive
+ * that authority when the admin is deleted or demoted. Tokens created before
+ * mcp_tokens.created_by existed have no creator and are left alone — review
+ * them in Settings -> Integrations. Returns the revoked token names.
+ */
+function revokeMcpTokensCreatedBy(userId: string): string[] {
+  const rows = db
+    .select({ id: schema.mcpTokens.id, name: schema.mcpTokens.name })
+    .from(schema.mcpTokens)
+    .where(and(eq(schema.mcpTokens.createdBy, userId), isNull(schema.mcpTokens.revokedAt)))
+    .all();
+  if (rows.length === 0) return [];
+  db.update(schema.mcpTokens)
+    .set({ revokedAt: new Date().toISOString() })
+    .where(and(eq(schema.mcpTokens.createdBy, userId), isNull(schema.mcpTokens.revokedAt)))
+    .run();
+  return rows.map((r) => r.name);
 }
 
 const users = new Hono();
@@ -191,7 +213,7 @@ users.post("/invitations", async (c) => {
     createdAt: nowIso,
   }).run();
 
-  writeAuditEntry("family_invitation_created", "modify", `email=${email} role=${role}`);
+  writeAuditEntry("family_invitation_created", "modify", `email=${email} role=${role}`, true, sessionAuditActor(c));
   return c.json({
     id,
     token,
@@ -217,7 +239,7 @@ users.delete("/invitations/:id", (c) => {
     .set({ revokedAt: new Date().toISOString() })
     .where(eq(schema.userInvitations.id, id))
     .run();
-  writeAuditEntry("family_invitation_revoked", "modify", `email=${invitation.email}`);
+  writeAuditEntry("family_invitation_revoked", "modify", `email=${invitation.email}`, true, sessionAuditActor(c));
   return c.json({ ok: true });
 });
 
@@ -260,10 +282,30 @@ users.put("/:id", async (c) => {
     updates.permissions = JSON.stringify(getDefaultPermissions());
   }
 
-  db.update(schema.users)
-    .set(updates)
-    .where(eq(schema.users.id, userId))
-    .run();
+  const roleChanged = body.role !== undefined && body.role !== user.role;
+  const demotedAdmin = roleChanged && user.role === "admin";
+  let revokedTokens: string[] = [];
+  db.transaction(() => {
+    db.update(schema.users)
+      .set(updates)
+      .where(eq(schema.users.id, userId))
+      .run();
+    // A role change ends the user's existing sessions: they sign in again
+    // and get the new role (requireSession also re-reads the role per request).
+    if (roleChanged) bumpSessionVersion(userId);
+    if (demotedAdmin) revokedTokens = revokeMcpTokensCreatedBy(userId);
+  });
+
+  if (roleChanged) {
+    writeAuditEntry(
+      "user_role_changed",
+      "modify",
+      `user=${user.username} id=${userId} ${user.role} -> ${body.role}` +
+        (revokedTokens.length > 0 ? `; revoked MCP tokens (${revokedTokens.join(", ")})` : ""),
+      true,
+      { ...sessionAuditActor(c), outcome: "success" },
+    );
+  }
 
   return c.json({ ok: true });
 });
@@ -282,8 +324,20 @@ users.delete("/:id", (c) => {
     return c.json({ error: "User not found" }, 404);
   }
 
-  writeAuditEntry("user_deleted", "destructive", `user=${user.username} id=${userId}`);
-  db.delete(schema.users).where(eq(schema.users.id, userId)).run();
+  // Deleting the row ends the user's sessions (requireSession re-reads it).
+  let revokedTokens: string[] = [];
+  db.transaction(() => {
+    revokedTokens = revokeMcpTokensCreatedBy(userId);
+    db.delete(schema.users).where(eq(schema.users.id, userId)).run();
+  });
+  writeAuditEntry(
+    "user_deleted",
+    "destructive",
+    `user=${user.username} id=${userId}` +
+      (revokedTokens.length > 0 ? `; revoked MCP tokens (${revokedTokens.join(", ")})` : ""),
+    true,
+    { ...sessionAuditActor(c), outcome: "success" },
+  );
   return c.json({ ok: true });
 });
 
@@ -300,10 +354,18 @@ users.post("/:id/reset-password", async (c) => {
   }
 
   const passwordHash = await bcryptHash(body.password, BCRYPT_ROUNDS);
-  db.update(schema.users)
-    .set({ passwordHash })
-    .where(eq(schema.users.id, userId))
-    .run();
+  db.transaction(() => {
+    db.update(schema.users)
+      .set({ passwordHash })
+      .where(eq(schema.users.id, userId))
+      .run();
+    // A password reset signs the user out everywhere.
+    bumpSessionVersion(userId);
+  });
+  writeAuditEntry("user_password_reset", "modify", `user=${user.username} id=${userId}`, true, {
+    ...sessionAuditActor(c),
+    outcome: "success",
+  });
 
   return c.json({ ok: true });
 });
