@@ -5,8 +5,9 @@
  *
  * requireSession now re-reads the user on every request (role from the DB,
  * missing user -> 401) and checks a per-user session version that role
- * changes and password resets bump. MCP tokens a deleted or demoted admin
- * created are revoked.
+ * changes and password resets bump. MCP tokens a deleted admin created are
+ * revoked; a demotion (one switch in the dashboard, easily undone) never
+ * revokes — revocation is permanent — it reports the tokens instead.
  */
 import { describe, it, expect, beforeAll, vi } from "vitest";
 
@@ -129,8 +130,8 @@ describe("session re-validation against the users table", () => {
   });
 });
 
-describe("users routes end sessions and revoke the user's MCP tokens", () => {
-  it("PUT role change ends the target's sessions and revokes tokens the demoted admin created", async () => {
+describe("users routes end sessions; deleting a user revokes their MCP tokens", () => {
+  it("PUT role change ends the target's sessions but keeps (and reports) tokens the demoted admin created", async () => {
     const app = buildApp();
     const owner = insertUser("admin");
     const ownerCookie = await cookieFor(owner, "admin");
@@ -147,6 +148,7 @@ describe("users routes end sessions and revoke the user's MCP tokens", () => {
       body: JSON.stringify({ role: "member" }),
     });
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, activeMcpTokens: ["frank-token"] });
 
     // Frank's existing session is over (even for member-level routes).
     expect((await app.request("/api/auth/me", { headers: { cookie: frankCookie } })).status).toBe(200);
@@ -156,8 +158,8 @@ describe("users routes end sessions and revoke the user's MCP tokens", () => {
     expect(me.authenticated).toBe(false);
     expect((await app.request("/api/users", { headers: { cookie: frankCookie } })).status).toBe(401);
 
-    // Frank's tokens are revoked, the owner's are not.
-    expect(tokenRow("frank-token")?.revokedAt).toBeTruthy();
+    // A demotion never revokes (revocation cannot be undone): tokens stay live.
+    expect(tokenRow("frank-token")?.revokedAt).toBeNull();
     expect(tokenRow("owner-token")?.revokedAt).toBeNull();
 
     // A fresh login gets the new role.
@@ -170,7 +172,43 @@ describe("users routes end sessions and revoke the user's MCP tokens", () => {
     expect(row?.actorId).toBe(owner.id);
     expect(row?.actorLabel).toBe(owner.username);
     expect(row?.source).toBe("dashboard");
-    expect(row?.details).toContain("frank-token");
+    expect(row?.details).toContain("stay active (frank-token)");
+  });
+
+  it("demote then re-promote (a misclick undone) leaves the admin's tokens and automations working", async () => {
+    const app = buildApp();
+    const owner = insertUser("admin");
+    const ownerCookie = await cookieFor(owner, "admin");
+    const ivy = insertUser("admin");
+    const ivyCookie = await cookieFor(ivy, "admin");
+    expect((await createToken(app, ivyCookie, "ivy-token")).status).toBe(200);
+    const tokenId = tokenRow("ivy-token")!.id;
+    const automationId = randomUUID();
+    db.insert(schema.automations)
+      .values({
+        id: automationId,
+        name: "ivy automation",
+        trigger: JSON.stringify({ type: "schedule", cron: "0 * * * *" }),
+        actions: "[]",
+        actorTokenId: tokenId,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+
+    for (const role of ["member", "admin"]) {
+      const res = await app.request(`/api/users/${ivy.id}`, {
+        method: "PUT",
+        headers: { ...JSON_HEADERS, cookie: ownerCookie },
+        body: JSON.stringify({ role }),
+      });
+      expect(res.status).toBe(200);
+    }
+
+    // The token is live, so the automation it wrote keeps running
+    // (automation/engine.ts resolveAutomationGrant blocks only on revoked).
+    expect(tokenRow("ivy-token")?.revokedAt).toBeNull();
+    const auto = db.select().from(schema.automations).where(eq(schema.automations.id, automationId)).get();
+    expect(auto?.enabled).toBe(true);
   });
 
   it("DELETE ends the user's sessions, revokes their tokens and attributes the audit row", async () => {
@@ -180,12 +218,27 @@ describe("users routes end sessions and revoke the user's MCP tokens", () => {
     const gina = insertUser("admin");
     const ginaCookie = await cookieFor(gina, "admin");
     expect((await createToken(app, ginaCookie, "gina-token")).status).toBe(200);
+    for (const enabled of [true, false]) {
+      db.insert(schema.automations)
+        .values({
+          id: randomUUID(),
+          name: `gina automation ${enabled}`,
+          trigger: JSON.stringify({ type: "schedule", cron: "0 * * * *" }),
+          actions: "[]",
+          enabled,
+          actorTokenId: tokenRow("gina-token")!.id,
+          createdAt: new Date().toISOString(),
+        })
+        .run();
+    }
 
     const res = await app.request(`/api/users/${gina.id}`, {
       method: "DELETE",
       headers: { cookie: ownerCookie, origin: "http://localhost:3000" },
     });
     expect(res.status).toBe(200);
+    // The response names what the delete revoked, so the dashboard can say so.
+    expect(await res.json()).toEqual({ ok: true, revokedMcpTokens: ["gina-token"], affectedAutomations: 1 });
     expect((await app.request("/api/users", { headers: { cookie: ginaCookie } })).status).toBe(401);
     expect(tokenRow("gina-token")?.revokedAt).toBeTruthy();
 

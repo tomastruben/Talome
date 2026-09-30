@@ -3,7 +3,7 @@ import { z } from "zod";
 import { hash as bcryptHash } from "bcryptjs";
 import { generateRecoveryCode } from "./auth.js";
 import { db, schema } from "../db/index.js";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { UserPermissions } from "@talome/types";
 import { getDefaultPermissions } from "@talome/types";
@@ -46,25 +46,39 @@ function parsePermissions(raw: string | null): UserPermissions | null {
   }
 }
 
-/**
- * Revoke the (not yet revoked) MCP tokens a user created. A token is an
- * owner-level credential minted with admin authority; it must not outlive
- * that authority when the admin is deleted or demoted. Tokens created before
- * mcp_tokens.created_by existed have no creator and are left alone — review
- * them in Settings -> Integrations. Returns the revoked token names.
- */
-function revokeMcpTokensCreatedBy(userId: string): string[] {
-  const rows = db
+/** Live (not revoked) MCP tokens a user created. */
+function liveMcpTokensCreatedBy(userId: string): Array<{ id: string; name: string }> {
+  return db
     .select({ id: schema.mcpTokens.id, name: schema.mcpTokens.name })
     .from(schema.mcpTokens)
     .where(and(eq(schema.mcpTokens.createdBy, userId), isNull(schema.mcpTokens.revokedAt)))
     .all();
-  if (rows.length === 0) return [];
+}
+
+/**
+ * Revoke the (not yet revoked) MCP tokens a DELETED user created. A token is
+ * an owner-level credential minted with admin authority and must not outlive
+ * its creator's account. Revocation is permanent, so it happens only on
+ * delete — a demotion (a single switch in the dashboard, easily undone) never
+ * revokes. Tokens created before mcp_tokens.created_by existed have no
+ * creator and are left alone — review them in Settings -> Integrations.
+ * Returns the revoked tokens and how many enabled automations those tokens
+ * wrote: those stop running (and are disabled) on their next run.
+ */
+function revokeMcpTokensCreatedBy(userId: string): { names: string[]; affectedAutomations: number } {
+  const rows = liveMcpTokensCreatedBy(userId);
+  if (rows.length === 0) return { names: [], affectedAutomations: 0 };
+  const ids = rows.map((r) => r.id);
   db.update(schema.mcpTokens)
     .set({ revokedAt: new Date().toISOString() })
-    .where(and(eq(schema.mcpTokens.createdBy, userId), isNull(schema.mcpTokens.revokedAt)))
+    .where(and(inArray(schema.mcpTokens.id, ids), isNull(schema.mcpTokens.revokedAt)))
     .run();
-  return rows.map((r) => r.name);
+  const affected = db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.automations)
+    .where(and(inArray(schema.automations.actorTokenId, ids), eq(schema.automations.enabled, true)))
+    .get();
+  return { names: rows.map((r) => r.name), affectedAutomations: Number(affected?.n ?? 0) };
 }
 
 const users = new Hono();
@@ -284,7 +298,6 @@ users.put("/:id", async (c) => {
 
   const roleChanged = body.role !== undefined && body.role !== user.role;
   const demotedAdmin = roleChanged && user.role === "admin";
-  let revokedTokens: string[] = [];
   db.transaction(() => {
     db.update(schema.users)
       .set(updates)
@@ -293,21 +306,26 @@ users.put("/:id", async (c) => {
     // A role change ends the user's existing sessions: they sign in again
     // and get the new role (requireSession also re-reads the role per request).
     if (roleChanged) bumpSessionVersion(userId);
-    if (demotedAdmin) revokedTokens = revokeMcpTokensCreatedBy(userId);
   });
+
+  // MCP tokens a demoted admin created keep working: revoking is permanent
+  // (a token's plaintext is shown once, and automations it wrote would be
+  // disabled for good), while a demotion is one easily undone switch. They
+  // are returned so the dashboard can offer to revoke them.
+  const activeMcpTokens = demotedAdmin ? liveMcpTokensCreatedBy(userId).map((t) => t.name) : [];
 
   if (roleChanged) {
     writeAuditEntry(
       "user_role_changed",
       "modify",
       `user=${user.username} id=${userId} ${user.role} -> ${body.role}` +
-        (revokedTokens.length > 0 ? `; revoked MCP tokens (${revokedTokens.join(", ")})` : ""),
+        (activeMcpTokens.length > 0 ? `; MCP tokens they created stay active (${activeMcpTokens.join(", ")})` : ""),
       true,
       { ...sessionAuditActor(c), outcome: "success" },
     );
   }
 
-  return c.json({ ok: true });
+  return c.json({ ok: true, ...(demotedAdmin ? { activeMcpTokens } : {}) });
 });
 
 /** DELETE /:id — delete user (cannot delete self) */
@@ -325,20 +343,22 @@ users.delete("/:id", (c) => {
   }
 
   // Deleting the row ends the user's sessions (requireSession re-reads it).
-  let revokedTokens: string[] = [];
+  let revoked: { names: string[]; affectedAutomations: number } = { names: [], affectedAutomations: 0 };
   db.transaction(() => {
-    revokedTokens = revokeMcpTokensCreatedBy(userId);
+    revoked = revokeMcpTokensCreatedBy(userId);
     db.delete(schema.users).where(eq(schema.users.id, userId)).run();
   });
   writeAuditEntry(
     "user_deleted",
     "destructive",
     `user=${user.username} id=${userId}` +
-      (revokedTokens.length > 0 ? `; revoked MCP tokens (${revokedTokens.join(", ")})` : ""),
+      (revoked.names.length > 0
+        ? `; revoked MCP tokens (${revoked.names.join(", ")}); ${revoked.affectedAutomations} automation(s) they wrote will stop`
+        : ""),
     true,
     { ...sessionAuditActor(c), outcome: "success" },
   );
-  return c.json({ ok: true });
+  return c.json({ ok: true, revokedMcpTokens: revoked.names, affectedAutomations: revoked.affectedAutomations });
 });
 
 /** POST /:id/reset-password — admin resets a user's password */
