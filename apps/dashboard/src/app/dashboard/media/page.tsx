@@ -33,6 +33,7 @@ import {
   Cancel01Icon,
   Add01Icon,
 } from "@/components/icons";
+import { tiltHandlers } from "@/components/ui/micro";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useDownloads } from "@/hooks/use-downloads";
 import type { DownloadQueueItem, DownloadTorrent, MediaSearchResult } from "@talome/types";
@@ -615,7 +616,7 @@ function MediaCard({ item, onClick, onNavigate, watchStatus, selected, selection
 
   return (
     <div className="media-card" onClick={() => (onNavigate ?? onClick)(item)}>
-      <div className={`media-card-poster ${selected ? "ring-2 ring-primary" : ""}`}>
+      <div className={`media-card-poster tm-tilt ${selected ? "ring-2 ring-primary" : ""}`} {...tiltHandlers}>
         {item.poster && !imgFailed ? (
           <Image
             src={resolvePosterUrl(item.poster, 400) ?? ""}

@@ -31,6 +31,7 @@ import {
   LaunchTerminalCard,
 } from "@/components/ai-elements/tool";
 import { Reasoning } from "@/components/ai-elements/reasoning";
+import { IconSwap } from "@/components/ui/micro";
 import {
   Confirmation,
   ConfirmationTitle,
@@ -473,11 +474,11 @@ export function ChatMessage({
       {message.role === "assistant" && textContent && (
         <MessageActions className="opacity-100 sm:opacity-0 sm:transition-opacity sm:duration-100 sm:group-hover:opacity-100">
           <MessageAction tooltip="Copy" onClick={handleCopy}>
-            {copied ? (
-              <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} />
-            ) : (
-              <HugeiconsIcon icon={Copy01Icon} size={14} />
-            )}
+            <IconSwap
+              active={copied ? "b" : "a"}
+              a={<HugeiconsIcon icon={Copy01Icon} size={14} />}
+              b={<HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} />}
+            />
           </MessageAction>
           {isLast && onRegenerate && (
             <MessageAction tooltip="Regenerate" onClick={onRegenerate}>

@@ -73,7 +73,7 @@ export function SidebarNotifications() {
             {!isMuted && unreadCount > 0 && (
               <span
                 className={cn(
-                  "ml-auto inline-flex size-2 shrink-0 rounded-full",
+                  "tm-badge-in ml-auto inline-flex size-2 shrink-0 rounded-full",
                   hasCritical ? "bg-destructive" : "bg-status-warning"
                 )}
               />

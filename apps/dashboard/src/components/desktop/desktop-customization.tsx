@@ -13,7 +13,6 @@ import Image from "next/image";
 import {
   ArrowLeft01Icon,
   Cancel01Icon,
-  CheckmarkCircle02Icon,
   DashboardSquareEditIcon,
   HugeiconsIcon,
   Image01Icon,
@@ -21,6 +20,7 @@ import {
   Search01Icon,
   Tick01Icon,
 } from "@/components/icons";
+import { SuccessCheck } from "@/components/ui/micro";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -163,7 +163,7 @@ function WallpaperPresetButton({
       role="radio"
       aria-checked={selected}
       aria-label={`Use ${preset.name} wallpaper`}
-      className="group grid min-w-0 gap-2 text-left outline-none"
+      className="group grid min-w-0 gap-2 text-left outline-none transition-transform duration-150 active:scale-[0.98]"
       onClick={onSelect}
     >
       <span
@@ -181,8 +181,8 @@ function WallpaperPresetButton({
           className="transition-transform duration-150 group-hover:scale-[1.02]"
         />
         {selected ? (
-          <span className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm backdrop-blur-sm">
-            <HugeiconsIcon icon={CheckmarkCircle02Icon} size={15} />
+          <span className="tm-badge-in absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 shadow-sm backdrop-blur-sm">
+            <SuccessCheck size={18} className="text-foreground" />
           </span>
         ) : null}
       </span>
@@ -232,8 +232,8 @@ function OnlineWallpaperCard({
         />
         <span className="absolute inset-x-0 bottom-0 h-1/2 bg-linear-to-t from-black/55 to-transparent" />
         {selected ? (
-          <span className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm backdrop-blur-sm">
-            <HugeiconsIcon icon={CheckmarkCircle02Icon} size={15} />
+          <span className="tm-badge-in absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-background/90 shadow-sm backdrop-blur-sm">
+            <SuccessCheck size={18} className="text-foreground" />
           </span>
         ) : null}
         {applying ? (

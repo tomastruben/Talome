@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { motion, useReducedMotion } from "motion/react";
 import { HugeiconsIcon, Search01Icon, Settings01Icon } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
 import { useUser } from "@/hooks/use-user";
@@ -10,15 +11,24 @@ import { cn } from "@/lib/utils";
 import { SETTINGS_CATEGORIES } from "@/components/settings/settings-nav";
 
 function SidebarLink({ href, icon, title, active }: { href: string; icon: IconSvgElement; title: string; active: boolean }) {
+  const reduceMotion = useReducedMotion();
   return (
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex h-8 items-center gap-2.5 rounded-lg px-2 text-sm transition-colors duration-150 ease-out",
-        active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+        "relative flex h-8 items-center gap-2.5 rounded-lg px-2 text-sm transition-colors duration-150 ease-out",
+        active ? "text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
       )}
     >
+      {/* One highlight that slides to the section you pick */}
+      {active && (
+        <motion.span
+          layoutId="settings-sidebar-selection"
+          className="absolute inset-0 -z-10 rounded-lg bg-muted"
+          transition={reduceMotion ? { duration: 0 } : { duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+        />
+      )}
       <span
         className={cn(
           "flex size-6 shrink-0 items-center justify-center rounded-md transition-colors duration-150",
@@ -53,7 +63,7 @@ export function SettingsSidebar() {
   const showGeneral = !query.trim() || "general dark mode server mode services log out".includes(query.trim().toLowerCase());
 
   return (
-    <nav aria-label="Settings sections" className="flex flex-col gap-4">
+    <nav aria-label="Settings sections" className="isolate flex flex-col gap-4">
       <label className="relative block">
         <span className="sr-only">Search settings</span>
         <HugeiconsIcon

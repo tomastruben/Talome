@@ -245,6 +245,13 @@ const WidgetItem = React.memo(function WidgetItem({
   const hasHeightOptions = heightOptions.length > 1;
   const hasResizeControls = resizable && (hasWidthOptions || hasHeightOptions);
   const compact = effectiveSize.cols === 1 && effectiveSize.rows === 1;
+  // Removing: the widget shrinks away before the grid closes the gap
+  const [removing, setRemoving] = React.useState(false);
+  const remove = () => {
+    if (removing) return;
+    setRemoving(true);
+    window.setTimeout(onRemove, 160);
+  };
   const widgetLabel = widgetType.startsWith("widget:")
     ? widgetType.slice("widget:".length)
     : WIDGET_LABELS[widgetType as BuiltinWidgetType];
@@ -256,7 +263,12 @@ const WidgetItem = React.memo(function WidgetItem({
       showHandle={editMode}
       gridSize={{ cols: effectiveSize.cols, rows: effectiveSize.rows }}
       availableCols={availableCols}
-      className={cn("group relative", isNew && "animate-widget-enter")}
+      className={cn(
+        "group relative",
+        isNew && "animate-widget-enter",
+        editMode && !removing && "tm-jiggle",
+        removing && "tm-widget-leave",
+      )}
     >
       {widgetComponent(widgetType, manifestById, manifestsLoading, effectiveSize, compact)}
 
@@ -266,14 +278,14 @@ const WidgetItem = React.memo(function WidgetItem({
             type="button"
             aria-label={`Remove ${widgetLabel} widget`}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onRemove(); }}
-            className="absolute -top-2 -right-2 z-20 flex items-center justify-center size-7 rounded-full bg-background border border-border/80 text-muted-foreground shadow-sm hover:text-destructive hover:border-destructive/40 transition-colors"
+            onClick={(e) => { e.stopPropagation(); remove(); }}
+            className="tm-badge-in absolute -top-2 -right-2 z-20 flex items-center justify-center size-7 rounded-full bg-background border border-border/80 text-muted-foreground shadow-sm hover:text-destructive hover:border-destructive/40 transition-[color,border-color,transform] active:scale-90"
           >
             <HugeiconsIcon icon={Cancel01Icon} size={10} />
           </button>
 
           {hasResizeControls && (
-            <div className="absolute -bottom-2.5 right-3 z-20 flex items-center gap-1">
+            <div className="tm-badge-in absolute -bottom-2.5 right-3 z-20 flex items-center gap-1">
               {hasWidthOptions && (
                 <button
                   type="button"

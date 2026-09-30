@@ -20,6 +20,7 @@ import {
   Share04Icon,
   Wifi01Icon,
 } from "@/components/icons";
+import { IconSwap } from "@/components/ui/micro";
 import { useAtom, useAtomValue } from "jotai";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { useWidgetEdit } from "@/components/widgets/widget-edit-context";
@@ -198,7 +199,11 @@ function HomeEditControls() {
         onClick={() => setEditMode((v) => !v)}
         aria-label={editMode ? "Done editing" : "Edit widgets"}
       >
-        <HugeiconsIcon icon={editMode ? Tick01Icon : DashboardSquare02Icon} size={16} />
+        <IconSwap
+          active={editMode ? "b" : "a"}
+          a={<HugeiconsIcon icon={DashboardSquare02Icon} size={16} />}
+          b={<HugeiconsIcon icon={Tick01Icon} size={16} />}
+        />
       </Button>
     </div>
   );

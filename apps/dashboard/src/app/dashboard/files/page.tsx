@@ -5,7 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import useSWR from "swr";
 import dynamic from "next/dynamic";
 import { useSetAtom } from "jotai";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { SelectMark } from "@/components/ui/micro";
 import {
   HugeiconsIcon,
   Folder01Icon,
@@ -30,7 +31,6 @@ import {
   HardDriveIcon,
   Cancel01Icon,
   ArrowRight01Icon,
-  CheckmarkCircle02Icon,
   FolderExportIcon,
   ArrowLeft01Icon,
   ArrowLeft02Icon,
@@ -902,8 +902,14 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
   }, [currentPath]);
 
   const hasSelection = selectedPaths.size > 0;
+  const reduceMotion = useReducedMotion();
 
+  // Into a folder the list arrives from the right; back out, from the left
+  const [navDirection, setNavDirection] = useState(0);
   const navigate = useCallback((path: string) => {
+    setNavDirection(
+      !currentPath || path.startsWith(`${currentPath}/`) ? 1 : currentPath.startsWith(`${path}/`) ? -1 : 0,
+    );
     // Save scroll position of current view
     const scrollParent = contentRef.current;
     if (scrollParent) {
@@ -1316,6 +1322,12 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
 
         {/* ── File table ──────────────────────────────────────────────── */}
         <div ref={contentRef} className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
+          <motion.div
+            key={data ? (currentPath ?? "roots") : "loading"}
+            initial={reduceMotion ? false : { opacity: 0, x: navDirection * 12, filter: navDirection ? "blur(3px)" : "blur(0px)" }}
+            animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
               {isLoading && !data ? (
                 currentPath ? (
                   <FilesTableSkeleton />
@@ -1366,16 +1378,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                             )}
                             onClick={toggleSelectAll}
                           >
-                            {allSelected ? (
-                              <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} className="text-foreground" />
-                            ) : (
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className={cn(
-                                "transition-colors duration-150",
-                                hasSelection ? "text-dim-foreground" : "text-dim-foreground"
-                              )}>
-                                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" />
-                              </svg>
-                            )}
+                            <SelectMark selected={allSelected} className={allSelected ? "text-foreground" : "text-dim-foreground"} />
                           </button>
                         </div>
                       </TableHead>
@@ -1417,16 +1420,10 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                                     toggleSelect(item.path, idx, e.shiftKey);
                                   }}
                                 >
-                                  {isSelected ? (
-                                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} className="text-foreground" />
-                                  ) : (
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className={cn(
-                                      "transition-colors duration-150",
-                                      hasSelection ? "text-dim-foreground" : "text-dim-foreground group-hover:text-muted-foreground"
-                                    )}>
-                                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" />
-                                    </svg>
-                                  )}
+                                  <SelectMark
+                                    selected={isSelected}
+                                    className={isSelected ? "text-foreground" : hasSelection ? "text-dim-foreground" : "text-dim-foreground group-hover:text-muted-foreground"}
+                                  />
                                 </button>
                               </div>
                             </TableCell>
@@ -1487,6 +1484,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
                   </TableBody>
                 </Table>
               )}
+          </motion.div>
         </div>
 
         {/* ── Floating selection bar ──────────────────────────────────── */}

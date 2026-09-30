@@ -10,9 +10,9 @@ import {
   ArrowDown01Icon,
   ArrowUp01Icon,
   Cancel01Icon,
-  CheckmarkCircle02Icon,
   Refresh01Icon,
 } from "@/components/icons";
+import { SuccessCheck } from "@/components/ui/micro";
 import { cn } from "@/lib/utils";
 import type { UploadItem } from "./use-upload-queue";
 
@@ -146,7 +146,7 @@ export function UploadPanel({
                     </Button>
                   )}
                   {item.status === "done" && (
-                    <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} className="text-status-healthy shrink-0 mr-1.5" />
+                    <SuccessCheck size={16} className="shrink-0 mr-1.5" />
                   )}
                   {item.status === "failed" && (
                     <HugeiconsIcon icon={AlertCircleIcon} size={16} className="text-status-critical shrink-0" />

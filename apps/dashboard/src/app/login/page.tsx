@@ -1,10 +1,12 @@
 "use client";
 
-import { Suspense, useState, useEffect, useSyncExternalStore } from "react";
+import { Suspense, useState, useEffect, useRef, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { PopText, useShake } from "@/components/ui/micro";
 import { DEFAULT_SIGN_IN_WALLPAPER, readStoredWallpaper } from "@/lib/wallpaper";
 
 const MOTION = { duration: 0.18, ease: "easeOut" } as const;
@@ -32,6 +34,26 @@ function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [isFirstTime, setIsFirstTime] = useState(false);
   const [ready, setReady] = useState(false);
+  // Signed in: the card lifts away and the wallpaper eases forward before the dashboard appears
+  const [unlocking, setUnlocking] = useState(false);
+  const { shake, shakeClassName } = useShake();
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const reduceMotion = useReducedMotion();
+
+  function enter(returnTo: string) {
+    setUnlocking(true);
+    window.setTimeout(() => {
+      router.replace(returnTo);
+      router.refresh();
+    }, reduceMotion ? 0 : 260);
+  }
+
+  function reject(message: string) {
+    setError(message);
+    shake();
+    // Like a lock screen: the password is selected, ready to retype
+    requestAnimationFrame(() => passwordRef.current?.select());
+  }
 
   useEffect(() => {
     fetch("/api/auth/status")
@@ -65,14 +87,13 @@ function LoginContent() {
           setView("setup-recovery-code");
           return;
         }
-        const returnTo = searchParams.get("from") || "/dashboard";
-        router.replace(returnTo);
-        router.refresh();
+        enter(searchParams.get("from") || "/dashboard");
+        return;
       } else {
-        setError(data.error ?? "Login failed");
+        reject(data.error ?? "Login failed");
       }
     } catch {
-      setError("Network error — is Talome running?");
+      reject("Network error — is Talome running?");
     } finally {
       setLoading(false);
     }
@@ -102,18 +123,18 @@ function LoginContent() {
         setView("recovery-success");
       } else {
         setError(data.error ?? "Recovery failed");
+        shake();
       }
     } catch {
       setError("Network error — is Talome running?");
+      shake();
     } finally {
       setLoading(false);
     }
   }
 
   function proceedToDashboard() {
-    const returnTo = searchParams.get("from") || "/dashboard";
-    router.replace(returnTo);
-    router.refresh();
+    enter(searchParams.get("from") || "/dashboard");
   }
 
   const inputClass = "h-10 bg-background/40 border-border/60 text-sm placeholder:text-muted-foreground";
@@ -121,19 +142,19 @@ function LoginContent() {
 
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center bg-background p-6 overflow-hidden">
-      <SignInBackdrop />
+      <SignInBackdrop unlocking={unlocking} />
 
       <AnimatePresence>
         {ready && (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={MOTION}
+            animate={unlocking ? { opacity: 0, y: -8, scale: 1.02, filter: "blur(4px)" } : { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
+            transition={unlocking ? { duration: 0.26, ease: [0.22, 1, 0.36, 1] } : MOTION}
             className="relative z-10 w-full max-w-sm flex flex-col items-center"
           >
             <LockClock />
 
-            <div className="w-full rounded-2xl border border-white/10 bg-background/60 backdrop-blur-xl p-6">
+            <div className={`w-full rounded-2xl border border-white/10 bg-background/60 backdrop-blur-xl p-6 ${shakeClassName ?? ""}`}>
             {setupStep && <SetupSteps step={setupStep} />}
 
             {/* Brand mark */}
@@ -143,11 +164,20 @@ function LoginContent() {
                   <circle cx="12" cy="4.5" r="1.7" opacity="1"/><circle cx="17.1" cy="7" r="1.27" opacity="0.56"/><circle cx="12" cy="9.5" r="0.72" opacity="0.12"/><circle cx="6.5" cy="12" r="1.27" opacity="0.56"/><circle cx="12" cy="14.5" r="1.7" opacity="1"/><circle cx="17.5" cy="17" r="1.27" opacity="0.56"/><circle cx="12" cy="19.5" r="0.72" opacity="0.12"/><circle cx="12" cy="4.5" r="0.72" opacity="0.12"/><circle cx="6.5" cy="7" r="1.27" opacity="0.56"/><circle cx="12" cy="9.5" r="1.7" opacity="1"/><circle cx="17.5" cy="12" r="1.27" opacity="0.56"/><circle cx="12" cy="14.5" r="0.72" opacity="0.12"/><circle cx="6.5" cy="17" r="1.27" opacity="0.56"/><circle cx="12" cy="19.5" r="1.7" opacity="1"/>
                 </svg>
               </div>
-              <h1 className="text-lg font-medium tracking-tight text-foreground">
-                {view === "recover" ? "Reset password" :
-                 view === "setup-recovery-code" || view === "recovery-success" ? "Recovery code" :
-                 isFirstTime ? "Welcome to Talome" : "Welcome back"}
-              </h1>
+              <AnimatePresence mode="popLayout" initial={false}>
+                <motion.h1
+                  key={view === "recover" ? "recover" : view === "setup-recovery-code" || view === "recovery-success" ? "code" : "welcome"}
+                  initial={{ opacity: 0, y: 4, filter: "blur(2px)" }}
+                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                  exit={{ opacity: 0, y: -4, filter: "blur(2px)" }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                  className="text-lg font-medium tracking-tight text-foreground"
+                >
+                  {view === "recover" ? "Reset password" :
+                   view === "setup-recovery-code" || view === "recovery-success" ? "Recovery code" :
+                   isFirstTime ? "Welcome to Talome" : "Welcome back"}
+                </motion.h1>
+              </AnimatePresence>
               <p className="text-sm text-muted-foreground mt-1">
                 {view === "recover"
                   ? "Enter your recovery code to set a new password."
@@ -174,16 +204,18 @@ function LoginContent() {
                   className={inputClass}
                 />
                 <Input
+                  ref={passwordRef}
                   type="password"
                   placeholder={isFirstTime ? "Choose a password (min 8 chars)" : "Password"}
                   value={password}
                   onChange={(e) => { setPassword(e.target.value); if (error) setError(""); }}
                   autoComplete={isFirstTime ? "new-password" : "current-password"}
+                  aria-invalid={error ? true : undefined}
                   className={inputClass}
                 />
                 <ErrorMessage error={error} />
-                <Button type="submit" className="w-full h-10" disabled={loading || !password || (isFirstTime && password.length < 8)}>
-                  {loading ? "..." : isFirstTime ? "Create account" : "Sign in"}
+                <Button type="submit" className="w-full h-10" disabled={loading || unlocking || !password || (isFirstTime && password.length < 8)}>
+                  {loading || unlocking ? <Spinner className="size-4" /> : isFirstTime ? "Create account" : "Sign in"}
                 </Button>
               </form>
             )}
@@ -219,7 +251,7 @@ function LoginContent() {
                 />
                 <ErrorMessage error={error} />
                 <Button type="submit" className="w-full h-10" disabled={loading || !username || !recoveryCode || newPassword.length < 8}>
-                  {loading ? "..." : "Reset password"}
+                  {loading ? <Spinner className="size-4" /> : "Reset password"}
                 </Button>
               </form>
             )}
@@ -277,7 +309,7 @@ function subscribeToWallpaper(onChange: () => void) {
   return () => window.removeEventListener("storage", onChange);
 }
 
-function SignInBackdrop() {
+function SignInBackdrop({ unlocking }: { unlocking: boolean }) {
   const stored = useSyncExternalStore(subscribeToWallpaper, () => readStoredWallpaper() ?? DEFAULT_SIGN_IN_WALLPAPER, () => null);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -296,11 +328,14 @@ function SignInBackdrop() {
         className="absolute inset-0 size-full object-cover"
         style={{
           opacity: loaded ? 1 : 0,
-          transform: loaded || reduceMotion ? "scale(1)" : "scale(1.03)",
-          transition: reduceMotion ? "none" : "opacity 180ms ease-out, transform 180ms ease-out",
+          transform: reduceMotion ? "scale(1)" : unlocking ? "scale(1.04)" : loaded ? "scale(1)" : "scale(1.03)",
+          transition: reduceMotion ? "none" : unlocking
+            ? "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)"
+            : "opacity 180ms ease-out, transform 180ms ease-out",
         }}
       />
-      <div className="absolute inset-0 bg-background/45" />
+      {/* The scrim lifts as you sign in, so the desktop seems to come forward */}
+      <div className={`absolute inset-0 bg-background/45 transition-opacity duration-300 ${unlocking ? "opacity-0" : ""}`} />
     </div>
   );
 }
@@ -324,7 +359,7 @@ function LockClock() {
   return (
     <div className="mb-6 text-center select-none">
       <p className="text-2xl font-medium tabular-nums text-foreground">
-        {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        <PopText value={now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} />
       </p>
       <p className="text-sm text-foreground/70 mt-1">
         {now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}

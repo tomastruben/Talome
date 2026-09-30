@@ -29,6 +29,7 @@ import {
   ArrowUp01Icon,
   Delete01Icon,
 } from "@/components/icons";
+import { tiltHandlers } from "@/components/ui/micro";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
@@ -221,7 +222,7 @@ function AudiobookCard({
 
   return (
     <div className="media-card" onClick={() => onClick(item)}>
-      <div className="audiobook-card-cover">
+      <div className="audiobook-card-cover tm-tilt" {...tiltHandlers}>
         {!imgFailed ? (
           <Image
             src={coverUrl(item.id, 400)}

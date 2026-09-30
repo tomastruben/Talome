@@ -4,10 +4,10 @@ import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import {
   HugeiconsIcon,
-  CheckmarkCircle01Icon,
   InformationCircleIcon,
   AlertCircleIcon,
 } from "@/components/icons"
+import { SuccessCheck } from "@/components/ui/micro"
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "system" } = useTheme()
@@ -18,7 +18,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
       className="toaster group"
       closeButton
       icons={{
-        success: <HugeiconsIcon icon={CheckmarkCircle01Icon} size={15} strokeWidth={1.5} />,
+        // The check draws itself as the toast arrives
+        success: <SuccessCheck size={16} />,
         info:    <HugeiconsIcon icon={InformationCircleIcon} size={15} strokeWidth={1.5} />,
         warning: <HugeiconsIcon icon={AlertCircleIcon}       size={15} strokeWidth={1.5} />,
         error:   <HugeiconsIcon icon={AlertCircleIcon}       size={15} strokeWidth={1.5} />,
