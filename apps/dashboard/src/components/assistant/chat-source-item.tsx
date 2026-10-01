@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import type { ConversationItem } from "@/components/assistant/assistant-context";
 import { HugeiconsIcon } from "@/components/icons";
 import {
@@ -50,7 +51,9 @@ export const CHAT_ROW_ACTION_SHOWN = "[&>div>button+button]:opacity-100";
  *   the row's context menu (right-click, or long-press on touch). It is the
  *   same undoable delete as the classic history list: the caller's `action`.
  *   Deleting the open chat leaves it at once; Undo reopens it (the page's
- *   `requestDelete`).
+ *   `requestDelete`). The page then moves focus to the next chat
+ *   (chat-list-focus.ts), so the menu doesn't hand it back to the row it
+ *   opened from, which is gone.
  */
 export function ChatSourceItem({
   conversation,
@@ -65,12 +68,19 @@ export function ChatSourceItem({
   action: SourceListItemAction;
 }) {
   const title = chatTitle(conversation);
+  const deleting = useRef(false);
 
   return (
-    <ContextMenu>
+    <ContextMenu
+      onOpenChange={(open) => {
+        // A menu closed without Delete hands focus back to its row as usual
+        if (open) deleting.current = false;
+      }}
+    >
       <ContextMenuTrigger asChild>
         <div
           data-chat-row=""
+          data-chat-id={conversation.id}
           className={cn(
             "min-w-0 rounded-lg data-[state=open]:bg-foreground/5",
             active && CHAT_ROW_ACTION_SHOWN,
@@ -103,8 +113,19 @@ export function ChatSourceItem({
           />
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-48">
-        <ContextMenuItem variant="destructive" onSelect={action.onSelect}>
+      <ContextMenuContent
+        className="w-48"
+        onCloseAutoFocus={(event) => {
+          if (deleting.current) event.preventDefault();
+        }}
+      >
+        <ContextMenuItem
+          variant="destructive"
+          onSelect={() => {
+            deleting.current = true;
+            action.onSelect();
+          }}
+        >
           <HugeiconsIcon icon={action.icon} size={14} aria-hidden="true" />
           Delete
         </ContextMenuItem>

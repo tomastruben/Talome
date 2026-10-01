@@ -44,6 +44,7 @@ import { useAssistant } from "@/components/assistant/assistant-context";
 import { AssistantModelSelector } from "@/components/assistant/assistant-model-selector";
 import { AssistantChatError } from "@/components/assistant/chat-error";
 import { ChatSourceItem, chatTitle } from "@/components/assistant/chat-source-item";
+import { restoreFocusAfterChatLeft, type ChatList } from "@/components/assistant/chat-list-focus";
 import { useKeyboardMode } from "@/hooks/use-keyboard-mode";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -374,8 +375,24 @@ export default function AssistantPage() {
     [deleteConversation],
   );
   const { pending: pendingDeletes, request: requestUndoableDelete } = useUndoableDelete(removeConversation);
+  // Every chat in the order both lists show them: date groups, newest first
+  const grouped = useMemo(() => {
+    const groups: Record<string, typeof conversations[number][]> = {};
+    for (const conv of conversations) {
+      const group = getDateGroup(conv.updatedAt);
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(conv);
+    }
+    return groups;
+  }, [conversations]);
+  const chatOrder = useMemo(() => Object.values(grouped).flat().map((conv) => conv.id), [grouped]);
+  // The deleted row takes focus with it: once it has left the page, focus
+  // moves to the next chat in the same list (see chat-list-focus.ts)
+  const leftListRef = useRef<{ id: string; list: ChatList; order: readonly string[] } | null>(null);
   const requestDelete = useCallback(
-    (id: string, label: string) => {
+    (id: string, label: string, list: ChatList) => {
+      if (pendingDeletes.has(id)) return;
+      leftListRef.current = { id, list, order: chatOrder };
       if (id === activeId) {
         leftChatRef.current = id;
         startNew();
@@ -383,8 +400,14 @@ export default function AssistantPage() {
       }
       requestUndoableDelete(id, label);
     },
-    [activeId, requestUndoableDelete, startNew],
+    [activeId, chatOrder, pendingDeletes, requestUndoableDelete, startNew],
   );
+  useEffect(() => {
+    const left = leftListRef.current;
+    if (!left || !pendingDeletes.has(left.id)) return;
+    leftListRef.current = null;
+    restoreFocusAfterChatLeft(left);
+  }, [pendingDeletes]);
   useEffect(() => {
     const id = leftChatRef.current;
     if (!id) return;
@@ -652,16 +675,6 @@ export default function AssistantPage() {
     setBlueprint({});
   }, [setBlueprint]);
 
-  const grouped = useMemo(() => {
-    const groups: Record<string, typeof conversations[number][]> = {};
-    for (const conv of conversations) {
-      const group = getDateGroup(conv.updatedAt);
-      if (!groups[group]) groups[group] = [];
-      groups[group].push(conv);
-    }
-    return groups;
-  }, [conversations]);
-
   // Voice conversation: speaks the latest assistant reply when it finishes
   const [voiceOpen, setVoiceOpen] = useState(false);
   const lastAssistant = useMemo(() => {
@@ -766,7 +779,13 @@ export default function AssistantPage() {
           <div className="mb-4 flex size-12 items-center justify-center" aria-hidden>
             <ThinkingOrb state="breathing" size={32} />
           </div>
-          <h2 className="mb-6 text-center text-2xl font-medium tracking-tight text-foreground @md/assistant:mb-8">
+          {/* Where focus lands on a touch screen once Delete has emptied the
+              list below (the composer would raise the on-screen keyboard) */}
+          <h2
+            tabIndex={-1}
+            data-assistant-home=""
+            className="mb-6 text-center text-2xl font-medium tracking-tight text-foreground outline-none @md/assistant:mb-8"
+          >
             How can I help?
           </h2>
 
@@ -791,21 +810,29 @@ export default function AssistantPage() {
             ))}
           </div>
 
-          {conversations.length > 0 && (
+          {conversations.some((conv) => !pendingDeletes.has(conv.id)) && (
             <div className={`w-full max-w-xl ${WINDOW_SIDEBAR_REPLACES}`}>
               {Object.entries(grouped).map(([group, convs]) => {
+                // Chats waiting on Undo leave the list before it is cut to
+                // length, so the group still shows its first three and its
+                // "Show N more" counts what is really left; a group they
+                // emptied goes too, as in the window sidebar
+                const live = convs.filter((conv) => !pendingDeletes.has(conv.id));
+                if (live.length === 0) return null;
                 const isExpanded = !!expandedGroups[group];
-                const visibleConvs = isExpanded ? convs : convs.slice(0, MAX_VISIBLE_HISTORY_PER_GROUP);
-                const hiddenCount = Math.max(0, convs.length - visibleConvs.length);
+                const visibleConvs = isExpanded ? live : live.slice(0, MAX_VISIBLE_HISTORY_PER_GROUP);
+                const hiddenCount = Math.max(0, live.length - visibleConvs.length);
 
                 return (
                   <div key={group} className="pb-1.5">
                     <div className="px-1 pb-1.5 pt-3 first:pt-0 text-xs font-medium text-muted-foreground">
                       {group}
                     </div>
-                    {visibleConvs.filter((conv) => !pendingDeletes.has(conv.id)).map((conv) => (
+                    {visibleConvs.map((conv) => (
                       <div
                         key={conv.id}
+                        data-chat-history-row=""
+                        data-chat-id={conv.id}
                         className="group/item flex items-center rounded-lg text-sm text-muted-foreground transition-colors duration-150 hover:bg-accent/30 hover:text-foreground focus-within:bg-accent/30"
                       >
                         <button
@@ -829,7 +856,7 @@ export default function AssistantPage() {
                               variant="ghost"
                               size="icon-sm"
                               aria-label={`Delete "${conv.title}"`}
-                              onClick={() => requestDelete(conv.id, conv.title || "Untitled conversation")}
+                              onClick={() => requestDelete(conv.id, conv.title || "Untitled conversation", "history")}
                               className="mr-1 shrink-0 text-muted-foreground hover:text-status-critical sm:opacity-0 sm:group-hover/item:opacity-100 sm:group-focus-within/item:opacity-100 sm:focus-visible:opacity-100 pointer-coarse:size-11 pointer-coarse:opacity-100"
                             >
                               <HugeiconsIcon icon={Delete01Icon} size={14} strokeWidth={1.5} aria-hidden="true" />
@@ -839,11 +866,11 @@ export default function AssistantPage() {
                         </Tooltip>
                       </div>
                     ))}
-                    {convs.length > MAX_VISIBLE_HISTORY_PER_GROUP && (
+                    {live.length > MAX_VISIBLE_HISTORY_PER_GROUP && (
                       <button
                         type="button"
                         onClick={() => toggleGroup(group)}
-                        className="mt-1 mb-2 w-full rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/20 hover:text-foreground"
+                        className="mt-1 mb-2 w-full rounded-lg px-3 py-2 text-left text-sm text-muted-foreground outline-none transition-colors duration-150 ease-out hover:bg-accent/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
                       >
                         {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
                       </button>
@@ -900,7 +927,13 @@ export default function AssistantPage() {
   const sidebar = (
     <SourceList label="Chats">
       <SourceListSection>
-        <SourceListItem icon={Add01Icon} label="New chat" active={!showingChat} onSelect={() => void handleNew()} />
+        <SourceListItem
+          icon={Add01Icon}
+          label="New chat"
+          active={!showingChat}
+          onSelect={() => void handleNew()}
+          data-new-chat=""
+        />
       </SourceListSection>
       {Object.entries(grouped).map(([group, convs]) => {
         // Chats waiting on Undo leave the list; a section they emptied goes too
@@ -919,7 +952,7 @@ export default function AssistantPage() {
                 action={{
                   icon: Delete01Icon,
                   label: `Delete "${chatTitle(conv)}"`,
-                  onSelect: () => requestDelete(conv.id, chatTitle(conv)),
+                  onSelect: () => requestDelete(conv.id, chatTitle(conv), "sidebar"),
                 }}
               />
             ))}
