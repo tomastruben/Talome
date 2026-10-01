@@ -4,6 +4,18 @@ import type { IconSvgElement } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+/**
+ * `fill` drops the dashed card and takes the rest of the view instead,
+ * centred: for a state that *is* the view (an empty folder, a failed list) in
+ * a window or page whose parent is a flex column filling its height (page
+ * roots `flex min-w-0 flex-1 flex-col`, fill-mode lists `flex min-h-full
+ * flex-col`). Without it the state is a dashed card sized to its content.
+ */
+const frame = (fill: boolean | undefined) =>
+  fill
+    ? "flex min-h-64 flex-1 self-stretch flex-col items-center justify-center gap-3 border-0 p-12 text-center"
+    : "flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-12 text-center";
+
 // ── EmptyState ────────────────────────────────────────────────────────────────
 
 interface EmptyStateProps {
@@ -11,17 +23,14 @@ interface EmptyStateProps {
   title: string;
   description?: string;
   action?: ReactNode;
+  /** Fill the parent flex column, centred, without the dashed card */
+  fill?: boolean;
   className?: string;
 }
 
-export function EmptyState({ icon, title, description, action, className }: EmptyStateProps) {
+export function EmptyState({ icon, title, description, action, fill, className }: EmptyStateProps) {
   return (
-    <div
-      className={cn(
-        "flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-12 text-center",
-        className
-      )}
-    >
+    <div data-slot="empty-state" className={cn(frame(fill), className)}>
       {icon && (
         <HugeiconsIcon
           icon={icon}
@@ -47,6 +56,8 @@ interface ErrorStateProps {
   title?: string;
   description?: string;
   onRetry?: () => void;
+  /** Fill the parent flex column, centred, without the dashed card */
+  fill?: boolean;
   className?: string;
 }
 
@@ -54,15 +65,11 @@ export function ErrorState({
   title = "Something went wrong",
   description = "Check that the Talome server is reachable.",
   onRetry,
+  fill,
   className,
 }: ErrorStateProps) {
   return (
-    <div
-      className={cn(
-        "flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-12 text-center",
-        className
-      )}
-    >
+    <div data-slot="error-state" className={cn(frame(fill), className)}>
       <HugeiconsIcon
         icon={AlertCircleIcon}
         size={32}
@@ -75,7 +82,7 @@ export function ErrorState({
       </div>
       {onRetry && (
         <Button variant="ghost" size="sm" onClick={onRetry} className="mt-1 h-7 text-xs">
-          Try again
+          Retry
         </Button>
       )}
     </div>

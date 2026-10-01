@@ -4,6 +4,7 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAtomValue } from "jotai";
 import { WindowSidebarSlot } from "@/components/ui/source-list";
+import { WindowStatusBarSlot, WindowToolbarSlot } from "@/components/desktop/window-content";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { SiteHeader } from "@/components/layout/site-header";
@@ -31,6 +32,7 @@ import { DesktopAppActionBridge } from "@/components/desktop/desktop-app-action-
 import { DesktopAudiobookPlayerBridge } from "@/components/desktop/desktop-audiobook-player-bridge";
 import { DesktopShellHeaderActions } from "@/components/desktop/desktop-shell-header-actions";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { windowContentLayout } from "@/lib/window-layout";
 import {
   canAccessDashboardRoute,
   firstAccessibleDashboardRoute,
@@ -47,9 +49,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const embeddedFrame = useIsEmbeddedFrame();
   const desktopRoute = pathname === "/dashboard/desktop";
-  const embeddedPlayerRoute = embeddedFrame && pathname === "/dashboard/player";
-  const embeddedFilesRoute = embeddedFrame && pathname === "/dashboard/files";
   const embeddedAudiobookRoute = embeddedFrame && pathname.startsWith("/dashboard/audiobooks");
+  const windowLayout = windowContentLayout(pathname);
   const { user, isLoading: userLoading } = useUser();
   const routeAllowed = canAccessDashboardRoute(pathname, user?.role, user?.permissions);
   const restrictedLandingRoute = pathname === "/dashboard" && !routeAllowed;
@@ -123,7 +124,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 {children}
               </main>
             ) : embeddedFrame ? (
-              <main id="main-content" className="relative flex h-dvh min-h-0 flex-1 flex-col overflow-hidden [container-type:inline-size]">
+              // A desktop window: the window's glass (parent document) shows
+              // through wherever the app doesn't paint. The sidebar sits on the
+              // glass; the content column paints a thin tint and holds the
+              // toolbar, the scroller and the status bar (window-content.tsx).
+              <main id="main-content" className="@container/window relative flex h-dvh min-h-0 flex-1 flex-col overflow-hidden">
                 {embeddedAudiobookRoute ? (
                   <>
                     <AudiobookAudioEngine />
@@ -135,16 +140,23 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 <div className="flex min-h-0 flex-1">
                   <WindowSidebarSlot />
                   <div
-                    ref={contentScrollRef}
-                    className={`relative flex min-h-0 min-w-0 flex-1 flex-col overscroll-none ${
-                      embeddedPlayerRoute
-                        ? "overflow-hidden bg-black"
-                        : embeddedFilesRoute
-                          ? "overflow-hidden bg-background"
-                          : "overflow-y-auto bg-background p-4"
-                    }`}
+                    data-window-content=""
+                    className="tm-window-content @container/content relative flex min-h-0 min-w-0 flex-1 flex-col"
                   >
-                    {children}
+                    <WindowToolbarSlot />
+                    <div
+                      ref={contentScrollRef}
+                      data-content-scroll=""
+                      data-window-layout={windowLayout}
+                      className={
+                        windowLayout === "fill"
+                          ? "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                          : "tm-window-scroll relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-none"
+                      }
+                    >
+                      {children}
+                    </div>
+                    <WindowStatusBarSlot />
                   </div>
                 </div>
               </main>
@@ -161,7 +173,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 {!hideHeader && <SiteHeader />}
                 <SystemHealthBanner />
                 <main id="main-content" className={`flex-1 min-h-0 min-w-0 overflow-hidden relative flex flex-col ${hideHeader ? "" : "[container-type:inline-size]"}`}>
-                  <div ref={contentScrollRef} className={`flex-1 min-h-0 min-w-0 flex flex-col ${hideHeader ? "" : "overflow-y-auto p-4 pb-8 sm:p-6 sm:pb-10 overscroll-none"}`}>
+                  <div ref={contentScrollRef} data-content-scroll="" className={`flex-1 min-h-0 min-w-0 flex flex-col ${hideHeader ? "" : "overflow-y-auto p-4 pb-8 sm:p-6 sm:pb-10 overscroll-none"}`}>
                     {children}
                   </div>
                 </main>

@@ -78,7 +78,7 @@ export function DesktopServiceUnavailable({
     <div
       role="status"
       data-desktop-service-unavailable={state}
-      className="flex size-full flex-col items-center justify-center gap-3 bg-background p-6 text-center"
+      className="tm-window-content flex size-full flex-col items-center justify-center gap-3 p-6 text-center"
     >
       <HugeiconsIcon
         icon={state === "missing" ? PackageOpenIcon : AlertCircleIcon}

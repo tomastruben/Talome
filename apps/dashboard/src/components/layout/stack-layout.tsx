@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { DURATION, TRAVEL, enter, exit } from "@/lib/motion";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 
 /**
  * Stack navigation direction between two paths under `rootPath`:
@@ -60,7 +61,7 @@ interface StackLayoutProps {
 }
 
 function findScrollParent(el: HTMLElement | null): HTMLElement | null {
-  return (el?.closest("[class*='overflow-y-auto']") as HTMLElement | null) ?? null;
+  return (el?.closest("[data-content-scroll], [class*='overflow-y-auto']") as HTMLElement | null) ?? null;
 }
 
 export function StackLayout({ children, rootPath }: StackLayoutProps) {
@@ -76,6 +77,9 @@ export function StackLayout({ children, rootPath }: StackLayoutProps) {
   const pathRef = useRef(pathname);
   const scrollPositions = useRef<Map<string, number>>(new Map());
   const reduceMotion = useReducedMotion();
+  // In a desktop window the panel sits on window glass; an opaque fill would
+  // read as a dark slab over the frost.
+  const embedded = useIsEmbeddedFrame();
 
   // While a transition runs, the shell resets the shared scroller to the top;
   // those scroll events must not overwrite the saved positions.
@@ -129,7 +133,7 @@ export function StackLayout({ children, rootPath }: StackLayoutProps) {
           animate="center"
           exit="exit"
           transition={transition}
-          className="bg-background will-change-transform"
+          className={embedded ? "will-change-transform" : "bg-background will-change-transform"}
         >
           {children}
         </motion.div>

@@ -499,13 +499,11 @@ export const DesktopWindow = memo(function DesktopWindow({
     };
 
     return (
+      // Neutral in both states: the title bar sits on the window glass, and
+      // window chrome never carries status colours. Auto mode shows as the
+      // amber switch fill (non-text, 3:1 on glass) beside a foreground label.
       <div
-        className={cn(
-          "flex h-6 shrink-0 items-center overflow-hidden rounded-md transition-colors duration-150",
-          autoAction?.active
-            ? "bg-status-warning/10 ring-1 ring-status-warning/20"
-            : "bg-muted/30 ring-1 ring-border/50",
-        )}
+        className="flex h-6 shrink-0 items-center overflow-hidden rounded-md bg-muted/30 ring-1 ring-border/50"
         role="group"
         aria-label="Terminal controls"
       >
@@ -526,7 +524,7 @@ export const DesktopWindow = memo(function DesktopWindow({
               className="data-[state=checked]:bg-status-warning"
               onCheckedChange={() => onAction?.(autoAction.id)}
             />
-            <span className={cn("tm-cap-trim font-medium", autoAction.active ? "text-status-warning" : "text-muted-foreground")}>Auto</span>
+            <span className={cn("tm-cap-trim font-medium", autoAction.active ? "text-foreground" : "text-muted-foreground")}>Auto</span>
           </label>
         )}
         {remoteAction && (
@@ -554,10 +552,7 @@ export const DesktopWindow = memo(function DesktopWindow({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className={cn(
-                  "flex h-6 min-w-0 max-w-40 items-center gap-1.5 rounded-r-md px-2.5 text-xs transition-colors duration-150 hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-40",
-                  autoAction?.active ? "text-status-warning/80 hover:text-status-warning" : "text-muted-foreground hover:text-foreground",
-                )}
+                className="flex h-6 min-w-0 max-w-40 items-center gap-1.5 rounded-r-md px-2.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
                 disabled={agentAction.disabled}
                 aria-label={agentAction.label}
                 onPointerDown={stopTitlebarGesture}
@@ -601,7 +596,7 @@ export const DesktopWindow = memo(function DesktopWindow({
       <div
         aria-hidden
         data-window-snap-preview=""
-        className="pointer-events-none absolute rounded-xl border border-foreground/20 bg-foreground/[0.08] backdrop-blur-sm transition-[left,top,width,height] duration-150 ease-out motion-reduce:transition-none"
+        className="pointer-events-none absolute rounded-xl border border-foreground/20 bg-foreground/[0.08] backdrop-blur-sm transition-[left,top,width,height] duration-150 ease-out motion-reduce:transition-none solid-materials:bg-muted solid-materials:backdrop-blur-none"
         style={{
           left: snapPreview.x + 6,
           top: snapPreview.y + 6,
@@ -628,7 +623,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         // Focus is shown by edge, shadow and title colour (tm-window[data-active]), never by dimming content.
         "tm-window absolute flex min-h-0 flex-col overflow-hidden outline-none",
         "transition-[border-color,box-shadow] duration-150 ease-out",
-        maximized ? "rounded-t-none rounded-b-2xl border-x-0 border-t-0 border-b" : "rounded-2xl border",
+        maximized ? "rounded-t-none rounded-b-xl border-x-0 border-t-0 border-b" : "rounded-xl border",
         disabled && "pointer-events-none",
         minimized && "invisible pointer-events-none opacity-0",
       )}

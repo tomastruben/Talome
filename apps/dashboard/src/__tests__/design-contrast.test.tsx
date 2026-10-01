@@ -9,6 +9,7 @@ const health = vi.hoisted(() => ({ status: "offline" as "online" | "offline" | "
 vi.mock("@/hooks/use-is-online", () => ({ useIsOnline: () => ({ status: health.status }) }));
 
 import { HEALTH_BANNER_TONE, SystemHealthBanner } from "@/components/system-health-banner";
+import { SourceListItem } from "@/components/ui/source-list";
 
 const SRC = join(__dirname, "..");
 const read = (path: string) => readFileSync(join(SRC, path), "utf8");
@@ -155,5 +156,191 @@ describe("critical text on an inverted surface (Files selection bar)", () => {
     const files = read("app/dashboard/files/page.tsx");
     expect(files).toContain("text-status-critical-inverse");
     expect(files).not.toMatch(/text-red-\d|bg-red-\d|hover:bg-black\//);
+  });
+});
+
+describe("desktop window glass", () => {
+  /** The declarations of the first unlayered rule whose selector is exactly `selector`. */
+  const ruleBody = (selector: string): string => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = new RegExp(`(^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(css);
+    if (!match) throw new Error(`No ${selector} rule`);
+    return match[2];
+  };
+  const material = (selector: string) => {
+    const body = ruleBody(selector);
+    const tint = /background:\s*color-mix\(in oklch, var\((--[\w-]+)\) (\d+)%, transparent\)/.exec(body);
+    const filter = /(?<!-webkit-)backdrop-filter:\s*([^;]+);/.exec(body)?.[1].trim();
+    const webkitFilter = /-webkit-backdrop-filter:\s*([^;]+);/.exec(body)?.[1].trim();
+    const fn = (name: string) => Number(new RegExp(`${name}\\(([\\d.]+)(?:px)?\\)`).exec(filter ?? "")?.[1]);
+    return {
+      token: tint?.[1],
+      alpha: Number(tint?.[2]) / 100,
+      filter,
+      webkitFilter,
+      blur: fn("blur"),
+      saturate: fn("saturate"),
+      brightness: fn("brightness"),
+    };
+  };
+  const tintAlpha = (selector: string, token: string) => {
+    const match = new RegExp(`background:\\s*color-mix\\(in oklch, var\\(${token}\\) (\\d+)%, transparent\\)`).exec(ruleBody(selector));
+    return Number(match?.[1]) / 100;
+  };
+
+  const glass = { dark: material(".tm-window"), light: material(":root:not(.dark) .tm-window") };
+  const content = {
+    dark: tintAlpha(".tm-window-content", "--background"),
+    light: tintAlpha(":root:not(.dark) .tm-window-content", "--background"),
+  };
+  /** The worst backdrop for each theme's text: pure white behind dark glass, pure black behind light. */
+  const worstBackdrop = { dark: 1, light: 0 } as const;
+  const gray = (v: number) => ({ r: v, g: v, b: v, a: 1 });
+  /** Backdrop → saturate (a no-op on grey) → brightness, in sRGB as browsers apply it → card tint. */
+  const glassOver = (theme: "dark" | "light", backdrop: number) =>
+    over(color(themes[theme], "--card"), gray(Math.min(1, backdrop * glass[theme].brightness)), glass[theme].alpha);
+  const contentOver = (theme: "dark" | "light", backdrop: number) =>
+    over(color(themes[theme], "--background"), glassOver(theme, backdrop), content[theme]);
+
+  it("is one frosted material on the window, as frosted as the sign-in card and never see-through", () => {
+    expect(glass.dark).toMatchObject({ token: "--card", alpha: 0.7, blur: 48, saturate: 1.8, brightness: 0.65 });
+    expect(glass.light).toMatchObject({ token: "--card", alpha: 0.88, blur: 48, saturate: 1.8, brightness: 1.2 });
+    for (const m of Object.values(glass)) expect(m.webkitFilter).toBe(m.filter);
+    expect(content).toEqual({ dark: 0.15, light: 0.25 });
+
+    // How much of the (dimmed, blurred) wallpaper shows through: enough to read
+    // as frosted glass (the owner asked for more frost on windows), not so much
+    // that the window turns see-through
+    for (const [name, m] of Object.entries(glass)) {
+      const through = (1 - m.alpha) * Math.min(1, m.brightness);
+      expect(through, name).toBeGreaterThanOrEqual(0.1);
+      expect(through, name).toBeLessThanOrEqual(0.2);
+    }
+
+    // The title bar and body paint nothing of their own: one glass per window
+    expect(ruleBody(".tm-window-titlebar")).not.toMatch(/background|backdrop-filter/);
+    expect(css).not.toMatch(/(^|\n)\.tm-window-body\s*\{/);
+  });
+
+  it("keeps text at AA on the glass and the content tint over any wallpaper, active or not", () => {
+    for (const theme of ["dark", "light"] as const) {
+      const tokens = themes[theme];
+      const surfaces = {
+        "title bar / sidebar": glassOver(theme, worstBackdrop[theme]),
+        "content column": contentOver(theme, worstBackdrop[theme]),
+      };
+      for (const [surface, bg] of Object.entries(surfaces)) {
+        expect(contrast(color(tokens, "--muted-foreground"), bg), `${theme} muted on ${surface}`).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(color(tokens, "--foreground"), bg), `${theme} foreground on ${surface}`).toBeGreaterThanOrEqual(7);
+      }
+    }
+    // Inactive windows share the material, and their title isn't faded
+    expect(css).not.toMatch(/\.tm-window:not\(\[data-active\]\)/);
+    expect(css).not.toMatch(/\[data-title-placement\][^{]*\{[^}]*opacity/);
+  });
+
+  it("keeps the amber needs-you count legible and distinct on window glass", () => {
+    for (const theme of ["dark", "light"] as const) {
+      const tokens = themes[theme];
+      const fill = color(tokens, "--status-warning");
+      expect(contrast(color(tokens, "--status-warning-foreground"), fill), `${theme} count text`).toBeGreaterThanOrEqual(4.5);
+      for (const bg of [glassOver(theme, worstBackdrop[theme]), contentOver(theme, worstBackdrop[theme])]) {
+        expect(contrast(fill, bg), `${theme} count on glass`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it("keeps sidebar labels and counts at AA on hovered and selected rows, not only on bare glass", () => {
+    // The row tints and text tones, read from rendered rows so the model can't drift from the classes
+    const { container } = render(
+      <>
+        <SourceListItem label="Selected" active trailing={12} onSelect={() => {}} />
+        <SourceListItem label="Rest" trailing={12} onSelect={() => {}} />
+      </>,
+    );
+    const [selectedRow, restRow] = Array.from(container.querySelectorAll("button"));
+    const trailing = (row: Element) => row.querySelector("[data-slot='source-list-trailing']")!.className;
+    const alpha = (className: string, pattern: RegExp) => {
+      const match = pattern.exec(className);
+      expect(match, `${pattern} in "${className}"`).not.toBeNull();
+      return Number(match![1]) / 100;
+    };
+    const tint = {
+      hover: alpha(restRow.className, /(?:^|\s)hover:bg-foreground\/(\d+)(?:\s|$)/),
+      selected: alpha(selectedRow.className, /(?:^|\s)bg-foreground\/(\d+)(?:\s|$)/),
+    };
+    const labelAtRest = alpha(restRow.className, /(?:^|\s)text-foreground\/(\d+)(?:\s|$)/);
+    const count = {
+      hover: alpha(trailing(restRow), /(?:^|\s)group-hover\/source-item:text-foreground\/(\d+)(?:\s|$)/),
+      selected: alpha(trailing(selectedRow), /(?:^|\s)text-foreground\/(\d+)(?:\s|$)/),
+    };
+    expect(trailing(restRow)).toMatch(/(?:^|\s)text-muted-foreground(?:\s|$)/);
+    expect(selectedRow.className).toMatch(/(?:^|\s)text-foreground(?:\s|$)/);
+
+    for (const theme of ["dark", "light"] as const) {
+      const fg = color(themes[theme], "--foreground");
+      const muted = color(themes[theme], "--muted-foreground");
+      const surfaces = { glass: glassOver(theme, worstBackdrop[theme]), "content tint": contentOver(theme, worstBackdrop[theme]) };
+      for (const [surface, base] of Object.entries(surfaces)) {
+        const hovered = over(fg, base, tint.hover);
+        const selected = over(fg, base, tint.selected);
+        const cases: Record<string, number> = {
+          "count at rest": contrast(muted, base),
+          "count on hover": contrast(over(fg, hovered, count.hover), hovered),
+          "count on selected": contrast(over(fg, selected, count.selected), selected),
+          "label at rest": contrast(over(fg, base, labelAtRest), base),
+          "label on hover": contrast(fg, hovered),
+          "label on selected": contrast(fg, selected),
+        };
+        for (const [name, ratio] of Object.entries(cases)) {
+          expect(ratio, `${theme} ${name} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  });
+
+  it("never writes title-bar text in a status colour (terminal Auto: amber switch fill, foreground label)", () => {
+    const windowSource = read("components/desktop/desktop-window.tsx");
+    expect(windowSource).not.toMatch(/text-status-/);
+    expect(windowSource).not.toMatch(/(bg|ring)-status-warning\//);
+    expect(windowSource).toContain("data-[state=checked]:bg-status-warning");
+
+    const group = /className="[^"]*\bbg-muted\/(\d+)[^"]*"\s*role="group"\s*aria-label="Terminal controls"/.exec(windowSource);
+    expect(group, "neutral Terminal controls group").not.toBeNull();
+    for (const theme of ["dark", "light"] as const) {
+      const tokens = themes[theme];
+      const bg = over(color(tokens, "--muted"), glassOver(theme, worstBackdrop[theme]), Number(group![1]) / 100);
+      expect(contrast(color(tokens, "--muted-foreground"), bg), `${theme} muted label`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(color(tokens, "--foreground"), bg), `${theme} active label`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(color(tokens, "--status-warning"), bg), `${theme} Auto switch fill`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("puts every blur material in the opaque fallback block", () => {
+    const fallbackStart = css.lastIndexOf("@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {");
+    const sectionStart = css.search(/\n\.tm-window\s*\{/);
+    expect(sectionStart).toBeGreaterThan(0);
+    expect(fallbackStart).toBeGreaterThan(sectionStart);
+
+    const rules = (text: string) =>
+      Array.from(text.matchAll(/([^{}]+)\{([^{}]*)\}/g), (m) => ({
+        selectors: m[1].replace(/\/\*[\s\S]*?\*\//g, "").split(",").map((s) => s.trim()).filter(Boolean),
+        body: m[2],
+      }));
+    const blurred = rules(css.slice(sectionStart, fallbackStart))
+      .filter((rule) => /backdrop-filter:\s*(?!none)/.test(rule.body))
+      .flatMap((rule) => rule.selectors);
+    expect(blurred).toEqual(expect.arrayContaining([".tm-window", ":root:not(.dark) .tm-window", ".tm-glass", ".tm-glass-dense"]));
+
+    const fallback = rules(css.slice(fallbackStart));
+    const solid = fallback
+      .filter((rule) => /backdrop-filter:\s*none/.test(rule.body) && /background:\s*var\(--surface-island-solid\)/.test(rule.body))
+      .flatMap((rule) => rule.selectors);
+    for (const selector of blurred) expect(solid, selector).toContain(selector);
+
+    // The content column goes solid with it, as in classic mode
+    const contentRule = fallback.find((rule) => rule.selectors.includes(".tm-window-content"));
+    expect(contentRule?.selectors).toContain(":root:not(.dark) .tm-window-content");
+    expect(contentRule?.body).toMatch(/background:\s*var\(--background\)/);
   });
 });

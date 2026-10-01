@@ -38,6 +38,8 @@
   --color-window-minimize: var(--window-minimize);
   --color-window-zoom: var(--window-zoom);
   --color-window-control-edge: var(--window-control-edge);
+  /* Desktop windows: hairlines on window glass (title bar, sidebar, toolbar) */
+  --color-window-separator: var(--window-separator);
   /* Motion: ease-enter / ease-exit utilities */
   --ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
@@ -200,6 +202,8 @@
   --window-minimize: oklch(0.74 0.15 75);
   --window-zoom: oklch(0.64 0.17 150);
   --window-control-edge: oklch(0 0 0 / 14%);
+  /* Hairlines on window glass: title bar, sidebar, toolbar, status bar */
+  --window-separator: oklch(0 0 0 / 8%);
 }
 
 .dark {
@@ -258,6 +262,7 @@
   --window-minimize: oklch(0.8 0.15 80);
   --window-zoom: oklch(0.72 0.17 150);
   --window-control-edge: oklch(0 0 0 / 0%);
+  --window-separator: oklch(1 0 0 / 8%);
 }
 
 /* ── Increased contrast ──────────────────────────────────────────────────────
@@ -868,24 +873,12 @@
     max-width: 100%;
   }
 
+  /* Edge fades are a mask, not a painted gradient, so the rail fades into
+     whatever is behind it (a card, or window glass in desktop mode) */
   @media (max-width: 1023px) {
-    .filter-rail::before,
-    .filter-rail::after {
-      content: "";
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      width: 18px;
-      pointer-events: none;
-      z-index: 1;
-    }
-    .filter-rail::before {
-      left: 0;
-      background: linear-gradient(to right, var(--background), transparent);
-    }
-    .filter-rail::after {
-      right: 0;
-      background: linear-gradient(to left, var(--background), transparent);
+    .filter-rail {
+      -webkit-mask-image: linear-gradient(to right, transparent 0, black 18px, black calc(100% - 18px), transparent 100%);
+      mask-image: linear-gradient(to right, transparent 0, black 18px, black calc(100% - 18px), transparent 100%);
     }
   }
 
@@ -1284,8 +1277,8 @@
     backface-visibility: hidden;
     transform-origin: center center;
     will-change: transform;
-    transition: transform 260ms cubic-bezier(0.2, 0.9, 0.2, 1),
-                opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+    transition: transform var(--duration-base) var(--ease-enter),
+                opacity var(--duration-base) var(--ease-enter);
   }
   .media-card:hover {
     border: none;
@@ -1296,7 +1289,7 @@
     border: none;
     box-shadow: none;
     transform: translate3d(0, -1px, 0) scale(1.008);
-    transition-duration: 140ms;
+    transition-duration: var(--duration-press);
   }
   .media-card:focus-visible {
     border: none;
@@ -1352,8 +1345,8 @@
     overflow: hidden;
   }
   .media-card-poster img {
-    transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
-                filter 280ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: transform var(--duration-base) var(--ease-enter),
+                filter var(--duration-base) var(--ease-enter);
     transform: scale(1);
     filter: saturate(0.98) brightness(0.985);
   }
@@ -1362,8 +1355,8 @@
     filter: saturate(1.02) brightness(1.01);
   }
   .media-card > .min-w-0 {
-    transition: transform 260ms cubic-bezier(0.2, 0.9, 0.2, 1),
-                opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+    transition: transform var(--duration-base) var(--ease-enter),
+                opacity var(--duration-base) var(--ease-enter);
     transform: translateY(0);
   }
   .media-card:hover > .min-w-0 {
@@ -1390,8 +1383,6 @@
     font-size: var(--text-sm);
     font-weight: 500;
     color: var(--muted-foreground);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     margin-bottom: var(--space-lg);
   }
 
@@ -2436,9 +2427,20 @@ html[data-status-bar="ios"] [data-desktop-dock-band] {
   text-box-edge: cap alphabetic;
 }
 
-/* Desktop windows: a hairline catches the light along the top edge, and
-   layered shadows lift the window you're working in above the rest. */
+/* Desktop windows: one frosted glass per window, on .tm-window. The
+   wallpaper's colour and light come through, blurred, but not its detail. The
+   backdrop is dimmed (lifted, in light) rather than the tint thickened, which
+   keeps muted text at 4.5:1 or better on the title bar, the sidebar and the
+   content column over any wallpaper: design-contrast.test.tsx checks the worst
+   case, pure white behind a dark window and pure black behind a light one.
+   Active and inactive windows share the material; focus shows in the edge,
+   the shadow and the title's colour, never by fading anything. A hairline
+   catches the light along the top edge, and layered shadows lift the window
+   you're working in above the rest. */
 .tm-window {
+  background: color-mix(in oklch, var(--card) 70%, transparent);
+  -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(0.65);
+  backdrop-filter: blur(48px) saturate(1.8) brightness(0.65);
   /* Two strokes: a light hairline on the inside catches the edge on dark
      wallpapers, a dark rim outside separates it from bright ones */
   border-color: oklch(1 0 0 / 9%);
@@ -2456,35 +2458,68 @@ html[data-status-bar="ios"] [data-desktop-dock-band] {
     0 32px 80px -16px oklch(0 0 0 / 65%),
     0 12px 28px -8px oklch(0 0 0 / 45%);
 }
-/* The title bar is frosted glass over whatever sits behind the window */
-.tm-window-titlebar {
-  border-color: oklch(1 0 0 / 6%);
-  background: color-mix(in oklch, var(--card) 90%, transparent);
-  backdrop-filter: blur(40px) saturate(1.8);
+:root:not(.dark) .tm-window {
+  background: color-mix(in oklch, var(--card) 88%, transparent);
+  -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
+  backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
+  border-color: oklch(0 0 0 / 10%);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), 0 12px 32px -12px oklch(0 0 0 / 20%), 0 2px 8px -2px oklch(0 0 0 / 12%);
 }
-.tm-window:not([data-active]) .tm-window-titlebar {
-  background: color-mix(in oklch, var(--card) 84%, transparent);
-}
-.tm-window:not([data-active]) .tm-window-titlebar [data-title-placement] { opacity: 0.7; }
-:root:not(.dark) .tm-window { border-color: oklch(0 0 0 / 10%); box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), 0 12px 32px -12px oklch(0 0 0 / 20%), 0 2px 8px -2px oklch(0 0 0 / 12%); }
 :root:not(.dark) .tm-window[data-active] { border-color: oklch(0 0 0 / 14%); box-shadow: 0 0 0 1px oklch(1 0 0 / 60%), 0 28px 64px -16px oklch(0 0 0 / 28%), 0 10px 24px -8px oklch(0 0 0 / 16%); }
+/* The title bar and the body (.tm-window-body) paint nothing: they are the
+   window's glass. Only the title bar's hairline is drawn. */
+.tm-window-titlebar {
+  border-color: var(--window-separator);
+}
 
-/* Inside a desktop window the page itself is transparent: the window's frosted
-   body shows through wherever the app doesn't paint (its sidebar), and the
-   app's content column paints the solid background */
+/* Inside a desktop window the page itself is transparent: the window's glass
+   shows through wherever the app doesn't paint (its sidebar, its toolbar) */
 html[data-embedded-frame],
 html[data-embedded-frame] body {
   background: transparent;
 }
 
-/* The window body is the same glass as the title bar, so a sidebar and the
-   title bar read as one frosted surface around the content */
-.tm-window-body {
-  background: color-mix(in oklch, var(--card) 90%, transparent);
-  backdrop-filter: blur(40px) saturate(1.8);
+/* The window shell inside the iframe (dashboard-shell.tsx, embedded branch).
+   The content column lays a thin tint of the background over the glass, so the
+   sidebar beside it reads as the glass itself and the content as a quieter
+   pane on it. Apps inside never paint an opaque background or their own blur. */
+.tm-window-content {
+  --window-pad: 1rem;
+  background: color-mix(in oklch, var(--background) 15%, transparent);
 }
-.tm-window:not([data-active]) .tm-window-body {
-  background: color-mix(in oklch, var(--card) 84%, transparent);
+:root:not(.dark) .tm-window-content {
+  background: color-mix(in oklch, var(--background) 25%, transparent);
+}
+/* A wider content column gets the roomier gutter. Set on the column's
+   children (a container can't query itself), so it inherits into the toolbar
+   and status-bar slots and into fill-mode apps' panes. */
+@container content (width >= 30rem) {
+  .tm-window-content > * { --window-pad: 1.5rem; }
+}
+/* Page-mode apps: the shell pads and scrolls the page */
+.tm-window-scroll {
+  padding: var(--window-pad);
+}
+/* An app's toolbar in the toolbar slot (<DesktopAppToolbar>), above the
+   scroller. Unlayered, so the window's height, padding and hairline win over
+   the page's padding and margin utilities; the page's classes keep its row. */
+.tm-window-toolbar {
+  flex-shrink: 0;
+  min-height: 3rem;
+  margin: 0;
+  padding: 0.375rem var(--window-pad);
+  align-content: center;
+  border-bottom: 1px solid var(--window-separator);
+}
+/* An app's status bar in the status-bar slot (<WindowStatusBar>), on the
+   window's bottom edge. The inline padding is the gutter less a ghost button's
+   own padding (px-1.5), so its text lines up with the content above. */
+.tm-window-statusbar {
+  flex-shrink: 0;
+  min-height: 2.25rem;
+  margin: 0;
+  padding: 0.25rem calc(var(--window-pad) - 0.375rem);
+  border-top: 1px solid var(--window-separator);
 }
 
 /* Widgets on the desktop are glass too, so the wallpaper stays part of the
@@ -2567,17 +2602,21 @@ html[data-embedded-frame] body {
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .tm-glass,
   .tm-glass-dense,
-  .tm-window-titlebar,
-  .tm-window:not([data-active]) .tm-window-titlebar,
-  .tm-window-body,
-  .tm-window:not([data-active]) .tm-window-body,
+  .tm-window,
   [data-desktop-widget-canvas] [data-widget],
   :root:not(.dark) .tm-glass,
   :root:not(.dark) .tm-glass-dense,
+  :root:not(.dark) .tm-window,
   :root:not(.dark) [data-desktop-widget-canvas] [data-widget] {
     background: var(--surface-island-solid);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
+  }
+  /* The window's content column becomes the solid background beside the
+     solid sidebar, as in classic mode */
+  .tm-window-content,
+  :root:not(.dark) .tm-window-content {
+    background: var(--background);
   }
   .tm-on-wallpaper { text-shadow: 0 1px 2px oklch(0 0 0 / 90%), 0 0 12px oklch(0 0 0 / 70%); }
 }

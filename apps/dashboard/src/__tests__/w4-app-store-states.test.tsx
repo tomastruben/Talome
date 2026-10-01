@@ -79,7 +79,7 @@ describe("App Store states", () => {
     catalog = { status: 500, body: { error: "boom" } };
     renderPage();
     expect(await screen.findByText("Couldn't load the App Store")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
   it("doesn't claim there are no sources when they couldn't be loaded (regression)", async () => {

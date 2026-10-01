@@ -37,6 +37,12 @@ export const SHORTCUTS = {
     handledIn: "components/bug-hunt/bug-hunt-launcher.tsx",
     matches: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "x",
   },
+  filesSearch: {
+    hint: "⌘F",
+    label: "Search in Files",
+    handledIn: "app/dashboard/files/page.tsx",
+    matches: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f",
+  },
 } as const satisfies Record<string, Shortcut>;
 
 export type ShortcutId = keyof typeof SHORTCUTS;

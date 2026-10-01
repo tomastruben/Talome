@@ -250,6 +250,39 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("is a rounded-xl window, and its snap preview turns solid under reduced transparency", () => {
+    render(
+      <DesktopWindow {...defaultProps} onTile={vi.fn()}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    const windowRegion = screen.getByRole("region", { name: "Files window" });
+    expect(windowRegion).toHaveClass("tm-window", "rounded-xl", "border");
+    expect(windowRegion.className).not.toMatch(/rounded-(?:b-)?2xl/);
+
+    fireEvent.pointerDown(screen.getByText("Files").parentElement!.parentElement!, { button: 0, clientX: 300, clientY: 120 });
+    fireEvent.pointerMove(window, { clientX: 2, clientY: 300 });
+    const preview = document.querySelector("[data-window-snap-preview]");
+    expect(preview).not.toBeNull();
+    // A blur surface outside the named materials must go solid with them
+    expect(preview).toHaveClass("backdrop-blur-sm", "solid-materials:backdrop-blur-none", "solid-materials:bg-muted");
+    fireEvent.pointerUp(window);
+  });
+
+  it("shows an inactive window by its title colour alone, never by fading it", () => {
+    render(
+      <DesktopWindow {...defaultProps} active={false}>
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    const title = screen.getByText("Files");
+    expect(title).toHaveClass("text-muted-foreground");
+    expect(title.className).not.toMatch(/\bopacity-/);
+    expect(screen.getByRole("region", { name: "Files window" }).className).not.toMatch(/\bopacity-\d/);
+  });
+
   it("gives a snapped window its previous size back when dragged away", () => {
     const onTile = vi.fn();
     render(
@@ -322,8 +355,9 @@ describe("DesktopWindow", () => {
     );
 
     const windowRegion = screen.getByRole("region", { name: "Files window" });
-    expect(windowRegion).toHaveClass("rounded-t-none", "rounded-b-2xl", "border-x-0", "border-t-0");
-    expect(windowRegion).not.toHaveClass("rounded-2xl");
+    expect(windowRegion).toHaveClass("rounded-t-none", "rounded-b-xl", "border-x-0", "border-t-0");
+    expect(windowRegion).not.toHaveClass("rounded-xl");
+    expect(windowRegion.className).not.toMatch(/rounded-(?:b-)?2xl/);
     expect(document.querySelector("[data-resize-edge]")).toBeNull();
   });
 
