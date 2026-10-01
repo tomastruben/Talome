@@ -206,7 +206,7 @@ export function ReleaseSearchPanel({
       {(visiblePrimary.length > 0 || visibleAlternatives.length > 0) && (
         <div className="space-y-1">
           {!noMatchingReleases && matching.length > 0 && (
-            <p className="px-0.5 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-dim-foreground">
+            <p className="px-0.5 pb-0.5 text-xs font-medium text-muted-foreground">
               Matches profile · {matching.length}
             </p>
           )}
@@ -252,7 +252,7 @@ export function ReleaseSearchPanel({
           )}
           {!noMatchingReleases && visibleAlternatives.length > 0 && (
             <div className="space-y-1 pt-2">
-              <p className="px-0.5 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-status-warning/70">
+              <p className="px-0.5 pb-0.5 text-xs font-medium text-status-warning">
                 Outside profile · {alternatives.length}
               </p>
               {visibleAlternatives.map((release, index) => renderRelease(release, index, "alternative"))}

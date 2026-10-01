@@ -105,7 +105,7 @@ export function ReleaseResultCard({
           )}
         </div>
         {isRejected && (
-          <p className="mt-1 truncate text-[11px] leading-tight text-status-warning/80">
+          <p className="mt-1 truncate text-xs leading-tight text-status-warning">
             <span className="font-medium">Outside profile</span>
             {rejectionReason ? ` · ${rejectionReason}` : " · Review before downloading"}
           </p>

@@ -89,6 +89,7 @@ import {
   WINDOW_SIDEBAR_REPLACES,
   WINDOW_SIDEBAR_SHOWS,
   WindowSidebarLayout,
+  useWindowSidebarShown,
 } from "@/components/ui/source-list";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { useFeatureStack } from "@/hooks/use-feature-stacks";
@@ -117,6 +118,7 @@ import {
 } from "@/components/media/media-data";
 import {
   DEFAULT_MEDIA_VIEW_STATE,
+  MEDIA_SORT_KEYS,
   MEDIA_VIEW_PARAM_KEYS,
   RATING_OPTIONS,
   SORT_LABELS,
@@ -143,6 +145,7 @@ import {
   type MediaViewState,
 } from "@/components/media/media-library-view";
 import { MediaWindowSidebar } from "@/components/media/media-window-sidebar";
+import { MEDIA_VIEW_INLINE, MEDIA_VIEW_MENU, MediaViewMenu } from "@/components/media/media-view-menu";
 
 interface WantedReleaseResult {
   title: string;
@@ -780,12 +783,13 @@ function MediaCard({
             />
           </span>
         )}
-        {/* Focus and selection ring, drawn over the artwork: the card clips anything outside the poster. */}
+        {/* Hover, focus and selection ring, drawn inside the artwork so no
+            scroller or rail can clip it. Hover never scales the poster. */}
         <span
           aria-hidden="true"
           className={cn(
             "pointer-events-none absolute inset-0 z-10 rounded-lg ring-2 ring-inset transition-colors duration-150 ease-out group-focus-visible:ring-ring",
-            selected ? "ring-primary" : "ring-transparent",
+            selected ? "ring-primary" : "ring-transparent group-hover:ring-foreground/20",
           )}
         />
         {/* Overlays sit on artwork, so they use the dark palette in both themes. */}
@@ -881,7 +885,7 @@ function DiscoveryCard({ item, onClick, priority }: { item: MediaSearchResult; o
         )}
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 z-10 rounded-lg ring-2 ring-inset ring-transparent transition-colors duration-150 ease-out group-focus-visible:ring-ring"
+          className="pointer-events-none absolute inset-0 z-10 rounded-lg ring-2 ring-inset ring-transparent transition-colors duration-150 ease-out group-hover:ring-foreground/20 group-focus-visible:ring-ring"
         />
         <span className="dark absolute top-1.5 right-1.5 z-10">
           <span className="block rounded-full bg-foreground/80 p-0.5">
@@ -937,7 +941,7 @@ function ContinueWatchingCard({
             src={thumb}
             alt=""
             fill
-            className="object-cover transition-transform duration-200 ease-out motion-safe:group-hover:scale-103 motion-safe:group-focus-visible:scale-103"
+            className="object-cover transition-[filter] duration-150 ease-out group-hover:brightness-110"
             sizes="(max-width: 640px) 33vw, 160px"
           />
         ) : (
@@ -945,7 +949,7 @@ function ContinueWatchingCard({
             <HugeiconsIcon icon={item.type === "tv" ? Tv01Icon : Film01Icon} size={16} className="text-dim-foreground" />
           </span>
         )}
-        <span className="absolute inset-0 rounded-lg ring-2 ring-inset ring-transparent transition-colors duration-150 group-hover:ring-foreground/20 group-focus-visible:ring-ring" />
+        <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-lg ring-2 ring-inset ring-transparent transition-colors duration-150 ease-out group-hover:ring-foreground/20 group-focus-visible:ring-ring" />
         {pct > 0 && (
           <span className="dark absolute inset-x-0 bottom-0 block h-1 bg-background/70">
             <span className="block h-full rounded-r-full bg-foreground/80" style={{ width: `${pct}%` }} />
@@ -1011,6 +1015,8 @@ function MediaPageInner() {
 
   // Cinema browser
   const cinemaBrowser = useCinemaBrowser();
+  /** In a window with its sidebar on screen, collections live in the sidebar. */
+  const windowSidebarShown = useWindowSidebarShown();
 
   // Feature stack readiness — show setup when nothing is configured
   const { stack: mediaStack, isLoading: stackLoading } = useFeatureStack("media");
@@ -1705,10 +1711,22 @@ function MediaPageInner() {
     attention: downloads ? downloadActivity.counts.attention : null,
   }, numberFormat);
 
+  const setCollection = (next: MediaCollection) => patchView({ collection: next });
+  const setSort = (next: MediaSortKey) => patchView({ sort: next });
+  const setMinRating = (next: number | null) => patchView({ minRating: next });
+
+  // One row: where you are on the left (the tab strip, or in a window with a
+  // sidebar the heading), search and the view controls on the right. The
+  // selects fold into one menu where the content column is narrow; only when
+  // the tab strip and the search can't share a row does search drop to a
+  // second line (narrow windows without a sidebar, phones). The search widens
+  // only in a window's column: on the classic page the labelled tab strip
+  // shares the row, and it fits with every count and badge showing only at
+  // w-48 (the toolbar-fit model in media-window-layout.test.tsx).
   const toolbar = (
-    <DesktopAppToolbar className="page-controls-row min-w-0 flex-wrap justify-between gap-2">
+    <DesktopAppToolbar className="flex min-w-0 flex-wrap items-center gap-2">
       <Tabs
-        className={WINDOW_SIDEBAR_REPLACES}
+        className={cn(WINDOW_SIDEBAR_REPLACES, "shrink-0")}
         value={tab}
         onValueChange={(v) => selectTab(v as MediaTab)}
       >
@@ -1723,7 +1741,7 @@ function MediaPageInner() {
               className="text-xs gap-1.5"
             >
               <HugeiconsIcon icon={t.icon} size={14} />
-              <span className="hidden md:inline">{t.label}</span>
+              <span className="hidden @4xl:inline">{t.label}</span>
               {t.badge}
             </TabsTrigger>
           ))}
@@ -1732,26 +1750,26 @@ function MediaPageInner() {
 
       {/* In a window the sidebar names the place; the heading says where you are. */}
       <div className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 flex-col")}>
-        <h1 className="truncate text-lg font-medium">{heading}</h1>
-        {summary && <p className="truncate text-xs tabular-nums text-muted-foreground">{summary}</p>}
+        <h1 className="truncate text-sm font-medium leading-5">{heading}</h1>
+        {summary && <p className="truncate text-xs leading-4 tabular-nums text-muted-foreground">{summary}</p>}
       </div>
 
       {isLibrary && (
-        <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+        <div data-media-view-controls="" className="ml-auto flex min-w-0 items-center justify-end gap-2 @max-md:w-full">
           <SearchField
-            containerClassName="w-full sm:w-56"
+            containerClassName="min-w-0 w-48 @3xl/content:w-56 @max-md:w-auto @max-md:max-w-none @max-md:flex-1"
             className="h-8"
             placeholder={tab === "movies" ? "Search movies…" : "Search shows…"}
             aria-label={tab === "movies" ? "Search movies" : "Search shows"}
             value={search}
             onChange={(e) => patchView({ search: e.target.value })}
           />
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+          <div className={cn(MEDIA_VIEW_INLINE, "shrink-0 items-center gap-2")}>
             {showCollections.length > 1 && (
-              <Select value={collection} onValueChange={(v) => patchView({ collection: v as MediaCollection })}>
+              <Select value={collection} onValueChange={(v) => setCollection(v as MediaCollection)}>
                 <SelectTrigger
                   aria-label="Show"
-                  className={cn(WINDOW_SIDEBAR_REPLACES, "h-8 w-full min-w-0 text-xs sm:w-auto sm:min-w-28")}
+                  className={cn(WINDOW_SIDEBAR_REPLACES, "h-8 min-w-28 text-xs")}
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -1762,21 +1780,21 @@ function MediaPageInner() {
                 </SelectContent>
               </Select>
             )}
-            <Select value={sort} onValueChange={(v) => patchView({ sort: v as MediaSortKey })}>
-              <SelectTrigger aria-label="Sort" className="h-8 w-full min-w-0 text-xs sm:w-auto sm:min-w-28">
+            <Select value={sort} onValueChange={(v) => setSort(v as MediaSortKey)}>
+              <SelectTrigger aria-label="Sort" className="h-8 min-w-28 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(Object.keys(SORT_LABELS) as MediaSortKey[]).map((key) => (
+                {MEDIA_SORT_KEYS.map((key) => (
                   <SelectItem key={key} value={key}>{SORT_LABELS[key]}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <Select
               value={minRating === null ? "any" : String(minRating)}
-              onValueChange={(v) => patchView({ minRating: v === "any" ? null : Number(v) })}
+              onValueChange={(v) => setMinRating(v === "any" ? null : Number(v))}
             >
-              <SelectTrigger aria-label="Minimum rating" className="h-8 w-full min-w-0 text-xs sm:w-auto sm:min-w-24">
+              <SelectTrigger aria-label="Minimum rating" className="h-8 min-w-24 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1789,6 +1807,17 @@ function MediaPageInner() {
               </SelectContent>
             </Select>
           </div>
+          <MediaViewMenu
+            className={cn(MEDIA_VIEW_MENU, "shrink-0")}
+            libraryTab={libraryTab}
+            collections={windowSidebarShown ? null : showCollections}
+            collection={collection}
+            sort={sort}
+            minRating={minRating}
+            onCollectionChange={setCollection}
+            onSortChange={setSort}
+            onMinRatingChange={setMinRating}
+          />
         </div>
       )}
     </DesktopAppToolbar>
@@ -2154,7 +2183,7 @@ function MediaPageInner() {
 
   return (
     <WindowSidebarLayout sidebar={sidebar}>
-    <div ref={rootRef} className="flex min-w-0 flex-1 flex-col gap-5">
+    <div ref={rootRef} className="flex min-w-0 flex-1 flex-col gap-6">
       {toolbar}
 
       {isLibrary && libraryError && library && (
@@ -2181,7 +2210,7 @@ function MediaPageInner() {
           <SectionHeading>Continue watching</SectionHeading>
           <div className="flex gap-3 overflow-x-auto scrollbar-none pb-1">
             {railItems.map((cw, i) => (
-              <ContinueWatchingCard key={cw.ratingKey ?? i} item={cw} onOpen={navigateToContinueWatching} className="w-24 shrink-0" />
+              <ContinueWatchingCard key={cw.ratingKey ?? i} item={cw} onOpen={navigateToContinueWatching} className="w-28 shrink-0 @3xl:w-32" />
             ))}
           </div>
         </section>
@@ -2190,13 +2219,13 @@ function MediaPageInner() {
       {/* Movie optimization — per-movie counts from the scan cache */}
       {tab === "movies" && health.counts.scanned > 0 && (
         <div className="flex items-center justify-between gap-4 py-1">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground @md:gap-3">
             <button
               type="button"
               aria-pressed={collection === "ready"}
               onClick={() => patchView({ collection: collection === "ready" ? "all" : "ready" })}
               className={cn(
-                "rounded-full px-2 py-0.5 transition-colors duration-150",
+                "inline-flex min-h-6 items-center gap-1 rounded-full px-2 transition-colors duration-150 pointer-coarse:min-h-11",
                 collection === "ready" ? "bg-status-healthy/12 text-status-healthy" : "hover:bg-muted/50",
               )}
             >
@@ -2210,7 +2239,7 @@ function MediaPageInner() {
                   aria-pressed={collection === "needs-conversion"}
                   onClick={() => patchView({ collection: collection === "needs-conversion" ? "all" : "needs-conversion" })}
                   className={cn(
-                    "rounded-full px-2 py-0.5 transition-colors duration-150",
+                    "inline-flex min-h-6 items-center gap-1 rounded-full px-2 transition-colors duration-150 pointer-coarse:min-h-11",
                     collection === "needs-conversion" ? "bg-status-warning/12 text-status-warning" : "hover:bg-muted/50",
                   )}
                 >

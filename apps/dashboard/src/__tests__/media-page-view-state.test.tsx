@@ -410,6 +410,42 @@ describe("Media page view state", () => {
     expect(tab("TV shows")).toBeInTheDocument();
   });
 
+  it("keeps the library toolbar to one row: search, then selects or one menu by column width", () => {
+    render(<MediaPage />);
+    const controls = document.querySelector<HTMLElement>("[data-media-view-controls]");
+    expect(controls).not.toBeNull();
+    // Never a stacked column of controls, and no viewport breakpoints
+    expect(controls!.className).not.toMatch(/(?:^|\s)flex-col\b/);
+    expect(controls!.className).not.toMatch(/(?:^|\s)(?:sm|md|lg):/);
+    expect(controls!).toContainElement(screen.getByRole("textbox", { name: "Search movies" }));
+
+    // Wide columns: the selects, inline
+    const sort = screen.getByRole("combobox", { name: "Sort" });
+    const inline = sort.parentElement!;
+    expect(inline.className).toContain("hidden @3xl/content:flex @7xl:flex");
+    expect(inline).toContainElement(screen.getByRole("combobox", { name: "Minimum rating" }));
+    // Narrow columns: one menu instead
+    const menu = screen.getByRole("button", { name: "Sort and filter" });
+    expect(menu.className).toContain("@3xl/content:hidden");
+    expect(menu.className).toContain("@7xl:hidden");
+    expect(controls!).toContainElement(menu);
+
+    // Tab labels show where the column has room, not by viewport
+    expect(tab("Movies").querySelector("span")?.className).toContain("@4xl:inline");
+  });
+
+  it("sorts and filters from the toolbar menu", async () => {
+    render(<MediaPage />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Sort and filter" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Title, A to Z" }));
+    expect(window.location.search).toBe("?sort=title-asc");
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Sort and filter" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Rated 7 or higher" }));
+    expect(new URLSearchParams(window.location.search).get("rating")).toBe("7");
+    expect(screen.getByRole("button", { name: "Sort and filter, filtered" })).toBeInTheDocument();
+  });
+
   it("writes search to the URL once typing pauses", async () => {
     vi.useFakeTimers();
     render(<MediaPage />);

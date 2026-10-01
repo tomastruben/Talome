@@ -456,8 +456,8 @@ function MediaHero({
       </div>
 
       <div className="flex-1 min-w-0 py-1">
-        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">
-          {type === "tv" ? "TV Show" : "Movie"}
+        <p className="text-xs text-muted-foreground mb-1">
+          {type === "tv" ? "TV show" : "Movie"}
         </p>
         <h2 className="text-base font-medium leading-snug">{title}</h2>
         <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -783,7 +783,7 @@ export function UnifiedMediaSheet({
               <div className="flex gap-4 p-5 pb-4">
                 <Skeleton className="w-[120px] h-[180px] shrink-0 rounded-lg" />
                 <div className="flex-1 min-w-0 py-1 space-y-3">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Loading</p>
+                  <p className="text-xs text-muted-foreground">Loading…</p>
                   <Skeleton className="h-5 w-3/4" />
                   <Skeleton className="h-4 w-1/3" />
                   <div className="flex gap-1">
@@ -843,7 +843,7 @@ export function UnifiedMediaSheet({
               {/* Download progress — library only */}
               {item.kind === "library" && activeDownloads.length > 0 && (
                 <div className="mx-5 mb-4 rounded-lg border border-border/50 p-4 space-y-3">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Downloading</p>
+                  <p className="text-xs text-muted-foreground">Downloading</p>
                   {activeDownloads.map((dl) => (
                     <DownloadProgress key={dl.id} item={dl} onRemove={removeFromQueue} />
                   ))}

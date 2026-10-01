@@ -549,8 +549,8 @@ function CinemaDetail({
                     ref={(el) => registerAction(el, 1)}
                     className={cn(
                       "inline-flex items-center gap-2 sm:gap-2.5 h-12 sm:h-16 px-8 sm:px-12 rounded-lg bg-white text-black font-medium text-lg sm:text-xl hover:bg-white/90",
-                      !lite && "hover:scale-105 transition-all",
-                      actionIndex === 1 && cn("ring-2 ring-white/80 ring-offset-2 ring-offset-background", !lite && "scale-105"),
+                      !lite && "transition-colors duration-150",
+                      actionIndex === 1 && "ring-2 ring-white/80 ring-offset-2 ring-offset-background",
                     )}
                     onClick={() => startPlayback(item.filePath!)}
                   >
@@ -576,8 +576,8 @@ function CinemaDetail({
                   ref={(el) => registerAction(el, 1)}
                   className={cn(
                     "inline-flex items-center gap-2 sm:gap-2.5 h-12 sm:h-16 px-8 sm:px-12 rounded-lg bg-white text-black font-medium text-lg sm:text-xl hover:bg-white/90",
-                    !lite && "hover:scale-105 transition-all",
-                    actionIndex === 1 && cn("ring-2 ring-white/80 ring-offset-2 ring-offset-background", !lite && "scale-105"),
+                    !lite && "transition-colors duration-150",
+                    actionIndex === 1 && "ring-2 ring-white/80 ring-offset-2 ring-offset-background",
                   )}
                   onClick={() => episodesRef.current?.scrollIntoView({ behavior: lite ? "instant" : "smooth", block: "start" })}
                 >
@@ -704,7 +704,7 @@ function CinemaDetail({
         {related.length > 0 && (
           <div>
             <h3 className="text-xl font-medium text-white/60 mb-4">More like this</h3>
-            <div ref={relatedEdgeRef} className="flex gap-4 overflow-x-auto scrollbar-none py-2 -my-2">
+            <div ref={relatedEdgeRef} className="flex gap-4 overflow-x-auto scrollbar-none p-2 -m-2">
               {related.map((r, rIdx) => {
                 const rPoster = resolvePosterUrl(r.poster, 120);
                 // Action index: 0=back, 1=play, 2..genres, genres+2..episodes, episodes+genres+2..related
@@ -718,11 +718,9 @@ function CinemaDetail({
                     ref={(el) => registerAction(el, rActionIdx)}
                     type="button"
                     className={cn(
-                      "shrink-0 w-[150px] text-left group rounded-xl",
-                      !lite && "transition-all duration-200",
-                      actionIndex === rActionIdx
-                        ? cn("z-10", !lite ? "scale-110 ring-2 ring-white/70" : "ring-2 ring-white ring-offset-2 ring-offset-background")
-                        : cn(!lite && "hover:scale-105"),
+                      "shrink-0 w-[150px] scroll-m-2 text-left group rounded-xl",
+                      !lite && "transition-shadow duration-150",
+                      actionIndex === rActionIdx && "ring-2 ring-white ring-offset-2 ring-offset-background",
                     )}
                     onClick={() => onSelectItem(r)}
                   >
@@ -1345,11 +1343,9 @@ export function CinemaBrowserOverlay() {
                 key={`${item.type}-${item.id}`}
                 ref={(el) => { if (el) cardRefs.current.set(i, el); else cardRefs.current.delete(i); }}
                 className={cn(
-                  "cinema-card group cursor-pointer rounded-xl",
-                  !lite && "transition-all duration-200 ease-out will-change-transform",
-                  focused
-                    ? cn("z-10", !lite ? "scale-110 ring-2 ring-white/70" : "ring-2 ring-white ring-offset-2 ring-offset-background")
-                    : cn(!lite && "hover:scale-105 hover:z-10"),
+                  "cinema-card group cursor-pointer rounded-xl scroll-m-2",
+                  !lite && "transition-shadow duration-150 ease-out",
+                  focused && "ring-2 ring-white ring-offset-2 ring-offset-background",
                 )}
                 style={lite ? { contentVisibility: "auto", containIntrinsicSize: "150px 280px" } : undefined}
                 onClick={() => setSelectedItem(item)}

@@ -689,7 +689,7 @@ export default function MediaDetailPage() {
         <div className="flex min-w-0 flex-1 flex-col gap-6" aria-busy="true">
           {skeletonDue && (
             <>
-              <Skeleton className="aspect-video w-full rounded-lg" />
+              <Skeleton className="aspect-video w-full rounded-lg @3xl:aspect-21/9" />
               <Skeleton className="h-24 w-full" />
             </>
           )}
@@ -736,8 +736,9 @@ export default function MediaDetailPage() {
   return (
     <WindowSidebarLayout sidebar={sidebar}>
     <div className="flex min-w-0 flex-1 flex-col gap-6">
-      {/* Player area */}
-      <div className="relative rounded-lg overflow-hidden bg-black aspect-video">
+      {/* Player area. Without a player the hero is wider than 16:9 on a wide
+          content column, so a window or page doesn't spend its height on it. */}
+      <div className={cn("relative overflow-hidden rounded-lg bg-black", streamSrc ? "aspect-video" : "aspect-video @3xl:aspect-21/9")}>
         {streamSrc && playingFilePath ? (
           <>
             <VideoPlayer
@@ -852,42 +853,42 @@ export default function MediaDetailPage() {
                 type="button"
                 onClick={playMovie}
                 aria-label={`Play ${item.title}`}
-                className="absolute z-10 right-4 bottom-4 lg:right-6 lg:bottom-6 shrink-0 flex items-center justify-center w-14 h-14 lg:w-16 lg:h-16 rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 hover:scale-105 active:scale-95 transition-[background-color,transform] duration-150"
+                className="pressable absolute z-10 right-4 bottom-4 @3xl:right-6 @3xl:bottom-6 shrink-0 flex items-center justify-center size-14 @3xl:size-16 rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 outline-none focus-visible:ring-2 focus-visible:ring-white"
               >
                 <HugeiconsIcon icon={PlayIcon} size={24} className="text-white ml-0.5" />
               </button>
             )}
             {!canPlay && type === "tv" && (
-              <div className="absolute z-10 right-4 bottom-4 lg:right-6 lg:bottom-6 shrink-0 flex flex-col items-center gap-1 text-muted-foreground">
+              <div className="absolute z-10 right-4 bottom-4 @3xl:right-6 @3xl:bottom-6 shrink-0 flex flex-col items-center gap-1 text-muted-foreground">
                 <HugeiconsIcon icon={Tv01Icon} size={24} className="opacity-60" />
                 <p className="text-xs opacity-70">Select episode</p>
               </div>
             )}
 
             {/* Bottom metadata overlay — minimal on mobile, richer on desktop */}
-            <div className="absolute bottom-0 left-0 right-0 p-4 lg:p-6 pr-20 lg:pr-24">
-              <h2 className="tm-rise text-lg lg:text-2xl font-medium text-white mb-1.5 lg:mb-2 line-clamp-2 lg:line-clamp-1">{item.title}</h2>
-              <div className="tm-rise tm-rise-2 flex items-center gap-1.5 lg:gap-2 flex-wrap">
+            <div className="absolute bottom-0 left-0 right-0 p-4 @3xl:p-6 pr-20 @3xl:pr-24">
+              <h2 className="tm-rise text-lg @3xl:text-2xl font-medium text-white mb-1.5 @3xl:mb-2 line-clamp-2 @3xl:line-clamp-1">{item.title}</h2>
+              <div className="tm-rise tm-rise-2 flex items-center gap-1.5 @3xl:gap-2 flex-wrap">
                 {item.rating != null && item.rating > 0 && (
-                  <span className="flex items-center gap-1 text-xs lg:text-sm text-amber-400">
+                  <span className="flex items-center gap-1 text-xs @3xl:text-sm text-amber-400">
                     <HugeiconsIcon icon={StarIcon} size={12} />
                     {item.rating.toFixed(1)}
                   </span>
                 )}
-                {item.year && <span className="text-xs lg:text-sm text-white/80">{item.year}</span>}
+                {item.year && <span className="text-xs @3xl:text-sm text-white/80">{item.year}</span>}
                 {item.runtime && (
-                  <span className="text-xs lg:text-sm text-white/70">{formatRuntimeMinutes(item.runtime)}</span>
+                  <span className="text-xs @3xl:text-sm text-white/70">{formatRuntimeMinutes(item.runtime)}</span>
                 )}
                 {(item.studio || item.network) && (
-                  <span className="hidden lg:inline text-sm text-white/70">{item.studio || item.network}</span>
+                  <span className="hidden @3xl:inline text-sm text-white/70">{item.studio || item.network}</span>
                 )}
                 {item.genres && item.genres.length > 0 && (
-                  <span className="hidden lg:inline text-sm text-white/60">{item.genres.slice(0, 3).join(" · ")}</span>
+                  <span className="hidden @3xl:inline text-sm text-white/60">{item.genres.slice(0, 3).join(" · ")}</span>
                 )}
               </div>
               {/* Overview: hidden on narrow containers (shown below hero instead), visible when wide enough */}
               {item.overview && (
-                <p className="hidden lg:block text-sm text-white/70 mt-2 line-clamp-2 max-w-[60%] leading-relaxed">{item.overview}</p>
+                <p className="hidden @3xl:block text-sm text-white/70 mt-2 line-clamp-2 max-w-[60%] leading-relaxed">{item.overview}</p>
               )}
             </div>
           </div>
@@ -1171,7 +1172,7 @@ function MobileOverview({ item, type }: { item: MediaItem; type: "movie" | "tv" 
   }, [item.overview]);
 
   return (
-    <div className="lg:hidden -mt-2 space-y-3">
+    <div className="@3xl:hidden -mt-2 space-y-3">
       {/* Overview text — tap to expand */}
       <div>
         <p
@@ -1238,16 +1239,16 @@ function RelatedRail({ type, id }: { type: string; id: number }) {
             <button
               key={`${item.type}-${item.id}`}
               type="button"
-              className="shrink-0 w-[120px] snap-start group text-left"
+              className="group w-30 shrink-0 snap-start text-left outline-none"
               onClick={() => router.push(`/dashboard/media/${item.type}/${item.id}`)}
             >
-              <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-muted/40 mb-1.5">
+              <div className="relative aspect-2/3 rounded-lg overflow-hidden bg-muted/40 mb-1.5">
                 {poster ? (
                   <Image
                     src={poster}
                     alt={item.title}
                     fill
-                    className="object-cover group-hover:scale-102 transition-transform duration-150"
+                    className="object-cover transition-[filter] duration-150 ease-out group-hover:brightness-110"
                     sizes="120px"
                   />
                 ) : (
@@ -1259,6 +1260,11 @@ function RelatedRail({ type, id }: { type: string; id: number }) {
                     />
                   </div>
                 )}
+                {/* Hover and focus ring inside the poster: the rail scrolls and would clip one outside it. */}
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 rounded-lg ring-2 ring-inset ring-transparent transition-colors duration-150 ease-out group-hover:ring-foreground/20 group-focus-visible:ring-ring"
+                />
               </div>
               <p className="text-xs font-medium truncate">{item.title}</p>
               <p className="text-xs text-muted-foreground truncate">
