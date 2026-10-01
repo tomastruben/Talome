@@ -78,6 +78,14 @@ describe("windowed apps adopt the window shell", () => {
     }
   });
 
+  it("keeps Delete on chats in the Assistant's window sidebar, like the classic history list", () => {
+    const page = read("app/dashboard/assistant/page.tsx");
+    const sidebar = page.slice(page.indexOf('<SourceList label="Chats">'));
+    expect(sidebar).toMatch(/action=\{\{[\s\S]*?icon: Delete01Icon[\s\S]*?requestDelete\(conv\.id/);
+    // Chats waiting on Undo leave the sidebar too
+    expect(sidebar).toMatch(/!pendingDeletes\.has\(conv\.id\)/);
+  });
+
   it("fades the Assistant's conversation and the App Store rails with mask-image", () => {
     expect(read("app/dashboard/assistant/page.tsx")).toMatch(/\[mask-image:linear-gradient\(to_bottom/);
     const apps = read("app/dashboard/apps/page.tsx");

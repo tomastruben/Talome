@@ -846,12 +846,18 @@ export default function AssistantPage() {
       </SourceListSection>
       {Object.entries(grouped).map(([group, convs]) => (
         <SourceListSection key={group} title={group}>
-          {convs.map((conv) => (
+          {convs.filter((conv) => !pendingDeletes.has(conv.id)).map((conv) => (
             <SourceListItem
               key={conv.id}
               label={conv.title}
               active={showingChat && activeId === conv.id}
               onSelect={() => { setActiveId(conv.id); setDismissed(false); }}
+              // Same undoable delete as the classic history list
+              action={{
+                icon: Delete01Icon,
+                label: `Delete "${conv.title || "Untitled conversation"}"`,
+                onSelect: () => requestDelete(conv.id, conv.title || "Untitled conversation"),
+              }}
             />
           ))}
         </SourceListSection>
