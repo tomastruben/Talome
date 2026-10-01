@@ -47,6 +47,11 @@ const STATUS_HEADING: Record<StatusFilter, string> = {
   stopped: "Stopped",
 };
 
+const SOURCE_HEADING: Record<Exclude<SourceFilter, "all">, string> = {
+  managed: "Managed by Talome",
+  external: "External",
+};
+
 // ── Skeleton ──────────────────────────────────────────────────────────────────
 
 function StackRowSkeleton() {
@@ -61,8 +66,10 @@ function StackRowSkeleton() {
           <Skeleton className="h-3 w-40" />
         </div>
       </TableCell>
-      <TableCell className="hidden sm:table-cell"><Skeleton className="h-3 w-12" /></TableCell>
-      <TableCell className="hidden sm:table-cell"><Skeleton className="h-3 w-10 ml-auto" /></TableCell>
+      {/* Status and CPU show once the column has room, as in the list (the
+          column, not the screen: in a window the screen includes the sidebar) */}
+      <TableCell className="hidden @xl:table-cell"><Skeleton className="h-3 w-12" /></TableCell>
+      <TableCell className="hidden @xl:table-cell"><Skeleton className="h-3 w-10 ml-auto" /></TableCell>
       <TableCell><Skeleton className="h-3 w-12 ml-auto" /></TableCell>
       <TableCell><Skeleton className="h-7 w-7 rounded-md ml-auto" /></TableCell>
     </TableRow>
@@ -139,9 +146,12 @@ export default function ContainersPage() {
     <div className="flex min-w-0 flex-1 flex-col gap-5">
       {/* Controls. In a wide window the sidebar holds the filters, so the
           toolbar names the view and keeps the search. */}
-      <DesktopAppToolbar className="page-controls-row flex-wrap gap-2">
-        <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 items-center truncate text-sm font-medium text-foreground")}>
-          {STATUS_HEADING[statusFilter]}
+      <DesktopAppToolbar className="flex min-w-0 flex-wrap items-center gap-2">
+        <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 items-baseline gap-1.5 text-sm font-medium text-foreground")}>
+          <span className="truncate">{STATUS_HEADING[statusFilter]}</span>
+          {sourceFilter !== "all" && (
+            <span className="shrink-0 font-normal text-muted-foreground">· {SOURCE_HEADING[sourceFilter]}</span>
+          )}
         </h2>
         <Tabs
           className={WINDOW_SIDEBAR_REPLACES}
@@ -155,16 +165,18 @@ export default function ContainersPage() {
                 <TabsBadge>{stacks.length}</TabsBadge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="running" className="text-xs gap-1.5">
+            {/* Labels show once the column has room (the column, not the screen:
+                in a window the screen includes the sidebar) */}
+            <TabsTrigger value="running" className="text-xs gap-1.5" title="Running">
               <TabsDot color="emerald" />
-              <span className="hidden sm:inline">Running</span>
+              <span className="sr-only @lg:not-sr-only">Running</span>
               {!isLoading && runningCount > 0 && (
                 <TabsBadge>{runningCount}</TabsBadge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="stopped" className="text-xs gap-1.5">
+            <TabsTrigger value="stopped" className="text-xs gap-1.5" title="Stopped">
               <TabsDot color="muted" />
-              <span className="hidden sm:inline">Stopped</span>
+              <span className="sr-only @lg:not-sr-only">Stopped</span>
               {!isLoading && stoppedCount > 0 && (
                 <TabsBadge>{stoppedCount}</TabsBadge>
               )}
@@ -195,15 +207,14 @@ export default function ContainersPage() {
           </Tabs>
         )}
 
-        <div className="w-full sm:ml-auto sm:w-auto">
-          <SearchField
-            containerClassName="w-full sm:w-auto"
-            aria-label="Search services"
-            placeholder="Search services…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
+        {/* Beside the filters while it keeps 10rem, else a row of its own */}
+        <SearchField
+          containerClassName="ml-auto min-w-40 flex-1 @xl:max-w-64"
+          aria-label="Search services"
+          placeholder="Search services…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
       </DesktopAppToolbar>
 
       {/* Content */}

@@ -384,8 +384,8 @@ export function AiCostSection() {
       <section>
         <SectionLabel>Budget</SectionLabel>
 
-        {/* ── Mobile: segmented control + single preset ──────── */}
-        <div className="sm:hidden">
+        {/* ── Narrow (a phone, or a small window): segmented control + single preset ── */}
+        <div className="@2xl:hidden">
           {/* Segment tabs */}
           <div className="flex rounded-lg bg-muted/30 p-0.5 mb-4">
             {presetData.map(({ preset, isActive }, idx) => (
@@ -474,9 +474,9 @@ export function AiCostSection() {
           })()}
         </div>
 
-        {/* ── Desktop: unified comparison table ──────────────── */}
-        <div className="hidden sm:block">
-          <div className="rounded-xl border border-border bg-card overflow-hidden">
+        {/* ── Full section width: unified comparison table ──── */}
+        <div className="hidden @2xl:block">
+          <div className="rounded-xl border border-border bg-card overflow-x-auto">
             <table className="w-full border-collapse" aria-label="Budget preset comparison">
               <thead>
                 <tr className="align-top">

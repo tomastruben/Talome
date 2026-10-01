@@ -88,14 +88,14 @@ export function ChatBotSenders({ platform }: { platform: Platform }) {
 
   return (
     <>
-      <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+      <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium">Allowed users</p>
           <p className="text-xs text-muted-foreground mt-0.5">
             The bot can manage your server, so it only answers these people. Anyone else is told their user id and you get a notification.
           </p>
         </div>
-        <div className="flex shrink-0 w-full sm:w-72 gap-2">
+        <div className="flex shrink-0 w-full @lg:w-72 gap-2">
           <Input
             aria-label={COPY[platform].idLabel}
             placeholder={COPY[platform].placeholder}

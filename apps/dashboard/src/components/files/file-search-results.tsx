@@ -313,8 +313,8 @@ export function FileSearchResults({
                       <p id={`${cellId}-folder`} className="truncate text-xs text-muted-foreground">{folder}</p>
                     </div>
                     {details && <span id={`${cellId}-details`} className="sr-only">{details}</span>}
-                    <span aria-hidden="true" className="hidden w-24 shrink-0 text-xs text-muted-foreground sm:block">{formatDate(item.modified)}</span>
-                    <span aria-hidden="true" className="hidden w-16 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
+                    <span aria-hidden="true" className="hidden w-24 shrink-0 text-xs text-muted-foreground @md:block">{formatDate(item.modified)}</span>
+                    <span aria-hidden="true" className="hidden w-16 shrink-0 text-right text-xs tabular-nums text-muted-foreground @md:block">
                       {size ?? "—"}
                     </span>
                   </div>

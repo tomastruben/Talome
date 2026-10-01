@@ -111,8 +111,10 @@ export default function SettingsSectionPage() {
 
   const Component = section.component;
 
+  // A size container: the sections' rows wrap by the width they get (a
+  // window's content column or the classic page), not by the screen.
   return (
-    <div className="mx-auto w-full max-w-2xl min-w-0 pb-12">
+    <div className="@container mx-auto w-full max-w-2xl min-w-0 pb-12">
       <Component />
     </div>
   );

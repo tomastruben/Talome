@@ -96,7 +96,7 @@ function PortEditor({ appId, serviceName, ports, onSaved }: { appId: string; ser
         {editing ? (
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" disabled={saving} onClick={() => { setEditing(false); setSaveError(null); }}>Cancel</Button>
-            <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save ports"}</Button>
+            <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save ports"}</Button>
           </div>
         ) : (
           <Button variant="ghost" size="sm" onClick={startEditing} disabled={!mappings.some((port) => port?.editable)}>Edit ports</Button>
@@ -146,7 +146,7 @@ export default function ConfigurePage() {
 
   if (error) {
     return (
-      <div className="p-4 sm:p-6"><Alert variant="destructive">
+      <div><Alert variant="destructive">
         <AlertTitle>Configuration unavailable</AlertTitle>
         <AlertDescription>{error?.message ?? "Unknown error"}<Button variant="outline" size="sm" onClick={() => mutate()}>Try again</Button></AlertDescription>
       </Alert></div>
@@ -154,7 +154,7 @@ export default function ConfigurePage() {
   }
 
   if (!data) {
-    return <div className="p-6 text-muted-foreground">Loading configuration...</div>;
+    return <div className="text-sm text-muted-foreground" aria-busy="true">Loading configuration…</div>;
   }
 
   const services = data.config?.services ?? {};
@@ -191,7 +191,8 @@ export default function ConfigurePage() {
   const isDirty = editedEnv !== null;
 
   return (
-    <div className="p-4 sm:p-6 max-w-3xl min-w-0 flex flex-col gap-8">
+    // The shell pads the page (classic and window alike); this adds none of its own
+    <div className="@container max-w-3xl min-w-0 flex flex-col gap-8">
       <div>
         <h1 className="text-2xl font-medium break-words">{appId} — Configure</h1>
         <p className="text-muted-foreground text-sm mt-1 break-all">{data.composePath}</p>
@@ -212,7 +213,7 @@ export default function ConfigurePage() {
       {/* Image */}
       {service?.image && (
         <section className="flex flex-col gap-2">
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Image</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">Image</h2>
           <code className="text-sm bg-muted px-2 py-1 rounded break-all">{service.image}</code>
         </section>
       )}
@@ -222,14 +223,14 @@ export default function ConfigurePage() {
       {/* Environment Variables */}
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-medium">Environment Variables</h2>
+          <h2 className="text-sm font-medium">Environment variables</h2>
           {isDirty && (
             <div className="flex gap-2">
               <Button variant="ghost" size="sm" onClick={() => setEditedEnv(null)}>
                 Reset
               </Button>
               <Button size="sm" onClick={handleSave} disabled={saving}>
-                {saving ? "Saving..." : "Save changes"}
+                {saving ? "Saving…" : "Save changes"}
               </Button>
             </div>
           )}
@@ -237,7 +238,7 @@ export default function ConfigurePage() {
 
         <div className="flex flex-col gap-3">
           {Object.entries(currentEnv).map(([key, value]) => (
-            <div key={key} className="grid grid-cols-1 sm:grid-cols-[1fr_2fr] gap-2 sm:gap-3 sm:items-center">
+            <div key={key} className="grid grid-cols-1 @lg:grid-cols-[1fr_2fr] gap-2 @lg:gap-3 @lg:items-center">
               <Label htmlFor={`env-${key}`} className="font-mono text-xs truncate" title={key}>
                 {key}
               </Label>

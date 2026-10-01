@@ -225,7 +225,7 @@ export function AppSourcesSection() {
           </div>
           <Button
             size="sm"
-            className="h-9 sm:h-8 text-xs px-5 w-full sm:w-auto sm:self-end"
+            className="h-9 sm:h-8 text-xs px-5 w-full @lg:w-auto @lg:self-end"
             onClick={handleAddStore}
             disabled={addingStore || !newStoreName || !newStoreUrl}
           >

@@ -169,7 +169,7 @@ function BackupTerminalPassword() {
           </p>
         </div>
       </SettingsRow>
-      <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+      <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
         <div className="flex-1 min-w-0">
           <Label htmlFor="backup-terminal-password" className="text-sm font-medium cursor-pointer">
             {hasPassword ? "Change password" : "Set password"}
@@ -194,7 +194,7 @@ function BackupTerminalPassword() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder={`At least ${MIN_BACKUP_PASSWORD_LENGTH} characters`}
-          className="text-sm h-8 w-full sm:w-72"
+          className="text-sm h-8 w-full @lg:w-72"
           autoComplete="new-password"
         />
       </SettingsRow>

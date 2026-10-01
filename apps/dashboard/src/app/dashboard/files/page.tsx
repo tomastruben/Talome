@@ -204,10 +204,10 @@ function FilesTableSkeleton({ rows = 12 }: { rows?: number }) {
                 <Skeleton className={cn("h-3.5 rounded", nameWidths[i % nameWidths.length])} />
               </div>
             </TableCell>
-            <TableCell className="hidden sm:table-cell">
+            <TableCell className="hidden @md:table-cell">
               <Skeleton className="h-3 w-16 rounded" />
             </TableCell>
-            <TableCell className="hidden sm:table-cell text-right">
+            <TableCell className="hidden @md:table-cell text-right">
               {i % 3 !== 0 && <Skeleton className="h-3 w-10 rounded ml-auto" />}
             </TableCell>
             <TableCell className={FILES_LAST_CELL} />
@@ -1840,10 +1840,10 @@ function FilesPageInner({
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell className="hidden sm:table-cell text-muted-foreground text-xs">
+                        <TableCell className="hidden @md:table-cell text-muted-foreground text-xs">
                           {formatDate(item.modified)}
                         </TableCell>
-                        <TableCell className="hidden sm:table-cell text-right text-muted-foreground text-xs tabular-nums">
+                        <TableCell className="hidden @md:table-cell text-right text-muted-foreground text-xs tabular-nums">
                           {item.isDirectory ? "—" : formatBytes(item.size)}
                         </TableCell>
                         <TableCell className={FILES_LAST_CELL}>
@@ -2059,7 +2059,7 @@ function FilesPageInner({
                   onClick={() => setMovingPaths(Array.from(selectedVisible))}
                 >
                   <HugeiconsIcon icon={FolderExportIcon} size={14} />
-                  <span className="hidden sm:inline">Move</span>
+                  <span className="sr-only @md:not-sr-only">Move</span>
                 </button>
                 <button
                   type="button"
@@ -2067,7 +2067,7 @@ function FilesPageInner({
                   onClick={handleBulkDownload}
                 >
                   <HugeiconsIcon icon={Download01Icon} size={14} />
-                  <span className="hidden sm:inline">Download</span>
+                  <span className="sr-only @md:not-sr-only">Download</span>
                 </button>
                 <button
                   type="button"
@@ -2075,7 +2075,7 @@ function FilesPageInner({
                   onClick={() => void confirmBulkDelete()}
                 >
                   <HugeiconsIcon icon={Delete01Icon} size={14} />
-                  <span className="hidden sm:inline">Delete</span>
+                  <span className="sr-only @md:not-sr-only">Delete</span>
                 </button>
               </div>
             </motion.div>

@@ -27,7 +27,7 @@ import { AutomationSheet } from "@/components/automations/automation-sheet";
 import { useAutomation } from "@/components/automations/automation-context";
 import { relativeTime } from "@/lib/format";
 import { automationStatus, automationStatusMeta, type AutomationStatus, type AutomationStatusTone } from "@/lib/automation-status";
-import { ErrorState } from "@/components/ui/empty-state";
+import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** Throws on failure, so a failed load never shows "No automations yet". */
@@ -207,7 +207,9 @@ export default function AutomationsPage() {
   }
 
   return (
-    <div className="w-full max-w-2xl mx-auto space-y-6">
+    // A flex column filling the page (or the window's content), so the empty
+    // and error states centre in the space left
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-1 flex-col gap-6">
       {/* Failure banner */}
       {recentFailures.length > 0 && !bannerDismissed && (
         <Banner className="rounded-xl bg-destructive/8 text-destructive dark:text-status-critical" inset>
@@ -224,6 +226,7 @@ export default function AutomationsPage() {
       {/* List */}
       {!data && loadError ? (
         <ErrorState
+          fill
           title="Couldn't load automations"
           description={loadError instanceof Error ? loadError.message : "Check that the Talome server is reachable, then retry."}
           onRetry={() => void mutate()}
@@ -233,19 +236,18 @@ export default function AutomationsPage() {
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
         </div>
       ) : rows.length === 0 ? (
-        <div className="rounded-xl border border-dashed p-12 flex flex-col items-center gap-3 text-center">
-          <HugeiconsIcon icon={FlashIcon} size={32} className="text-dim-foreground" />
-          <div>
-            <p className="font-medium text-sm">No automations yet</p>
-            <p className="text-sm text-muted-foreground max-w-xs">
-              Automations run on a schedule or when events happen — restart a service if it crashes, clean up downloads weekly, scan your library nightly.
-            </p>
-          </div>
-          <Button size="sm" variant="outline" onClick={openCreate}>
-            <HugeiconsIcon icon={Add01Icon} size={14} />
-            Create automation
-          </Button>
-        </div>
+        <EmptyState
+          fill
+          icon={FlashIcon}
+          title="No automations yet"
+          description="Automations run on a schedule or when events happen — restart a service if it crashes, clean up downloads weekly, scan your library nightly."
+          action={
+            <Button size="sm" variant="outline" onClick={openCreate}>
+              <HugeiconsIcon icon={Add01Icon} size={14} />
+              Create automation
+            </Button>
+          }
+        />
       ) : (
         <div className="space-y-2">
           {rows.map((row) => {

@@ -16,8 +16,8 @@ export function FilesColGroup() {
     <colgroup>
       <col className="w-[calc(var(--window-pad,0.75rem)+1.5rem)]" />
       <col />
-      <col className="hidden w-[25%] sm:table-column" />
-      <col className="hidden w-[15%] sm:table-column" />
+      <col className="hidden w-[25%] @md:table-column" />
+      <col className="hidden w-[15%] @md:table-column" />
       <col className="w-[calc(var(--window-pad,0.75rem)+2rem)]" />
     </colgroup>
   );
@@ -56,8 +56,8 @@ export function FilesListHeader({ allSelected, hasSelection, onToggleSelectAll }
             </div>
           </TableHead>
           <TableHead className="overflow-hidden">Name</TableHead>
-          <TableHead className="hidden sm:table-cell">Modified</TableHead>
-          <TableHead className="hidden text-right sm:table-cell">Size</TableHead>
+          <TableHead className="hidden @md:table-cell">Modified</TableHead>
+          <TableHead className="hidden text-right @md:table-cell">Size</TableHead>
           <TableHead className={FILES_LAST_CELL}>
             <span className="sr-only">Actions</span>
           </TableHead>

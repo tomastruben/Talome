@@ -37,7 +37,7 @@ function TokenRow({
 }) {
   const expired = isExpired(token.expiresAt);
   return (
-    <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2 items-start">
+    <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2 items-start">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 min-w-0">
           <p className="text-sm font-medium truncate">{token.name}</p>
@@ -130,8 +130,8 @@ export function McpSection() {
               local network, agents can also use port 4000 on the server directly.
             </p>
           </div>
-          <div className="flex items-start gap-2 w-full sm:w-auto">
-            <span className="flex-1 sm:flex-none text-xs font-mono text-muted-foreground bg-muted/40 px-2.5 py-1.5 rounded-lg truncate max-w-60 sm:max-w-none">
+          <div className="flex items-start gap-2 w-full @lg:w-auto">
+            <span className="flex-1 @lg:flex-none text-xs font-mono text-muted-foreground bg-muted/40 px-2.5 py-1.5 rounded-lg truncate max-w-60 @lg:max-w-none">
               {serverUrl}
             </span>
             <CopyButton value={serverUrl} label="Copy MCP server URL" size="sm" className="h-7 text-xs shrink-0" />

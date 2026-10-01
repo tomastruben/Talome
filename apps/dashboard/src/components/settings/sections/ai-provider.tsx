@@ -375,7 +375,7 @@ export function AiProviderSection() {
           </p>
         ) : null}
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid @md:grid-cols-2 @2xl:grid-cols-4 gap-3">
           {(["anthropic", "openai", "kimi", "ollama"] as const).map((p) => (
             <ProviderCard
               key={p}
@@ -596,7 +596,7 @@ export function AiProviderSection() {
             <SettingsRow className="py-2.5">
               <p className="text-sm font-medium text-foreground">Model</p>
             </SettingsRow>
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-3">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium">
                   {PROVIDER_META[activeProvider].label} model
@@ -610,7 +610,7 @@ export function AiProviderSection() {
                 onValueChange={handleModelChange}
                 disabled={savingModel}
               >
-                <SelectTrigger className="w-full sm:w-72 h-8 text-xs">
+                <SelectTrigger className="w-full @lg:w-72 h-8 text-xs">
                   <SelectValue placeholder="Select a model" />
                 </SelectTrigger>
                 <SelectContent>

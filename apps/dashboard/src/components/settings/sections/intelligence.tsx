@@ -293,7 +293,7 @@ export function IntelligenceSection() {
       {/* ── Cost Projection + Presets ────────────────────────────── */}
       {costData && (
         <section>
-          <div className="rounded-xl border border-border bg-card px-4 py-4 sm:px-6 sm:py-5">
+          <div className="rounded-xl border border-border bg-card px-4 py-4 @lg:px-6 @lg:py-5">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <div>
                 <p className="text-sm font-medium text-foreground mb-1">Projected monthly</p>
@@ -318,7 +318,7 @@ export function IntelligenceSection() {
 
             {/* Preset pills */}
             <TooltipProvider delayDuration={300}>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
+              <div className="grid grid-cols-2 @lg:grid-cols-4 gap-2 mt-4">
                 {PRESETS.map((p) => {
                   const breakdown = computePresetCost(p, costData?.last30d.byContext, { claudeCodeAvailable });
                   return (
@@ -396,7 +396,7 @@ export function IntelligenceSection() {
             </div>
             <Switch checked={agent.autoRemediate} onCheckedChange={(v) => updateAgent("autoRemediate", v)} />
           </SettingsRow>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <Label className="text-sm font-medium">Check interval</Label>
               <p className="text-xs text-muted-foreground mt-0.5">How often to check system health</p>
@@ -420,7 +420,7 @@ export function IntelligenceSection() {
               </SelectContent>
             </Select>
           </SettingsRow>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <Label className="text-sm font-medium">Triage rate</Label>
               <p className="text-xs text-muted-foreground mt-0.5">Haiku — event classification</p>
@@ -445,7 +445,7 @@ export function IntelligenceSection() {
               </SelectContent>
             </Select>
           </SettingsRow>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <Label className="text-sm font-medium">Remediation rate</Label>
               <p className="text-xs text-muted-foreground mt-0.5">
@@ -481,7 +481,7 @@ export function IntelligenceSection() {
       <section>
         <SectionLabel>Detection Thresholds</SectionLabel>
         <SettingsGroup>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <Label className="text-sm font-medium">CPU alert</Label>
             </div>
@@ -499,7 +499,7 @@ export function IntelligenceSection() {
               </InputGroupAddon>
             </InputGroup>
           </SettingsRow>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <Label className="text-sm font-medium">Memory alert</Label>
             </div>
@@ -517,7 +517,7 @@ export function IntelligenceSection() {
               </InputGroupAddon>
             </InputGroup>
           </SettingsRow>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <Label className="text-sm font-medium">Restart loop</Label>
               <p className="text-xs text-muted-foreground mt-0.5">Restarts within 1 hour to trigger alert</p>
@@ -536,7 +536,7 @@ export function IntelligenceSection() {
               </InputGroupAddon>
             </InputGroup>
           </SettingsRow>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <Label className="text-sm font-medium">Image staleness</Label>
               <p className="text-xs text-muted-foreground mt-0.5">Days before an image is flagged as stale</p>
@@ -602,7 +602,7 @@ export function IntelligenceSection() {
               onCheckedChange={(v) => updateEvo({ autoScan: v })}
             />
           </SettingsRow>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium">Auto-execute policy</p>
               <p className="text-xs text-muted-foreground mt-0.5">
@@ -624,7 +624,7 @@ export function IntelligenceSection() {
               </SelectContent>
             </Select>
           </SettingsRow>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium">Execution mode</p>
               <p className="text-xs text-muted-foreground mt-0.5">

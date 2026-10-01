@@ -288,10 +288,10 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
             <TableRow>
               <TableHead scope="col" className="w-11 pl-3 pr-0"><span className="sr-only">Icon</span></TableHead>
               <TableHead scope="col">Name</TableHead>
-              <TableHead scope="col" className="hidden sm:table-cell w-24">Status</TableHead>
-              <TableHead scope="col" className="hidden sm:table-cell text-right w-16">CPU</TableHead>
-              <TableHead scope="col" className="text-right w-16 sm:w-20">Memory</TableHead>
-              <TableHead scope="col" className="w-14 sm:w-20"><span className="sr-only">Actions</span></TableHead>
+              <TableHead scope="col" className="hidden @xl:table-cell w-24">Status</TableHead>
+              <TableHead scope="col" className="hidden @xl:table-cell text-right w-16">CPU</TableHead>
+              <TableHead scope="col" className="text-right w-16 @xl:w-20">Memory</TableHead>
+              <TableHead scope="col" className="w-14 @xl:w-20"><span className="sr-only">Actions</span></TableHead>
             </TableRow>
           </TableHeader>
           {stacks.length === 0 ? (
@@ -342,7 +342,7 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                         </p>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell py-2.5">
+                    <TableCell className="hidden @xl:table-cell py-2.5">
                       {!isMulti && (busyActionId === primary.id || removingId === primary.id) ? (
                         <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                           <Spinner className="size-3" />
@@ -368,7 +368,7 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell py-2.5 text-right text-sm tabular-nums font-mono text-muted-foreground">
+                    <TableCell className="hidden @xl:table-cell py-2.5 text-right text-sm tabular-nums font-mono text-muted-foreground">
                       {stack.cpuPercent > 0 ? `${stack.cpuPercent.toFixed(1)}%` : "—"}
                     </TableCell>
                     <TableCell className="py-2.5 text-right text-sm tabular-nums font-mono text-muted-foreground">
@@ -539,7 +539,7 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                                       <p className="text-sm truncate">{container.name}</p>
                                       <p className="text-xs text-muted-foreground truncate mt-0.5">{shortImage(container.image)}</p>
                                     </button>
-                                    <div className="hidden sm:flex flex-wrap gap-1 shrink-0">
+                                    <div className="hidden @xl:flex flex-wrap gap-1 shrink-0">
                                       {ports.length > 0 ? ports.map((p) =>
                                         isRunning ? (
                                           <button
@@ -558,13 +558,13 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                                         ),
                                       ) : null}
                                     </div>
-                                    <span className="hidden sm:block w-16 text-right text-sm tabular-nums font-mono text-muted-foreground shrink-0">
+                                    <span className="hidden @xl:block w-16 text-right text-sm tabular-nums font-mono text-muted-foreground shrink-0">
                                       {container.stats ? `${container.stats.cpuPercent.toFixed(1)}%` : "—"}
                                     </span>
-                                    <span className="w-16 sm:w-20 text-right text-sm tabular-nums font-mono text-muted-foreground shrink-0">
+                                    <span className="w-16 @xl:w-20 text-right text-sm tabular-nums font-mono text-muted-foreground shrink-0">
                                       {container.stats ? formatMb(container.stats.memoryUsageMb) : "—"}
                                     </span>
-                                    <div className="flex items-center justify-end gap-0.5 w-14 sm:w-20 shrink-0">
+                                    <div className="flex items-center justify-end gap-0.5 w-14 @xl:w-20 shrink-0">
                                       {(busyActionId === container.id || removingId === container.id) ? (
                                         <Spinner className="size-3.5" />
                                       ) : (

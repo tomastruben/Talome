@@ -1103,9 +1103,13 @@ export default function AudiobooksPage() {
     <WindowSidebarLayout sidebar={sidebar}>
     <div ref={rootRef} className="flex min-w-0 flex-1 flex-col gap-5 pb-12">
       {/* Controls — tabs + search/sort */}
-      <DesktopAppToolbar className="page-controls-row flex-wrap justify-between gap-2">
-        <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 items-center truncate text-sm font-medium text-foreground")}>
-          {viewHeading}
+      {/* One row that wraps only where it must: the controls keep their own
+          width and the search takes what's left, down to 10rem, before it
+          moves to a row of its own. Sized by the content column (container
+          queries), not the screen, which in a window includes the sidebar. */}
+      <DesktopAppToolbar className="flex min-w-0 flex-wrap items-center gap-2">
+        <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 text-sm font-medium text-foreground")}>
+          <span className="truncate">{viewHeading}</span>
         </h2>
         <Tabs
           className={WINDOW_SIDEBAR_REPLACES}
@@ -1115,15 +1119,15 @@ export default function AudiobooksPage() {
           <TabsList>
             <TabsTrigger value="library" className="text-xs gap-1.5" aria-label="Library" title="Library">
               <HugeiconsIcon icon={BookOpen01Icon} size={14} aria-hidden="true" />
-              <span className="hidden md:inline">Library</span>
+              <span className="hidden @xl:inline">Library</span>
             </TabsTrigger>
             <TabsTrigger value="search" className="text-xs gap-1.5" aria-label="Search" title="Search">
               <HugeiconsIcon icon={Search01Icon} size={14} aria-hidden="true" />
-              <span className="hidden md:inline">Search</span>
+              <span className="hidden @xl:inline">Search</span>
             </TabsTrigger>
             <TabsTrigger value="downloads" className="text-xs gap-1.5" aria-label={downloadsLabel} title="Downloads">
               <HugeiconsIcon icon={DownloadCircle01Icon} size={14} aria-hidden="true" />
-              <span className="hidden md:inline">Downloads</span>
+              <span className="hidden @xl:inline">Downloads</span>
               {downloadCount > 0 && <TabsBadge>{formatCount(downloadCount)}</TabsBadge>}
             </TabsTrigger>
           </TabsList>
@@ -1131,71 +1135,68 @@ export default function AudiobooksPage() {
 
         {/* Library controls */}
         {tab === "library" && (
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-2">
-              <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
-                <SelectTrigger className="h-8 w-full min-w-0 text-xs sm:w-auto sm:min-w-[7rem]">
-                  <SelectValue />
+          <>
+            <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
+              <SelectTrigger aria-label="Sort" className="h-8 w-auto min-w-28 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="added-desc">Recently added</SelectItem>
+                <SelectItem value="added-asc">Oldest first</SelectItem>
+                <SelectItem value="title-asc">Title A–Z</SelectItem>
+                <SelectItem value="title-desc">Title Z–A</SelectItem>
+                <SelectItem value="duration-desc">Longest</SelectItem>
+                <SelectItem value="duration-asc">Shortest</SelectItem>
+              </SelectContent>
+            </Select>
+            {/* The library picker; in a wide window the sidebar lists the libraries */}
+            {pickerLibraries && (pickerLibraries.length > 1 || audibleConnected) && (
+              <Select value={selectedLibrary ?? ""} onValueChange={setSelectedLibrary}>
+                <SelectTrigger aria-label="Library" className={cn("h-8 w-auto min-w-28 text-xs", WINDOW_SIDEBAR_REPLACES)}>
+                  <SelectValue placeholder="Library" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="added-desc">Recently added</SelectItem>
-                  <SelectItem value="added-asc">Oldest first</SelectItem>
-                  <SelectItem value="title-asc">Title A–Z</SelectItem>
-                  <SelectItem value="title-desc">Title Z–A</SelectItem>
-                  <SelectItem value="duration-desc">Longest</SelectItem>
-                  <SelectItem value="duration-asc">Shortest</SelectItem>
+                  {pickerLibraries.map((lib) => (
+                    <SelectItem key={lib.id} value={lib.id}>{lib.name}</SelectItem>
+                  ))}
+                  {audibleConnected && (
+                    <>
+                      <SelectSeparator />
+                      <SelectItem value="__audible__">Audible</SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
-              {pickerLibraries && (pickerLibraries.length > 0 || audibleConnected) && (
-                <Select value={selectedLibrary ?? ""} onValueChange={setSelectedLibrary}>
-                  <SelectTrigger aria-label="Library" className={cn("h-8 w-full min-w-0 text-xs sm:hidden", WINDOW_SIDEBAR_REPLACES)}>
-                    <SelectValue placeholder="Library" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {pickerLibraries.map((lib) => (
-                      <SelectItem key={lib.id} value={lib.id}>{lib.name}</SelectItem>
-                    ))}
-                    {audibleConnected && (
-                      <>
-                        <SelectSeparator />
-                        <SelectItem value="__audible__">Audible</SelectItem>
-                      </>
-                    )}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
+            )}
             <SearchField
-              containerClassName="flex-1 w-full sm:w-auto"
+              containerClassName="ml-auto min-w-40 flex-1 @xl:max-w-64"
+              aria-label="Search library"
               placeholder="Search library…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-          </div>
+          </>
         )}
 
-        {/* Library picker — visible on all tabs (desktop: always, mobile: library tab only has its own) */}
-        {/* On the library tab the window sidebar lists the libraries; on Search
-            and Downloads this picks where downloads go, so it stays. */}
-        {pickerLibraries && (pickerLibraries.length > 1 || audibleConnected) && (
-          <div className={cn("items-center gap-3", tab === "library" ? cn("hidden sm:flex", WINDOW_SIDEBAR_REPLACES) : "flex")}>
-            <Select value={selectedLibrary ?? ""} onValueChange={setSelectedLibrary}>
-              <SelectTrigger aria-label="Library" className="h-8 text-xs min-w-[8rem]">
-                <SelectValue placeholder="Library" />
-              </SelectTrigger>
-              <SelectContent>
-                {pickerLibraries.map((lib) => (
-                  <SelectItem key={lib.id} value={lib.id}>{lib.name}</SelectItem>
-                ))}
-                {audibleConnected && (
-                  <>
-                    <SelectSeparator />
-                    <SelectItem value="__audible__">Audible</SelectItem>
-                  </>
-                )}
-              </SelectContent>
-            </Select>
-          </div>
+        {/* On Search and Downloads the picker chooses where downloads go, so
+            it stays even when the sidebar lists the libraries. */}
+        {tab !== "library" && pickerLibraries && (pickerLibraries.length > 1 || audibleConnected) && (
+          <Select value={selectedLibrary ?? ""} onValueChange={setSelectedLibrary}>
+            <SelectTrigger aria-label="Library" className="ml-auto h-8 w-auto min-w-32 text-xs">
+              <SelectValue placeholder="Library" />
+            </SelectTrigger>
+            <SelectContent>
+              {pickerLibraries.map((lib) => (
+                <SelectItem key={lib.id} value={lib.id}>{lib.name}</SelectItem>
+              ))}
+              {audibleConnected && (
+                <>
+                  <SelectSeparator />
+                  <SelectItem value="__audible__">Audible</SelectItem>
+                </>
+              )}
+            </SelectContent>
+          </Select>
         )}
       </DesktopAppToolbar>
 
@@ -1205,7 +1206,7 @@ export default function AudiobooksPage() {
           {selectedLibrary === "__audible__" ? (
             <>
               {audibleLoading ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                <div className="audiobook-grid" aria-busy="true">
                   {Array.from({ length: 12 }).map((_, i) => (
                     <div key={i} className="space-y-2">
                       <Skeleton className="aspect-square rounded-lg" />
@@ -1253,7 +1254,7 @@ export default function AudiobooksPage() {
                       FFmpeg not found on server — import is disabled. Install FFmpeg to enable audiobook importing.
                     </p>
                   )}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                  <div className="audiobook-grid">
                     {audibleLibrary.map((item) => (
                       <AudibleCard
                         key={item.asin}

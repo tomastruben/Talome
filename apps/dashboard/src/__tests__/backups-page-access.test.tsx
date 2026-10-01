@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { SWRConfig } from "swr";
 import type { AppBackupOverview, BackupSummary } from "@/app/dashboard/backups/_lib/types";
 
@@ -51,6 +51,21 @@ const APP: AppBackupOverview = {
 
 const fetchMock = vi.fn();
 
+/**
+ * The width the backups list measures (useMinWidth). jsdom has no layout, so
+ * a ResizeObserver stand-in reports this at once, like the browser does when
+ * observing starts. Wide enough for the inline row actions by default.
+ */
+const listWidth = { value: 1000 };
+class ListResizeObserver {
+  constructor(private readonly callback: ResizeObserverCallback) {}
+  observe() {
+    this.callback([{ contentRect: { width: listWidth.value } } as ResizeObserverEntry], this as unknown as ResizeObserver);
+  }
+  unobserve() {}
+  disconnect() {}
+}
+
 function renderPage() {
   return render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
@@ -67,6 +82,7 @@ beforeEach(() => {
   refreshUser.mockClear();
   toastError.mockClear();
   fetchMock.mockReset();
+  listWidth.value = 1000;
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") {
       // What the server answers any non-admin change with.
@@ -76,6 +92,7 @@ beforeEach(() => {
     return new Response(JSON.stringify([]), { status: 200 });
   });
   vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("ResizeObserver", ListResizeObserver);
 });
 
 afterEach(() => {
@@ -105,6 +122,33 @@ describe("Backups page access", () => {
     expect(screen.getByRole("button", { name: "More actions for Sonarr" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Storage/ })).toBeInTheDocument();
     expect(screen.queryByText(/Only an admin can/)).not.toBeInTheDocument();
+  });
+
+  it("moves the row actions into the row's menu when the list is too narrow for them (a small window)", async () => {
+    userState.isAdmin = true;
+    listWidth.value = 600;
+    renderPage();
+    expect(await screen.findByText("Sonarr")).toBeInTheDocument();
+    // Not in the row…
+    expect(screen.queryByRole("button", { name: /Back up now/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Verify now/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Restore/ })).not.toBeInTheDocument();
+
+    // …but one menu away, above the backup settings.
+    const more = screen.getByRole("button", { name: "More actions for Sonarr" });
+    fireEvent.pointerDown(more, { button: 0, ctrlKey: false, pointerType: "mouse" });
+    const menu = await screen.findByRole("menu");
+    const items = within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim());
+    expect(items).toEqual(["Back up now", "Verify now", "Restore", "Backup settings"]);
+  });
+
+  it("keeps the row actions out of the menu when they're in the row", async () => {
+    userState.isAdmin = true;
+    renderPage();
+    const more = await screen.findByRole("button", { name: "More actions for Sonarr" });
+    fireEvent.pointerDown(more, { button: 0, ctrlKey: false, pointerType: "mouse" });
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual(["Backup settings"]);
   });
 
   it("explains a 403 and re-reads the role when it still happens", async () => {

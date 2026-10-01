@@ -92,7 +92,7 @@ export function DataRetentionSection() {
           const id = `retention-${field.key}`;
           const fieldError = errors[field.key];
           return (
-            <SettingsRow key={field.key} className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow key={field.key} className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <Label htmlFor={id} className="text-sm font-medium cursor-pointer">{field.label}</Label>
                 <p className="text-xs text-muted-foreground mt-0.5">{field.description}</p>

@@ -225,7 +225,7 @@ export default function SettingsPage() {
   const { twoPane } = useSettingsLayout();
 
   return (
-    <div className="mx-auto w-full max-w-2xl min-w-0 grid gap-8 pb-12">
+    <div className="@container mx-auto grid w-full max-w-2xl min-w-0 gap-8 pb-12">
       <GeneralInline isAdmin={isAdmin} />
       {/* Restarting core, the dashboard or the terminal (every shell and Claude Code session) is admin-only. */}
       {isAdmin ? <ServicesSection heading={<CategoryLabel>Services</CategoryLabel>} /> : null}

@@ -1,14 +1,15 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
+/**
+ * Shaped like the list of automations. No padding of its own, since the shell
+ * pads the page (classic and window alike).
+ */
 export default function AutomationsLoading() {
   return (
-    <div className="flex flex-col gap-6 p-6">
-      <Skeleton className="h-8 w-48" />
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Skeleton className="h-32" />
-        <Skeleton className="h-32" />
-        <Skeleton className="h-32" />
-      </div>
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-1 flex-col gap-2" aria-busy="true">
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} className="h-16 w-full rounded-xl" />
+      ))}
     </div>
   );
 }

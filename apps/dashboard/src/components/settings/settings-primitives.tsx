@@ -139,12 +139,12 @@ interface SecretRowProps {
 
 export function SecretRow({ label, hint, id, placeholder, storedValue, isEditing, onEdit, onChange }: SecretRowProps) {
   return (
-    <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+    <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
       <div className="flex-1 min-w-0">
         <Label htmlFor={id} className="text-sm font-medium cursor-pointer">{label}</Label>
         {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
       </div>
-      <div className="relative shrink-0 w-full sm:w-72">
+      <div className="relative shrink-0 w-full @lg:w-72">
         <Input
           id={id}
           type="password"
@@ -178,12 +178,12 @@ export function TextRow({ label, hint, id, placeholder, value, onChange }: {
   onChange: (val: string) => void;
 }) {
   return (
-    <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+    <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
       <div className="flex-1 min-w-0">
         <Label htmlFor={id} className="text-sm font-medium cursor-pointer">{label}</Label>
         {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
       </div>
-      <div className="shrink-0 w-full sm:w-72">
+      <div className="shrink-0 w-full @lg:w-72">
         <Input
           id={id}
           placeholder={placeholder}

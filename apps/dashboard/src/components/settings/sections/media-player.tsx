@@ -305,7 +305,7 @@ export function MediaPlayerSection() {
         )}
 
         {/* ── Scan action ── */}
-        <SettingsRow className="bg-muted/30 py-3 flex-wrap sm:flex-nowrap gap-2">
+        <SettingsRow className="bg-muted/30 py-3 flex-wrap @lg:flex-nowrap gap-2">
           <div className="flex-1 min-w-0">
             <p className="text-xs text-muted-foreground">
               {(optConfig?.mediaTypes ?? "all") === "movies"
@@ -318,7 +318,7 @@ export function MediaPlayerSection() {
           <Button
             variant="outline"
             size="sm"
-            className="gap-1.5 w-full sm:w-auto shrink-0"
+            className="gap-1.5 w-full @lg:w-auto shrink-0"
             disabled={scanning}
             onClick={() => void runScanAndOptimize()}
           >
@@ -330,7 +330,7 @@ export function MediaPlayerSection() {
         {/* ── Settings ── */}
         {optConfig && (
           <>
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">Media to optimize</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -360,7 +360,7 @@ export function MediaPlayerSection() {
               </div>
             </SettingsRow>
 
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">Keep original files</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -374,7 +374,7 @@ export function MediaPlayerSection() {
               />
             </SettingsRow>
 
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">Auto-optimize</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -388,13 +388,13 @@ export function MediaPlayerSection() {
               />
             </SettingsRow>
 
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">Max concurrent conversions</p>
               </div>
               <Input
                 type="number"
-                className="w-full sm:w-20 text-sm tabular-nums h-8"
+                className="w-full @lg:w-20 text-sm tabular-nums h-8"
                 min={1}
                 max={4}
                 defaultValue={optConfig.maxConcurrentJobs}
@@ -448,7 +448,7 @@ export function MediaPlayerSection() {
             </div>
           </div>
         </SettingsRow>
-        <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+        <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
           <div className="flex-1 min-w-0">
             <p className="text-sm">Shareable link</p>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -458,7 +458,7 @@ export function MediaPlayerSection() {
           <Button
             variant="outline"
             size="sm"
-            className="gap-1.5 w-full sm:w-auto"
+            className="gap-1.5 w-full @lg:w-auto"
             onClick={() => {
               const url = `${window.location.origin}/dashboard/media?cinema=1`;
               if (navigator.clipboard?.writeText) {
@@ -497,7 +497,7 @@ export function MediaPlayerSection() {
           </SettingsRow>
         ) : config ? (
           <>
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">Smart detection</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -511,7 +511,7 @@ export function MediaPlayerSection() {
               />
             </SettingsRow>
 
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">Transcode cache</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -525,7 +525,7 @@ export function MediaPlayerSection() {
               />
             </SettingsRow>
 
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">Source folder temp</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -539,12 +539,12 @@ export function MediaPlayerSection() {
               />
             </SettingsRow>
 
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">HLS temp directory</p>
               </div>
               <Input
-                className="w-full sm:w-64 text-xs font-mono h-8"
+                className="w-full @lg:w-64 text-xs font-mono h-8"
                 defaultValue={config.hlsTempDirectory}
                 disabled={saving}
                 onBlur={(e) => {
@@ -556,12 +556,12 @@ export function MediaPlayerSection() {
               />
             </SettingsRow>
 
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">Transmux temp directory</p>
               </div>
               <Input
-                className="w-full sm:w-64 text-xs font-mono h-8"
+                className="w-full @lg:w-64 text-xs font-mono h-8"
                 defaultValue={config.transmuxTempDirectory}
                 disabled={saving}
                 onBlur={(e) => {
@@ -573,13 +573,13 @@ export function MediaPlayerSection() {
               />
             </SettingsRow>
 
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">Max concurrent jobs</p>
               </div>
               <Input
                 type="number"
-                className="w-full sm:w-20 text-sm tabular-nums h-8"
+                className="w-full @lg:w-20 text-sm tabular-nums h-8"
                 min={1}
                 max={20}
                 defaultValue={config.maxConcurrentJobs}
@@ -615,7 +615,7 @@ export function MediaPlayerSection() {
           </SettingsRow>
         ) : stats ? (
           <>
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm">
                   {stats.jobCount} job{stats.jobCount !== 1 ? "s" : ""}
@@ -637,7 +637,7 @@ export function MediaPlayerSection() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="gap-1.5 w-full sm:w-auto"
+                  className="gap-1.5 w-full @lg:w-auto"
                   disabled={clearing}
                   onClick={() => void clearCache()}
                 >

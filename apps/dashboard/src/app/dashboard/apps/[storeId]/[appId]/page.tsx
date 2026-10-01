@@ -1484,7 +1484,7 @@ export default function AppDetailPage() {
                 <Button
                   variant="outline"
                   onClick={launchClaudeSession}
-                  className="w-full sm:w-fit"
+                  className="w-full @lg:w-fit"
                 >
                   Open Claude Code
                 </Button>
@@ -1503,7 +1503,7 @@ export default function AppDetailPage() {
                 variant="outline"
                 onClick={submitToCommunity}
                 disabled={submittingCommunity}
-                className="w-full sm:w-fit"
+                className="w-full @lg:w-fit"
               >
                 {submittingCommunity ? "Submitting…" : "Submit to community"}
               </Button>

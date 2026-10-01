@@ -168,6 +168,13 @@ export function FilesSidebar({
                     label={folderName(path)}
                     active={currentPath === path}
                     onSelect={() => onNavigate(path)}
+                    // Unpinning is on the row too, not only in its context
+                    // menu: re-pin it from the folder's row menu.
+                    action={{
+                      icon: PinOffIcon,
+                      label: `Remove ${folderName(path)} from sidebar`,
+                      onSelect: () => onUnpin(path),
+                    }}
                   />
                 </div>
               </ContextMenuTrigger>

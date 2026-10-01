@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useState, useMemo } from "react";
 import { toast } from "sonner";
 import { AnimatePresence, motion } from "motion/react";
@@ -19,6 +20,7 @@ import {
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useInstalledApps } from "@/hooks/use-installed-apps";
 import { CORE_URL } from "@/lib/constants";
 import {
@@ -191,10 +193,10 @@ export default function SharePage() {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col gap-3 py-12 px-4 max-w-2xl mx-auto">
+      <div className="@container mx-auto flex w-full max-w-2xl flex-col gap-3" aria-busy="true">
         <Skeleton className="h-5 w-40" />
-        <Skeleton className="h-4 w-72" />
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-6">
+        <Skeleton className="h-4 w-72 max-w-full" />
+        <div className="grid grid-cols-2 @lg:grid-cols-3 gap-2 mt-6">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-12 rounded-xl" />
           ))}
@@ -205,12 +207,17 @@ export default function SharePage() {
 
   if (apps.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 px-4 max-w-md mx-auto text-center">
-        <p className="text-sm text-muted-foreground">
-          No apps installed yet. Install some apps first, then come back to
-          share your setup.
-        </p>
-      </div>
+      <EmptyState
+        fill
+        icon={Package01Icon}
+        title="No apps to share yet"
+        description="Install some apps first, then come back to share your setup."
+        action={
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/dashboard/apps">Browse App Store</Link>
+          </Button>
+        }
+      />
     );
   }
 
@@ -218,9 +225,11 @@ export default function SharePage() {
     effectiveSelection.size === apps.length && apps.length > 0;
 
   return (
-    <div className="flex flex-col px-4 py-8 sm:py-12 max-w-2xl mx-auto w-full">
+    // The shell pads the page (classic and window alike), so the page adds
+    // none of its own. A size container: it lays out by its own width.
+    <div className="@container mx-auto flex w-full max-w-2xl flex-col pb-6">
       {/* Intro */}
-      <div className="mb-8 sm:mb-10">
+      <div className="mb-8">
         <h2 className="text-lg font-medium tracking-tight">
           Share your setup
         </h2>
@@ -233,7 +242,7 @@ export default function SharePage() {
 
       <section
         aria-labelledby="share-package-explainer"
-        className="mb-8 overflow-hidden rounded-2xl border border-border bg-card"
+        className="mb-8 overflow-hidden rounded-xl border border-border bg-card"
       >
         <div className="flex items-start gap-3 border-b border-border/70 px-4 py-3.5">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted">
@@ -254,7 +263,7 @@ export default function SharePage() {
           </div>
         </div>
 
-        <div className="grid divide-y divide-border/70 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <div className="grid divide-y divide-border/70 @lg:grid-cols-3 @lg:divide-x @lg:divide-y-0">
           <SharePackageFact
             icon={Package01Icon}
             title="Recipe"
@@ -272,7 +281,7 @@ export default function SharePage() {
           />
         </div>
 
-        <p className="border-t border-border/70 px-4 py-3 text-[11px] leading-relaxed text-muted-foreground">
+        <p className="border-t border-border/70 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
           The recipient imports the file in <span className="font-medium text-foreground">Settings → Export &amp; Import</span>,
           reviews the apps, then Talome helps configure and install them. Your server does not need to stay online.
         </p>
@@ -292,7 +301,7 @@ export default function SharePage() {
             {allSelected ? "Deselect all" : "Select all"}
           </button>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 @lg:grid-cols-3 gap-2">
           {apps.map((app) => {
             const selected = effectiveSelection.has(app.id);
             return (
@@ -344,7 +353,7 @@ export default function SharePage() {
             transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
             className="space-y-6"
           >
-            <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+            <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
               <div className="flex items-start gap-3 border-b border-border/70 p-4">
                 <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background">
                   <HugeiconsIcon icon={Tick01Icon} size={16} />
@@ -356,7 +365,7 @@ export default function SharePage() {
                   </p>
                 </div>
                 {fingerprint && (
-                  <code className="shrink-0 rounded-md bg-muted/60 px-2 py-1 text-[10px] text-muted-foreground">
+                  <code className="shrink-0 rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground">
                     ID {fingerprint}
                   </code>
                 )}
@@ -364,15 +373,15 @@ export default function SharePage() {
               <div className="p-4">
                 <div className="relative overflow-hidden rounded-xl border border-border/70 bg-muted/25">
                   <div className="flex items-center justify-between border-b border-border/60 px-3 py-2">
-                    <span className="text-[11px] font-medium text-muted-foreground">Portable code</span>
-                    <span className="text-[10px] text-muted-foreground">{shareCode.length.toLocaleString()} characters</span>
+                    <span className="text-xs font-medium text-muted-foreground">Portable code</span>
+                    <span className="text-xs tabular-nums text-muted-foreground">{shareCode.length.toLocaleString()} characters</span>
                   </div>
-                  <code className="block max-h-16 overflow-hidden break-all px-3 py-2.5 font-mono text-[11px] leading-5 text-muted-foreground [mask-image:linear-gradient(to_bottom,black_45%,transparent_100%)]">
+                  <code className="block max-h-16 overflow-hidden break-all px-3 py-2.5 font-mono text-xs leading-5 text-muted-foreground [mask-image:linear-gradient(to_bottom,black_45%,transparent_100%)]">
                     {shareCode}
                   </code>
                 </div>
 
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="mt-3 grid grid-cols-1 gap-2 @lg:grid-cols-3">
                   <Button size="sm" onClick={() => void copyCode()} className="h-9 w-full gap-1.5 rounded-lg text-xs">
                     <AnimatePresence mode="wait" initial={false}>
                       <motion.span
@@ -396,7 +405,7 @@ export default function SharePage() {
                   </Button>
                 </div>
 
-                <p className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <HugeiconsIcon icon={CheckmarkCircle01Icon} size={13} className="shrink-0" />
                   No secrets or app data included. The recipe works independently of this server&apos;s address.
                 </p>
@@ -483,15 +492,15 @@ function SharePackageFact({
   description: string;
 }) {
   return (
-    <div className="flex gap-2.5 p-4 sm:flex-col sm:gap-2">
+    <div className="flex gap-2.5 p-4 @lg:flex-col @lg:gap-2">
       <HugeiconsIcon
         icon={icon}
         size={15}
-        className="mt-0.5 shrink-0 text-muted-foreground sm:mt-0"
+        className="mt-0.5 shrink-0 text-muted-foreground @lg:mt-0"
       />
       <div>
         <p className="text-xs font-medium">{title}</p>
-        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
           {description}
         </p>
       </div>

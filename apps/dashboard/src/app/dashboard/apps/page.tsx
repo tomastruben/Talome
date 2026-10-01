@@ -21,6 +21,7 @@ import {
   SourceListItem,
   SourceListSection,
   WINDOW_SIDEBAR_REPLACES,
+  WINDOW_SIDEBAR_SHOWS,
   WindowSidebarLayout,
 } from "@/components/ui/source-list";
 import { Tabs, TabsList, TabsTrigger, TabsBadge } from "@/components/ui/tabs";
@@ -39,6 +40,8 @@ import { CORE_URL } from "@/lib/constants";
 import { deleteCreatedAppCopy, emptyCatalogCopy } from "@/lib/app-store-copy";
 import { Button } from "@/components/ui/button";
 import { installedAppsRefreshInterval, installedStateSignature } from "@/lib/polling";
+import { cn } from "@/lib/utils";
+import { appStoreViewTitle, categoryLabel, sourceLabel } from "./_lib/app-store-view";
 import type { CatalogApp, StoreSource, StackListItem } from "@talome/types";
 
 type Tab = "all" | "installed" | string;
@@ -52,13 +55,6 @@ const SOURCE_TAB_ORDER: Record<string, number> = {
 };
 /** Don't refetch the multi-MB catalog more than once per this window. */
 const CATALOG_DEDUPE_MS = 5 * 60 * 1000;
-
-function sourceLabel(type: string) {
-  if (type === "casaos") return "CasaOS";
-  if (type === "umbrel") return "Umbrel";
-  if (type === "user-created") return "My Apps";
-  return type.charAt(0).toUpperCase() + type.slice(1);
-}
 
 function useAutoLoadSentinel({
   targetRef,
@@ -371,7 +367,7 @@ function AppsPageContent() {
           {categories.map((cat) => (
             <SourceListItem
               key={cat}
-              label={cat.length <= 2 ? cat.toUpperCase() : cat.charAt(0).toUpperCase() + cat.slice(1)}
+              label={categoryLabel(cat)}
               active={category === cat}
               onSelect={() => changeCategory(cat)}
             />
@@ -385,8 +381,16 @@ function AppsPageContent() {
     <WindowSidebarLayout sidebar={sidebar}>
     <div className="flex min-w-0 flex-1 flex-col gap-5">
       <DesktopAppToolbar className="grid min-w-0 gap-3">
-        {/* ── Source tabs + search ─────────────────────── */}
-        <div className="page-controls-row min-w-0 flex-wrap justify-between gap-2">
+        {/* ── Source tabs + search. One row that wraps only when the search
+            can't keep 10rem beside the tabs; in a wide window the sidebar
+            holds the sources, so the row names the view instead. ── */}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 items-baseline gap-1.5 text-sm font-medium text-foreground")}>
+            <span className="truncate">{appStoreViewTitle(tab)}</span>
+            {showCategories && category !== "all" && (
+              <span className="shrink-0 font-normal text-muted-foreground">· {categoryLabel(category)}</span>
+            )}
+          </h2>
           <Tabs className={WINDOW_SIDEBAR_REPLACES} value={tab} onValueChange={changeTab}>
             <TabsList>
               <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
@@ -410,20 +414,21 @@ function AppsPageContent() {
             </TabsList>
           </Tabs>
 
-          <div className="ml-auto flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-2">
-            <SearchField
-              containerClassName="flex-1 w-full sm:w-auto"
-              placeholder="Search apps…"
-              value={search}
-              onChange={(e) => changeSearch(e.target.value)}
-            />
-          </div>
+          <SearchField
+            containerClassName="ml-auto min-w-40 flex-1 @xl:max-w-64"
+            aria-label="Search apps"
+            placeholder="Search apps…"
+            value={search}
+            onChange={(e) => changeSearch(e.target.value)}
+          />
         </div>
 
-        {/* ── Category pills — "all" pinned, rest scroll ── */}
+        {/* ── Category pills — "All" pinned, the rest scroll ── */}
         {showCategories && (
-          <div className={`flex items-center gap-1.5 min-w-0 ${WINDOW_SIDEBAR_REPLACES}`}>
+          <div className={cn("flex min-w-0 items-center gap-1.5", WINDOW_SIDEBAR_REPLACES)}>
             <button
+              type="button"
+              aria-pressed={category === "all"}
               className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
                 category === "all"
                   ? "border-foreground/30 bg-foreground/8 text-foreground"
@@ -431,13 +436,16 @@ function AppsPageContent() {
               }`}
               onClick={() => changeCategory("all")}
             >
-              all
+              All
             </button>
             <div className="relative min-w-0 max-w-full flex-1">
-              <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none max-lg:[mask-image:linear-gradient(to_right,transparent,black_1rem,black_calc(100%-1rem),transparent)]">
+              {/* The rail fades out at its end (a mask, so it reads on window glass too) */}
+              <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)]">
                 {categories.map((cat) => (
                   <button
                     key={cat}
+                    type="button"
+                    aria-pressed={category === cat}
                     className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
                       category === cat
                         ? "border-foreground/30 bg-foreground/8 text-foreground"
@@ -445,9 +453,11 @@ function AppsPageContent() {
                     }`}
                     onClick={() => changeCategory(cat)}
                   >
-                    {cat}
+                    {categoryLabel(cat)}
                   </button>
                 ))}
+                {/* Room to scroll the last pill clear of the fade */}
+                <span aria-hidden="true" className="w-4 shrink-0" />
               </div>
             </div>
           </div>

@@ -218,14 +218,14 @@ function LocalDomainsSection({
         </SettingsRow>
 
         {!isEnabled && (
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <Label htmlFor="base-domain" className="text-sm font-medium cursor-pointer">Base domain</Label>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Wildcard DNS resolves all subdomains automatically
               </p>
             </div>
-            <div className="shrink-0 w-full sm:w-56">
+            <div className="shrink-0 w-full @lg:w-56">
               <Input
                 id="base-domain"
                 placeholder="talome.local"
@@ -640,14 +640,14 @@ function AuthProxySection() {
 
       {enabled && (
         <>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <Label htmlFor="core-host" className="text-sm font-medium cursor-pointer">Core API host</Label>
               <p className="text-xs text-muted-foreground mt-0.5">
                 How Caddy reaches the Talome API for session verification
               </p>
             </div>
-            <div className="shrink-0 w-full sm:w-64">
+            <div className="shrink-0 w-full @lg:w-64">
               <Input
                 id="core-host"
                 placeholder="host.docker.internal:4000"
@@ -658,14 +658,14 @@ function AuthProxySection() {
             </div>
           </SettingsRow>
 
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <div className="flex-1 min-w-0">
               <Label htmlFor="bypass-apps" className="text-sm font-medium cursor-pointer">Bypass apps</Label>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Comma-separated app IDs that skip auth (e.g. vaultwarden, pihole)
               </p>
             </div>
-            <div className="shrink-0 w-full sm:w-64">
+            <div className="shrink-0 w-full @lg:w-64">
               <Input
                 id="bypass-apps"
                 placeholder="vaultwarden, pihole"

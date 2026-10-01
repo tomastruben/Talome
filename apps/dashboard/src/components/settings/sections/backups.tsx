@@ -174,7 +174,7 @@ function ScheduleBuilder({ onSubmit, disabled }: { onSubmit: (cron: string) => v
     <div className="space-y-5">
       <div className="space-y-2">
         <p className="text-xs text-muted-foreground">Frequency</p>
-        <div className="grid grid-cols-3 sm:grid-cols-5 rounded-lg border border-border p-0.5 bg-muted/30 gap-0.5">
+        <div className="grid grid-cols-3 @lg:grid-cols-5 rounded-lg border border-border p-0.5 bg-muted/30 gap-0.5">
           {FREQUENCIES.map((f) => (
             <button
               key={f.id}
@@ -196,7 +196,7 @@ function ScheduleBuilder({ onSubmit, disabled }: { onSubmit: (cron: string) => v
       {showTime && (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">Time</p>
-          <div className="grid grid-cols-3 sm:grid-cols-5 rounded-lg border border-border p-0.5 bg-muted/30 gap-0.5">
+          <div className="grid grid-cols-3 @lg:grid-cols-5 rounded-lg border border-border p-0.5 bg-muted/30 gap-0.5">
             {TIME_SLOTS.map((t) => (
               <button
                 key={t.id}
@@ -219,7 +219,7 @@ function ScheduleBuilder({ onSubmit, disabled }: { onSubmit: (cron: string) => v
       <div className="space-y-3 pt-1">
         <p className="text-sm text-muted-foreground">{describeCron(cron)}</p>
         <div className="flex items-center gap-3">
-          <Button size="sm" className="h-9 sm:h-8 text-xs px-5 flex-1 sm:flex-none" onClick={() => onSubmit(cron)} disabled={disabled}>
+          <Button size="sm" className="h-9 sm:h-8 text-xs px-5 flex-1 @lg:flex-none" onClick={() => onSubmit(cron)} disabled={disabled}>
             {disabled ? "Creating..." : "Create schedule"}
           </Button>
           <button
@@ -471,7 +471,7 @@ export function BackupsSection() {
           <p className="text-sm font-medium text-foreground">Back up now</p>
         </SettingsRow>
         <SettingsRow className="flex-col items-stretch gap-3">
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full">
+          <div className="flex flex-col @lg:flex-row items-stretch @lg:items-center gap-3 w-full">
             <Select value={selectedApp} onValueChange={setSelectedApp}>
               <SelectTrigger size="sm" className="flex-1 w-full">
                 <SelectValue placeholder="Select an app" />

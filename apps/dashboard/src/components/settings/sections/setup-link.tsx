@@ -288,7 +288,7 @@ export function ExportImportSection() {
             </p>
           </div>
           {generatedCode ? (
-            <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="flex items-center gap-2 w-full @lg:w-auto">
               <code className="text-xs font-mono text-muted-foreground bg-muted/40 rounded-lg px-2.5 py-1.5 truncate flex-1 max-w-[200px]">
                 {generatedCode}
               </code>
@@ -318,7 +318,7 @@ export function ExportImportSection() {
             </p>
           </div>
           {stackCapsuleCode ? (
-            <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="flex items-center gap-2 w-full @lg:w-auto">
               <code className="text-xs font-mono text-muted-foreground bg-muted/40 rounded-lg px-2.5 py-1.5 truncate flex-1 max-w-[200px]">
                 {stackCapsuleCode}
               </code>

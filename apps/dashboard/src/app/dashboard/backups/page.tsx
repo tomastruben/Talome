@@ -33,6 +33,7 @@ import { fetchJson } from "@/lib/fetch-json";
 import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
 import { useUser } from "@/hooks/use-user";
 import { cn } from "@/lib/utils";
+import { INLINE_BACKUP_ACTIONS_MIN_WIDTH, useMinWidth } from "./_lib/use-min-width";
 import {
   BackupRequestError,
   METHOD_LABELS,
@@ -132,7 +133,7 @@ function RowSkeleton({ actions }: { actions: boolean }) {
         </div>
       </TableCell>
       <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-      <TableCell className="hidden md:table-cell"><Skeleton className="h-4 w-20" /></TableCell>
+      <TableCell className="hidden @2xl:table-cell"><Skeleton className="h-4 w-20" /></TableCell>
       {actions && <TableCell><Skeleton className="h-8 w-40 ml-auto" /></TableCell>}
     </TableRow>
   );
@@ -287,10 +288,17 @@ export default function BackupsPage() {
       [...apps].sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)) || a.name.localeCompare(b.name)),
     [apps],
   );
+  // Back up now, Verify now and Restore sit in the row when the list is wide
+  // enough for them, else in its menu. Measured on the list, not the screen:
+  // a desktop window's screen is the window, and the menu renders in a portal
+  // outside every container query.
+  const [listRef, inlineActions] = useMinWidth<HTMLDivElement>(INLINE_BACKUP_ACTIONS_MIN_WIDTH);
 
   return (
     <TooltipProvider>
-      <div className="grid gap-6">
+      {/* A flex column filling the page (or the window's content), so the
+          empty and error states centre in the space left */}
+      <div ref={listRef} className="flex min-w-0 flex-1 flex-col gap-6">
         {/* Summary */}
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           {showSkeleton ? (
@@ -309,7 +317,7 @@ export default function BackupsPage() {
             </p>
           )}
           {canManage && (
-            <Button variant="ghost" size="sm" className="sm:ml-auto text-muted-foreground" onClick={() => setStorageOpen(true)}>
+            <Button variant="ghost" size="sm" className="@lg:ml-auto text-muted-foreground" onClick={() => setStorageOpen(true)}>
               Storage &amp; retention
             </Button>
           )}
@@ -325,11 +333,12 @@ export default function BackupsPage() {
         )}
 
         {error && !data ? (
-          <ErrorState title="Couldn't load backups" description="Check that the Talome server is reachable, then retry." onRetry={refresh} />
+          <ErrorState fill title="Couldn't load backups" description="Check that the Talome server is reachable, then retry." onRetry={refresh} />
         ) : showSkeleton && loadingPhase !== "skeleton" ? (
           <div className="min-h-64" aria-busy="true" />
         ) : !isLoading && apps.length === 0 ? (
           <EmptyState
+            fill
             icon={ArchiveIcon}
             title="No apps to back up"
             description="Installed apps appear here with their backup and verification status."
@@ -346,7 +355,7 @@ export default function BackupsPage() {
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="pl-4">App</TableHead>
                   <TableHead>Last backup</TableHead>
-                  <TableHead className="hidden md:table-cell">Verification</TableHead>
+                  <TableHead className="hidden @2xl:table-cell">Verification</TableHead>
                   {canManage && <TableHead className="sr-only">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -374,46 +383,47 @@ export default function BackupsPage() {
                           </TableCell>
                           <TableCell className="py-3">
                             <LastBackupCell app={app} />
-                            <VerificationBadge backup={ok} className="md:hidden mt-1" />
+                            <VerificationBadge backup={ok} className="@2xl:hidden mt-1" />
                           </TableCell>
-                          <TableCell className="hidden md:table-cell py-3">
+                          <TableCell className="hidden @2xl:table-cell py-3">
                             <VerificationBadge backup={ok} />
                           </TableCell>
                           {canManage && (
                             <TableCell className="py-3 pr-3">
                               <div className="flex items-center justify-end gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="hidden sm:inline-flex"
-                                  disabled={busyApp && !backingUp}
-                                  busy={backingUp}
-                                  busyLabel={`Backing up ${app.name}…`}
-                                  onClick={() => void backupNow(app)}
-                                >
-                                  <HugeiconsIcon icon={ArchiveIcon} size={16} />
-                                  Back up now
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="hidden sm:inline-flex"
-                                  disabled={!ok?.hasManifest || verifying || busyApp}
-                                  onClick={() => void verifyNow(app)}
-                                >
-                                  <HugeiconsIcon icon={SecurityCheckIcon} size={16} />
-                                  Verify now
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="hidden sm:inline-flex"
-                                  disabled={!ok || busyApp}
-                                  onClick={() => setRestoreApp(app)}
-                                >
-                                  <HugeiconsIcon icon={DatabaseRestoreIcon} size={16} />
-                                  Restore
-                                </Button>
+                                {inlineActions && (
+                                  <>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      disabled={busyApp && !backingUp}
+                                      busy={backingUp}
+                                      busyLabel={`Backing up ${app.name}…`}
+                                      onClick={() => void backupNow(app)}
+                                    >
+                                      <HugeiconsIcon icon={ArchiveIcon} size={16} />
+                                      Back up now
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      disabled={!ok?.hasManifest || verifying || busyApp}
+                                      onClick={() => void verifyNow(app)}
+                                    >
+                                      <HugeiconsIcon icon={SecurityCheckIcon} size={16} />
+                                      Verify now
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      disabled={!ok || busyApp}
+                                      onClick={() => setRestoreApp(app)}
+                                    >
+                                      <HugeiconsIcon icon={DatabaseRestoreIcon} size={16} />
+                                      Restore
+                                    </Button>
+                                  </>
+                                )}
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
                                     <Button variant="ghost" size="icon-sm" aria-label={`More actions for ${app.name}`}>
@@ -421,27 +431,29 @@ export default function BackupsPage() {
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end" className="min-w-44">
-                                    <DropdownMenuItem className="sm:hidden" disabled={busyApp} onSelect={() => void backupNow(app)}>
-                                      <HugeiconsIcon icon={ArchiveIcon} size={16} />
-                                      Back up now
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      className="sm:hidden"
-                                      disabled={!ok?.hasManifest || verifying || busyApp}
-                                      onSelect={() => void verifyNow(app)}
-                                    >
-                                      <HugeiconsIcon icon={SecurityCheckIcon} size={16} />
-                                      Verify now
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      className="sm:hidden"
-                                      disabled={!ok || busyApp}
-                                      onSelect={() => setRestoreApp(app)}
-                                    >
-                                      <HugeiconsIcon icon={DatabaseRestoreIcon} size={16} />
-                                      Restore
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator className="sm:hidden" />
+                                    {!inlineActions && (
+                                      <>
+                                        <DropdownMenuItem disabled={busyApp} onSelect={() => void backupNow(app)}>
+                                          <HugeiconsIcon icon={ArchiveIcon} size={16} />
+                                          Back up now
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                          disabled={!ok?.hasManifest || verifying || busyApp}
+                                          onSelect={() => void verifyNow(app)}
+                                        >
+                                          <HugeiconsIcon icon={SecurityCheckIcon} size={16} />
+                                          Verify now
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                          disabled={!ok || busyApp}
+                                          onSelect={() => setRestoreApp(app)}
+                                        >
+                                          <HugeiconsIcon icon={DatabaseRestoreIcon} size={16} />
+                                          Restore
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator />
+                                      </>
+                                    )}
                                     <DropdownMenuItem onSelect={() => setSettingsApp(app)}>
                                       <HugeiconsIcon icon={Settings01Icon} size={16} />
                                       Backup settings

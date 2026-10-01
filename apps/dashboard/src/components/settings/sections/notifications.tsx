@@ -364,65 +364,65 @@ function NotificationChannelsSection() {
               ))}
             </div>
           </SettingsRow>
-          <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+          <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
             <p className="text-sm font-medium flex-1">Name</p>
             <input
               type="text"
               placeholder="e.g. My Phone"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              className="h-8 w-full sm:w-48 rounded-md border border-border bg-input px-3 text-sm"
+              className="h-8 w-full @lg:w-48 rounded-md border border-border bg-input px-3 text-sm"
             />
           </SettingsRow>
           {newType !== "email" && (
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <p className="text-sm font-medium flex-1">URL</p>
               <input
                 type="text"
                 placeholder={newType === "ntfy" ? "https://ntfy.sh" : "https://webhook.site/..."}
                 value={newUrl}
                 onChange={(e) => setNewUrl(e.target.value)}
-                className="h-8 w-full sm:w-64 rounded-md border border-border bg-input px-3 text-sm"
+                className="h-8 w-full @lg:w-64 rounded-md border border-border bg-input px-3 text-sm"
               />
             </SettingsRow>
           )}
           {newType === "ntfy" && (
-            <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+            <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
               <p className="text-sm font-medium flex-1">Topic</p>
               <input
                 type="text"
                 placeholder="my-talome-alerts"
                 value={newTopic}
                 onChange={(e) => setNewTopic(e.target.value)}
-                className="h-8 w-full sm:w-48 rounded-md border border-border bg-input px-3 text-sm"
+                className="h-8 w-full @lg:w-48 rounded-md border border-border bg-input px-3 text-sm"
               />
             </SettingsRow>
           )}
           {newType === "email" && (
             <>
-              <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+              <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
                 <p className="text-sm font-medium flex-1">SMTP Host</p>
-                <input type="text" placeholder="smtp.gmail.com" value={newSmtpHost} onChange={(e) => setNewSmtpHost(e.target.value)} className="h-8 w-full sm:w-48 rounded-md border border-border bg-input px-3 text-sm" />
+                <input type="text" placeholder="smtp.gmail.com" value={newSmtpHost} onChange={(e) => setNewSmtpHost(e.target.value)} className="h-8 w-full @lg:w-48 rounded-md border border-border bg-input px-3 text-sm" />
               </SettingsRow>
-              <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+              <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
                 <p className="text-sm font-medium flex-1">SMTP Port</p>
                 <input type="text" placeholder="587" value={newSmtpPort} onChange={(e) => setNewSmtpPort(e.target.value)} className="h-8 w-20 rounded-md border border-border bg-input px-3 text-sm" />
               </SettingsRow>
-              <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+              <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
                 <p className="text-sm font-medium flex-1">Username</p>
-                <input type="text" placeholder="optional" value={newSmtpUser} onChange={(e) => setNewSmtpUser(e.target.value)} className="h-8 w-full sm:w-48 rounded-md border border-border bg-input px-3 text-sm" />
+                <input type="text" placeholder="optional" value={newSmtpUser} onChange={(e) => setNewSmtpUser(e.target.value)} className="h-8 w-full @lg:w-48 rounded-md border border-border bg-input px-3 text-sm" />
               </SettingsRow>
-              <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+              <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
                 <p className="text-sm font-medium flex-1">Password</p>
-                <input type="password" placeholder="optional" value={newSmtpPass} onChange={(e) => setNewSmtpPass(e.target.value)} className="h-8 w-full sm:w-48 rounded-md border border-border bg-input px-3 text-sm" />
+                <input type="password" placeholder="optional" value={newSmtpPass} onChange={(e) => setNewSmtpPass(e.target.value)} className="h-8 w-full @lg:w-48 rounded-md border border-border bg-input px-3 text-sm" />
               </SettingsRow>
-              <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+              <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
                 <p className="text-sm font-medium flex-1">From</p>
-                <input type="email" placeholder="alerts@example.com" value={newEmailFrom} onChange={(e) => setNewEmailFrom(e.target.value)} className="h-8 w-full sm:w-48 rounded-md border border-border bg-input px-3 text-sm" />
+                <input type="email" placeholder="alerts@example.com" value={newEmailFrom} onChange={(e) => setNewEmailFrom(e.target.value)} className="h-8 w-full @lg:w-48 rounded-md border border-border bg-input px-3 text-sm" />
               </SettingsRow>
-              <SettingsRow className="flex-wrap sm:flex-nowrap gap-y-2">
+              <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2">
                 <p className="text-sm font-medium flex-1">To</p>
-                <input type="text" placeholder="you@example.com" value={newEmailTo} onChange={(e) => setNewEmailTo(e.target.value)} className="h-8 w-full sm:w-64 rounded-md border border-border bg-input px-3 text-sm" />
+                <input type="text" placeholder="you@example.com" value={newEmailTo} onChange={(e) => setNewEmailTo(e.target.value)} className="h-8 w-full @lg:w-64 rounded-md border border-border bg-input px-3 text-sm" />
               </SettingsRow>
             </>
           )}
