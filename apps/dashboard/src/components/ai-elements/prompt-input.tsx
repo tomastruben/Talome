@@ -934,7 +934,10 @@ export const PromptInputTextarea = ({
 
   return (
     <InputGroupTextarea
-      className={cn("field-sizing-content max-h-48 min-h-16 text-lg md:text-sm", className)}
+      // text-sm like every control; 16px on touch screens, where a smaller
+      // field makes iOS zoom the page on focus. Not a viewport breakpoint: a
+      // desktop window narrower than md is still a desktop.
+      className={cn("field-sizing-content max-h-48 min-h-16 text-sm pointer-coarse:text-base", className)}
       name="message"
       onCompositionEnd={handleCompositionEnd}
       onCompositionStart={handleCompositionStart}

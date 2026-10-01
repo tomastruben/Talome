@@ -43,6 +43,7 @@ import { ChatMessage } from "@/components/chat/chat-message";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { AssistantModelSelector } from "@/components/assistant/assistant-model-selector";
 import { AssistantChatError } from "@/components/assistant/chat-error";
+import { ChatSourceItem, chatTitle } from "@/components/assistant/chat-source-item";
 import { useKeyboardMode } from "@/hooks/use-keyboard-mode";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -272,7 +273,7 @@ function BuildResultCard({
       : `${Math.round(result.duration / 60_000)}m`;
 
   return (
-    <div className="max-w-2xl mx-auto w-full px-4 sm:px-6 py-3">
+    <div className="mx-auto w-full max-w-2xl px-4 py-3 @md/assistant:px-6">
       <div className="rounded-xl border border-border/40 bg-card/30 p-4 space-y-3">
         <div className="flex items-center gap-3">
           <HugeiconsIcon
@@ -293,18 +294,15 @@ function BuildResultCard({
         </div>
 
         {(result.error || result.republishError) && (
-          <p className="text-xs text-destructive/70 bg-destructive/5 rounded-lg px-3 py-2">
+          <p className="rounded-lg bg-status-critical/12 px-3 py-2 text-xs text-foreground wrap-anywhere">
             {result.error || result.republishError}
           </p>
         )}
 
-        <button
-          onClick={onDismiss}
-          className="flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-xs font-medium text-background transition-opacity hover:opacity-90"
-        >
-          <HugeiconsIcon icon={ok ? PackageOpenIcon : ArrowLeft01Icon} size={14} />
-          {ok ? "View App" : "Back to Chat"}
-        </button>
+        <Button type="button" size="sm" onClick={onDismiss}>
+          <HugeiconsIcon icon={ok ? PackageOpenIcon : ArrowLeft01Icon} size={14} aria-hidden="true" />
+          {ok ? "View app" : "Back to chat"}
+        </Button>
       </div>
     </div>
   );
@@ -319,12 +317,11 @@ export default function AssistantPage() {
     messages, status, error, clearError, stop,
     conversations, activeId, setActiveId, deleteConversation,
     handleSubmit, regenerate,
-    model, setModel, modelOptions, activeProvider, modelReady, startNew,
+    model, setModel, modelOptions, activeProvider, modelReady, startNew, isSubmitting,
   } = useAssistant();
   const embeddedFrame = useIsEmbeddedFrame();
   const keyboard = useKeyboardMode();
   const confirm = useConfirm();
-  const { pending: pendingDeletes, request: requestDelete } = useUndoableDelete(deleteConversation);
   const suggestions = useSuggestions();
 
   const [blueprint, setBlueprint] = useAtom(blueprintAtom);
@@ -360,6 +357,51 @@ export default function AssistantPage() {
   // or submitting a message clears the flag and shows the chat again.
   const [dismissed, setDismissed] = useState(false);
   const showingChat = !dismissed && (messages.length > 0 || activeId !== null);
+
+  // Delete is undoable: the chat leaves the list at once and is deleted on
+  // the server after the Undo window. Deleting the open chat (or the one a
+  // Back left running behind the home view) also leaves it at once, as New
+  // chat does: its response stops, and nothing you send in the meantime can
+  // go to a chat that is about to disappear. Undo reopens it, as saved,
+  // unless you have opened or started another chat since.
+  const leftChatRef = useRef<string | null>(null);
+  const removeConversation = useCallback(
+    (id: string, options?: { keepalive?: boolean }) => {
+      // Past Undo: forget it, so the effect below never reopens it
+      if (leftChatRef.current === id) leftChatRef.current = null;
+      return deleteConversation(id, options);
+    },
+    [deleteConversation],
+  );
+  const { pending: pendingDeletes, request: requestUndoableDelete } = useUndoableDelete(removeConversation);
+  const requestDelete = useCallback(
+    (id: string, label: string) => {
+      if (id === activeId) {
+        leftChatRef.current = id;
+        startNew();
+        setDismissed(false);
+      }
+      requestUndoableDelete(id, label);
+    },
+    [activeId, requestUndoableDelete, startNew],
+  );
+  useEffect(() => {
+    const id = leftChatRef.current;
+    if (!id) return;
+    // Another chat is open (or a new one was saved): Undo only puts it back in the list
+    if (activeId !== null) {
+      leftChatRef.current = null;
+      return;
+    }
+    if (pendingDeletes.has(id)) return;
+    // It left the Undo window without being deleted (a delete forgets it
+    // first), so Undo was chosen: reopen it, unless a new chat is under way
+    leftChatRef.current = null;
+    if (messages.length > 0 || isSubmitting) return;
+    setActiveId(id);
+    setDismissed(false);
+  }, [activeId, isSubmitting, messages.length, pendingDeletes, setActiveId]);
+
   const activeConversationTitle = activeId
     ? conversations.find((conversation) => conversation.id === activeId)?.title
     : undefined;
@@ -673,17 +715,28 @@ export default function AssistantPage() {
   // ── Chat content ──────────────────────────────────────────────────────────
 
   // The scroller fades into the input bar below it. A mask, not a gradient in
-  // the background colour, so it reads the same on window glass.
+  // the background colour, so it reads the same on window glass. At rest the
+  // fade is exactly the content's bottom padding (pb-6), so the last line is
+  // never faded or covered. Scrolled up, the bottom 2.25rem clears for the
+  // scroll-to-bottom button (ConversationScrollButton marks itself), so the
+  // button never sits over text you can read.
   const showInputBar = !buildSession && !buildResult;
   const bottomFade = showInputBar
-    ? "[mask-image:linear-gradient(to_bottom,black_calc(100%-3rem),transparent)]"
+    ? cn(
+        "[mask-image:linear-gradient(to_bottom,black_calc(100%-1.5rem),transparent)]",
+        "group-has-[[data-conversation-scroll-button]]/conversation:[mask-image:linear-gradient(to_bottom,black_calc(100%-3.5rem),transparent_calc(100%-2.25rem))]",
+      )
     : undefined;
+
+  // Gutters follow the column, not the screen: in a window with its sidebar
+  // the column is narrower than the viewport (p-4 under 28rem, p-6 above)
+  const columnGutter = "px-4 @md/assistant:px-6";
 
   const chatContent = showingChat ? (
     <Conversation className="flex-1 min-h-0" initial="smooth" resize="smooth">
       <ConversationContent
         scrollClassName={bottomFade}
-        className="max-w-2xl mx-auto w-full py-4 sm:py-6 px-4 sm:px-6"
+        className={cn("mx-auto w-full max-w-2xl pt-4 pb-6 @md/assistant:pt-6", columnGutter)}
       >
         {messages.map((message, index) => (
           <ChatMessage
@@ -703,8 +756,8 @@ export default function AssistantPage() {
   ) : (
     // Centred while it fits (auto margins), scrolls from the top when it doesn't.
     <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-none", bottomFade)}>
-      <div className="m-auto w-full max-w-2xl px-4 py-4 sm:px-6 sm:py-6">
-        <div className="flex w-full flex-col items-center px-2 sm:px-4">
+      <div className={cn("m-auto w-full max-w-2xl pt-4 pb-6 @md/assistant:pt-6", columnGutter)}>
+        <div className="flex w-full flex-col items-center">
           {error ? (
             <div className="w-full max-w-md mb-6">
               <AssistantChatError error={error} provider={activeProvider} onDismiss={clearError} />
@@ -713,22 +766,26 @@ export default function AssistantPage() {
           <div className="mb-4 flex size-12 items-center justify-center" aria-hidden>
             <ThinkingOrb state="breathing" size={32} />
           </div>
-          <h2 className="text-xl sm:text-2xl font-medium tracking-tight text-foreground mb-6 sm:mb-8">
+          <h2 className="mb-6 text-center text-2xl font-medium tracking-tight text-foreground @md/assistant:mb-8">
             How can I help?
           </h2>
 
-          <div className="tm-rise grid grid-cols-2 gap-2 w-full max-w-xl mb-8 sm:mb-10">
+          {/* Two columns from 20rem; a label wraps to a second line rather
+              than losing its end in a narrow window */}
+          <div className="tm-rise mb-8 grid w-full max-w-xl grid-cols-1 gap-2 @xs/assistant:grid-cols-2">
             {suggestions.map((s, i) => (
               <button
                 key={`${i}-${s.label}`}
+                type="button"
                 onClick={() => handleSuggestion(s.prompt)}
-                className="group/suggestion flex items-center gap-2 rounded-2xl px-3 sm:px-4 py-3 text-sm text-left text-muted-foreground bg-foreground/[0.04] transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/[0.07] hover:text-foreground active:scale-[0.98] active:bg-foreground/[0.08]"
+                className="group/suggestion flex min-h-11 items-center gap-2 rounded-xl bg-foreground/4 px-3 py-2.5 text-left text-sm text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/7 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:bg-foreground/8 motion-safe:active:scale-98 @md/assistant:px-4"
               >
-                <span className="min-w-0 flex-1 truncate">{s.label}</span>
+                <span className="line-clamp-2 min-w-0 flex-1">{s.label}</span>
                 <HugeiconsIcon
                   icon={ArrowRight01Icon}
                   size={14}
-                  className="shrink-0 -translate-x-1 opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/suggestion:translate-x-0 group-hover/suggestion:opacity-60"
+                  aria-hidden="true"
+                  className="shrink-0 opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/suggestion:opacity-60 motion-safe:-translate-x-1 motion-safe:group-hover/suggestion:translate-x-0"
                 />
               </button>
             ))}
@@ -754,6 +811,7 @@ export default function AssistantPage() {
                         <button
                           type="button"
                           onClick={() => { setActiveId(conv.id); setDismissed(false); }}
+                          title={conv.title}
                           className="flex min-w-0 flex-1 items-center rounded-lg px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:bg-accent/40 sm:py-2.5"
                         >
                           <span className="flex-1 truncate">{conv.title}</span>
@@ -844,38 +902,48 @@ export default function AssistantPage() {
       <SourceListSection>
         <SourceListItem icon={Add01Icon} label="New chat" active={!showingChat} onSelect={() => void handleNew()} />
       </SourceListSection>
-      {Object.entries(grouped).map(([group, convs]) => (
-        <SourceListSection key={group} title={group}>
-          {convs.filter((conv) => !pendingDeletes.has(conv.id)).map((conv) => (
-            <SourceListItem
-              key={conv.id}
-              label={conv.title}
-              active={showingChat && activeId === conv.id}
-              onSelect={() => { setActiveId(conv.id); setDismissed(false); }}
-              // Same undoable delete as the classic history list
-              action={{
-                icon: Delete01Icon,
-                label: `Delete "${conv.title || "Untitled conversation"}"`,
-                onSelect: () => requestDelete(conv.id, conv.title || "Untitled conversation"),
-              }}
-            />
-          ))}
-        </SourceListSection>
-      ))}
+      {Object.entries(grouped).map(([group, convs]) => {
+        // Chats waiting on Undo leave the list; a section they emptied goes too
+        const visible = convs.filter((conv) => !pendingDeletes.has(conv.id));
+        if (visible.length === 0) return null;
+        return (
+          <SourceListSection key={group} title={group}>
+            {visible.map((conv) => (
+              <ChatSourceItem
+                key={conv.id}
+                conversation={conv}
+                active={showingChat && activeId === conv.id}
+                onSelect={() => { setActiveId(conv.id); setDismissed(false); }}
+                // Same undoable delete as the classic history list, from the
+                // row's button (hover, focus, the open chat) and its context menu
+                action={{
+                  icon: Delete01Icon,
+                  label: `Delete "${chatTitle(conv)}"`,
+                  onSelect: () => requestDelete(conv.id, chatTitle(conv)),
+                }}
+              />
+            ))}
+          </SourceListSection>
+        );
+      })}
     </SourceList>
   );
 
   return (
     <WindowSidebarLayout sidebar={sidebar}>
-    <div className="flex-1 min-h-0 flex flex-col overflow-hidden overscroll-none">
-      <VoiceMode
-        open={voiceOpen}
-        onClose={() => setVoiceOpen(false)}
-        onSend={sendVoiceMessage}
-        status={status as ChatStatus}
-        lastAssistant={lastAssistant}
-        history={voiceHistory}
-      />
+    {/* Outside the container below: it is a fixed full-screen overlay, and a
+        size container is the containing block for fixed descendants */}
+    <VoiceMode
+      open={voiceOpen}
+      onClose={() => setVoiceOpen(false)}
+      onSend={sendVoiceMessage}
+      status={status as ChatStatus}
+      lastAssistant={lastAssistant}
+      history={voiceHistory}
+    />
+    {/* A named container: gutters and the suggestion grid follow this column's
+        width, which in a window is narrower than the screen */}
+    <div className="@container/assistant flex-1 min-h-0 flex flex-col overflow-hidden overscroll-none">
       {!embeddedFrame && (
         <AssistantHeader showingChat={showingChat} onBack={handleBack} onNew={handleNew} />
       )}
@@ -903,7 +971,7 @@ export default function AssistantPage() {
       {showInputBar && (
         <div className={cn("relative shrink-0", embeddedFrame && "pb-[calc(var(--window-pad,1rem)-0.75rem)]")}>
           {hasBlueprint && showingChat && (
-            <div className="max-w-2xl mx-auto w-full px-4 sm:px-6 pb-2 pt-1">
+            <div className={cn("mx-auto w-full max-w-2xl pb-2 pt-1", columnGutter)}>
               {buildError && <Alert variant="destructive" className="mb-2">
                 <AlertTitle>Build could not start</AlertTitle>
                 <AlertDescription>

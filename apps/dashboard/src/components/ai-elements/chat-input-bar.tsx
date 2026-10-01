@@ -111,7 +111,7 @@ export function ChatInputBar({
   status,
   onSubmit,
   onStop,
-  placeholder = "Ask Talome anything...",
+  placeholder = "Ask Talome anything…",
   extraTools,
   maxWidth = "max-w-2xl",
   onVoiceMode,
@@ -165,10 +165,11 @@ export function ChatInputBar({
   );
 
   return (
-    <div
-      className="relative shrink-0 pb-3 pt-2"
-    >
-      <div className={`${maxWidth} mx-auto w-full px-4 sm:px-6`}>
+    // Its own container, so the gutter follows the column it sits in (a
+    // window's content column is narrower than the screen): the same p-4 /
+    // p-6 step as the conversation above it
+    <div className="@container/composer relative shrink-0 pb-3 pt-2">
+      <div className={`${maxWidth} mx-auto w-full px-4 @md/composer:px-6`}>
         {/* Provider lifts the text so dictation can write into the composer */}
         <PromptInputProvider>
         <VoiceBeam

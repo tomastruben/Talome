@@ -5,19 +5,38 @@ import type { ComponentProps } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { HugeiconsIcon, ArrowDown01Icon, Download01Icon } from "@/components/icons";
-import { useCallback } from "react";
+import { createContext, useCallback, useContext } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
+
+/**
+ * Lets content inside a conversation release the stick-to-bottom lock before
+ * it grows on purpose (a tool result's "Show all"), so the view stays where
+ * the person was reading instead of jumping to the new bottom. Null outside a
+ * conversation.
+ */
+const ConversationScrollLockContext = createContext<(() => void) | null>(null);
+
+export function useConversationScrollLock(): (() => void) | null {
+  return useContext(ConversationScrollLockContext);
+}
 
 export type ConversationProps = ComponentProps<typeof StickToBottom>;
 
-export const Conversation = ({ className, ...props }: ConversationProps) => (
+export const Conversation = ({ className, children, ...props }: ConversationProps) => (
   <StickToBottom
-    className={cn("relative flex-1 overflow-y-hidden", className)}
+    className={cn("group/conversation relative flex-1 overflow-y-hidden", className)}
     initial="smooth"
     resize="smooth"
     role="log"
     {...props}
-  />
+  >
+    {(context) => (
+      // stopScroll is a stable callback, so consumers don't re-render on scroll
+      <ConversationScrollLockContext.Provider value={context.stopScroll}>
+        {typeof children === "function" ? children(context) : children}
+      </ConversationScrollLockContext.Provider>
+    )}
+  </StickToBottom>
 );
 
 export type ConversationContentProps = ComponentProps<
@@ -71,6 +90,13 @@ export const ConversationEmptyState = ({
 
 export type ConversationScrollButtonProps = ComponentProps<typeof Button>;
 
+/**
+ * Shown while you're scrolled up. It sits in the bottom 2.25rem of the
+ * conversation, a band the page's scroller mask keeps clear while the button
+ * is there (`data-conversation-scroll-button`, read by `bottomFade` in
+ * app/dashboard/assistant/page.tsx), so it never covers text you can read.
+ * On touch the target grows to 44px around it.
+ */
 export const ConversationScrollButton = ({
   className,
   ...props
@@ -85,14 +111,15 @@ export const ConversationScrollButton = ({
     !isAtBottom && (
       <Button
         className={cn(
-          "absolute bottom-4 left-[50%] translate-x-[-50%] rounded-full dark:bg-background dark:hover:bg-muted",
+          "absolute bottom-1 left-1/2 -translate-x-1/2 rounded-full dark:bg-background dark:hover:bg-muted animate-in fade-in-0 duration-150 ease-enter pointer-coarse:after:absolute pointer-coarse:after:-inset-1.5",
           className
         )}
         onClick={handleScrollToBottom}
-        size="icon"
+        size="icon-sm"
         type="button"
         variant="outline"
         aria-label="Scroll to bottom"
+        data-conversation-scroll-button=""
         {...props}
       >
         <HugeiconsIcon icon={ArrowDown01Icon} size={16} />

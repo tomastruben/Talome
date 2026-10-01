@@ -61,7 +61,7 @@ import { DURATION, EASE_ENTER } from "@/lib/motion";
 import { ThinkingOrb } from "thinking-orbs";
 import { toolOrbState } from "@/lib/agent-activity";
 
-import { CodeBlock } from "./code-block";
+import { TOOL_BLOCK_CAP, ToolCappedRegion, ToolDataBlock, isEmptyToolData } from "./tool-data";
 import { Button } from "@/components/ui/button";
 import { CORE_URL } from "@/lib/constants";
 
@@ -523,35 +523,34 @@ export type ToolContentProps = ComponentProps<typeof CollapsibleContent>;
 export const ToolContent = ({ className, ...props }: ToolContentProps) => (
   <CollapsibleContent
     className={cn(
-      "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 space-y-3 border-t border-border/30 px-3.5 pb-3.5 pt-3 text-popover-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
+      "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 min-w-0 space-y-3 border-t border-border/30 p-3 text-popover-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
       className
     )}
     {...props}
   />
 );
 
-export type ToolInputProps = ComponentProps<"div"> & {
+export type ToolInputProps = Omit<ComponentProps<"div">, "children"> & {
   input: AnyToolPart["input"];
 };
 
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-export const ToolInput = ({ className, input, ...props }: ToolInputProps) => (
-  <div className={cn("space-y-1.5 overflow-hidden", className)} {...props}>
-    <h4 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-      Parameters
-    </h4>
-    <div className="rounded-lg bg-muted/40">
-      <CodeBlock code={safeStringify(input)} language="json" />
-    </div>
-  </div>
-);
+/**
+ * The call's arguments, capped like the result so a long one (a file's
+ * contents, a diff) never stretches the card. A call without arguments shows
+ * no block at all rather than an empty "{}".
+ */
+export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
+  if (isEmptyToolData(input)) return null;
+  return (
+    <ToolDataBlock
+      label="Parameters"
+      value={input}
+      cap={TOOL_BLOCK_CAP.parameters}
+      className={className}
+      {...props}
+    />
+  );
+};
 
 // ── Structured result cards ───────────────────────────────────────────────────
 
@@ -886,7 +885,7 @@ function SettingChangeCard({ output }: { output: Record<string, unknown> }) {
       </div>
       {previousValue !== null && (
         <div className="border-t border-border/30 px-3 py-1.5 flex items-center gap-2 text-xs">
-          <span className="text-muted-foreground line-through truncate max-w-[40%]">{previousValue}</span>
+          <span className="text-muted-foreground line-through truncate max-w-2/5">{previousValue}</span>
           <HugeiconsIcon icon={ArrowDown01Icon} size={10} className="text-dim-foreground shrink-0 rotate-[-90deg]" />
           <span className="text-foreground truncate">{newValue}</span>
         </div>
@@ -926,7 +925,7 @@ function AudiobookLibraryCard({ output }: { output: unknown }) {
           >
             <HugeiconsIcon icon={AudioBook01Icon} size={12} className="text-dim-foreground shrink-0" />
             <span className="text-xs font-medium text-foreground flex-1 truncate">{String(item.title ?? "")}</span>
-            {item.author ? <span className="text-xs text-muted-foreground shrink-0 truncate max-w-[30%]">{String(item.author)}</span> : null}
+            {item.author ? <span className="text-xs text-muted-foreground shrink-0 truncate max-w-3/10">{String(item.author)}</span> : null}
             {duration && <span className="text-xs text-muted-foreground shrink-0">{duration}</span>}
           </button>
         );
@@ -1032,7 +1031,7 @@ function getStructuredCard(toolName: string, output: unknown): ReactNode | null 
   return null;
 }
 
-export type ToolOutputProps = ComponentProps<"div"> & {
+export type ToolOutputProps = Omit<ComponentProps<"div">, "children"> & {
   output: AnyToolPart["output"];
   errorText: AnyToolPart["errorText"];
   toolName?: string;
@@ -1052,51 +1051,57 @@ export const ToolOutput = ({
     return null;
   }
 
-  // Structured card for known tools
+  // Structured card for known tools: capped too, since a list (every
+  // container on the server) can run long
   if (toolName && !errorText && output !== undefined) {
     const structured = getStructuredCard(toolName, output);
     if (structured) {
       return (
         <ToolCardStaleContext.Provider value={stale}>
-        <div className={cn("space-y-1.5", className)} {...props}>
+        <div className={cn("min-w-0 space-y-1.5", className)} {...props}>
           <h4 className="text-xs font-medium text-muted-foreground">
             Result
           </h4>
-          {structured}
+          <ToolCappedRegion label="Result" cap={TOOL_BLOCK_CAP.card}>
+            {structured}
+          </ToolCappedRegion>
         </div>
         </ToolCardStaleContext.Provider>
       );
     }
   }
 
-  let Output: ReactNode;
-
-  if (typeof output === "object" && !isValidElement(output)) {
-    Output = (
-      <CodeBlock code={safeStringify(output)} language="json" />
+  if (errorText) {
+    return (
+      <ToolDataBlock
+        label="Error"
+        value={errorText}
+        tone="error"
+        cap={TOOL_BLOCK_CAP.result}
+        className={className}
+        {...props}
+      />
     );
-  } else if (typeof output === "string") {
-    Output = <CodeBlock code={output} language="json" />;
-  } else {
-    Output = <div>{String(output)}</div>;
+  }
+
+  if (isValidElement(output)) {
+    return (
+      <div className={cn("min-w-0 space-y-1.5", className)} {...props}>
+        <h4 className="text-xs font-medium text-muted-foreground">Result</h4>
+        <ToolCappedRegion label="Result" cap={TOOL_BLOCK_CAP.result} className="bg-muted/40 text-xs">
+          {output}
+        </ToolCappedRegion>
+      </div>
+    );
   }
 
   return (
-    <div className={cn("space-y-1.5", className)} {...props}>
-      <h4 className="text-xs font-medium text-muted-foreground">
-        {errorText ? "Error" : "Result"}
-      </h4>
-      <div
-        className={cn(
-          "overflow-x-auto rounded-lg text-xs [&_table]:w-full",
-          errorText
-            ? "bg-status-critical/12 text-foreground"
-            : "bg-muted/40 text-foreground"
-        )}
-      >
-        {errorText && <div className="px-3 py-2 text-xs">{errorText}</div>}
-        {!errorText && Output}
-      </div>
-    </div>
+    <ToolDataBlock
+      label="Result"
+      value={output}
+      cap={TOOL_BLOCK_CAP.result}
+      className={className}
+      {...props}
+    />
   );
 };

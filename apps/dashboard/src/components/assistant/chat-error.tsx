@@ -3,6 +3,7 @@
 import type { MouseEvent, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { HugeiconsIcon, AlertCircleIcon } from "@/components/icons";
+import { Button } from "@/components/ui/button";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { parseAssistantError } from "@/lib/assistant-chat-error";
 
@@ -23,7 +24,7 @@ function AssistantDashboardLink({
   return (
     <a
       href={href}
-      className="underline underline-offset-2 hover:text-destructive/90"
+      className="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       onClick={handleClick}
     >
       {children}
@@ -100,7 +101,7 @@ export function AssistantChatError({
             href={billingUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:text-destructive/90"
+            className="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Add credits
           </a>{" "}
@@ -122,17 +123,19 @@ export function AssistantChatError({
     displayMessage
   );
 
+  // The status tint recipe: a critical tint and icon, text in foreground, so
+  // the message stays legible on window glass as well as on the page
   return (
-    <div className="rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm">
+    <div role="alert" className="rounded-xl border border-status-critical/30 bg-status-critical/12 px-4 py-3 text-sm">
       <div className="flex items-start gap-3">
-        <HugeiconsIcon icon={AlertCircleIcon} size={16} className="mt-0.5 shrink-0 text-destructive/70" />
+        <HugeiconsIcon icon={AlertCircleIcon} size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-status-critical" />
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-destructive/90">{title}</p>
-          <p className="mt-1 text-destructive/60 text-sm">{body}</p>
+          <p className="font-medium text-foreground">{title}</p>
+          <p className="mt-1 text-sm text-foreground wrap-break-word">{body}</p>
         </div>
-        <button onClick={onDismiss} className="shrink-0 text-destructive/40 hover:text-destructive/70 transition-colors text-xs">
+        <Button type="button" variant="ghost" size="xs" onClick={onDismiss} className="-my-0.5 shrink-0 text-muted-foreground hover:text-foreground">
           Dismiss
-        </button>
+        </Button>
       </div>
     </div>
   );

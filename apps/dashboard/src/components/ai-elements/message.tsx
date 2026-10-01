@@ -35,6 +35,7 @@ import { useContainerLookup } from "@/hooks/use-containers";
 import { useStreamdownPlugins } from "@/lib/streamdown-plugins";
 import type { Container } from "@talome/types";
 import { motion, useReducedMotion } from "motion/react";
+import { TRAVEL, enter } from "@/lib/motion";
 import {
   findAssistantEntityReference,
   type AssistantEntityReference,
@@ -44,11 +45,17 @@ export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
 };
 
+/**
+ * One turn. The Assistant's turns use the whole column (text, tool cards and
+ * approval cards included), so a narrow window doesn't lose a sixth of its
+ * width to an empty gutter; your own turns sit in a bubble of at most four
+ * fifths of the column, aligned to the end.
+ */
 export const Message = ({ className, from, ...props }: MessageProps) => (
   <div
     className={cn(
-      "group flex w-full max-w-[92%] sm:max-w-[85%] flex-col gap-1.5",
-      from === "user" ? "is-user ml-auto justify-end" : "is-assistant",
+      "group flex w-full min-w-0 flex-col gap-1.5",
+      from === "user" ? "is-user ml-auto max-w-4/5 justify-end" : "is-assistant",
       className
     )}
     {...props}
@@ -57,6 +64,12 @@ export const Message = ({ className, from, ...props }: MessageProps) => (
 
 export type MessageContentProps = HTMLAttributes<HTMLDivElement>;
 
+/**
+ * The Assistant's content spans the column and scrolls sideways only for
+ * what can't wrap (a wide table). It reaches 0.5rem past the column on each
+ * side with 0.5rem of padding, so a tool card's hover bleed (`Tool`, -mx-2)
+ * sits inside it instead of adding a sideways scroll to every message.
+ */
 export const MessageContent = ({
   children,
   className,
@@ -66,7 +79,7 @@ export const MessageContent = ({
     className={cn(
       "flex w-fit min-w-0 max-w-full flex-col gap-2 text-sm",
       "group-[.is-user]:ml-auto group-[.is-user]:overflow-hidden group-[.is-user]:rounded-2xl group-[.is-user]:bg-muted group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground",
-      "group-[.is-assistant]:overflow-x-auto group-[.is-assistant]:text-foreground",
+      "group-[.is-assistant]:-mx-2 group-[.is-assistant]:w-auto group-[.is-assistant]:max-w-none group-[.is-assistant]:overflow-x-auto group-[.is-assistant]:px-2 group-[.is-assistant]:text-foreground",
       className
     )}
     {...props}
@@ -565,19 +578,15 @@ export const MessageSources = ({ sources, className, animateIn = false }: Messag
   const animationProps =
     animateIn && !prefersReducedMotion
       ? {
-          initial: { opacity: 0, y: 6, filter: "blur(2px)" },
-          animate: { opacity: 1, y: 0, filter: "blur(0px)" },
-          transition: {
-            duration: 0.38,
-            delay: 0.18,
-            ease: [0.22, 1, 0.36, 1] as const,
-          },
+          initial: { opacity: 0, y: TRAVEL.rise },
+          animate: { opacity: 1, y: 0 },
+          transition: enter(),
         }
       : {};
 
   return (
     <motion.div className={cn("mt-3 space-y-1.5", className)} {...animationProps}>
-      <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+      <p className="text-xs font-medium text-muted-foreground">
         Sources
       </p>
       <div className="flex flex-wrap gap-1.5">
@@ -595,7 +604,7 @@ export const MessageSources = ({ sources, className, animateIn = false }: Messag
               <span className="flex size-3.5 shrink-0 items-center justify-center rounded-sm bg-muted/60 text-xs font-medium tabular-nums text-muted-foreground">
                 {i + 1}
               </span>
-              <span className="max-w-[160px] truncate">{s.title || hostname}</span>
+              <span className="max-w-40 truncate">{s.title || hostname}</span>
             </a>
           );
         })}

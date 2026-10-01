@@ -75,7 +75,7 @@ export function AssistantModelSelector({
         <button
           aria-label={`Select AI model. Current model: ${selectedName}`}
           className={cn(
-            "inline-flex h-8 min-w-0 max-w-48 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-dim-foreground transition-colors duration-150",
+            "inline-flex h-8 min-w-0 max-w-48 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors duration-150",
             "hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
             "disabled:pointer-events-none disabled:opacity-50",
           )}
@@ -127,7 +127,7 @@ export function AssistantModelSelector({
                     <div className="min-w-0 flex-1 py-0.5">
                       <ModelSelectorName className="block">{option.name}</ModelSelectorName>
                       {option.description ? (
-                        <span className="block truncate text-[11px] leading-4 text-muted-foreground">
+                        <span className="block truncate text-xs text-muted-foreground">
                           {option.description}
                         </span>
                       ) : null}
