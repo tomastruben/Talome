@@ -255,7 +255,9 @@ export function SourceListSkeleton({ rows = 3 }: { rows?: number }) {
  */
 export function WindowSidebarSlot() {
   const setSlot = useSetAtom(windowSidebarSlotAtom);
-  return <div ref={setSlot} className="hidden min-h-0 shrink-0 @2xl/window:flex" />;
+  // data-window-sidebar: the sidebar sits on the window's glass, so the glass
+  // token remap in globals.css (Primitives on window glass) applies here too
+  return <div ref={setSlot} data-window-sidebar="" className="hidden min-h-0 shrink-0 @2xl/window:flex" />;
 }
 
 /**

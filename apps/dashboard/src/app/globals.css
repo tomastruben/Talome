@@ -753,6 +753,17 @@
   }
 }
 
+/* ── Media posters and audiobook covers under reduced motion ────────────────
+   Posters and covers lean toward the pointer (.tm-tilt, tiltHandlers). Under
+   reduced motion they stay flat; the hover brightness and ring still show.
+   Unlayered, like .tm-tilt itself, so it wins over it. */
+@media (prefers-reduced-motion: reduce) {
+  .media-card-poster.tm-tilt,
+  .audiobook-card-cover.tm-tilt {
+    transform: none;
+  }
+}
+
 /* ── Audiobook detail cover glow ───────────────── */
 .audiobook-detail-glow {
   position: absolute;
@@ -1250,50 +1261,37 @@
   }
 
   /* ── Media grid & cards ───────────────────────────── */
+  /* Poster density follows the content column (in a window, the column
+     beside the sidebar; in classic mode, the page), never the viewport. The
+     smallest poster grows with the column (cqi: 1% of the column's width), so
+     a 760px window shows four posters across, a wide one six or seven, and
+     columns never drop as the window widens. min() keeps one column inside a
+     column narrower than a poster. */
   .media-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-    gap: var(--space-md);
+    grid-template-columns: repeat(auto-fill, minmax(min(clamp(6rem, 4rem + 8cqi, 9rem), 100%), 1fr));
+    gap: var(--space-lg) var(--space-md);
   }
 
-  @container (min-width: 480px) {
+  @container (min-width: 48rem) {
     .media-grid {
-      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-      gap: var(--space-xl);
+      gap: var(--space-xl) var(--space-lg);
     }
   }
 
+  /* A poster card never scales or lifts: it sits in grids, rails and
+     scrollers that would clip it. Hover brightens the artwork a step and the
+     card draws an inset ring over it (page.tsx), both colour changes. */
   .media-card {
     display: flex;
     flex-direction: column;
     position: relative;
+    min-width: 0;
     border-radius: var(--radius-lg);
-    overflow: hidden;
     cursor: pointer;
     border: none;
     box-shadow: none;
     outline: none;
-    transform: translateZ(0);
-    backface-visibility: hidden;
-    transform-origin: center center;
-    will-change: transform;
-    transition: transform var(--duration-base) var(--ease-enter),
-                opacity var(--duration-base) var(--ease-enter);
-  }
-  .media-card:hover {
-    border: none;
-    box-shadow: none;
-    transform: translate3d(0, -2px, 0) scale(1.01);
-  }
-  .media-card:active {
-    border: none;
-    box-shadow: none;
-    transform: translate3d(0, -1px, 0) scale(1.008);
-    transition-duration: var(--duration-press);
-  }
-  .media-card:focus-visible {
-    border: none;
-    box-shadow: none;
   }
 
   /* ── Media detail sheet ───────────────────────────── */
@@ -1344,32 +1342,22 @@
     background-color: var(--muted);
     overflow: hidden;
   }
-  .media-card-poster img {
-    transition: transform var(--duration-base) var(--ease-enter),
-                filter var(--duration-base) var(--ease-enter);
-    transform: scale(1);
+  .media-card-poster img,
+  .audiobook-card-cover img {
+    transition: filter var(--duration-fast) var(--ease-default);
     filter: saturate(0.98) brightness(0.985);
   }
-  .media-card:hover .media-card-poster img {
-    transform: scale(1.02) translateY(-0.5px);
-    filter: saturate(1.02) brightness(1.01);
-  }
-  .media-card > .min-w-0 {
-    transition: transform var(--duration-base) var(--ease-enter),
-                opacity var(--duration-base) var(--ease-enter);
-    transform: translateY(0);
-  }
-  .media-card:hover > .min-w-0 {
-    transform: translateY(-0.5px);
+  @media (hover: hover) {
+    .media-card:hover .media-card-poster img,
+    .media-card:hover .audiobook-card-cover img {
+      filter: saturate(1.04) brightness(1.08);
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .app-card,
     .app-card-body,
-    .app-card-media img,
-    .media-card,
-    .media-card > .min-w-0,
-    .media-card-poster img {
+    .app-card-media img {
       transition: none;
       transform: none;
       animation: none;
@@ -1387,15 +1375,17 @@
   }
 
   /* ── Audiobook grid ────────────────────────────────── */
+  /* Square covers carry a title and an author, so the smallest cover is a
+     step larger than a poster; same container-relative growth as .media-grid.
+     Covers brighten on hover like posters (above) and never scale. */
   .audiobook-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-    gap: var(--space-xl);
+    grid-template-columns: repeat(auto-fill, minmax(min(clamp(7rem, 5rem + 8cqi, 10rem), 100%), 1fr));
+    gap: var(--space-xl) var(--space-lg);
   }
-  @container (min-width: 480px) {
+  @container (min-width: 48rem) {
     .audiobook-grid {
-      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-      gap: var(--space-2xl);
+      gap: var(--space-2xl) var(--space-xl);
     }
   }
   .audiobook-card-cover {
@@ -1405,23 +1395,6 @@
     border-radius: var(--radius-lg);
     background-color: var(--muted);
     overflow: hidden;
-  }
-  .audiobook-card-cover img {
-    transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
-                filter 280ms cubic-bezier(0.22, 1, 0.36, 1);
-    transform: scale(1);
-    filter: saturate(0.98) brightness(0.985);
-  }
-  .media-card:hover .audiobook-card-cover img {
-    transform: scale(1.02);
-    filter: saturate(1.02) brightness(1.01);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .audiobook-card-cover img {
-      transition: none;
-      transform: none;
-    }
   }
 
   /* ── Surface / elevation cards ─────────────────────── */
@@ -2445,9 +2418,9 @@ html[data-status-bar="ios"] {
    turns smoky instead of foggy, then lay a --card tint over it.
 
                  dark                       light
-     thin        78%  blur 40  ×0.75        82%  blur 40  ×1.15   Dock, desktop icons (.tm-glass)
-     regular     82%  blur 48  ×0.75        88%  blur 48  ×1.2    Desktop widgets, sign-in card (.tm-glass-dense)
-     thick       85%  blur 56  ×0.7         90%  blur 56  ×1.2    Windows (.tm-window, plus the content tint)
+     thin        85%  blur 40  ×0.75        88%  blur 40  ×1.15   Dock, desktop icons (.tm-glass)
+     regular     88%  blur 48  ×0.75        92%  blur 48  ×1.2    Desktop widgets, sign-in card (.tm-glass-dense)
+     thick       92%  blur 56  ×0.7         94%  blur 56  ×1.2    Windows (.tm-window, plus the content tint)
 
    Denser as the content gets denser: the Dock holds icons, widgets hold short
    readouts, windows hold whole apps. Over a pure white (dark) / pure black
@@ -2466,7 +2439,7 @@ html[data-status-bar="ios"] {
    catches the light along the top edge, and layered shadows lift the window
    you're working in above the rest. */
 .tm-window {
-  background: color-mix(in oklch, var(--card) 85%, transparent);
+  background: color-mix(in oklch, var(--card) 92%, transparent);
   -webkit-backdrop-filter: blur(56px) saturate(1.8) brightness(0.7);
   backdrop-filter: blur(56px) saturate(1.8) brightness(0.7);
   /* Two strokes: a light hairline on the inside catches the edge on dark
@@ -2487,7 +2460,7 @@ html[data-status-bar="ios"] {
     0 12px 28px -8px oklch(0 0 0 / 45%);
 }
 :root:not(.dark) .tm-window {
-  background: color-mix(in oklch, var(--card) 90%, transparent);
+  background: color-mix(in oklch, var(--card) 94%, transparent);
   -webkit-backdrop-filter: blur(56px) saturate(1.8) brightness(1.2);
   backdrop-filter: blur(56px) saturate(1.8) brightness(1.2);
   border-color: oklch(0 0 0 / 10%);
@@ -2550,10 +2523,124 @@ html[data-embedded-frame] body {
   border-top: 1px solid var(--window-separator);
 }
 
+/* ── Primitives on window glass ─────────────────────────────────────────────
+   The fill tokens assume an opaque page: --card, --muted, --accent and
+   --secondary are solid greys a step off --background, and --border and
+   --input are tuned for a white (or near-black) page. On window glass a solid
+   grey either matches the glass (a chip vanishes over a bright wallpaper) or
+   covers it (a card turns into a slab), and a hairline tuned for white is lost
+   over a dark one. So inside a window (the content column and the sidebar)
+   those tokens become mixes of --foreground: relative fills, like Apple's
+   system fills, that sit the same distance from whatever the glass shows.
+   Text tokens keep their values (one placeholder aside, below), --background
+   stays the page colour, and nothing outside a window changes: classic mode
+   keeps the opaque values.
+
+                     dark             light
+     --card          foreground 5%    background 60%   cards, grouped boxes (a lift)
+     --muted         foreground 8%    foreground 5%    tracks, neutral chips, quiet hovers
+     --accent        foreground 10%   foreground 7%    hover and selected fills, skeletons
+     --secondary     foreground 16%   foreground 12%   chips (Badge, Pill), secondary buttons
+     --border        foreground 12%   foreground 10%   hairlines, card edges
+     --input         foreground 15%   foreground 9%    fills drawn with it (switch track, tab thumb)
+
+   Controls you type in, choose from or press (Input, Textarea, Select trigger,
+   InputGroup, outline Button, outline Toggle) need an edge you can find, so
+   each redefines --input on itself for a 3:1 boundary against the surface
+   around it. The outline button takes it as its light --border too. Its light
+   fill stays bg-background, the opaque page colour (a white bezel, like a
+   push button), and so does its hover, a step darker: it reads over anything
+   an app paints under it (the player's black), not only over the glass.
+   Nothing here redefines --background, because floating controls paint
+   bg-background to stay opaque over the text they float on (the Assistant's
+   scroll-to-bottom button). In dark a field's (and the outline button's)
+   input/30 fill paints under its border, so fields take a lighter edge than
+   outline toggles, which have no fill: as light as a 3:1 edge allows, since a
+   select's input/50 hover fill comes from the same token (its placeholder
+   lifts a step on hover to keep 4.5:1). A pressed toggle takes the chip fill.
+   Chips are not controls (their text names them): they keep text at 4.5:1 and
+   stand off the glass more than the classic chip stands off its page; outline
+   chips (Badge outline, kbd) get a firmer edge than a hairline.
+
+   Surfaces that float over the content or over artwork rather than sitting on
+   the glass keep the opaque card: --surface-popover is the classic card in
+   both themes. A floating layer is found by what makes it float, not by one
+   utility class: position fixed as a class (fixed, or a variant such as
+   focus:fixed), as an inline style (a dnd-kit DragOverlay, which positions
+   itself) or the data-floating marker for anything else that floats (an
+   absolute panel over scrolling content), plus the app-card status badges,
+   which sit over artwork.
+
+   Under increased contrast the window turns opaque and the remap is off, so
+   the classic high-contrast borders apply; under reduced transparency the
+   window is opaque too and the relative fills still read on it. Only where color-mix works:
+   without it Tailwind's fallback would turn each mix into opaque foreground.
+   design-contrast.test.tsx checks every pair over the worst backdrop, the
+   content tint, a card and the opaque fallback, in both themes. */
+@media not (prefers-contrast: more) {
+  @supports (color: color-mix(in lab, red, red)) {
+    :is(.tm-window-content, [data-window-sidebar]) {
+      --card: color-mix(in oklch, var(--foreground) 5%, transparent);
+      --muted: color-mix(in oklch, var(--foreground) 8%, transparent);
+      --accent: color-mix(in oklch, var(--foreground) 10%, transparent);
+      --secondary: color-mix(in oklch, var(--foreground) 16%, transparent);
+      --border: color-mix(in oklch, var(--foreground) 12%, transparent);
+      --input: color-mix(in oklch, var(--foreground) 15%, transparent);
+    }
+    :root:not(.dark) :is(.tm-window-content, [data-window-sidebar]) {
+      --card: color-mix(in oklch, var(--background) 60%, transparent);
+      --muted: color-mix(in oklch, var(--foreground) 5%, transparent);
+      --accent: color-mix(in oklch, var(--foreground) 7%, transparent);
+      --secondary: color-mix(in oklch, var(--foreground) 12%, transparent);
+      --border: color-mix(in oklch, var(--foreground) 10%, transparent);
+      --input: color-mix(in oklch, var(--foreground) 9%, transparent);
+    }
+
+    /* Controls: a 3:1 edge, set on the control itself */
+    :is(.tm-window-content, [data-window-sidebar]) :is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"], [data-slot="input-group"], [data-slot="button"][data-variant="outline"]) {
+      --input: color-mix(in oklch, var(--foreground) 30%, transparent);
+    }
+    :is(.tm-window-content, [data-window-sidebar]) :is([data-slot="toggle"], [data-slot="toggle-group-item"])[data-variant="outline"] {
+      --input: color-mix(in oklch, var(--foreground) 38%, transparent);
+    }
+    :root:not(.dark) :is(.tm-window-content, [data-window-sidebar]) :is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"], [data-slot="input-group"], [data-slot="button"][data-variant="outline"], [data-slot="toggle"][data-variant="outline"], [data-slot="toggle-group-item"][data-variant="outline"]) {
+      --input: color-mix(in oklch, var(--foreground) 48%, transparent);
+    }
+    :is(.tm-window-content, [data-window-sidebar]) [data-slot="button"][data-variant="outline"] {
+      --border: var(--input);
+    }
+    /* Light: an opaque control at rest (bg-background), so an opaque hover */
+    :root:not(.dark) :is(.tm-window-content, [data-window-sidebar]) [data-slot="button"][data-variant="outline"] {
+      --accent: color-mix(in oklch, var(--foreground) 7%, var(--background));
+    }
+    :is(.tm-window-content, [data-window-sidebar]) :is([data-slot="toggle"], [data-slot="toggle-group-item"])[data-state="on"] {
+      --accent: var(--secondary);
+    }
+    /* A dark select trigger's hover fill (input/50) over a card is the densest
+       field fill: its placeholder lifts a step on hover to keep 4.5:1 */
+    .dark :is(.tm-window-content, [data-window-sidebar]) [data-slot="select-trigger"]:hover {
+      --muted-foreground: oklch(0.82 0 0);
+    }
+
+    /* Outline chips: a firmer edge than a hairline */
+    :is(.tm-window-content, [data-window-sidebar]) :is([data-slot="badge"][data-variant="outline"], kbd) {
+      --border: color-mix(in oklch, var(--foreground) 24%, transparent);
+    }
+    :root:not(.dark) :is(.tm-window-content, [data-window-sidebar]) :is([data-slot="badge"][data-variant="outline"], kbd) {
+      --border: color-mix(in oklch, var(--foreground) 30%, transparent);
+    }
+
+    /* Floating over the content or over artwork: the opaque card */
+    :is(.tm-window-content, [data-window-sidebar]) :is([data-floating], .fixed, [class*=":fixed"], [style*="position: fixed"], [style*="position:fixed"], .app-card-installed-badge, .app-card-setup-badge) {
+      --card: var(--surface-popover);
+    }
+  }
+}
+
 /* Widgets on the desktop are glass too, so the wallpaper stays part of the
    composition (Home keeps solid cards) */
 [data-desktop-widget-canvas] [data-widget] {
-  background: color-mix(in oklch, var(--card) 82%, transparent);
+  background: color-mix(in oklch, var(--card) 88%, transparent);
   border-color: oklch(1 0 0 / 10%);
   -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(0.75);
   backdrop-filter: blur(48px) saturate(1.8) brightness(0.75);
@@ -2563,7 +2650,7 @@ html[data-embedded-frame] body {
   border-color: oklch(1 0 0 / 8%);
 }
 :root:not(.dark) [data-desktop-widget-canvas] [data-widget] {
-  background: color-mix(in oklch, var(--card) 88%, transparent);
+  background: color-mix(in oklch, var(--card) 92%, transparent);
   -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
   backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
   border-color: oklch(0 0 0 / 8%);
@@ -2576,7 +2663,7 @@ html[data-embedded-frame] body {
    4.5:1 or better over the brightest (darkest, in light) blurred patch of every
    bundled wallpaper. */
 .tm-glass-dense {
-  background: color-mix(in oklch, var(--card) 82%, transparent);
+  background: color-mix(in oklch, var(--card) 88%, transparent);
   border-color: oklch(1 0 0 / 12%);
   -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(0.75);
   backdrop-filter: blur(48px) saturate(1.8) brightness(0.75);
@@ -2586,7 +2673,7 @@ html[data-embedded-frame] body {
     0 24px 60px -20px oklch(0 0 0 / 60%);
 }
 :root:not(.dark) .tm-glass-dense {
-  background: color-mix(in oklch, var(--card) 88%, transparent);
+  background: color-mix(in oklch, var(--card) 92%, transparent);
   border-color: oklch(0 0 0 / 8%);
   -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
   backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
@@ -2613,7 +2700,7 @@ html[data-embedded-frame] body {
    wallpaper shows through, blurred and a little richer, framed by the same two
    strokes as windows */
 .tm-glass {
-  background: color-mix(in oklch, var(--card) 78%, transparent);
+  background: color-mix(in oklch, var(--card) 85%, transparent);
   border-color: oklch(1 0 0 / 12%);
   -webkit-backdrop-filter: blur(40px) saturate(1.8) brightness(0.75);
   backdrop-filter: blur(40px) saturate(1.8) brightness(0.75);
@@ -2623,7 +2710,7 @@ html[data-embedded-frame] body {
     0 18px 40px -14px oklch(0 0 0 / 55%);
 }
 :root:not(.dark) .tm-glass {
-  background: color-mix(in oklch, var(--card) 82%, transparent);
+  background: color-mix(in oklch, var(--card) 88%, transparent);
   -webkit-backdrop-filter: blur(40px) saturate(1.8) brightness(1.15);
   backdrop-filter: blur(40px) saturate(1.8) brightness(1.15);
   border-color: oklch(0 0 0 / 8%);
