@@ -812,6 +812,10 @@ export function DesktopExperience() {
   const dashboardWidgetLayoutController = useWidgetLayout();
   const desktopWidgetLayoutController = useDesktopWidgetLayout();
   const workspaceRef = useRef<HTMLDivElement>(null);
+  /** The part of the workspace above the Dock: window placement, Fill, snapping
+   * and the title-bar limit use it, while windows themselves may slide under
+   * the Dock, which floats over them. */
+  const workAreaRef = useRef<HTMLDivElement>(null);
   const appFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
   const desktopWindowRefs = useRef(new Map<string, HTMLElement>());
   const dockButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -987,7 +991,7 @@ export function DesktopExperience() {
   }, [desktopModeAvailable, router]);
 
   useEffect(() => {
-    const workspace = workspaceRef.current;
+    const workspace = workAreaRef.current;
     if (!workspace) return;
 
     let measurementFrame = 0;
@@ -2060,6 +2064,12 @@ export function DesktopExperience() {
       ) : null}
 
       <div ref={workspaceRef} className="relative z-[1] flex-1 min-h-0 overflow-hidden">
+        <div
+          ref={workAreaRef}
+          aria-hidden="true"
+          data-desktop-work-area=""
+          className="pointer-events-none invisible absolute inset-x-0 top-0 bottom-[var(--desktop-dock-reserve)]"
+        />
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
@@ -2122,7 +2132,7 @@ export function DesktopExperience() {
                 className={cn(
                   "absolute top-6 left-6",
                   desktopWidgetsEditing
-                    ? "z-[1100] max-h-[calc(100%-6rem)] overflow-y-auto overscroll-contain p-3 pb-4 pr-4"
+                    ? "z-[1100] max-h-[calc(100%-6rem-var(--desktop-dock-reserve))] overflow-y-auto overscroll-contain p-3 pb-4 pr-4"
                     : "z-[10]",
                 )}
                 style={{
@@ -2289,13 +2299,15 @@ export function DesktopExperience() {
 
       <div
         data-desktop-dock-band=""
-        className="relative z-[2] flex h-[5.75rem] shrink-0 items-end justify-center px-4 pb-4"
+        // Floats over the bottom of the workspace, so windows slide under the
+        // Dock; only the Dock itself takes the pointer.
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] flex h-[var(--desktop-dock-reserve)] items-end justify-center px-4 pb-4"
       >
         {!desktopWidgetsEditing ? (
           <nav
             aria-label="Desktop applications"
             className={cn(
-              "desktop-dock tm-glass relative flex max-w-full items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
+              "desktop-dock tm-glass pointer-events-auto relative flex max-w-full items-end gap-1 rounded-2xl border p-2 transition-[background-color,border-color,box-shadow,opacity] duration-150",
               draggingDockAppId && "border-foreground/20",
             )}
             data-dock-dragging={draggingDockAppId || undefined}

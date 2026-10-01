@@ -2413,8 +2413,17 @@ html[data-status-bar="ios"] [data-desktop-root] {
   padding-right: env(safe-area-inset-right, 0px);
 }
 html[data-status-bar="ios"] [data-desktop-dock-band] {
-  height: calc(5.75rem + env(safe-area-inset-bottom, 0px));
   padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* The Dock's band at the bottom of the desktop. Windows may slide under it
+   (it floats over the workspace), but placement, Fill and snapping stop above
+   it, so a filled window's status bar is never hidden. */
+[data-desktop-root] {
+  --desktop-dock-reserve: 5.75rem;
+}
+html[data-status-bar="ios"] [data-desktop-root] {
+  --desktop-dock-reserve: calc(5.75rem + env(safe-area-inset-bottom, 0px));
 }
 
 /* Optical centring for a line of text next to icons: trim the text box to the
