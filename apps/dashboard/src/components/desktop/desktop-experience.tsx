@@ -967,6 +967,14 @@ export function DesktopExperience() {
     () => new Map(windows.map((windowModel) => [windowModel.appId, windowModel])),
     [windows],
   );
+  /** Launchpad tiles carry the Dock's window dot: open, or hollow when minimized. */
+  const launchpadWindowState = useCallback((target: { item: NavItem } | { app: LaunchableApp }) => {
+    const windowModel = "item" in target
+      ? windowByAppId.get(appDefinitionFromNav(target.item).id)
+      : windowByAppId.get(`${SERVICE_APP_PREFIX}${target.app.id}`);
+    if (!windowModel) return undefined;
+    return windowModel.minimized ? "minimized" as const : "open" as const;
+  }, [windowByAppId]);
   // App operations are read only while a service in the dock isn't running,
   // so an update recreating its container reads "Updating", not "Not installed".
   const watchOperations = hasPermission("apps") && visibleDockApps.some((app) => {
@@ -2292,6 +2300,8 @@ export function DesktopExperience() {
           onOpenChange={setLaunchpadOpen}
           onLaunch={launchNavItem}
           onLaunchService={launchService}
+          anchorRef={launchpadButtonRef}
+          windowState={launchpadWindowState}
         />
       </div>
 
