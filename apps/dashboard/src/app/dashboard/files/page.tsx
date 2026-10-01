@@ -19,9 +19,6 @@ import {
   Edit02Icon,
   MoreHorizontalIcon,
   CloudUploadIcon,
-  FolderAddIcon,
-  FileUploadIcon,
-  FolderUploadIcon,
   ExternalDriveIcon,
   HardDriveIcon,
   Cancel01Icon,
@@ -74,7 +71,8 @@ import {
   uniqueName,
   type FileItem,
 } from "@/components/files/file-helpers";
-import { FilesToolbar, type FilesSearchScope } from "@/components/files/files-toolbar";
+import { FilesActions, FilesToolbar, type FilesSearchScope } from "@/components/files/files-toolbar";
+import { SelectionBar, SelectionBarButton } from "@/components/files/selection-bar";
 import { FilesStatusBar } from "@/components/files/files-status-bar";
 import { FILES_FIRST_CELL, FILES_LAST_CELL, FilesColGroup, FilesListHeader } from "@/components/files/files-list-header";
 import { FileSearchResults, HighlightedName } from "@/components/files/file-search-results";
@@ -104,7 +102,6 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { pageActionAtom } from "@/atoms/page-action";
-import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { pageBackAtom } from "@/atoms/page-back";
 import { Progress } from "@/components/ui/progress";
@@ -298,46 +295,6 @@ function RootsList({ roots, onSelect }: { roots: FileManagerRoot[]; onSelect: (r
           );
         })}
       </div>
-    </div>
-  );
-}
-
-// ── Header actions (rendered via pageActionAtom) ────────────────────────
-
-function FileActions({ onNewFolder, onUpload, onUploadFolder }: { onNewFolder: () => void; onUpload: () => void; onUploadFolder: () => void }) {
-  return (
-    <div className="ml-auto flex items-center gap-1 shrink-0">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <HugeiconsIcon icon={CloudUploadIcon} size={14} />
-            Upload
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-40">
-          <DropdownMenuItem onSelect={onUpload}>
-            <HugeiconsIcon icon={FileUploadIcon} size={14} />
-            Files…
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={onUploadFolder}>
-            <HugeiconsIcon icon={FolderUploadIcon} size={14} />
-            Folder…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-        onClick={onNewFolder}
-      >
-        <HugeiconsIcon icon={FolderAddIcon} size={14} />
-        New
-      </Button>
     </div>
   );
 }
@@ -567,7 +524,7 @@ function FileQuickLook({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-7 text-muted-foreground hover:text-foreground disabled:text-dim-foreground disabled:pointer-events-none"
+                  className="size-7 text-muted-foreground hover:text-foreground disabled:text-dim-foreground disabled:pointer-events-none pointer-coarse:size-11"
                   onClick={goToPrev}
                   disabled={!hasPrev}
                   aria-label="Previous file"
@@ -580,7 +537,7 @@ function FileQuickLook({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-7 text-muted-foreground hover:text-foreground disabled:text-dim-foreground disabled:pointer-events-none"
+                  className="size-7 text-muted-foreground hover:text-foreground disabled:text-dim-foreground disabled:pointer-events-none pointer-coarse:size-11"
                   onClick={goToNext}
                   disabled={!hasNext}
                   aria-label="Next file"
@@ -592,16 +549,17 @@ function FileQuickLook({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+              className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:min-w-11"
               onClick={() => filePath && onDownload(filePath, fileName)}
             >
-              <HugeiconsIcon icon={Download01Icon} size={12} />
-              <span className="hidden sm:inline">Download</span>
+              <HugeiconsIcon icon={Download01Icon} size={12} aria-hidden="true" />
+              {/* Named on phones too, where only the icon shows */}
+              <span className="sr-only sm:not-sr-only">Download</span>
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 text-muted-foreground hover:text-foreground"
+              className="size-7 text-muted-foreground hover:text-foreground pointer-coarse:size-11"
               onClick={onClose}
               aria-label="Close preview"
             >
@@ -707,7 +665,8 @@ function MoveDialog({
           <div className="flex items-center gap-1 px-4 pb-2">
             {hasMultipleRoots && (
               <button
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors px-1 py-0.5 rounded"
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors px-1 py-0.5 rounded pointer-coarse:min-h-11"
                 onClick={() => setBrowsePath(null)}
               >
                 Volumes
@@ -731,7 +690,8 @@ function MoveDialog({
                 return (
                   <button
                     key={root}
-                    className="flex items-center gap-2.5 w-full px-4 py-2 text-left hover:bg-muted/30 transition-colors"
+                    type="button"
+                    className="flex items-center gap-2.5 w-full px-4 py-2 text-left pointer-coarse:min-h-11 hover:bg-muted/30 transition-colors"
                     onClick={() => setBrowsePath(root)}
                   >
                     <HugeiconsIcon icon={icon} size={16} className="text-dim-foreground shrink-0" />
@@ -744,7 +704,8 @@ function MoveDialog({
             <div className="py-1">
               {canGoBack && (
                 <button
-                  className="flex items-center gap-2.5 w-full px-4 py-2 text-left hover:bg-muted/30 transition-colors"
+                  type="button"
+                  className="flex items-center gap-2.5 w-full px-4 py-2 text-left pointer-coarse:min-h-11 hover:bg-muted/30 transition-colors"
                   onClick={goBack}
                 >
                   <HugeiconsIcon icon={ArrowLeft01Icon} size={16} className="text-dim-foreground shrink-0" />
@@ -772,7 +733,8 @@ function MoveDialog({
               {folders.map((folder) => (
                 <button
                   key={folder.path}
-                  className="flex items-center gap-2.5 w-full px-4 py-2 text-left hover:bg-muted/30 transition-colors group"
+                  type="button"
+                  className="flex items-center gap-2.5 w-full px-4 py-2 text-left pointer-coarse:min-h-11 hover:bg-muted/30 transition-colors group"
                   onClick={() => setBrowsePath(folder.path)}
                 >
                   <HugeiconsIcon icon={Folder01Icon} size={16} className="text-muted-foreground shrink-0" />
@@ -790,9 +752,10 @@ function MoveDialog({
 
         {/* Footer */}
         <DialogFooter className="border-t border-border/40 px-4 py-3">
-          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" size="sm" className="pointer-coarse:h-11" onClick={onClose}>Cancel</Button>
           <Button
             size="sm"
+            className="pointer-coarse:h-11"
             onClick={() => void handleConfirm()}
             disabled={isAtRoot || isMoving || !data?.path}
           >
@@ -915,7 +878,6 @@ function FilesPageInner({
   const dragCounter = useRef(0);
   const lastSelectedIdx = useRef<number | null>(null);
   const setPageAction = useSetAtom(pageActionAtom);
-  const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
   const setPageTitle = useSetAtom(pageTitleAtom);
   const setPageBack = useSetAtom(pageBackAtom);
 
@@ -1421,38 +1383,36 @@ function FilesPageInner({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedPaths.size]);
 
+  // The folder's verbs: in classic mode in the page header, in a window at the
+  // trailing end of the toolbar (the title bar keeps only Back and the title).
+  // At the list of locations there's no folder to upload into.
+  const toolbarActions = !embedded || isAtVirtualRoot ? null : (
+    <FilesActions
+      placement="toolbar"
+      onUploadFiles={() => fileInputRef.current?.click()}
+      onUploadFolder={() => folderInputRef.current?.click()}
+      onNewFolder={() => void handleNewFolder()}
+    />
+  );
   useEffect(() => {
-    if (isAtVirtualRoot) {
+    if (embedded || isAtVirtualRoot) {
       setPageAction(null);
-      setDesktopAppActions([]);
-    } else {
-      setPageAction(
-        <FileActions
-          onNewFolder={() => void handleNewFolder()}
-          onUpload={() => fileInputRef.current?.click()}
-          onUploadFolder={() => folderInputRef.current?.click()}
-        />,
-      );
-      setDesktopAppActions([
-        {
-          id: "upload",
-          label: "Upload",
-          icon: "upload",
-          onSelect: () => fileInputRef.current?.click(),
-        },
-        {
-          id: "new-folder",
-          label: "New",
-          icon: "new-folder",
-          onSelect: () => void handleNewFolder(),
-        },
-      ]);
+      return;
     }
-    return () => {
-      setPageAction(null);
-      setDesktopAppActions([]);
-    };
-  }, [setPageAction, setDesktopAppActions, handleNewFolder, isAtVirtualRoot]);
+    setPageAction(
+      // The header row is title-first: the verbs sit at its trailing end, like
+      // every other page action (site-header renders this in its flex row as is)
+      <div data-files-actions="" className="ml-auto flex shrink-0 items-center gap-1">
+        <FilesActions
+          placement="header"
+          onUploadFiles={() => fileInputRef.current?.click()}
+          onUploadFolder={() => folderInputRef.current?.click()}
+          onNewFolder={() => void handleNewFolder()}
+        />
+      </div>,
+    );
+    return () => setPageAction(null);
+  }, [setPageAction, handleNewFolder, isAtVirtualRoot, embedded]);
 
   // Wire atom-based drilldown: show folder name + back button in header.
   // Uses useLayoutEffect + currentPath (not data?.path) so the title is set
@@ -1818,7 +1778,10 @@ function FilesPageInner({
                               aria-label={isSelected ? `Deselect ${item.name}` : `Select ${item.name}`}
                               className={cn(
                                 "flex items-center justify-center rounded-full transition-opacity duration-150 focus-visible:opacity-100 pointer-coarse:size-11",
-                                hasSelection || isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100",
+                                // With a mouse the mark appears on hover; on touch there is no hover, so it stays
+                                hasSelection || isSelected
+                                  ? "opacity-100"
+                                  : "pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-visible:opacity-100 pointer-fine:focus-visible:opacity-100",
                               )}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1855,7 +1818,8 @@ function FilesPageInner({
                                   size="icon"
                                   // Tab from the focused row reaches its menu; other rows' menus stay out of the tab order.
                                   tabIndex={item.path === rovingRowPath ? 0 : -1}
-                                  className="size-6 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus-visible:opacity-100 transition-opacity pointer-coarse:size-11"
+                                  // Revealed on hover only where there is hover (a mouse or trackpad): on touch it stays
+                                  className="size-6 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100 pointer-fine:focus-visible:opacity-100 pointer-coarse:size-11"
                                   onClick={(e) => e.stopPropagation()}
                                   onKeyDown={(e) => e.stopPropagation()}
                                   aria-label="File actions"
@@ -1991,6 +1955,7 @@ function FilesPageInner({
           onScopeChange={changeScope}
           showScope={trimmedQuery.length > 0 && !isAtVirtualRoot}
           expanded={resultsShown}
+          actions={toolbarActions}
         />
 
         {/* ── Drag overlay ────────────────────────────────────────────── */}
@@ -2038,59 +2003,27 @@ function FilesPageInner({
           </motion.div>
         </div>
 
-        {/* ── Floating selection bar ──────────────────────────────────── */}
-        <AnimatePresence>
-          {hasSelection && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={enter()}
-              // In a window the status bar sits outside this column; in classic it's the last row of it.
-              className={cn("absolute inset-x-0 z-20 flex justify-center pointer-events-none", embedded ? "bottom-3" : "bottom-14")}
-            >
-              {/* Inverted surface: status text uses the -inverse token (both themes checked in design-contrast.test). */}
-              <div className="flex items-center gap-1 rounded-full bg-foreground text-background px-4 py-2 shadow-lg pointer-events-auto">
-                <span className="text-sm font-medium tabular-nums whitespace-nowrap">{selectedVisible.size} selected</span>
-                <div className="w-px h-4 bg-background/15 mx-1" />
-                <button
-                  type="button"
-                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-background/10 rounded-full transition-colors"
-                  onClick={() => setMovingPaths(Array.from(selectedVisible))}
-                >
-                  <HugeiconsIcon icon={FolderExportIcon} size={14} />
-                  <span className="sr-only @md:not-sr-only">Move</span>
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-background/10 rounded-full transition-colors"
-                  onClick={handleBulkDownload}
-                >
-                  <HugeiconsIcon icon={Download01Icon} size={14} />
-                  <span className="sr-only @md:not-sr-only">Download</span>
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-status-critical-inverse hover:bg-background/10 rounded-full transition-colors"
-                  onClick={() => void confirmBulkDelete()}
-                >
-                  <HugeiconsIcon icon={Delete01Icon} size={14} />
-                  <span className="sr-only @md:not-sr-only">Delete</span>
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <FilesStatusBar
-          segments={segments}
-          atVirtualRoot={isAtVirtualRoot}
-          onNavigate={(path) => navigate(path)}
-          countLabel={countLabel}
-          searching={deepSearch && search.searching}
-          showHidden={showHidden}
-          onToggleHidden={() => setShowHidden((v) => !v)}
-        />
+        {/* The status bar and, floating 12px above it, the selection bar. In
+            classic mode the status bar is this column's last row, so the
+            anchor is as tall as it is (touch targets and the home indicator's
+            safe area included); in a window the status bar sits on the
+            window's edge and the empty anchor is the column's bottom. */}
+        <div data-files-bottom="" className="relative shrink-0">
+          <SelectionBar count={selectedVisible.size} className="absolute inset-x-0 bottom-full mb-3">
+            <SelectionBarButton icon={FolderExportIcon} label="Move" onClick={() => setMovingPaths(Array.from(selectedVisible))} />
+            <SelectionBarButton icon={Download01Icon} label="Download" onClick={handleBulkDownload} />
+            <SelectionBarButton icon={Delete01Icon} label="Delete" tone="critical" onClick={() => void confirmBulkDelete()} />
+          </SelectionBar>
+          <FilesStatusBar
+            segments={segments}
+            atVirtualRoot={isAtVirtualRoot}
+            onNavigate={(path) => navigate(path)}
+            countLabel={countLabel}
+            searching={deepSearch && search.searching}
+            showHidden={showHidden}
+            onToggleHidden={() => setShowHidden((v) => !v)}
+          />
+        </div>
       </div>
       </WindowSidebarLayout>
 

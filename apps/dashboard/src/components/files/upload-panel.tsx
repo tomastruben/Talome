@@ -13,20 +13,10 @@ import {
   Refresh01Icon,
 } from "@/components/icons";
 import { SuccessCheck } from "@/components/ui/micro";
+import { formatBytes } from "@/lib/format";
+import { DURATION, TRAVEL, enter, exit } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { UploadItem } from "./use-upload-queue";
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
-}
 
 function statusText(item: UploadItem): string {
   switch (item.status) {
@@ -79,11 +69,11 @@ export function UploadPanel({
     <AnimatePresence>
       {items.length > 0 && (
         <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 8 }}
-          transition={{ duration: 0.15, ease: "easeOut" }}
-          className="fixed bottom-4 right-4 z-50 w-[calc(100vw-2rem)] sm:w-96 rounded-xl border bg-card shadow-lg overflow-hidden"
+          initial={{ opacity: 0, y: TRAVEL.lift }}
+          animate={{ opacity: 1, y: 0, transition: enter(DURATION.pill) }}
+          exit={{ opacity: 0, y: TRAVEL.rise, transition: exit(DURATION.exitFast) }}
+          // Clear of an iPhone's home indicator (the safe area is 0 elsewhere)
+          className="fixed right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-50 w-[calc(100vw-2rem)] sm:w-96 rounded-xl border bg-card shadow-lg overflow-hidden"
           role="status"
           aria-live="polite"
         >
@@ -97,18 +87,18 @@ export function UploadPanel({
               )}
             </div>
             {remaining > 0 ? (
-              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onCancelAll}>
+              <Button variant="ghost" size="sm" className="h-7 text-xs pointer-coarse:h-11" onClick={onCancelAll}>
                 Cancel all
               </Button>
             ) : (
-              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onClear}>
+              <Button variant="ghost" size="sm" className="h-7 text-xs pointer-coarse:h-11" onClick={onClear}>
                 Done
               </Button>
             )}
             <Button
               variant="ghost"
               size="icon"
-              className="size-7"
+              className="size-7 pointer-coarse:size-11"
               aria-label={collapsed ? "Show uploads" : "Hide uploads"}
               onClick={() => setCollapsed((c) => !c)}
             >
@@ -136,12 +126,12 @@ export function UploadPanel({
                     )}
                   </div>
                   {(item.status === "queued" || item.status === "uploading") && (
-                    <Button variant="ghost" size="icon" className="size-7 shrink-0" aria-label={`Cancel ${item.relativePath}`} onClick={() => onCancel(item.id)}>
+                    <Button variant="ghost" size="icon" className="size-7 shrink-0 pointer-coarse:size-11" aria-label={`Cancel ${item.relativePath}`} onClick={() => onCancel(item.id)}>
                       <HugeiconsIcon icon={Cancel01Icon} size={14} />
                     </Button>
                   )}
                   {(item.status === "failed" || item.status === "cancelled") && (
-                    <Button variant="ghost" size="icon" className="size-7 shrink-0" aria-label={`Retry ${item.relativePath}`} onClick={() => onRetry(item.id)}>
+                    <Button variant="ghost" size="icon" className="size-7 shrink-0 pointer-coarse:size-11" aria-label={`Retry ${item.relativePath}`} onClick={() => onRetry(item.id)}>
                       <HugeiconsIcon icon={Refresh01Icon} size={14} />
                     </Button>
                   )}

@@ -1541,7 +1541,9 @@ export function VideoPlayer({
     const circumference = 2 * Math.PI * radius;
     const strokeOffset = circumference * (1 - transmuxProgress);
     return (
-      <div className="flex flex-col items-center justify-center gap-4 w-full h-full bg-black">
+      // The player is black in both themes: the dark token scope keeps its
+      // muted text, fills and outline controls tuned for black (as the terminal does).
+      <div className="dark flex flex-col items-center justify-center gap-4 w-full h-full bg-black">
         <div className="relative size-12">
           {hasProgress ? (
             <svg viewBox="0 0 48 48" className="size-12 -rotate-90">
@@ -1596,7 +1598,7 @@ export function VideoPlayer({
     };
 
     return (
-      <div className="flex flex-col items-center justify-center gap-6 p-8 text-center w-full h-full bg-black">
+      <div className="dark flex flex-col items-center justify-center gap-6 p-8 text-center w-full h-full bg-black">
         {cinemaMode && onBack && (
           <button
             onClick={onBack}
@@ -1681,7 +1683,9 @@ export function VideoPlayer({
     <div
       ref={containerRef}
       className={cn(
-        "relative bg-black select-none group w-full h-full",
+        // Black in both themes, so it takes the dark token scope: menus that
+        // portal into it (fullscreen, cinema) and its outline buttons use the dark values.
+        "dark relative bg-black select-none group w-full h-full",
         isFullscreen && !showControls && "cursor-none",
       )}
       onMouseMove={resetHideTimer}
@@ -1865,7 +1869,7 @@ export function VideoPlayer({
                         {formatTime(duration)}
                       </span>
                       {playbackMode !== "direct" && playbackMode !== "direct-mkv" && (
-                        <span className={cn("text-white/30 uppercase tracking-wider", cinemaMode ? "text-sm" : "text-lg")}>
+                        <span className={cn("text-white/30", cinemaMode ? "text-sm" : "text-lg")}>
                           {playbackMode === "hls" ? "HLS" : "Transmux"}
                         </span>
                       )}
@@ -2243,7 +2247,7 @@ export function VideoPlayer({
                   {/* Quality */}
                   {(isMediaLibrary || hasJfSession || qualityLevels.length > 1) && (
                     <>
-                      <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-muted-foreground/60 font-medium">Quality</DropdownMenuLabel>
+                      <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Quality</DropdownMenuLabel>
                       <DropdownMenuRadioGroup value={String(currentQuality)} onValueChange={(v) => handleQualityChange(parseInt(v, 10))}>
                         {jfDirectPlayUrl.current && (
                           <DropdownMenuRadioItem value="-2">Original</DropdownMenuRadioItem>
@@ -2269,7 +2273,7 @@ export function VideoPlayer({
                   )}
 
                   {/* Speed */}
-                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-muted-foreground/60 font-medium">Speed</DropdownMenuLabel>
+                  <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Speed</DropdownMenuLabel>
                   <DropdownMenuRadioGroup value={String(speed)} onValueChange={(v) => handleSpeedChange(Number(v))}>
                     {SPEED_OPTIONS.map((s) => (
                       <DropdownMenuRadioItem key={s} value={String(s)}>{s}x</DropdownMenuRadioItem>
@@ -2280,7 +2284,7 @@ export function VideoPlayer({
                   {subtitleTracks.length > 0 && (
                     <>
                       <DropdownMenuSeparator />
-                      <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-muted-foreground/60 font-medium">Subtitles</DropdownMenuLabel>
+                      <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Subtitles</DropdownMenuLabel>
                       <DropdownMenuRadioGroup value={selectedSub === null ? "off" : String(selectedSub)} onValueChange={(v) => setSelectedSub(v === "off" ? null : parseInt(v, 10))}>
                         <DropdownMenuRadioItem value="off">Off</DropdownMenuRadioItem>
                         {subtitleTracks.map((sub) => (
@@ -2294,7 +2298,7 @@ export function VideoPlayer({
                   {audioTracks.length > 1 && (
                     <>
                       <DropdownMenuSeparator />
-                      <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-muted-foreground/60 font-medium">Audio</DropdownMenuLabel>
+                      <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Audio</DropdownMenuLabel>
                       <DropdownMenuRadioGroup value={String(selectedAudio)} onValueChange={(v) => handleAudioSwitch(parseInt(v, 10))}>
                         {audioTracks.map((track) => (
                           <DropdownMenuRadioItem key={track.index} value={String(track.index)}>

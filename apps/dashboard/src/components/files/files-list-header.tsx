@@ -46,8 +46,11 @@ export function FilesListHeader({ allSelected, hasSelection, onToggleSelectAll }
                 type="button"
                 aria-label={allSelected ? "Deselect all" : "Select all"}
                 className={cn(
-                  "flex items-center justify-center rounded-full transition-opacity duration-150 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  hasSelection ? "opacity-100" : "opacity-0 group-hover/header:opacity-100",
+                  "flex items-center justify-center rounded-full transition-opacity duration-150 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11",
+                  // With a mouse the mark appears on hover; on touch there is no hover, so it stays
+                  hasSelection
+                    ? "opacity-100"
+                    : "pointer-fine:opacity-0 pointer-fine:group-hover/header:opacity-100 pointer-fine:focus-visible:opacity-100",
                 )}
                 onClick={onToggleSelectAll}
               >
