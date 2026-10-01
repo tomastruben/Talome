@@ -170,7 +170,10 @@ export function SignInFrame({
         animate={
           unlocking && !reduceMotion
             ? { opacity: 0, y: -TRAVEL.lift, scale: 1.02, filter: "blur(4px)" }
-            : { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }
+            // At rest the wrapper carries no filter: any filter (even blur(0px))
+            // makes it a backdrop root, and the card's frost would stop seeing
+            // the wallpaper.
+            : { opacity: 1, y: 0, scale: 1, transitionEnd: { filter: "none" } }
         }
         transition={unlocking ? exitTransition() : enterTransition()}
         className="relative z-10 flex w-full max-w-sm flex-col items-center"
@@ -242,9 +245,10 @@ function SignInBackdrop({ unlocking }: { unlocking: boolean }) {
               : `opacity ${DURATION_MS.base}ms ${ease}, transform ${DURATION_MS.base}ms ${ease}`,
         }}
       />
-      {/* The scrim lifts as you sign in, so the desktop seems to come forward */}
+      {/* The scrim blurs and dims the wallpaper like a lock screen, and lifts as
+          you sign in, so the desktop sharpens and comes forward */}
       <div
-        className={`absolute inset-0 bg-background/45 transition-opacity duration-[var(--duration-base)] ${unlocking ? "opacity-0" : ""}`}
+        className={`tm-lock-backdrop absolute inset-0 bg-background/45 transition-opacity duration-[var(--duration-base)] ${unlocking ? "opacity-0" : ""}`}
       />
     </div>
   );
