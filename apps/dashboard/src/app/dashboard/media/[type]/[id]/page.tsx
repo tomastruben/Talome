@@ -14,7 +14,6 @@ import {
   type MediaItem,
   type SeasonData,
   type EpisodeData,
-  type LibraryData,
   formatSize,
   deriveContainerFromPath,
 } from "@/components/media/media-detail-sheet";
@@ -64,6 +63,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { EmptyState, ErrorState } from "@/components/ui/empty-state";
+import { WindowSidebarLayout } from "@/components/ui/source-list";
+import { MediaWindowSidebar } from "@/components/media/media-window-sidebar";
+import { useMediaLibrary } from "@/components/media/media-data";
+import {
+  DEFAULT_MEDIA_VIEW_STATE,
+  serializeMediaViewState,
+  type LibraryTab,
+  type MediaLocation,
+} from "@/components/media/media-library-view";
+import { SKELETON_DELAY_MS } from "@/lib/motion";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { cn } from "@/lib/utils";
@@ -314,7 +324,7 @@ function DownloadProgressCard({
       )}
 
       {healthFacts.length > 0 && (
-        <p className="text-[11px] text-muted-foreground tabular-nums">
+        <p className="text-xs text-muted-foreground tabular-nums">
           {healthFacts.join(" · ")}
         </p>
       )}
@@ -458,19 +468,71 @@ export default function MediaDetailPage() {
     return () => { setPageTitle(null); setPageBack(null); };
   }, [item, setPageTitle, setPageBack, router, backPath]);
 
-  // Fetch media item from library
+  // The media item comes from the shared library (one request with the list
+  // and the sidebar). A local copy holds changes made here, such as a deleted
+  // file, until the library refreshes.
+  const { data: library, error: libraryError, mutate: mutateLibrary } = useMediaLibrary();
+  const libraryItem = useMemo(() => {
+    if (!library) return undefined;
+    const list = type === "tv" ? library.tv : library.movies;
+    return list.find((m) => m.id === id) ?? null;
+  }, [library, type, id]);
+  // The cached library can predate this title (the Assistant added it a
+  // moment ago and linked here). Before saying it isn't in the library, ask
+  // the server once more: mutate() always starts a new request, so the answer
+  // is newer than anything cached. Until then the page stays loading.
+  const lookupKey = `${type}/${id}`;
+  const [missingConfirmedFor, setMissingConfirmedFor] = useState<string | null>(null);
+  const missingConfirmed = missingConfirmedFor === lookupKey;
+  const confirmingMissingRef = useRef<string | null>(null);
   useEffect(() => {
-    setLoading(true);
-    fetch(`${CORE_URL}/api/media/library`)
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data: LibraryData) => {
-        const list = type === "tv" ? data.tv : data.movies;
-        const found = list.find((m) => m.id === id) ?? null;
-        setItem(found);
-      })
-      .catch(() => setItem(null))
-      .finally(() => setLoading(false));
-  }, [type, id]);
+    if (libraryItem !== null) {
+      setMissingConfirmedFor(null);
+      return;
+    }
+    if (missingConfirmed || confirmingMissingRef.current === lookupKey) return;
+    confirmingMissingRef.current = lookupKey;
+    void Promise.resolve(mutateLibrary())
+      .catch(() => undefined)
+      .then(() => {
+        if (confirmingMissingRef.current === lookupKey) confirmingMissingRef.current = null;
+        setMissingConfirmedFor(lookupKey);
+      });
+  }, [libraryItem, lookupKey, missingConfirmed, mutateLibrary]);
+  useEffect(() => {
+    if (libraryItem) {
+      setItem((prev) => (prev && JSON.stringify(prev) === JSON.stringify(libraryItem) ? prev : libraryItem));
+      setLoading(false);
+    } else if (libraryItem === null && missingConfirmed) {
+      setItem(null);
+      setLoading(false);
+    }
+  }, [libraryItem, missingConfirmed]);
+  useEffect(() => {
+    if (!library && libraryError) setLoading(false);
+  }, [library, libraryError]);
+  const [skeletonDue, setSkeletonDue] = useState(false);
+  useEffect(() => {
+    if (!loading) return;
+    const timer = setTimeout(() => setSkeletonDue(true), SKELETON_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [loading]);
+
+  // The window sidebar: you are inside Movies or TV shows
+  const libraryTab: LibraryTab = type === "tv" ? "tv" : "movies";
+  const openMediaView = useCallback((patch: Partial<typeof DEFAULT_MEDIA_VIEW_STATE>) => {
+    const query = serializeMediaViewState({ ...DEFAULT_MEDIA_VIEW_STATE, genres: [], ...patch });
+    router.push(query ? `/dashboard/media?${query}` : "/dashboard/media");
+  }, [router]);
+  const sidebar = (
+    <MediaWindowSidebar
+      location={{ tab: libraryTab, collection: "all", section: "all" }}
+      libraryTab={libraryTab}
+      genres={[]}
+      onNavigate={(location: MediaLocation) => openMediaView(location)}
+      onGenresChange={(genres) => openMediaView({ tab: libraryTab, genres })}
+    />
+  );
 
   // Fetch episodes for TV shows
   useEffect(() => {
@@ -575,6 +637,7 @@ export default function MediaDetailPage() {
       }
       if (type === "movie") {
         setItem((prev) => prev ? { ...prev, hasFile: false, filePath: null } : null);
+        void mutateLibrary();
       } else {
         const epRes = await fetch(`${CORE_URL}/api/media/episodes?seriesId=${id}`);
         if (epRes.ok) {
@@ -587,7 +650,7 @@ export default function MediaDetailPage() {
     }
     setDeleting(false);
     setDeleteTarget(null);
-  }, [deleteTarget, item, type, id, playingFilePath]);
+  }, [deleteTarget, item, type, id, playingFilePath, mutateLibrary]);
 
   // Remove entire entry from Sonarr/Radarr
   const handleRemoveFromLibrary = useCallback(async () => {
@@ -622,21 +685,46 @@ export default function MediaDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-col gap-6">
-        <Skeleton className="aspect-video w-full rounded-lg" />
-        <Skeleton className="h-24 w-full" />
-      </div>
+      <WindowSidebarLayout sidebar={sidebar}>
+        <div className="flex min-w-0 flex-1 flex-col gap-6" aria-busy="true">
+          {skeletonDue && (
+            <>
+              <Skeleton className="aspect-video w-full rounded-lg" />
+              <Skeleton className="h-24 w-full" />
+            </>
+          )}
+        </div>
+      </WindowSidebarLayout>
     );
   }
 
   if (!item) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 p-12 min-h-[60vh]">
-        <p className="text-muted-foreground">Media not found</p>
-        <Button variant="ghost" onClick={() => router.push(backPath)}>
-          Back to library
-        </Button>
-      </div>
+      <WindowSidebarLayout sidebar={sidebar}>
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Not found is said only on a successful answer; a failed one can't tell. */}
+          {libraryError ? (
+            <ErrorState
+              fill
+              title="Couldn't load this title"
+              description="Talome couldn't get your library from Radarr and Sonarr. Check that the server is running, then retry."
+              onRetry={() => void mutateLibrary()}
+            />
+          ) : (
+            <EmptyState
+              fill
+              icon={type === "tv" ? Tv01Icon : Film01Icon}
+              title="This title isn't in your library"
+              description={`It may have been removed from ${type === "tv" ? "Sonarr" : "Radarr"}.`}
+              action={
+                <Button variant="outline" size="sm" onClick={() => router.push(backPath)}>
+                  Back to library
+                </Button>
+              }
+            />
+          )}
+        </div>
+      </WindowSidebarLayout>
     );
   }
 
@@ -646,7 +734,8 @@ export default function MediaDetailPage() {
   const canPlay = type === "movie" ? !!item.filePath : false;
 
   return (
-    <div className="flex flex-col gap-6">
+    <WindowSidebarLayout sidebar={sidebar}>
+    <div className="flex min-w-0 flex-1 flex-col gap-6">
       {/* Player area */}
       <div className="relative rounded-lg overflow-hidden bg-black aspect-video">
         {streamSrc && playingFilePath ? (
@@ -944,7 +1033,7 @@ export default function MediaDetailPage() {
                     )}
                   >
                     <span className="text-xs font-medium">{tier.label}</span>
-                    <span className="text-[10px] text-muted-foreground">{tier.hint}</span>
+                    <span className="text-xs text-muted-foreground">{tier.hint}</span>
                   </button>
                 );
               })}
@@ -1060,6 +1149,7 @@ export default function MediaDetailPage() {
         </DialogContent>
       </Dialog>
     </div>
+    </WindowSidebarLayout>
   );
 }
 
@@ -1140,7 +1230,7 @@ function RelatedRail({ type, id }: { type: string; id: number }) {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">More like this</p>
+      <h2 className="text-sm font-medium text-muted-foreground">More like this</h2>
       <div className="flex gap-3 overflow-x-auto scrollbar-none pb-2 snap-x snap-mandatory">
         {items.map((item) => {
           const poster = resolvePosterUrl(item.poster, 240);

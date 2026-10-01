@@ -1,11 +1,18 @@
 "use client";
 
-import { useEffect, useState, Suspense, useMemo, useRef, useCallback } from "react";
+import {
+  useEffect,
+  useState,
+  Suspense,
+  useMemo,
+  useRef,
+  useCallback,
+  useDeferredValue,
+  type ReactNode,
+} from "react";
 import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
-import useSWR from "swr";
 import { CORE_URL, resolvePosterUrl } from "@/lib/constants";
-import { optimizationJobsRefreshInterval } from "@/lib/polling";
 import { SearchField } from "@/components/ui/search-field";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,9 +40,11 @@ import {
   CheckmarkCircle01Icon,
   Cancel01Icon,
   Add01Icon,
+  UserIcon,
 } from "@/components/icons";
 import { tiltHandlers } from "@/components/ui/micro";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState, ErrorState } from "@/components/ui/empty-state";
+import { Badge } from "@/components/ui/badge";
 import { useDownloads } from "@/hooks/use-downloads";
 import type { DownloadQueueItem, DownloadTorrent, MediaSearchResult } from "@talome/types";
 import {
@@ -57,19 +66,19 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { AnimatePresence, motion } from "motion/react";
-import { DURATION, enter, tween } from "@/lib/motion";
+import { DURATION, SKELETON_DELAY_MS, enter, tween } from "@/lib/motion";
+import { cn } from "@/lib/utils";
+import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import {
   type MediaItem,
   type LookupItem,
-  type LibraryData,
   formatSize,
-  deriveContainerFromPath,
   UnifiedMediaSheet,
   type SheetItem,
 } from "@/components/media/media-detail-sheet";
 import { ReleaseSearchPanel } from "@/components/media/release-search-panel";
-import { RequestsTab, type OverseerrRequest } from "@/components/media/requests-tab";
-import { WatchlistSection, type PlexWatchlistItem } from "@/components/media/watching-tab";
+import { RequestsTab } from "@/components/media/requests-tab";
+import { WatchlistSection } from "@/components/media/watching-tab";
 import { useCinemaBrowser } from "@/components/media/cinema-browser-context";
 import { preloadCinemaBrowser } from "@/components/media/cinema-browser-launcher";
 import { Projector01Icon } from "@/components/icons";
@@ -77,10 +86,8 @@ import { useSetAtom } from "jotai";
 import { pageActionAtom } from "@/atoms/page-action";
 import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import {
-  SourceList,
-  SourceListItem,
-  SourceListSection,
   WINDOW_SIDEBAR_REPLACES,
+  WINDOW_SIDEBAR_SHOWS,
   WindowSidebarLayout,
 } from "@/components/ui/source-list";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
@@ -90,30 +97,52 @@ import {
   continueWatchingFallbackRoute,
   resolveContinueWatchingRoute,
 } from "@/lib/media-navigation";
-
-interface CalendarData {
-  episodes: { id: number; seriesId?: number | null; seriesTitle: string; title: string; season: number; episode: number; airDate: string; poster?: string | null }[];
-  movies: { id: number; title: string; releaseDate?: string; poster?: string | null; year?: number | null }[];
-}
-
-interface WantedRecord {
-  id: number;
-  app: "sonarr" | "radarr";
-  title: string;
-  year?: number | null;
-  monitored?: boolean | null;
-  quality?: string | null;
-  size?: number | null;
-  poster?: string | null;
-  seriesId?: number | null;
-  episodeId?: number | null;
-  seasonNumber?: number | null;
-  movieId?: number | null;
-}
-
-interface WantedData {
-  records: WantedRecord[];
-}
+import {
+  useMediaCalendar,
+  useMediaLibrary,
+  useMediaRequests,
+  useMediaWanted,
+  useMovieHealth,
+  usePlexWatching,
+  usePlexWatchlist,
+  usePlexWatchStatus,
+  useHourClock,
+  mediaSourceStatus,
+  sourceFailed,
+  wantedTotal,
+  watchStatusOrNull,
+  type MediaSourceStatus,
+  type PlexContinueWatchingItem,
+  type WantedRecord,
+} from "@/components/media/media-data";
+import {
+  DEFAULT_MEDIA_VIEW_STATE,
+  MEDIA_VIEW_PARAM_KEYS,
+  RATING_OPTIONS,
+  SORT_LABELS,
+  availableCollections,
+  collectionLabel,
+  fileStem,
+  filterLibrary,
+  genreCounts,
+  hasCinemaParam,
+  isLibraryTab,
+  matchesCollection,
+  parseMediaViewState,
+  serializeMediaViewState,
+  sortLibrary,
+  viewSummary,
+  viewTitle,
+  type ActivitySection,
+  type CollectionContext,
+  type LibraryTab,
+  type MediaCollection,
+  type MediaLocation,
+  type MediaSortKey,
+  type MediaTab,
+  type MediaViewState,
+} from "@/components/media/media-library-view";
+import { MediaWindowSidebar } from "@/components/media/media-window-sidebar";
 
 interface WantedReleaseResult {
   title: string;
@@ -135,50 +164,37 @@ interface WantedReleasePanelState {
   grabbingTitle: string | null;
 }
 
-type Tab = "movies" | "tv" | "downloads" | "calendar" | "activity";
-
-interface RequestsData {
-  configured?: boolean;
-  results: OverseerrRequest[];
-}
-
-interface PlexWatchlistData {
-  configured: boolean;
-  items: PlexWatchlistItem[];
-}
-
-interface PlexWatchStatusData {
-  configured: boolean;
-  watchStatus: Record<string, "watched" | "in-progress">;
-}
-
-interface PlexContinueWatchingItem {
-  ratingKey?: string;
-  title?: string;
-  episodeTitle?: string;
-  type: "movie" | "tv";
-  year?: number;
-  thumb?: string;
-  viewOffset?: number;
-  duration?: number;
-  grandparentTitle?: string;
-  parentIndex?: number;
-  index?: number;
-}
-
-interface PlexWatchingData {
-  configured: boolean;
-  continueWatching?: PlexContinueWatchingItem[];
-}
-
-type SortKey = "added-desc" | "added-asc" | "title-asc" | "title-desc" | "year-desc" | "year-asc";
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-async function fetcher(url: string) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("API error");
-  return res.json();
+const PAGE_CHUNK = 120;
+const SCROLL_KEY = "media-scroll-y";
+/** Search is written to the URL once typing pauses. */
+const SEARCH_URL_DEBOUNCE_MS = 300;
+/** Our own URL writes come back through useSearchParams; recognise them for this long. */
+const ECHO_WINDOW_MS = 2000;
+
+const numberFormat = new Intl.NumberFormat();
+const listFormat = new Intl.ListFormat(undefined, { type: "conjunction" });
+const dayFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+
+function formatDay(value: string | undefined | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : dayFormat.format(date);
+}
+
+/** True once `flag` has stayed true for `delayMs`: skeletons never flash on fast loads. */
+function useDelayedFlag(flag: boolean, delayMs = SKELETON_DELAY_MS) {
+  const [elapsed, setElapsed] = useState(false);
+  useEffect(() => {
+    if (!flag) return;
+    const timer = setTimeout(() => setElapsed(true), delayMs);
+    return () => {
+      clearTimeout(timer);
+      setElapsed(false);
+    };
+  }, [flag, delayMs]);
+  return flag && elapsed;
 }
 
 function useAutoLoadSentinel({
@@ -239,6 +255,92 @@ const QUEUE_STATUS_MAP: Record<string, { label: string; color: string }> = {
   queued:        { label: "Queued",       color: "text-muted-foreground" },
 };
 
+function SectionHeading({ children }: { children: ReactNode }) {
+  return <h2 className="mb-3 text-sm font-medium text-muted-foreground">{children}</h2>;
+}
+
+// ── Skeletons (shaped like the result) ───────────────────────────────────────
+
+function LibrarySkeleton() {
+  return (
+    <div className="media-grid" aria-hidden="true">
+      {Array.from({ length: 12 }).map((_, i) => (
+        <div key={i} className="min-w-0">
+          <Skeleton className="aspect-2/3 w-full rounded-lg" />
+          <Skeleton className="mt-2 h-4 w-3/4" />
+          <Skeleton className="mt-1.5 h-4 w-1/2" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RowsSkeleton({ rows, className }: { rows: number; className: string }) {
+  return (
+    <div className="grid gap-2" aria-hidden="true">
+      {Array.from({ length: rows }).map((_, i) => (
+        <Skeleton key={i} className={cn("w-full rounded-lg", className)} />
+      ))}
+    </div>
+  );
+}
+
+// ── Source states ─────────────────────────────────────────────────────────────
+
+/** A source that never answered, or that core couldn't reach: names the app and the fix. */
+function SourceErrorState({
+  app,
+  what,
+  status,
+  onRetry,
+}: {
+  app: string;
+  /** What failed to load, in running text ("your watchlist"). */
+  what: string;
+  status: MediaSourceStatus;
+  onRetry: () => void;
+}) {
+  return status === "unreachable" ? (
+    <ErrorState
+      fill
+      title={`Couldn't reach ${app}`}
+      description={`Talome couldn't connect to ${app}. Check that it's running and its address is right in Services, then retry.`}
+      onRetry={onRetry}
+    />
+  ) : (
+    <ErrorState
+      fill
+      title={`Couldn't load ${what}`}
+      description={`Talome couldn't get ${what} from ${app}. Check that the server is running, then retry.`}
+      onRetry={onRetry}
+    />
+  );
+}
+
+/** One line above data that stays on screen while part of it couldn't be loaded or refreshed. */
+function SourceStatusLine({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status">
+      {message} ·
+      <Button variant="ghost" size="xs" onClick={onRetry}>Retry</Button>
+    </p>
+  );
+}
+
+/** Picks what a view shows from where its source stands. */
+function bySourceStatus(
+  status: MediaSourceStatus,
+  cases: { loading: ReactNode; failed: ReactNode; notConfigured: ReactNode; ready: () => ReactNode },
+): ReactNode {
+  switch (status) {
+    case "loading": return cases.loading;
+    case "error":
+    case "unreachable": return cases.failed;
+    case "not-configured": return cases.notConfigured;
+    case "ready": return cases.ready();
+  }
+}
+
 // ── Download Row Components ───────────────────────────────────────────────────
 
 function DownloadQueueRow({
@@ -275,9 +377,23 @@ function DownloadQueueRow({
     ...((item.statusMessages ?? []).map((message) => message.trim())),
   ].filter((message) => message.length > 0);
   const warningDetailText = warningDetails.length > 0 ? Array.from(new Set(warningDetails)).join(" • ") : null;
+  const statusClass = retryState === "running"
+    ? "text-primary motion-safe:animate-pulse"
+    : retryState === "done"
+      ? "text-status-healthy"
+      : retryState === "error"
+        ? "text-destructive"
+        : statusInfo.color;
+  const statusLabel = retryState === "running"
+    ? "Retrying"
+    : retryState === "done"
+      ? "Retried"
+      : retryState === "error"
+        ? "Retry failed"
+        : statusInfo.label;
 
   return (
-    <div className="group/row relative rounded-lg overflow-hidden border border-border/50 bg-card flex items-stretch min-h-[88px]">
+    <div className="group/row relative rounded-lg overflow-hidden border border-border/50 bg-card flex items-stretch min-h-22">
       {/* Poster — full-height strip on the left */}
       <div className="w-14 shrink-0 relative bg-muted/40 border-r border-border/40">
         {resolved && !imgFailed ? (
@@ -303,51 +419,16 @@ function DownloadQueueRow({
             {warningDetailText ? (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span
-                    className={`text-xs mt-px cursor-help ${
-                      retryState === "running"
-                        ? "text-primary motion-safe:animate-pulse"
-                        : retryState === "done"
-                          ? "text-status-healthy"
-                          : retryState === "error"
-                            ? "text-destructive"
-                            : statusInfo.color
-                    }`}
-                    aria-label="Show warning details"
-                  >
-                    {retryState === "running"
-                      ? "Retrying"
-                      : retryState === "done"
-                        ? "Retried"
-                        : retryState === "error"
-                          ? "Retry failed"
-                          : statusInfo.label}
+                  <span className={`text-xs mt-px cursor-help ${statusClass}`} aria-label="Show warning details">
+                    {statusLabel}
                   </span>
                 </TooltipTrigger>
-                <TooltipContent side="left" className="max-w-[320px] text-xs leading-snug">
+                <TooltipContent side="left" className="max-w-80 text-xs leading-snug">
                   {warningDetailText}
                 </TooltipContent>
               </Tooltip>
             ) : (
-              <span
-                className={`text-xs mt-px ${
-                  retryState === "running"
-                    ? "text-primary motion-safe:animate-pulse"
-                    : retryState === "done"
-                      ? "text-status-healthy"
-                      : retryState === "error"
-                        ? "text-destructive"
-                        : statusInfo.color
-                }`}
-              >
-                {retryState === "running"
-                  ? "Retrying"
-                  : retryState === "done"
-                    ? "Retried"
-                    : retryState === "error"
-                      ? "Retry failed"
-                      : statusInfo.label}
-              </span>
+              <span className={`text-xs mt-px ${statusClass}`}>{statusLabel}</span>
             )}
             {(item.status === "failed" || item.status === "warning") && onRetry && (
               <Tooltip>
@@ -388,7 +469,7 @@ function DownloadQueueRow({
             </span>
           </div>
           {healthFacts.length > 0 && (
-            <p className="text-[11px] text-status-warning/90 tabular-nums">
+            <p className="text-xs text-status-warning tabular-nums">
               {healthFacts.join(" · ")}
             </p>
           )}
@@ -430,7 +511,7 @@ function DownloadTorrentRow({ torrent }: { torrent: DownloadTorrent }) {
   const [imgFailed, setImgFailed] = useState(false);
 
   return (
-    <div className="relative rounded-lg overflow-hidden border border-border/50 bg-card flex items-stretch min-h-[88px]">
+    <div className="relative rounded-lg overflow-hidden border border-border/50 bg-card flex items-stretch min-h-22">
       {/* Poster strip */}
       <div className="w-14 shrink-0 relative bg-muted/40 border-r border-border/40">
         {resolved && !imgFailed ? (
@@ -456,7 +537,7 @@ function DownloadTorrentRow({ torrent }: { torrent: DownloadTorrent }) {
 
         <div className="space-y-1.5">
           {status.detail && (
-            <p className="text-[11px] leading-snug text-muted-foreground">
+            <p className="text-xs leading-snug text-muted-foreground">
               {status.detail}
             </p>
           )}
@@ -489,42 +570,43 @@ function WantedRow({
   const [imgFailed, setImgFailed] = useState(false);
   const resolved = resolvePosterUrl(item.poster, 120);
   return (
-    <div
-      className={`group relative rounded-lg overflow-hidden border bg-card flex items-stretch h-[72px] transition-colors duration-150 cursor-pointer ${
-        active
-          ? "border-primary/30"
-          : "border-border/50 hover:border-border/80"
-      }`}
+    <button
+      type="button"
+      aria-expanded={active}
+      className={cn(
+        "group relative flex h-18 w-full items-stretch overflow-hidden rounded-lg border bg-card text-left transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        active ? "border-primary/30" : "border-border/50 hover:border-border/80",
+      )}
       onClick={() => onManualSearch?.(item)}
     >
-      <div className="w-12 shrink-0 relative bg-muted/40 border-r border-border/40">
+      <span className="relative block w-12 shrink-0 border-r border-border/40 bg-muted/40">
         {resolved && !imgFailed ? (
           <Image
             src={resolved}
-            alt={`${item.title} poster`}
+            alt=""
             className="object-cover" fill
             onError={() => setImgFailed(true)}
           />
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
+          <span className="absolute inset-0 flex items-center justify-center">
             <HugeiconsIcon icon={item.app === "sonarr" ? Tv01Icon : Film01Icon} size={14} className="text-dim-foreground" />
-          </div>
+          </span>
         )}
-      </div>
-      <div className="flex-1 min-w-0 flex items-center gap-3 px-3.5">
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate leading-snug">{item.title}</p>
-          <p className="text-xs text-muted-foreground truncate mt-0.5">
-            {[item.app.toUpperCase(), item.year ?? null, item.quality ?? null].filter(Boolean).join(" · ")}
-          </p>
-        </div>
+      </span>
+      <span className="flex min-w-0 flex-1 items-center gap-3 px-3.5">
+        <span className="block min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium leading-snug">{item.title}</span>
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            {[item.app === "sonarr" ? "Sonarr" : "Radarr", item.year ?? null, item.quality ?? null].filter(Boolean).join(" · ")}
+          </span>
+        </span>
         <HugeiconsIcon
           icon={Search01Icon}
           size={14}
           className="shrink-0 text-dim-foreground"
         />
-      </div>
-    </div>
+      </span>
+    </button>
   );
 }
 
@@ -558,7 +640,7 @@ function WantedReleasePanel({
   );
 }
 
-// ── CalendarPoster ────────────────────────────────────────────────────────────
+// ── CalendarCard ─────────────────────────────────────────────────────────────
 
 function CalendarCard({
   poster,
@@ -583,7 +665,7 @@ function CalendarCard({
   const resolved = resolvePosterUrl(poster, 120);
 
   return (
-    <div className="group relative rounded-lg overflow-hidden border border-border/50 bg-card flex items-stretch h-[72px]">
+    <div className="group relative rounded-lg overflow-hidden border border-border/50 bg-card flex items-stretch h-18">
       {/* Poster strip */}
       <div className="w-12 shrink-0 relative bg-muted/40 border-r border-border/40">
         {resolved && !imgFailed ? (
@@ -609,7 +691,7 @@ function CalendarCard({
           )}
         </div>
         <div className="shrink-0 text-right">
-          <p className="text-sm font-medium text-muted-foreground">{date}</p>
+          <p className="text-sm font-medium text-muted-foreground tabular-nums">{date}</p>
           {meta && <p className="text-xs text-muted-foreground mt-0.5 font-mono">{meta}</p>}
         </div>
       </div>
@@ -618,7 +700,8 @@ function CalendarCard({
       {onRemove && (
         <button
           type="button"
-          className="shrink-0 w-9 flex items-center justify-center border-l border-border/30 text-dim-foreground hover:text-destructive transition-colors duration-150 opacity-0 group-hover:opacity-100 focus:opacity-100"
+          aria-label={`Remove ${title}`}
+          className="shrink-0 w-9 flex items-center justify-center border-l border-border/30 text-dim-foreground hover:text-destructive transition-colors duration-150 opacity-0 group-hover:opacity-100 focus:opacity-100 pointer-coarse:opacity-100"
           onClick={onRemove}
           disabled={removing}
         >
@@ -631,175 +714,300 @@ function CalendarCard({
   );
 }
 
-// ── MediaCard ────────────────────────────────────────────────────────────────
+// ── Cards ────────────────────────────────────────────────────────────────────
 
-function MediaCard({ item, onClick, onNavigate, watchStatus, selected, selectionMode, priority, optStatus }: { item: MediaItem; onClick: (item: MediaItem) => void; onNavigate?: (item: MediaItem) => void; watchStatus?: "watched" | "in-progress"; selected?: boolean; selectionMode?: boolean; priority?: boolean; optStatus?: { status: string; progress: number } }) {
+function mediaName(title: string, year?: number | null) {
+  return year ? `${title} (${year})` : title;
+}
+
+/**
+ * A poster card. It is a button: its name is the title and year, Enter or
+ * Space opens it, and in selection mode it reports whether it is selected.
+ */
+function MediaCard({
+  item,
+  onActivate,
+  watchStatus,
+  selected,
+  selectionMode,
+  priority,
+  optStatus,
+}: {
+  item: MediaItem;
+  onActivate: (item: MediaItem) => void;
+  watchStatus?: "watched" | "in-progress";
+  selected?: boolean;
+  selectionMode?: boolean;
+  priority?: boolean;
+  optStatus?: { status: string; progress: number };
+}) {
   const [imgFailed, setImgFailed] = useState(false);
   const label = item.type === "tv"
     ? `${item.seasonCount ?? 0}S · ${item.episodeCount ?? 0}E`
     : item.hasFile ? "In library" : "Missing";
+  const container = item.type === "movie" ? item.quality?.container : null;
+  const containerPlays = (() => {
+    if (!container) return false;
+    const c = container.toLowerCase();
+    const v = (item.quality?.codec ?? "").toLowerCase();
+    return (c === "mp4" || c === "m4v") && (v === "h264" || v === "x264" || v === "hevc" || v === "h265" || v === "x265");
+  })();
 
   return (
-    <div className="media-card" onClick={() => (onNavigate ?? onClick)(item)}>
-      <div className={`media-card-poster tm-tilt ${selected ? "ring-2 ring-primary" : ""}`} {...tiltHandlers}>
+    <button
+      type="button"
+      className="media-card group text-left"
+      aria-label={mediaName(item.title, item.year)}
+      aria-pressed={selectionMode ? !!selected : undefined}
+      onClick={() => onActivate(item)}
+    >
+      <span className="media-card-poster tm-tilt block" {...tiltHandlers}>
         {item.poster && !imgFailed ? (
           <Image
             src={resolvePosterUrl(item.poster, 400) ?? ""}
-            alt={item.title}
+            alt=""
             className="object-cover" fill
             sizes="(max-width: 640px) 33vw, (max-width: 1024px) 20vw, 200px"
             priority={priority}
             onError={() => setImgFailed(true)}
           />
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
+          <span className="absolute inset-0 flex items-center justify-center">
             <HugeiconsIcon
               icon={item.type === "tv" ? Tv01Icon : Film01Icon}
               size={28}
               className="text-dim-foreground"
             />
-          </div>
+          </span>
         )}
+        {/* Focus and selection ring, drawn over the artwork: the card clips anything outside the poster. */}
+        <span
+          aria-hidden="true"
+          className={cn(
+            "pointer-events-none absolute inset-0 z-10 rounded-lg ring-2 ring-inset transition-colors duration-150 ease-out group-focus-visible:ring-ring",
+            selected ? "ring-primary" : "ring-transparent",
+          )}
+        />
+        {/* Overlays sit on artwork, so they use the dark palette in both themes. */}
         {selectionMode && (
-          <div className={`absolute top-1.5 left-1.5 rounded-full size-5 flex items-center justify-center transition-colors ${
-            selected ? "bg-primary" : "bg-black/50 border border-white/30"
-          }`}>
-            {selected && <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} className="text-primary-foreground" />}
-          </div>
+          <span className="dark absolute top-1.5 left-1.5 z-10">
+            <span className={cn(
+              "flex size-5 items-center justify-center rounded-full transition-colors duration-150",
+              selected ? "bg-foreground" : "border border-foreground/30 bg-background/70",
+            )}>
+              {selected && <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} className="text-background" />}
+            </span>
+          </span>
         )}
         {!selectionMode && watchStatus && (
-          <div className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-0.5">
-            <HugeiconsIcon
-              icon={watchStatus === "watched" ? CheckmarkCircle01Icon : PlayIcon}
-              size={14}
-              className={watchStatus === "watched" ? "text-status-healthy" : "text-status-info"}
-            />
-          </div>
+          <span className="dark absolute top-1.5 right-1.5 z-10">
+            <span className="block rounded-full bg-background/70 p-0.5">
+              <HugeiconsIcon
+                icon={watchStatus === "watched" ? CheckmarkCircle01Icon : PlayIcon}
+                size={14}
+                className={watchStatus === "watched" ? "text-status-healthy" : "text-status-info"}
+              />
+            </span>
+          </span>
         )}
-        {optStatus?.status === "running" && (
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/30 overflow-hidden rounded-b">
-            <div className="h-full bg-status-healthy/80 transition-all duration-1000 ease-out" style={{ width: `${optStatus.progress * 100}%` }} />
-          </div>
+        {(optStatus?.status === "running" || optStatus?.status === "queued") && (
+          <span className="dark absolute inset-x-0 bottom-0 z-10 block h-1 overflow-hidden rounded-b bg-background/70">
+            {optStatus.status === "running" ? (
+              <span className="block h-full bg-status-healthy transition-[width] duration-200 ease-linear" style={{ width: `${optStatus.progress * 100}%` }} />
+            ) : (
+              <span className="block h-full w-full bg-muted-foreground/40 motion-safe:animate-pulse" />
+            )}
+          </span>
         )}
-        {optStatus?.status === "queued" && (
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/30 overflow-hidden rounded-b">
-            <div className="h-full w-full bg-muted-foreground/30 motion-safe:animate-pulse" />
-          </div>
-        )}
-      </div>
-      <div className="min-w-0 mt-2 px-0.5">
-        <p className="text-sm font-medium truncate leading-tight">{item.title}</p>
-        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+      </span>
+      <span className="min-w-0 mt-2 block px-0.5">
+        <span className="block truncate text-sm font-medium leading-tight">{item.title}</span>
+        <span className="mt-1 flex flex-wrap items-center gap-1.5">
           {item.year && (
-            <Pill variant="secondary" className="text-xs py-0 px-1.5 h-4 rounded-sm font-normal">
+            <Pill variant="secondary" className="text-xs py-0 px-1.5 h-4 rounded-sm font-normal tabular-nums">
               {item.year}
             </Pill>
           )}
-          <Pill variant="secondary" className="text-xs py-0 px-1.5 h-4 rounded-sm font-normal truncate max-w-[100px]">
+          <Pill variant="secondary" className="text-xs py-0 px-1.5 h-4 rounded-sm font-normal truncate max-w-24">
             {label}
           </Pill>
-          {item.type === "movie" && item.quality?.container && (() => {
-            const c = item.quality!.container!.toLowerCase();
-            const v = (item.quality!.codec ?? "").toLowerCase();
-            const ok = (c === "mp4" || c === "m4v") && (v === "h264" || v === "x264" || v === "hevc" || v === "h265" || v === "x265");
-            return (
-              <Pill
-                variant="secondary"
-                className={`text-xs py-0 px-1.5 h-4 rounded-sm font-normal ${
-                  ok ? "bg-status-healthy/10 text-status-healthy" : "bg-status-warning/10 text-status-warning"
-                }`}
-              >
-                {item.quality!.container!.toUpperCase()}
-              </Pill>
-            );
-          })()}
-        </div>
+          {container && (
+            <Pill
+              variant="secondary"
+              className={cn(
+                "text-xs py-0 px-1.5 h-4 rounded-sm font-normal",
+                containerPlays ? "bg-status-healthy/12 text-status-healthy" : "bg-status-warning/12 text-status-warning",
+              )}
+            >
+              {container.toUpperCase()}
+            </Pill>
+          )}
+        </span>
         {(item.sizeOnDisk ?? 0) > 0 && (
-          <p className="text-xs text-muted-foreground mt-0.5">{formatSize(item.sizeOnDisk!)}</p>
+          <span className="mt-0.5 block text-xs text-muted-foreground tabular-nums">{formatSize(item.sizeOnDisk!)}</span>
         )}
-      </div>
-    </div>
+      </span>
+    </button>
   );
 }
 
 function DiscoveryCard({ item, onClick, priority }: { item: MediaSearchResult; onClick: (item: MediaSearchResult) => void; priority?: boolean }) {
   const [imgFailed, setImgFailed] = useState(false);
   return (
-    <div className="media-card group" onClick={() => onClick(item)}>
-      <div className="media-card-poster opacity-75 group-hover:opacity-100 transition-opacity">
+    <button
+      type="button"
+      className="media-card group text-left"
+      aria-label={mediaName(item.name, item.year > 0 ? item.year : null)}
+      onClick={() => onClick(item)}
+    >
+      <span className="media-card-poster block opacity-75 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
         {item.poster && !imgFailed ? (
           <Image
             src={resolvePosterUrl(item.poster, 400) ?? ""}
-            alt={item.name}
+            alt=""
             className="object-cover" fill
             sizes="(max-width: 640px) 33vw, (max-width: 1024px) 20vw, 200px"
             priority={priority}
             onError={() => setImgFailed(true)}
           />
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
+          <span className="absolute inset-0 flex items-center justify-center">
             <HugeiconsIcon
               icon={item.type === "tv" ? Tv01Icon : Film01Icon}
               size={28}
               className="text-dim-foreground"
             />
-          </div>
+          </span>
         )}
-        <div className="absolute top-1.5 right-1.5 rounded-full bg-foreground/80 p-0.5">
-          <HugeiconsIcon icon={Add01Icon} size={14} className="text-background" />
-        </div>
-      </div>
-      <div className="min-w-0 mt-2 px-0.5">
-        <p className="text-sm font-medium truncate leading-tight">{item.name}</p>
-        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-10 rounded-lg ring-2 ring-inset ring-transparent transition-colors duration-150 ease-out group-focus-visible:ring-ring"
+        />
+        <span className="dark absolute top-1.5 right-1.5 z-10">
+          <span className="block rounded-full bg-foreground/80 p-0.5">
+            <HugeiconsIcon icon={Add01Icon} size={14} className="text-background" />
+          </span>
+        </span>
+      </span>
+      <span className="min-w-0 mt-2 block px-0.5">
+        <span className="block truncate text-sm font-medium leading-tight">{item.name}</span>
+        <span className="mt-1 flex flex-wrap items-center gap-1.5">
           {item.year > 0 && (
-            <Pill variant="secondary" className="text-xs py-0 px-1.5 h-4 rounded-sm font-normal">
+            <Pill variant="secondary" className="text-xs py-0 px-1.5 h-4 rounded-sm font-normal tabular-nums">
               {item.year}
             </Pill>
           )}
           {typeof item.rating === "number" && item.rating > 0 && (
-            <Pill variant="secondary" className="text-xs py-0 px-1.5 h-4 rounded-sm font-normal">
+            <Pill variant="secondary" className="text-xs py-0 px-1.5 h-4 rounded-sm font-normal tabular-nums">
               {item.rating.toFixed(1)}
             </Pill>
           )}
-        </div>
-      </div>
-    </div>
+        </span>
+      </span>
+    </button>
   );
 }
 
+function ContinueWatchingCard({
+  item,
+  onOpen,
+  className,
+}: {
+  item: PlexContinueWatchingItem;
+  onOpen: (item: PlexContinueWatchingItem) => void;
+  className?: string;
+}) {
+  const pct = item.viewOffset && item.duration && item.duration > 0
+    ? Math.min(100, (item.viewOffset / item.duration) * 100)
+    : 0;
+  const thumb = item.thumb
+    ? `${CORE_URL}/api/media/poster?service=plex&path=${encodeURIComponent(item.thumb)}&w=240`
+    : null;
+  const title = item.title?.trim() || (item.type === "tv" ? "TV show" : "Movie");
+  return (
+    <button
+      type="button"
+      className={cn("group text-left outline-none", className)}
+      onClick={() => onOpen(item)}
+      aria-label={`Open ${title}`}
+    >
+      <span className="relative block aspect-2/3 overflow-hidden rounded-lg bg-muted/30">
+        {thumb ? (
+          <Image
+            src={thumb}
+            alt=""
+            fill
+            className="object-cover transition-transform duration-200 ease-out motion-safe:group-hover:scale-103 motion-safe:group-focus-visible:scale-103"
+            sizes="(max-width: 640px) 33vw, 160px"
+          />
+        ) : (
+          <span className="absolute inset-0 flex items-center justify-center">
+            <HugeiconsIcon icon={item.type === "tv" ? Tv01Icon : Film01Icon} size={16} className="text-dim-foreground" />
+          </span>
+        )}
+        <span className="absolute inset-0 rounded-lg ring-2 ring-inset ring-transparent transition-colors duration-150 group-hover:ring-foreground/20 group-focus-visible:ring-ring" />
+        {pct > 0 && (
+          <span className="dark absolute inset-x-0 bottom-0 block h-1 bg-background/70">
+            <span className="block h-full rounded-r-full bg-foreground/80" style={{ width: `${pct}%` }} />
+          </span>
+        )}
+      </span>
+      <span className="mt-1.5 block truncate text-xs font-medium text-foreground">{title}</span>
+      {item.episodeTitle && (
+        <span className="block truncate text-xs text-muted-foreground">
+          {item.parentIndex != null && item.index != null ? `S${item.parentIndex}E${item.index} · ` : ""}
+          {item.episodeTitle}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ── Copy for library states ──────────────────────────────────────────────────
+
+const COLLECTION_EMPTY: Record<Exclude<MediaCollection, "all">, { title: string; description: string }> = {
+  recent: { title: "Nothing added in the last 30 days", description: "Titles show here for 30 days after they're added to your library." },
+  unwatched: { title: "You've watched everything", description: "Every movie in your library is marked watched in Plex." },
+  missing: { title: "No missing files", description: "Every released movie you monitor has a file on disk." },
+  ready: { title: "No movies ready yet", description: "Scan your library to check which files play directly in the browser." },
+  "needs-conversion": { title: "Nothing to convert", description: "Every scanned movie plays directly in the browser." },
+};
+
+const ACTIVITY_SECTION_ICONS: Record<Exclude<ActivitySection, "all">, typeof Film01Icon> = {
+  continue: PlayIcon,
+  watchlist: PlayListAddIcon,
+  requests: UserIcon,
+  wanted: Search01Icon,
+};
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-function MediaPageInner({
-  initialTab,
-  initialSearch,
-  initialGenres,
-  initialMinRating,
-  initialCinema,
-}: {
-  initialTab: Tab;
-  initialSearch: string;
-  initialGenres: string[];
-  initialMinRating: number | null;
-  initialCinema?: boolean;
-}) {
-  const PAGE_CHUNK = 120;
+function MediaPageInner() {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>(initialTab);
-  const [search, setSearch] = useState(initialSearch);
+  const searchParams = useSearchParams();
+  const paramsString = searchParams.toString();
+
+  const [view, setView] = useState<MediaViewState>(() => parseMediaViewState(searchParams));
+  const { tab, collection, section, search, sort, genres: selectedGenres, minRating } = view;
+  const patchView = useCallback((patch: Partial<MediaViewState>) => {
+    setView((current) => ({ ...current, ...patch }));
+  }, []);
+
+  /** The last of Movies or TV shows: collections, Cinema and the detail route follow it. */
+  const lastLibraryTabRef = useRef<LibraryTab>(isLibraryTab(view.tab) ? view.tab : "movies");
+  useEffect(() => {
+    if (isLibraryTab(tab)) lastLibraryTabRef.current = tab;
+  }, [tab]);
+  const libraryTab: LibraryTab = isLibraryTab(tab) ? tab : lastLibraryTabRef.current;
+
   const [selected, setSelected] = useState<SheetItem | null>(null);
-  const [sort, setSort] = useState<SortKey>("added-desc");
-  const [selectedGenres, setSelectedGenres] = useState<string[]>(initialGenres);
-  const [minRating, setMinRating] = useState<number | null>(initialMinRating);
-  type HealthFilter = "all" | "ready" | "needs-conversion";
-  const [healthFilter, setHealthFilter] = useState<HealthFilter>("all");
   const [scanning, setScanning] = useState(false);
-  const [visibleMovies, setVisibleMovies] = useState(PAGE_CHUNK);
-  const [visibleTv, setVisibleTv] = useState(PAGE_CHUNK);
+  const [visibleCount, setVisibleCount] = useState(PAGE_CHUNK);
   const [retryingQueueId, setRetryingQueueId] = useState<number | null>(null);
   const [queueRetryState, setQueueRetryState] = useState<Record<number, "idle" | "running" | "done" | "error">>({});
   const [removingQueueIds, setRemovingQueueIds] = useState<Set<number>>(new Set());
   const [wantedPanels, setWantedPanels] = useState<Record<string, WantedReleasePanelState>>({});
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Cinema browser
   const cinemaBrowser = useCinemaBrowser();
@@ -807,246 +1015,201 @@ function MediaPageInner({
   // Feature stack readiness — show setup when nothing is configured
   const { stack: mediaStack, isLoading: stackLoading } = useFeatureStack("media");
 
-  // Auto-open cinema mode via ?cinema=1 URL param (bookmarkable link for projectors)
+  // ── URL ⇄ view ─────────────────────────────────────────────────────────────
+  // One writer keeps the URL in step with the view (search once typing
+  // pauses). It calls replaceState with a null state: Next.js treats a call
+  // that carries its own history state (`__NA`) as internal and ignores it,
+  // so useSearchParams, the router's URL and the desktop window's route would
+  // all keep the old URL. With null, Next.js copies its state over and
+  // reports the new URL back through useSearchParams; those echoes are
+  // recognised and ignored, so only a real outside change (a link, the
+  // desktop opening this window at a new URL) re-applies the view. The page
+  // never remounts on a URL change.
+  const lastWrittenRef = useRef<string>(serializeMediaViewState(view));
+  const pendingWritesRef = useRef<{ value: string; at: number }[]>([]);
+  const consumedCinemaRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (initialCinema) {
-      const cinemaTab = tab === "movies" || tab === "tv" ? tab : "movies";
-      cinemaBrowser.open(cinemaTab);
-    }
-    // Only on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Batch selection
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
-  const [bulkDeleteFiles, setBulkDeleteFiles] = useState(false);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
-
-  const moviesLoadSentinelRef = useRef<HTMLDivElement | null>(null);
-  const tvLoadSentinelRef = useRef<HTMLDivElement | null>(null);
-  const tabRef = useRef(tab);
-  tabRef.current = tab;
-
-  // Sync active tab to URL so browser history preserves it on back-navigation
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    url.searchParams.set("tab", tab);
-    window.history.replaceState(window.history.state, "", url.toString());
-  }, [tab]);
-
-  const { data: library, isLoading: libraryLoading, error: libraryError, mutate: mutateLibrary } = useSWR<LibraryData>(
-    `${CORE_URL}/api/media/library`,
-    fetcher,
-    { refreshInterval: 30000 }
-  );
-
-  // Optimization jobs — lookup by basename (host paths ≠ Radarr container paths)
-  const { data: optJobsData } = useSWR<{ jobs: Array<{ sourcePath: string; status: string; progress: number }> }>(
-    `${CORE_URL}/api/optimization/jobs?status=running,queued,completed`,
-    fetcher,
-    // 3s while a job is running/queued, 30s when idle
-    { refreshInterval: optimizationJobsRefreshInterval }
-  );
-  const stemOf = (p: string) => {
-    const name = p.split("/").pop() ?? "";
-    const dot = name.lastIndexOf(".");
-    return dot > 0 ? name.substring(0, dot).toLowerCase() : name.toLowerCase();
-  };
-  const optJobsByBasename = useMemo(() => {
-    const map = new Map<string, { status: string; progress: number }>();
-    for (const j of optJobsData?.jobs ?? []) {
-      map.set(stemOf(j.sourcePath), { status: j.status, progress: j.progress });
-    }
-    return map;
-  }, [optJobsData]);
-
-  // Scan status by basename — movies only (TV optimization is per-episode in detail view)
-  type ScanEntry = { needsOptimization: boolean; videoCodec: string; audioCodec: string; container: string };
-  const movieBasenames = useMemo(() => {
-    const names: string[] = [];
-    for (const m of library?.movies ?? []) {
-      if (m.filePath) names.push(stemOf(m.filePath));
-    }
-    return names;
-  }, [library?.movies]);
-  const { data: scanStatusData, mutate: mutateScanStatus } = useSWR<{ entries: Record<string, ScanEntry> }>(
-    movieBasenames.length > 0 ? `${CORE_URL}/api/optimization/scan-status` : null,
-    (url: string) => fetch(url, {
-      method: "POST", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ basenames: movieBasenames }),
-    }).then(r => r.json()),
-    { refreshInterval: 30000 }
-  );
-  const scanStatusByBasename = useMemo(() => scanStatusData?.entries ?? {}, [scanStatusData]);
-
-  // Movie optimization counts — derived from scan data + job status
-  const movieOptCounts = useMemo(() => {
-    let scanned = 0, ready = 0, needsConversion = 0;
-    for (const m of library?.movies ?? []) {
-      if (!m.hasFile || !m.filePath) continue;
-      const stem = stemOf(m.filePath);
-      const job = optJobsByBasename.get(stem);
-      if (job?.status === "completed") { scanned++; ready++; continue; }
-      const entry = scanStatusByBasename[stem];
-      if (!entry) continue;
-      scanned++;
-      if (entry.needsOptimization) needsConversion++;
-      else ready++;
-    }
-    return { scanned, ready, needsConversion };
-  }, [library?.movies, optJobsByBasename, scanStatusByBasename]);
-
-  // Restore scroll position when returning from a detail page
-  useEffect(() => {
-    if (libraryLoading) return;
-    const savedY = sessionStorage.getItem("media-scroll-y");
-    if (!savedY) return;
-    sessionStorage.removeItem("media-scroll-y");
-    requestAnimationFrame(() => {
-      const scrollParent = document.querySelector(".overflow-y-auto") as HTMLElement | null;
-      if (scrollParent) scrollParent.scrollTo({ top: Number(savedY) });
+    const next = serializeMediaViewState(view);
+    const current = new URLSearchParams(window.location.search);
+    const rest = new URLSearchParams();
+    current.forEach((value, key) => {
+      if (!MEDIA_VIEW_PARAM_KEYS.includes(key)) rest.append(key, value);
     });
-  }, [libraryLoading]);
+    const query = [next, rest.toString()].filter(Boolean).join("&");
+    const target = query ? `?${query}` : "";
+    if (target === window.location.search) {
+      lastWrittenRef.current = next;
+      return;
+    }
+    const write = () => {
+      const now = Date.now();
+      pendingWritesRef.current = [
+        ...pendingWritesRef.current.filter((entry) => now - entry.at < ECHO_WINDOW_MS),
+        { value: next, at: now },
+      ];
+      lastWrittenRef.current = next;
+      window.history.replaceState(null, "", `${window.location.pathname}${target}${window.location.hash}`);
+    };
+    const inUrl = parseMediaViewState(current);
+    const onlySearchChanged = inUrl.search !== view.search
+      && serializeMediaViewState({ ...inUrl, search: view.search }) === next;
+    if (!onlySearchChanged) {
+      write();
+      return;
+    }
+    const timer = setTimeout(write, SEARCH_URL_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [view]);
 
-  const { data: downloads, torrents: activeTorrents, queue: downloadQueue, totalCount: pendingDownloadCount } = useDownloads();
+  useEffect(() => {
+    const params = new URLSearchParams(paramsString);
+    const incoming = serializeMediaViewState(parseMediaViewState(params));
+    const now = Date.now();
+    const pending = pendingWritesRef.current.filter((entry) => now - entry.at < ECHO_WINDOW_MS);
+    const echo = pending.findIndex((entry) => entry.value === incoming);
+    if (echo >= 0) {
+      // Our own write (or an older one Next.js reports late): not a navigation.
+      pendingWritesRef.current = pending.slice(echo + 1);
+    } else {
+      pendingWritesRef.current = pending;
+      if (incoming !== lastWrittenRef.current) {
+        lastWrittenRef.current = incoming;
+        // Keep the same state object when the view already matches (no re-render)
+        setView((current) => (serializeMediaViewState(current) === incoming ? current : parseMediaViewState(params)));
+      }
+    }
+    // ?cinema=1 opens Cinema once; the writer strips it from the URL.
+    if (hasCinemaParam(params) && consumedCinemaRef.current !== paramsString) {
+      consumedCinemaRef.current = paramsString;
+      const parsed = parseMediaViewState(params);
+      cinemaBrowser.open(isLibraryTab(parsed.tab) ? parsed.tab : "movies");
+    }
+    // cinemaBrowser.open is stable for the page's lifetime
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramsString]);
 
-  const { data: calendar, mutate: mutateCalendar } = useSWR<CalendarData>(
-    `${CORE_URL}/api/media/calendar`,
-    fetcher,
-    { refreshInterval: 60000 }
-  );
+  // ── Data ───────────────────────────────────────────────────────────────────
+  const { data: library, error: libraryError, mutate: mutateLibrary } = useMediaLibrary();
+  const health = useMovieHealth(library?.movies);
+  const { data: plexWatchStatus, error: plexWatchStatusError, mutate: mutatePlexWatchStatus } = usePlexWatchStatus();
+  const watchStatusMap = watchStatusOrNull(plexWatchStatus);
+  const {
+    data: downloads,
+    torrents: activeTorrents,
+    queue: downloadQueue,
+    totalCount: pendingDownloadCount,
+    activity: downloadActivity,
+    error: downloadsError,
+    retry: retryDownloads,
+  } = useDownloads();
+  const { data: calendar, error: calendarError, mutate: mutateCalendar } = useMediaCalendar();
+  const { data: wantedTv, error: wantedTvError, mutate: mutateWantedTv } = useMediaWanted("sonarr");
+  const { data: wantedMovies, error: wantedMoviesError, mutate: mutateWantedMovies } = useMediaWanted("radarr");
+  const { data: requestsData, error: requestsError, mutate: mutateRequests } = useMediaRequests();
+  const { data: plexWatchlist, error: plexWatchlistError, mutate: mutatePlexWatchlist } = usePlexWatchlist();
+  const { data: plexWatchingData, error: plexWatchingError, mutate: mutatePlexWatching } = usePlexWatching();
+
   const [calendarRemoving, setCalendarRemoving] = useState<string | null>(null);
   const [calendarRemoveTarget, setCalendarRemoveTarget] = useState<{ type: "tv" | "movie"; id: number; title: string } | null>(null);
-  const { data: wantedTv } = useSWR<WantedData>(
-    `${CORE_URL}/api/media/wanted?app=sonarr&kind=missing&page=1&pageSize=40`,
-    fetcher,
-    { refreshInterval: 60000 }
+
+  // ── Library view (memoised: large libraries stay responsive while typing) ──
+  const deferredSearch = useDeferredValue(search);
+  const now = useHourClock();
+  const collectionCtx = useMemo<CollectionContext>(
+    () => ({ now, watchStatus: watchStatusMap, health: health.healthOf }),
+    [now, watchStatusMap, health.healthOf],
   );
-  const { data: wantedMovies } = useSWR<WantedData>(
-    `${CORE_URL}/api/media/wanted?app=radarr&kind=missing&page=1&pageSize=40`,
-    fetcher,
-    { refreshInterval: 60000 }
+  const libraryItems = useMemo(
+    () => (library ? (libraryTab === "movies" ? library.movies : library.tv) : null),
+    [library, libraryTab],
+  );
+  const sortedItems = useMemo(() => (libraryItems ? sortLibrary(libraryItems, sort) : []), [libraryItems, sort]);
+  const collectionItems = useMemo(
+    () => (collection === "all" ? sortedItems : sortedItems.filter((item) => matchesCollection(item, collection, collectionCtx))),
+    [sortedItems, collection, collectionCtx],
+  );
+  const filteredItems = useMemo(
+    () => filterLibrary(collectionItems, { search: deferredSearch, genres: selectedGenres, minRating, collection: "all" }, collectionCtx),
+    [collectionItems, deferredSearch, selectedGenres, minRating, collectionCtx],
+  );
+  const railGenres = useMemo(
+    () => (libraryItems ? genreCounts(libraryItems).map((g) => g.genre).sort((a, b) => a.localeCompare(b)) : []),
+    [libraryItems],
+  );
+  const showCollections = useMemo(() => {
+    const available = availableCollections(libraryTab, collectionCtx);
+    return available.includes(collection) ? available : [...available, collection];
+  }, [libraryTab, collectionCtx, collection]);
+  const filtersActive = search.trim() !== "" || selectedGenres.length > 0 || minRating !== null;
+
+  const moviesLoadSentinelRef = useRef<HTMLDivElement | null>(null);
+  const loadNextChunk = useCallback(() => {
+    setVisibleCount((current) => Math.min(current + PAGE_CHUNK, filteredItems.length));
+  }, [filteredItems.length]);
+  useAutoLoadSentinel({
+    targetRef: moviesLoadSentinelRef,
+    enabled: isLibraryTab(tab) && !!library && filteredItems.length > visibleCount,
+    onLoadMore: loadNextChunk,
+  });
+  useEffect(() => {
+    setVisibleCount(PAGE_CHUNK);
+  }, [tab, collection, deferredSearch, selectedGenres, minRating, sort]);
+
+  const showLibrarySkeleton = useDelayedFlag(isLibraryTab(tab) && !library && !libraryError);
+  const showDownloadsSkeleton = useDelayedFlag(tab === "downloads" && !downloads && !downloadsError);
+  const showCalendarSkeleton = useDelayedFlag(tab === "calendar" && !calendar && !calendarError);
+
+  // ── Collections decided by Plex or the scan ────────────────────────────────
+  // Unwatched needs Plex watch status; Ready to play and Needs conversion need
+  // the scan. Until that data answers (or when it failed), the collection's
+  // count and its empty copy would be guesses.
+  const watchStatusStatus = mediaSourceStatus(plexWatchStatus, plexWatchStatusError);
+  const healthCollection = collection === "ready" || collection === "needs-conversion";
+  const collectionUndecided = (collection === "unwatched" && watchStatusMap === null)
+    || (healthCollection && health.healthOf === null && (health.scanPending || !!health.scanError));
+  const showCollectionSkeleton = useDelayedFlag(
+    isLibraryTab(tab) && !!library && (
+      (collection === "unwatched" && watchStatusStatus === "loading")
+      || (healthCollection && health.healthOf === null && health.scanPending)
+    ),
   );
 
-  // Conditional tabs data
-  const { data: requestsData, mutate: mutateRequests } = useSWR<RequestsData>(
-    `${CORE_URL}/api/media/requests`,
-    fetcher,
-    { refreshInterval: 60000 }
+  // ── Scroll: remember the position across a detail visit ───────────────────
+  const contentScroller = useCallback(
+    () => rootRef.current?.closest<HTMLElement>("[data-content-scroll]") ?? null,
+    [],
   );
-  const { data: plexWatchlist } = useSWR<PlexWatchlistData>(
-    `${CORE_URL}/api/media/plex/watchlist`,
-    fetcher,
-    { refreshInterval: 60000 }
-  );
-  const { data: plexWatchStatus } = useSWR<PlexWatchStatusData>(
-    `${CORE_URL}/api/media/plex/watch-status`,
-    fetcher,
-    { refreshInterval: 120000 }
-  );
-  const { data: plexWatchingData } = useSWR<PlexWatchingData>(
-    `${CORE_URL}/api/media/plex/watching`,
-    fetcher,
-    { refreshInterval: 30000 }
-  );
+  const libraryLoaded = !!library;
+  useEffect(() => {
+    if (!libraryLoaded) return;
+    let saved: string | null = null;
+    try {
+      saved = sessionStorage.getItem(SCROLL_KEY);
+      if (saved !== null) sessionStorage.removeItem(SCROLL_KEY);
+    } catch {
+      return;
+    }
+    const top = saved === null ? NaN : Number(saved);
+    if (!Number.isFinite(top)) return;
+    const frame = requestAnimationFrame(() => contentScroller()?.scrollTo({ top }));
+    return () => cancelAnimationFrame(frame);
+  }, [libraryLoaded, contentScroller]);
 
   // ── Discovery search (external lookup when local results are sparse) ──────
   const [discoveryResults, setDiscoveryResults] = useState<MediaSearchResult[]>([]);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const discoveryAbort = useRef<AbortController | null>(null);
   const discoveryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  function sortItems(items: MediaItem[]): MediaItem[] {
-    return [...items].sort((a, b) => {
-      switch (sort) {
-        case "title-asc":   return a.title.localeCompare(b.title);
-        case "title-desc":  return b.title.localeCompare(a.title);
-        case "year-desc":   return (b.year ?? 0) - (a.year ?? 0);
-        case "year-asc":    return (a.year ?? 0) - (b.year ?? 0);
-        case "added-asc":   return new Date(a.added ?? 0).getTime() - new Date(b.added ?? 0).getTime();
-        case "added-desc":
-        default:            return new Date(b.added ?? 0).getTime() - new Date(a.added ?? 0).getTime();
-      }
-    });
-  }
-
-  const movies = sortItems(library?.movies ?? []);
-  const tv     = sortItems(library?.tv ?? []);
-
-  const q = search.toLowerCase();
-  // Health-based filter — movies only, uses scan cache (ffmpeg ground truth).
-  const matchesMovieHealthFilter = (item: MediaItem) => {
-    if (healthFilter === "all") return true;
-    if (!item.hasFile || !item.filePath) return false;
-    const stem = stemOf(item.filePath);
-    const job = optJobsByBasename.get(stem);
-    if (job?.status === "completed") return healthFilter === "ready";
-    const scanEntry = scanStatusByBasename[stem];
-    if (!scanEntry) return false;
-    const optimal = !scanEntry.needsOptimization;
-    return healthFilter === "ready" ? optimal : !optimal;
-  };
-
-  const filteredMovies = movies.filter((movie) => {
-    const matchesSearch = !q || movie.title.toLowerCase().includes(q);
-    const matchesGenres =
-      selectedGenres.length === 0 ||
-      selectedGenres.every((genre) => movie.genres?.includes(genre));
-    const matchesRating =
-      minRating === null ||
-      (typeof movie.rating === "number" && movie.rating >= minRating);
-    return matchesSearch && matchesGenres && matchesRating && matchesMovieHealthFilter(movie);
-  });
-  const filteredTv = tv.filter((show) => {
-    const matchesSearch = !q || show.title.toLowerCase().includes(q);
-    const matchesGenres =
-      selectedGenres.length === 0 ||
-      selectedGenres.every((genre) => show.genres?.includes(genre));
-    const matchesRating =
-      minRating === null ||
-      (typeof show.rating === "number" && show.rating >= minRating);
-    return matchesSearch && matchesGenres && matchesRating;
-  });
-  const wantedItems = useMemo(
-    () => [...(wantedTv?.records ?? []), ...(wantedMovies?.records ?? [])],
-    [wantedTv?.records, wantedMovies?.records],
-  );
-
-  const loadNextMoviesChunk = useCallback(() => {
-    setVisibleMovies((current) => Math.min(current + PAGE_CHUNK, filteredMovies.length));
-  }, [PAGE_CHUNK, filteredMovies.length]);
-  const loadNextTvChunk = useCallback(() => {
-    setVisibleTv((current) => Math.min(current + PAGE_CHUNK, filteredTv.length));
-  }, [PAGE_CHUNK, filteredTv.length]);
-
-  useAutoLoadSentinel({
-    targetRef: moviesLoadSentinelRef,
-    enabled: tab === "movies" && !libraryLoading && filteredMovies.length > visibleMovies,
-    onLoadMore: loadNextMoviesChunk,
-  });
-  useAutoLoadSentinel({
-    targetRef: tvLoadSentinelRef,
-    enabled: tab === "tv" && !libraryLoading && filteredTv.length > visibleTv,
-    onLoadMore: loadNextTvChunk,
-  });
-
-  useEffect(() => {
-    setVisibleMovies(PAGE_CHUNK);
-    setVisibleTv(PAGE_CHUNK);
-  }, [search, selectedGenres, minRating, sort, PAGE_CHUNK]);
-
-  // Discovery: search externally when local results are sparse
-  const filteredLocal = tab === "movies" ? filteredMovies : filteredTv;
+  const q = search.trim().toLowerCase();
+  const filteredCount = filteredItems.length;
   useEffect(() => {
     if (discoveryTimer.current) clearTimeout(discoveryTimer.current);
-    if (tab !== "movies" && tab !== "tv") { setDiscoveryResults([]); return; }
-    if (q.length < 3) { setDiscoveryResults([]); setDiscoveryLoading(false); return; }
-
-    // Only search externally when local matches are few
-    if (filteredLocal.length >= 3) { setDiscoveryResults([]); setDiscoveryLoading(false); return; }
+    if (!isLibraryTab(tab) || q.length < 3 || filteredCount >= 3) {
+      setDiscoveryResults([]);
+      setDiscoveryLoading(false);
+      return;
+    }
 
     setDiscoveryLoading(true);
     discoveryTimer.current = setTimeout(() => {
@@ -1054,7 +1217,7 @@ function MediaPageInner({
       const controller = new AbortController();
       discoveryAbort.current = controller;
 
-      fetch(`${CORE_URL}/api/search?q=${encodeURIComponent(search)}`, {
+      fetch(`${CORE_URL}/api/search?q=${encodeURIComponent(q)}`, {
         credentials: "include",
         signal: controller.signal,
       })
@@ -1076,10 +1239,8 @@ function MediaPageInner({
       if (discoveryTimer.current) clearTimeout(discoveryTimer.current);
       if (discoveryAbort.current) discoveryAbort.current.abort();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, tab, filteredLocal.length]);
-
-  const queueCount = pendingDownloadCount;
+  }, [q, tab, filteredCount]);
+  const discoveryActive = q.length >= 3 && (discoveryResults.length > 0 || discoveryLoading);
 
   async function handleRetryQueueItem(item: DownloadQueueItem) {
     if (!item?.id) return;
@@ -1093,6 +1254,8 @@ function MediaPageInner({
         body: JSON.stringify({ app, id: item.id }),
       });
       setQueueRetryState((prev) => ({ ...prev, [item.id]: res.ok ? "done" : "error" }));
+    } catch {
+      setQueueRetryState((prev) => ({ ...prev, [item.id]: "error" }));
     } finally {
       setRetryingQueueId(null);
       setTimeout(() => {
@@ -1140,10 +1303,10 @@ function MediaPageInner({
         void mutateCalendar();
         void mutateLibrary();
       } else {
-        toast.error(`Failed to remove "${target.title}"`);
+        toast.error(`Couldn't remove "${target.title}"`);
       }
     } catch {
-      toast.error(`Failed to remove "${target.title}"`);
+      toast.error(`Couldn't remove "${target.title}"`);
     } finally {
       setCalendarRemoving(null);
       setCalendarRemoveTarget(null);
@@ -1186,7 +1349,7 @@ function MediaPageInner({
         ...prev,
         [key]: {
           loading: false,
-          error: err instanceof Error ? err.message : "Failed to load releases",
+          error: err instanceof Error ? err.message : "Couldn't load releases",
           releases: [],
           grabbingTitle: null,
         },
@@ -1220,7 +1383,7 @@ function MediaPageInner({
         ...prev,
         [key]: {
           ...(prev[key] ?? { loading: false, error: null, releases: [], grabbingTitle: null }),
-          error: err instanceof Error ? err.message : "Failed to submit release",
+          error: err instanceof Error ? err.message : "Couldn't submit the release",
         },
       }));
     } finally {
@@ -1236,12 +1399,16 @@ function MediaPageInner({
 
   // Save scroll position and navigate to a detail page
   const navigateToDetail = useCallback((item: MediaItem) => {
-    const scrollParent = document.querySelector(".overflow-y-auto") as HTMLElement | null;
-    if (scrollParent) {
-      sessionStorage.setItem("media-scroll-y", String(scrollParent.scrollTop));
+    const scroller = contentScroller();
+    if (scroller) {
+      try {
+        sessionStorage.setItem(SCROLL_KEY, String(scroller.scrollTop));
+      } catch {
+        // Storage unavailable (private mode): the list just opens at the top.
+      }
     }
     router.push(`/dashboard/media/${item.type}/${item.id}`);
-  }, [router]);
+  }, [router, contentScroller]);
 
   const navigateToContinueWatching = useCallback((item: PlexContinueWatchingItem) => {
     const route = resolveContinueWatchingRoute(item, [
@@ -1250,6 +1417,18 @@ function MediaPageInner({
     ]) ?? continueWatchingFallbackRoute(item);
     router.push(route);
   }, [library?.movies, library?.tv, router]);
+
+  const openServices = useCallback(() => {
+    const href = "/dashboard/containers";
+    if (!requestDesktopNavigation(href)) router.push(href);
+  }, [router]);
+
+  // Batch selection
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
+  const [bulkDeleteFiles, setBulkDeleteFiles] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   // Selection key: "movie-123" or "tv-456"
   const toggleSelect = useCallback((item: MediaItem) => {
@@ -1282,7 +1461,7 @@ function MediaPageInner({
           variant="ghost"
           size="sm"
           className="hidden md:inline-flex h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-          onClick={() => cinemaBrowser.open(tab as "movies" | "tv")}
+          onClick={() => cinemaBrowser.open(tab)}
           onPointerEnter={preloadCinemaBrowser}
           onFocus={preloadCinemaBrowser}
         >
@@ -1304,7 +1483,7 @@ function MediaPageInner({
         id: "cinema",
         label: "Cinema",
         icon: "projector",
-        onSelect: () => cinemaBrowser.open(tab as "movies" | "tv"),
+        onSelect: () => cinemaBrowser.open(tab),
       },
       {
         id: "select",
@@ -1355,7 +1534,7 @@ function MediaPageInner({
       }
     }
     if (success > 0) toast.success(`Removed ${success} item${success === 1 ? "" : "s"} from library`);
-    if (failed > 0) toast.error(`Failed to remove ${failed} item${failed === 1 ? "" : "s"}`);
+    if (failed > 0) toast.error(`Couldn't remove ${failed} item${failed === 1 ? "" : "s"}`);
     setBulkDeleting(false);
     setShowBulkDeleteDialog(false);
     setBulkDeleteFiles(false);
@@ -1363,22 +1542,10 @@ function MediaPageInner({
     void mutateLibrary();
   }, [selectedIds, bulkDeleteFiles, exitSelectionMode, mutateLibrary]);
 
-  // Handle card click: selection mode vs normal
-  const handleCardClick = useCallback((item: MediaItem) => {
-    if (selectionMode) {
-      toggleSelect(item);
-    } else {
-      const ws = item.tmdbId ? plexWatchStatus?.watchStatus?.[`tmdb:${item.tmdbId}`] : undefined;
-      setSelected({ kind: "library", data: item, watchStatus: ws });
-    }
-  }, [selectionMode, toggleSelect, plexWatchStatus]);
-
-  const handleCardNavigate = useCallback((item: MediaItem) => {
-    if (selectionMode) {
-      toggleSelect(item);
-    } else {
-      navigateToDetail(item);
-    }
+  // A card opens the detail page, or toggles it while selecting
+  const handleCardActivate = useCallback((item: MediaItem) => {
+    if (selectionMode) toggleSelect(item);
+    else navigateToDetail(item);
   }, [selectionMode, toggleSelect, navigateToDetail]);
 
   const handleDiscoveryClick = useCallback((item: MediaSearchResult) => {
@@ -1407,14 +1574,46 @@ function MediaPageInner({
   const handleSheetAdded = useCallback(() => {
     setSelected(null);
     setDiscoveryResults([]);
-    setSearch("");
+    patchView({ search: "" });
     void mutateLibrary();
-  }, [mutateLibrary]);
+  }, [mutateLibrary, patchView]);
 
-  const requestsConfigured = requestsData?.configured !== false && (requestsData?.results?.length ?? 0) >= 0 && requestsData?.configured === true;
-  const pendingRequestCount = requestsData?.results?.filter((r) => r.status === 1).length ?? 0;
-  const watchlistCount = plexWatchlist?.items?.length ?? 0;
-  const activityCount = (wantedItems.length + pendingRequestCount + watchlistCount) || undefined;
+  // ── Activity sources: only answered, reachable data is shown as a fact ────
+  const watchingStatus = mediaSourceStatus(plexWatchingData, plexWatchingError);
+  const watchlistStatus = mediaSourceStatus(plexWatchlist, plexWatchlistError);
+  const requestsStatus = mediaSourceStatus(requestsData, requestsError);
+  const wantedTvStatus = mediaSourceStatus(wantedTv, wantedTvError);
+  const wantedMoviesStatus = mediaSourceStatus(wantedMovies, wantedMoviesError);
+  const requestsReady = requestsStatus === "ready";
+  const requestItems = useMemo(() => requestsData?.results ?? [], [requestsData]);
+  const pendingRequestCount = requestsReady ? requestItems.filter((r) => r.status === 1).length : 0;
+  const continueItems = useMemo(() => plexWatchingData?.continueWatching ?? [], [plexWatchingData]);
+  const watchlistItems = useMemo(() => plexWatchlist?.items ?? [], [plexWatchlist]);
+  const wantedItems = useMemo(
+    () => [...(wantedTv?.records ?? []), ...(wantedMovies?.records ?? [])],
+    [wantedTv?.records, wantedMovies?.records],
+  );
+  const wantedCount = wantedTotal(wantedTv, wantedMovies);
+  /** Sonarr and Radarr have both answered, with data or a failure. */
+  const wantedSettled = wantedTvStatus !== "loading" && wantedMoviesStatus !== "loading";
+  /** Neither app could be read, so "Nothing wanted" would be a guess. */
+  const wantedFailed = sourceFailed(wantedTvStatus) && sourceFailed(wantedMoviesStatus);
+  const hasContinue = watchingStatus === "ready" && continueItems.length > 0;
+  const hasWatchlist = watchlistStatus === "ready" && watchlistItems.length > 0;
+  const hasRequests = requestsReady && requestItems.length > 0;
+  const hasWanted = wantedItems.length > 0;
+  const activitySettled = wantedSettled
+    && watchingStatus !== "loading" && watchlistStatus !== "loading" && requestsStatus !== "loading";
+  const activityPending = (() => {
+    switch (section) {
+      case "continue": return watchingStatus === "loading";
+      case "watchlist": return watchlistStatus === "loading";
+      case "requests": return requestsStatus === "loading";
+      case "wanted": return !hasWanted && !wantedSettled;
+      default: return !hasContinue && !hasWatchlist && !hasRequests && !hasWanted && !activitySettled;
+    }
+  })();
+  const showActivitySkeleton = useDelayedFlag(tab === "activity" && activityPending);
 
   // Build set of TMDB IDs in library for watchlist cross-reference
   const libraryTmdbIds = useMemo(() => {
@@ -1424,13 +1623,21 @@ function MediaPageInner({
     return ids;
   }, [library?.movies, library?.tv]);
 
-  const tabs: { id: Tab; label: string; icon: typeof Film01Icon; count?: number }[] = [
-    { id: "movies", label: "Movies", icon: Film01Icon, count: movies.length },
-    { id: "tv", label: "TV Shows", icon: Tv01Icon, count: tv.length },
-    { id: "downloads", label: "Downloads", icon: Download01Icon, count: queueCount || undefined },
-    { id: "calendar", label: "Calendar", icon: Calendar01Icon },
-    { id: "activity", label: "Activity", icon: Notification01Icon, count: activityCount },
-  ];
+  // ── Navigation between views ──────────────────────────────────────────────
+  /** Switching tab starts a fresh view: no search, filters, collection or section. */
+  const selectTab = useCallback((next: MediaTab) => {
+    setView({ ...DEFAULT_MEDIA_VIEW_STATE, genres: [], tab: next });
+  }, []);
+
+  const navigateTo = useCallback((location: MediaLocation) => {
+    setView((current) => current.tab === location.tab
+      ? { ...current, collection: location.collection, section: location.section }
+      : { ...DEFAULT_MEDIA_VIEW_STATE, genres: [], ...location });
+  }, []);
+
+  const setGenres = useCallback((genres: string[]) => {
+    setView((current) => ({ ...current, genres }));
+  }, []);
 
   // Show stack setup when no media apps are installed or configured
   if (!stackLoading && mediaStack && mediaStack.readiness === 0) {
@@ -1442,210 +1649,572 @@ function MediaPageInner({
     );
   }
 
-  const selectTab = (next: Tab) => {
-    setTab(next);
-    setSearch("");
-    setSort("added-desc");
-    setSelectedGenres([]);
-    setMinRating(null);
-    setHealthFilter("all");
+  // ── Toolbar ────────────────────────────────────────────────────────────────
+  const tabs: { id: MediaTab; label: string; icon: typeof Film01Icon; badge: ReactNode; ariaLabel: string }[] = [
+    {
+      id: "movies",
+      label: "Movies",
+      icon: Film01Icon,
+      badge: (library?.movies.length ?? 0) > 0 ? <TabsBadge>{numberFormat.format(library!.movies.length)}</TabsBadge> : null,
+      ariaLabel: "Movies",
+    },
+    {
+      id: "tv",
+      label: "TV shows",
+      icon: Tv01Icon,
+      badge: (library?.tv.length ?? 0) > 0 ? <TabsBadge>{numberFormat.format(library!.tv.length)}</TabsBadge> : null,
+      ariaLabel: "TV shows",
+    },
+    {
+      id: "downloads",
+      label: "Downloads",
+      icon: Download01Icon,
+      badge: downloads && pendingDownloadCount > 0 ? <TabsBadge>{numberFormat.format(pendingDownloadCount)}</TabsBadge> : null,
+      ariaLabel: "Downloads",
+    },
+    { id: "calendar", label: "Calendar", icon: Calendar01Icon, badge: null, ariaLabel: "Calendar" },
+    {
+      id: "activity",
+      label: "Activity",
+      icon: Notification01Icon,
+      badge: pendingRequestCount > 0 ? <Badge variant="count">{numberFormat.format(pendingRequestCount)}</Badge> : null,
+      ariaLabel: pendingRequestCount > 0
+        ? `Activity, ${numberFormat.format(pendingRequestCount)} ${pendingRequestCount === 1 ? "request" : "requests"} awaiting approval`
+        : "Activity",
+    },
+  ];
+
+  const isLibrary = isLibraryTab(tab);
+  const noun = libraryTab === "movies" ? "movies" : "shows";
+  const heading = viewTitle(view);
+  const summaryTotal: number | null = (() => {
+    if (isLibrary) return library && !collectionUndecided ? collectionItems.length : null;
+    if (tab === "downloads") return downloads ? pendingDownloadCount : null;
+    if (tab === "calendar") return calendar ? calendar.episodes.length + calendar.movies.length : null;
+    if (tab === "activity") {
+      if (section === "continue") return watchingStatus === "ready" ? continueItems.length : null;
+      if (section === "watchlist") return watchlistStatus === "ready" ? watchlistItems.length : null;
+      if (section === "requests") return requestsReady ? pendingRequestCount : null;
+      if (section === "wanted") return wantedSettled ? wantedCount : null;
+    }
+    return null;
+  })();
+  const summary = viewSummary(view, {
+    total: summaryTotal,
+    shown: isLibrary ? (library ? filteredItems.length : null) : summaryTotal,
+    attention: downloads ? downloadActivity.counts.attention : null,
+  }, numberFormat);
+
+  const toolbar = (
+    <DesktopAppToolbar className="page-controls-row min-w-0 flex-wrap justify-between gap-2">
+      <Tabs
+        className={WINDOW_SIDEBAR_REPLACES}
+        value={tab}
+        onValueChange={(v) => selectTab(v as MediaTab)}
+      >
+        <TabsList>
+          {tabs.map((t) => (
+            <TabsTrigger
+              key={t.id}
+              id={`media-tab-${t.id}`}
+              value={t.id}
+              aria-label={t.ariaLabel}
+              title={t.label}
+              className="text-xs gap-1.5"
+            >
+              <HugeiconsIcon icon={t.icon} size={14} />
+              <span className="hidden md:inline">{t.label}</span>
+              {t.badge}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
+      {/* In a window the sidebar names the place; the heading says where you are. */}
+      <div className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 flex-col")}>
+        <h1 className="truncate text-lg font-medium">{heading}</h1>
+        {summary && <p className="truncate text-xs tabular-nums text-muted-foreground">{summary}</p>}
+      </div>
+
+      {isLibrary && (
+        <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+          <SearchField
+            containerClassName="w-full sm:w-56"
+            className="h-8"
+            placeholder={tab === "movies" ? "Search movies…" : "Search shows…"}
+            aria-label={tab === "movies" ? "Search movies" : "Search shows"}
+            value={search}
+            onChange={(e) => patchView({ search: e.target.value })}
+          />
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+            {showCollections.length > 1 && (
+              <Select value={collection} onValueChange={(v) => patchView({ collection: v as MediaCollection })}>
+                <SelectTrigger
+                  aria-label="Show"
+                  className={cn(WINDOW_SIDEBAR_REPLACES, "h-8 w-full min-w-0 text-xs sm:w-auto sm:min-w-28")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {showCollections.map((c) => (
+                    <SelectItem key={c} value={c}>{collectionLabel(libraryTab, c)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Select value={sort} onValueChange={(v) => patchView({ sort: v as MediaSortKey })}>
+              <SelectTrigger aria-label="Sort" className="h-8 w-full min-w-0 text-xs sm:w-auto sm:min-w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(SORT_LABELS) as MediaSortKey[]).map((key) => (
+                  <SelectItem key={key} value={key}>{SORT_LABELS[key]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={minRating === null ? "any" : String(minRating)}
+              onValueChange={(v) => patchView({ minRating: v === "any" ? null : Number(v) })}
+            >
+              <SelectTrigger aria-label="Minimum rating" className="h-8 w-full min-w-0 text-xs sm:w-auto sm:min-w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="any">Any rating</SelectItem>
+                {RATING_OPTIONS.map((rating) => (
+                  <SelectItem key={rating} value={String(rating)} aria-label={`Rated ${rating} or higher`}>
+                    Rated {rating}+
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
+    </DesktopAppToolbar>
+  );
+
+  // ── Library content ───────────────────────────────────────────────────────
+  const showAllAction = (
+    <Button variant="outline" size="sm" onClick={() => patchView({ collection: "all" })}>
+      {libraryTab === "movies" ? "Show all movies" : "Show all shows"}
+    </Button>
+  );
+
+  const renderLibrary = () => {
+    if (!library) {
+      if (libraryError) {
+        return (
+          <ErrorState
+            fill
+            title={`Couldn't load your ${noun}`}
+            description="Talome couldn't get your library from Radarr and Sonarr. Check that the server is running, then retry."
+            onRetry={() => void mutateLibrary()}
+          />
+        );
+      }
+      return showLibrarySkeleton ? <LibrarySkeleton /> : null;
+    }
+
+    const appName = tab === "movies" ? "Radarr" : "Sonarr";
+    const unavailable = tab === "movies" ? library.radarrAvailable === false : library.sonarrAvailable === false;
+    if (unavailable && (libraryItems?.length ?? 0) === 0) {
+      return (
+        <EmptyState
+          fill
+          icon={tab === "movies" ? Film01Icon : Tv01Icon}
+          title={`${appName} isn't reachable`}
+          description={`Talome couldn't connect to ${appName}. Check that it's running and its address is right in Services.`}
+          action={<Button variant="outline" size="sm" onClick={openServices}>Open Services</Button>}
+        />
+      );
+    }
+
+    // The collection can't be computed yet (or at all): say so instead of "nothing here".
+    if (collection === "unwatched" && watchStatusMap === null) {
+      if (watchStatusStatus === "loading") return showCollectionSkeleton ? <LibrarySkeleton /> : null;
+      if (sourceFailed(watchStatusStatus)) {
+        return (
+          <SourceErrorState
+            app="Plex"
+            what="your watch history"
+            status={watchStatusStatus}
+            onRetry={() => void mutatePlexWatchStatus()}
+          />
+        );
+      }
+      return (
+        <EmptyState
+          fill
+          icon={Film01Icon}
+          title="Connect Plex to see what's unwatched"
+          description="Talome reads watch history from Plex."
+          action={showAllAction}
+        />
+      );
+    }
+    if (healthCollection && health.healthOf === null) {
+      if (health.scanPending) return showCollectionSkeleton ? <LibrarySkeleton /> : null;
+      if (health.scanError) {
+        return (
+          <ErrorState
+            fill
+            title="Couldn't load scan results"
+            description="Talome couldn't read which movies play directly in the browser. Check that the server is running, then retry."
+            onRetry={() => void health.mutateScan()}
+          />
+        );
+      }
+    }
+
+    if (filteredItems.length === 0 && !discoveryActive) {
+      if (collection !== "all" && !filtersActive) {
+        return (
+          <EmptyState
+            fill
+            icon={tab === "movies" ? Film01Icon : Tv01Icon}
+            title={COLLECTION_EMPTY[collection].title}
+            description={COLLECTION_EMPTY[collection].description}
+            action={showAllAction}
+          />
+        );
+      }
+      if (filtersActive) {
+        return (
+          <EmptyState
+            fill
+            icon={tab === "movies" ? Film01Icon : Tv01Icon}
+            title={`No ${noun} match those filters`}
+            description="Try a longer search to discover new titles."
+          />
+        );
+      }
+      return (
+        <EmptyState
+          fill
+          icon={tab === "movies" ? Film01Icon : Tv01Icon}
+          title={tab === "movies" ? "Your movie library is empty" : "Your TV library is empty"}
+          description={tab === "movies" ? "Search for a movie above to add it to your library." : "Search for a show above to add it to your library."}
+          action={
+            <Button variant="outline" size="sm" asChild>
+              <a href="/dashboard/assistant?prompt=Help+me+set+up+a+media+server+stack">Set up media stack</a>
+            </Button>
+          }
+        />
+      );
+    }
+
+    return (
+      <>
+        {filteredItems.length > 0 && (
+          <div className="media-grid">
+            {filteredItems.slice(0, visibleCount).map((m, i) => (
+              <MediaCard
+                key={`${m.type}-${m.id}`}
+                item={m}
+                onActivate={handleCardActivate}
+                watchStatus={m.tmdbId ? plexWatchStatus?.watchStatus?.[`tmdb:${m.tmdbId}`] : undefined}
+                selected={selectionMode && selectedIds.has(`${m.type}-${m.id}`)}
+                selectionMode={selectionMode}
+                priority={i < 8}
+                optStatus={m.filePath ? health.jobsByStem.get(fileStem(m.filePath)) : undefined}
+              />
+            ))}
+          </div>
+        )}
+        {filteredItems.length > visibleCount && (
+          <div ref={moviesLoadSentinelRef} className="flex justify-center py-2">
+            <span className="text-xs text-muted-foreground">
+              {tab === "movies" ? "Loading more movies…" : "Loading more shows…"}
+            </span>
+          </div>
+        )}
+        {discoveryActive && (
+          <section>
+            <SectionHeading>{discoveryLoading ? "Searching…" : "Not in your library"}</SectionHeading>
+            {discoveryResults.length > 0 && (
+              <div className="media-grid">
+                {discoveryResults.map((r, i) => (
+                  <DiscoveryCard key={r.id} item={r} onClick={handleDiscoveryClick} priority={i < 4} />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+      </>
+    );
   };
 
-  // In a desktop window the tabs become a labelled sidebar
-  const sidebarItem = (t: (typeof tabs)[number]) => (
-    <SourceListItem
-      key={t.id}
-      icon={t.icon}
-      label={t.label}
-      active={tab === t.id}
-      trailing={t.count}
-      onSelect={() => selectTab(t.id)}
-    />
+  const libraryUnfiltered = collection === "all" && !filtersActive;
+  const railItems = continueItems.filter((cw) => (tab === "movies" ? cw.type === "movie" : cw.type === "tv"));
+
+  // ── Activity content ──────────────────────────────────────────────────────
+  const renderWanted = (withHeading: boolean) => (
+    <section>
+      {withHeading && <SectionHeading>Wanted</SectionHeading>}
+      <div className="grid gap-2">
+        {wantedItems.map((w) => {
+          const key = `${w.app}-${w.id}`;
+          const panel = wantedPanels[key];
+          return (
+            <div key={key} className="grid gap-1">
+              <WantedRow item={w} onManualSearch={handleWantedManualSearch} active={Boolean(panel)} />
+              <AnimatePresence initial={false}>
+                {panel && (
+                  <motion.div
+                    key={`panel-${key}`}
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ height: tween(DURATION.fast), opacity: { duration: DURATION.fast } }}
+                    className="overflow-hidden"
+                  >
+                    <div className="pt-1">
+                      <WantedReleasePanel
+                        loading={panel.loading}
+                        error={panel.error}
+                        releases={panel.releases}
+                        grabbingTitle={panel.grabbingTitle}
+                        onClose={() => {
+                          setWantedPanels((prev) => {
+                            const next = { ...prev };
+                            delete next[key];
+                            return next;
+                          });
+                        }}
+                        onGrab={(release) => handleWantedGrabRelease(w, release)}
+                      />
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
+      </div>
+      {wantedCount != null && wantedCount > wantedItems.length && (
+        <p className="mt-3 text-xs tabular-nums text-muted-foreground">
+          Showing {numberFormat.format(wantedItems.length)} of {numberFormat.format(wantedCount)} wanted titles. Sonarr and Radarr list the rest.
+        </p>
+      )}
+    </section>
   );
+
+  const renderContinue = (withHeading: boolean) => (
+    <section>
+      {withHeading && <SectionHeading>Continue watching</SectionHeading>}
+      <div className="media-grid">
+        {continueItems.map((cw, i) => (
+          <ContinueWatchingCard key={cw.ratingKey ?? i} item={cw} onOpen={navigateToContinueWatching} className="w-full" />
+        ))}
+      </div>
+    </section>
+  );
+
+  const renderActivity = () => {
+    const showAll = section !== "all" && (
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn(WINDOW_SIDEBAR_REPLACES, "self-start")}
+        onClick={() => patchView({ section: "all" })}
+      >
+        Show all activity
+      </Button>
+    );
+    const sectionIcon = section === "all" ? PlayListAddIcon : ACTIVITY_SECTION_ICONS[section];
+    const gridSkeleton = showActivitySkeleton ? <LibrarySkeleton /> : null;
+    const rowsSkeleton = showActivitySkeleton ? <RowsSkeleton rows={3} className="h-18" /> : null;
+    const retryWatching = () => void mutatePlexWatching();
+    const retryWatchlist = () => void mutatePlexWatchlist();
+    const retryRequests = () => void mutateRequests();
+    const retryWanted = () => { void mutateWantedTv(); void mutateWantedMovies(); };
+    // Data on screen whose last refresh failed stays, with a line saying so.
+    const watchingStale = !!plexWatchingData && !!plexWatchingError;
+    const watchlistStale = !!plexWatchlist && !!plexWatchlistError;
+    const requestsStale = !!requestsData && !!requestsError;
+    const wantedStale = (!!wantedTv && !!wantedTvError) || (!!wantedMovies && !!wantedMoviesError);
+
+    let body: ReactNode;
+    let statusLine: ReactNode = null;
+    const refreshLine = (stale: boolean, onRetry: () => void) =>
+      stale ? <SourceStatusLine message="Couldn't refresh" onRetry={onRetry} /> : null;
+
+    if (section === "continue") {
+      statusLine = watchingStatus === "ready" && refreshLine(watchingStale, retryWatching);
+      body = bySourceStatus(watchingStatus, {
+        loading: gridSkeleton,
+        failed: <SourceErrorState app="Plex" what="what you're watching" status={watchingStatus} onRetry={retryWatching} />,
+        notConfigured: <EmptyState fill icon={sectionIcon} title="Connect Plex to see what you're watching" description="Continue watching comes from Plex." />,
+        ready: () => continueItems.length === 0
+          ? <EmptyState fill icon={sectionIcon} title="Nothing in progress" description="Movies and episodes you start in Plex show here." />
+          : renderContinue(false),
+      });
+    } else if (section === "watchlist") {
+      statusLine = watchlistStatus === "ready" && refreshLine(watchlistStale, retryWatchlist);
+      body = bySourceStatus(watchlistStatus, {
+        loading: gridSkeleton,
+        failed: <SourceErrorState app="Plex" what="your watchlist" status={watchlistStatus} onRetry={retryWatchlist} />,
+        notConfigured: <EmptyState fill icon={sectionIcon} title="Connect Plex to see your watchlist" description="Your watchlist comes from Plex." />,
+        ready: () => watchlistItems.length === 0
+          ? <EmptyState fill icon={sectionIcon} title="Your watchlist is empty" description="Titles you add to your Plex watchlist show here." />
+          : <WatchlistSection items={watchlistItems} libraryTmdbIds={libraryTmdbIds} />,
+      });
+    } else if (section === "requests") {
+      statusLine = requestsReady && refreshLine(requestsStale, retryRequests);
+      body = bySourceStatus(requestsStatus, {
+        loading: rowsSkeleton,
+        failed: <SourceErrorState app="Overseerr" what="requests" status={requestsStatus} onRetry={retryRequests} />,
+        notConfigured: <EmptyState fill icon={sectionIcon} title="Connect Overseerr to see requests" description="Requests come from Overseerr." />,
+        ready: () => requestItems.length === 0
+          ? <EmptyState fill icon={sectionIcon} title="No requests" description="Requests people make in Overseerr show here." />
+          : <RequestsTab requests={requestItems} onMutate={retryRequests} />,
+      });
+    } else if (section === "wanted") {
+      statusLine = (hasWanted || wantedSettled) && !wantedFailed && refreshLine(wantedStale, retryWanted);
+      body = hasWanted
+        ? renderWanted(false)
+        : !wantedSettled
+          ? rowsSkeleton
+          : wantedFailed
+            ? (
+              <ErrorState
+                fill
+                title="Couldn't reach Sonarr or Radarr"
+                description="Talome couldn't load wanted titles. Check that they're running in Services, then retry."
+                onRetry={retryWanted}
+              />
+            )
+            : <EmptyState fill icon={sectionIcon} title="Nothing wanted" description="Monitored titles that are released but have no file show here." />;
+    } else {
+      // Every source that failed outright or couldn't refresh, by what it would show.
+      const failures: { what: string; retry: () => void }[] = [];
+      if (sourceFailed(watchingStatus) || watchingStale) failures.push({ what: "continue watching", retry: retryWatching });
+      if (sourceFailed(watchlistStatus) || watchlistStale) failures.push({ what: "your watchlist", retry: retryWatchlist });
+      if (sourceFailed(requestsStatus) || requestsStale) failures.push({ what: "requests", retry: retryRequests });
+      if (wantedFailed || wantedStale) failures.push({ what: "wanted titles", retry: retryWanted });
+      const failedList = listFormat.format(failures.map((f) => f.what));
+      const retryFailures = () => { for (const failure of failures) failure.retry(); };
+      const sectionCount = [hasContinue, hasWatchlist, hasRequests, hasWanted].filter(Boolean).length;
+      if (sectionCount === 0) {
+        // "No activity" only once every source has answered and none failed.
+        body = !activitySettled
+          ? rowsSkeleton
+          : failures.length > 0
+            ? (
+              <ErrorState
+                fill
+                title="Couldn't load activity"
+                description={`Talome couldn't load ${failedList}. Check that those apps are running in Services, then retry.`}
+                onRetry={retryFailures}
+              />
+            )
+            : <EmptyState fill icon={PlayListAddIcon} title="No activity" description="Continue watching, your watchlist, requests and wanted titles show here." />;
+      } else {
+        statusLine = failures.length > 0 && <SourceStatusLine message={`Couldn't load ${failedList}`} onRetry={retryFailures} />;
+        body = (
+          <div className="grid gap-6">
+            {hasContinue && renderContinue(sectionCount > 1)}
+            {hasWatchlist && (
+              <section>
+                {sectionCount > 1 && <SectionHeading>Watchlist</SectionHeading>}
+                <WatchlistSection items={watchlistItems} libraryTmdbIds={libraryTmdbIds} />
+              </section>
+            )}
+            {hasRequests && (
+              <section>
+                {sectionCount > 1 && <SectionHeading>Requests</SectionHeading>}
+                <RequestsTab requests={requestItems} onMutate={retryRequests} />
+              </section>
+            )}
+            {hasWanted && renderWanted(sectionCount > 1)}
+          </div>
+        );
+      }
+    }
+
+    return (
+      <div className="flex min-h-0 flex-1 flex-col gap-3">
+        {showAll}
+        {statusLine}
+        {body}
+      </div>
+    );
+  };
+
   const sidebar = (
-    <SourceList label="Media sidebar">
-      <SourceListSection title="Library">
-        {tabs.filter((t) => t.id === "movies" || t.id === "tv").map(sidebarItem)}
-      </SourceListSection>
-      <SourceListSection title="Activity">
-        {tabs.filter((t) => t.id !== "movies" && t.id !== "tv").map(sidebarItem)}
-      </SourceListSection>
-    </SourceList>
+    <MediaWindowSidebar
+      location={{ tab, collection, section }}
+      libraryTab={libraryTab}
+      genres={selectedGenres}
+      onNavigate={navigateTo}
+      onGenresChange={setGenres}
+    />
   );
 
   return (
     <WindowSidebarLayout sidebar={sidebar}>
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5">
-      {/* Controls: tabs + search + sort */}
-      <DesktopAppToolbar className="page-controls-row min-w-0 flex-wrap justify-between gap-2">
-        <Tabs
-          className={WINDOW_SIDEBAR_REPLACES}
-          value={tab}
-          onValueChange={(v) => selectTab(v as Tab)}
-        >
-          <TabsList>
-            {tabs.map((t) => (
-              <TabsTrigger
-                key={t.id}
-                id={`media-tab-${t.id}`}
-                value={t.id}
-                aria-label={t.label}
-                title={t.label}
-                className="text-xs gap-1.5"
-              >
-                <HugeiconsIcon icon={t.icon} size={14} />
-                <span className="hidden md:inline">{t.label}</span>
-                {t.count !== undefined && t.count > 0 && (
-                  <TabsBadge>{t.count}</TabsBadge>
-                )}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+    <div ref={rootRef} className="flex min-w-0 flex-1 flex-col gap-5">
+      {toolbar}
 
-        <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-2">
-          {(tab === "movies" || tab === "tv") && (
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-2">
-              <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
-                <SelectTrigger className="h-8 w-full min-w-0 text-xs sm:w-auto sm:min-w-[7rem]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="added-desc">Recently added</SelectItem>
-                  <SelectItem value="added-asc">Oldest first</SelectItem>
-                  <SelectItem value="title-asc">Title A–Z</SelectItem>
-                  <SelectItem value="title-desc">Title Z–A</SelectItem>
-                  <SelectItem value="year-desc">Year (newest)</SelectItem>
-                  <SelectItem value="year-asc">Year (oldest)</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select
-                value={minRating === null ? "any" : String(minRating)}
-                onValueChange={(v) => setMinRating(v === "any" ? null : Number(v))}
-              >
-                <SelectTrigger className="h-8 w-full min-w-0 text-xs sm:w-auto sm:min-w-[6rem]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="any">Any rating</SelectItem>
-                  <SelectItem value="6">6.0+</SelectItem>
-                  <SelectItem value="7">7.0+</SelectItem>
-                  <SelectItem value="8">8.0+</SelectItem>
-                  <SelectItem value="9">9.0+</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-          <SearchField
-            containerClassName="flex-1 w-full sm:w-auto"
-            placeholder={`Search ${tab === "movies" ? "movies" : tab === "tv" ? "shows" : ""}...`}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-      </DesktopAppToolbar>
+      {isLibrary && libraryError && library && (
+        <SourceStatusLine message="Couldn't refresh" onRetry={() => void mutateLibrary()} />
+      )}
 
-      {(tab === "movies" || tab === "tv") && (
+      {isLibrary && (
         <MediaFiltersRow
-          items={tab === "movies" ? movies : tv}
+          genres={railGenres}
           selectedGenres={selectedGenres}
           minRating={minRating}
           onToggleGenre={(genre) => {
-            setSelectedGenres((prev) =>
-              prev.includes(genre)
-                ? prev.filter((g) => g !== genre)
-                : [...prev, genre]
-            );
+            setGenres(selectedGenres.includes(genre)
+              ? selectedGenres.filter((g) => g !== genre)
+              : [...selectedGenres, genre]);
           }}
-          onClearFilters={() => {
-            setSelectedGenres([]);
-            setMinRating(null);
-          }}
+          onClearFilters={() => patchView({ genres: [], minRating: null })}
         />
       )}
 
-      {/* Continue Watching — horizontal row from Plex on-deck */}
-      {(tab === "movies" || tab === "tv") && (() => {
-        const items = plexWatchingData?.continueWatching?.filter(
-          (cw) => (tab === "movies" ? cw.type === "movie" : cw.type === "tv")
-        ) ?? [];
-        if (items.length === 0) return null;
-        return (
-          <div className="min-w-0 space-y-2">
-            <p className="text-sm text-muted-foreground font-medium px-1">Continue Watching</p>
-            <div className="flex gap-3 overflow-x-auto scrollbar-none pb-1 -mx-1 px-1">
-              {items.map((cw, i) => {
-                const pct = cw.viewOffset && cw.duration && cw.duration > 0
-                  ? Math.min(100, (cw.viewOffset / cw.duration) * 100)
-                  : 0;
-                const thumb = cw.thumb
-                  ? `${CORE_URL}/api/media/poster?service=plex&path=${encodeURIComponent(cw.thumb)}&w=120`
-                  : null;
-                const title = cw.title?.trim() || (cw.type === "tv" ? "TV show" : "Movie");
-                return (
-                  <button
-                    key={cw.ratingKey ?? i}
-                    type="button"
-                    className="group shrink-0 w-[90px] text-left outline-none"
-                    onClick={() => navigateToContinueWatching(cw)}
-                    aria-label={`Open ${title}`}
-                  >
-                    <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-muted/30">
-                      {thumb ? (
-                        <Image
-                          src={thumb}
-                          alt={title}
-                          fill
-                          className="object-cover transition-transform duration-200 group-hover:scale-[1.03] group-focus-visible:scale-[1.03]"
-                          sizes="90px"
-                        />
-                      ) : (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <HugeiconsIcon icon={cw.type === "tv" ? Tv01Icon : Film01Icon} size={16} className="text-dim-foreground" />
-                        </div>
-                      )}
-                      <span className="absolute inset-0 rounded-lg ring-2 ring-inset ring-transparent transition-colors group-hover:ring-foreground/20 group-focus-visible:ring-primary" />
-                      {pct > 0 && (
-                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/60">
-                          <div className="h-full bg-white/80 rounded-r-full" style={{ width: `${pct}%` }} />
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-xs font-medium truncate mt-1.5 text-foreground">{title}</p>
-                    {cw.episodeTitle && (
-                      <p className="text-[10px] text-muted-foreground truncate">
-                        {cw.parentIndex != null && cw.index != null ? `S${cw.parentIndex}E${cw.index} · ` : ""}
-                        {cw.episodeTitle}
-                      </p>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+      {/* Continue watching — Plex on-deck, only on the unfiltered library */}
+      {isLibrary && libraryUnfiltered && railItems.length > 0 && (
+        <section className="min-w-0">
+          <SectionHeading>Continue watching</SectionHeading>
+          <div className="flex gap-3 overflow-x-auto scrollbar-none pb-1">
+            {railItems.map((cw, i) => (
+              <ContinueWatchingCard key={cw.ratingKey ?? i} item={cw} onOpen={navigateToContinueWatching} className="w-24 shrink-0" />
+            ))}
           </div>
-        );
-      })()}
+        </section>
+      )}
 
-      {/* Movie optimization bar — movies tab only, shows per-movie counts */}
-      {tab === "movies" && movieOptCounts.scanned > 0 && (
-        <div className="flex items-center justify-between gap-4 px-1 py-1">
-          <div className="flex items-center gap-2 sm:gap-3 text-xs text-muted-foreground flex-wrap">
+      {/* Movie optimization — per-movie counts from the scan cache */}
+      {tab === "movies" && health.counts.scanned > 0 && (
+        <div className="flex items-center justify-between gap-4 py-1">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:gap-3">
             <button
               type="button"
-              onClick={() => setHealthFilter(healthFilter === "ready" ? "all" : "ready")}
-              className={`rounded-full px-2 py-0.5 transition-colors ${healthFilter === "ready" ? "bg-status-healthy/15 text-status-healthy" : "hover:bg-muted/50"}`}
+              aria-pressed={collection === "ready"}
+              onClick={() => patchView({ collection: collection === "ready" ? "all" : "ready" })}
+              className={cn(
+                "rounded-full px-2 py-0.5 transition-colors duration-150",
+                collection === "ready" ? "bg-status-healthy/12 text-status-healthy" : "hover:bg-muted/50",
+              )}
             >
-              <span className="font-medium tabular-nums">{movieOptCounts.ready}</span> movies ready
+              <span className="font-medium tabular-nums">{numberFormat.format(health.counts.ready)}</span> ready to play
             </button>
-            {movieOptCounts.needsConversion > 0 && (
+            {health.counts.needsConversion > 0 && (
               <>
-                <span className="text-border">·</span>
+                <span aria-hidden="true" className="text-border">·</span>
                 <button
                   type="button"
-                  onClick={() => setHealthFilter(healthFilter === "needs-conversion" ? "all" : "needs-conversion")}
-                  className={`rounded-full px-2 py-0.5 transition-colors ${healthFilter === "needs-conversion" ? "bg-status-warning/15 text-status-warning" : "hover:bg-muted/50"}`}
+                  aria-pressed={collection === "needs-conversion"}
+                  onClick={() => patchView({ collection: collection === "needs-conversion" ? "all" : "needs-conversion" })}
+                  className={cn(
+                    "rounded-full px-2 py-0.5 transition-colors duration-150",
+                    collection === "needs-conversion" ? "bg-status-warning/12 text-status-warning" : "hover:bg-muted/50",
+                  )}
                 >
-                  <span className="font-medium tabular-nums">{movieOptCounts.needsConversion}</span> need conversion
+                  <span className="font-medium tabular-nums">{numberFormat.format(health.counts.needsConversion)}</span> need conversion
                 </button>
               </>
             )}
@@ -1670,7 +2239,7 @@ function MediaPageInner({
                 } else {
                   scanPaths = (pathsData.paths as string[]) ?? [];
                 }
-                if (scanPaths.length === 0) { toast.error("No media directories found"); setScanning(false); return; }
+                if (scanPaths.length === 0) { toast.error("No media folders found to scan"); setScanning(false); return; }
                 const res = await fetch(`${CORE_URL}/api/optimization/scan`, {
                   method: "POST", credentials: "include",
                   headers: { "Content-Type": "application/json" },
@@ -1678,14 +2247,16 @@ function MediaPageInner({
                 });
                 if (res.ok) {
                   const data = await res.json();
-                  void mutateScanStatus();
+                  void health.mutateScan();
                   if (data.queued > 0) {
                     toast(`Found ${data.queued} files needing conversion`);
                   } else {
                     toast("Library is fully optimized");
                   }
+                } else {
+                  toast.error("Couldn't scan the library");
                 }
-              } catch { toast.error("Scan failed"); }
+              } catch { toast.error("Couldn't scan the library"); }
               finally { setScanning(false); }
             }}
           >
@@ -1695,172 +2266,42 @@ function MediaPageInner({
         </div>
       )}
 
-      {/* Content */}
-      {tab === "movies" && (
-        libraryLoading ? (
-          <div className="media-grid">
-            {Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="h-[200px] rounded-lg" />)}
-          </div>
-        ) : libraryError ? (
-          <EmptyState
-            icon={Film01Icon}
-            title="Unable to load movies"
-            description="The media server returned an error. Check that Talome's backend is running."
-          />
-        ) : library?.radarrAvailable === false && filteredMovies.length === 0 ? (
-          <EmptyState
-            icon={Film01Icon}
-            title="Radarr is not reachable"
-            description="Check that Radarr is running and the URL is correct in settings."
-          />
-        ) : filteredMovies.length === 0 && !(q.length >= 3 && (discoveryResults.length > 0 || discoveryLoading)) ? (
-          <EmptyState
-            icon={Film01Icon}
-            title={search || selectedGenres.length > 0 || minRating !== null
-              ? "No movies match those filters"
-              : "Your movie library is empty"}
-            description={search || selectedGenres.length > 0 || minRating !== null
-              ? "Try a longer search to discover new titles."
-              : "Search for a movie above to add it to your library."}
-            action={!(search || selectedGenres.length > 0 || minRating !== null) ? (
-              <Button variant="outline" size="sm" asChild>
-                <a href="/dashboard/assistant?prompt=Help+me+set+up+a+media+server+stack">
-                  Set up media stack
-                </a>
-              </Button>
-            ) : undefined}
-          />
-        ) : filteredMovies.length > 0 ? (
-          <div className="media-grid">
-            {filteredMovies.slice(0, visibleMovies).map((m, i) => <MediaCard key={m.id} item={m} onClick={handleCardClick} onNavigate={handleCardNavigate} watchStatus={m.tmdbId ? plexWatchStatus?.watchStatus?.[`tmdb:${m.tmdbId}`] : undefined} selected={selectionMode && selectedIds.has(`movie-${m.id}`)} selectionMode={selectionMode} priority={i < 8} optStatus={m.filePath ? optJobsByBasename.get(stemOf(m.filePath)) : undefined} />)}
-          </div>
-        ) : null
-      )}
-      {tab === "movies" && filteredMovies.length > visibleMovies && (
-        <div ref={moviesLoadSentinelRef} className="flex justify-center py-2">
-          <span className="text-xs text-muted-foreground">Loading more movies...</span>
-        </div>
-      )}
-
-      {/* Discovery results — movies */}
-      {tab === "movies" && (discoveryResults.length > 0 || discoveryLoading) && (
-        <div className="mt-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="h-px flex-1 bg-border" />
-            <span className="text-xs text-muted-foreground tracking-wide shrink-0">
-              {discoveryLoading ? "Searching…" : "Not in your library"}
-            </span>
-            <div className="h-px flex-1 bg-border" />
-          </div>
-          {discoveryResults.length > 0 && (
-            <div className="media-grid">
-              {discoveryResults.map((r, i) => (
-                <DiscoveryCard key={r.id} item={r} onClick={handleDiscoveryClick} priority={i < 4} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "tv" && (
-        libraryLoading ? (
-          <div className="media-grid">
-            {Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="h-[200px] rounded-lg" />)}
-          </div>
-        ) : libraryError ? (
-          <EmptyState
-            icon={Tv01Icon}
-            title="Unable to load TV shows"
-            description="The media server returned an error. Check that Talome's backend is running."
-          />
-        ) : library?.sonarrAvailable === false && filteredTv.length === 0 ? (
-          <EmptyState
-            icon={Tv01Icon}
-            title="Sonarr is not reachable"
-            description="Check that Sonarr is running and the URL is correct in settings."
-          />
-        ) : filteredTv.length === 0 && !(q.length >= 3 && (discoveryResults.length > 0 || discoveryLoading)) ? (
-          <EmptyState
-            icon={Tv01Icon}
-            title={search || selectedGenres.length > 0 || minRating !== null
-              ? "No shows match those filters"
-              : "Your TV library is empty"}
-            description={search || selectedGenres.length > 0 || minRating !== null
-              ? "Try a longer search to discover new titles."
-              : "Search for a show above to add it to your library."}
-            action={!(search || selectedGenres.length > 0 || minRating !== null) ? (
-              <Button variant="outline" size="sm" asChild>
-                <a href="/dashboard/assistant?prompt=Help+me+set+up+a+media+server+stack">
-                  Set up media stack
-                </a>
-              </Button>
-            ) : undefined}
-          />
-        ) : filteredTv.length > 0 ? (
-          <div className="media-grid">
-            {filteredTv.slice(0, visibleTv).map((s, i) => <MediaCard key={s.id} item={s} onClick={handleCardClick} onNavigate={handleCardNavigate} watchStatus={s.tmdbId ? plexWatchStatus?.watchStatus?.[`tmdb:${s.tmdbId}`] : undefined} selected={selectionMode && selectedIds.has(`tv-${s.id}`)} selectionMode={selectionMode} priority={i < 8} optStatus={s.filePath ? optJobsByBasename.get(stemOf(s.filePath)) : undefined} />)}
-          </div>
-        ) : null
-      )}
-      {tab === "tv" && filteredTv.length > visibleTv && (
-        <div ref={tvLoadSentinelRef} className="flex justify-center py-2">
-          <span className="text-xs text-muted-foreground">Loading more shows...</span>
-        </div>
-      )}
-
-      {/* Discovery results — TV */}
-      {tab === "tv" && (discoveryResults.length > 0 || discoveryLoading) && (
-        <div className="mt-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="h-px flex-1 bg-border" />
-            <span className="text-xs text-muted-foreground tracking-wide shrink-0">
-              {discoveryLoading ? "Searching…" : "Not in your library"}
-            </span>
-            <div className="h-px flex-1 bg-border" />
-          </div>
-          {discoveryResults.length > 0 && (
-            <div className="media-grid">
-              {discoveryResults.map((r, i) => (
-                <DiscoveryCard key={r.id} item={r} onClick={handleDiscoveryClick} priority={i < 4} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {isLibrary && renderLibrary()}
 
       {tab === "downloads" && (
-        <div className="grid gap-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
           <p className="text-xs text-muted-foreground">
             Content acquired via connected services is your responsibility. Ensure compliance with applicable laws in your jurisdiction.
           </p>
-          {/* Loading skeleton */}
-          {!downloads && (
-            <div className="grid gap-2">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-20 rounded-lg" />
-              ))}
-            </div>
+          {!downloads && downloadsError && (
+            <ErrorState
+              fill
+              title="Couldn't load downloads"
+              description="Talome couldn't reach your download apps. Check that they're running, then retry."
+              onRetry={() => void retryDownloads()}
+            />
           )}
+          {showDownloadsSkeleton && <RowsSkeleton rows={3} className="h-22" />}
 
           {/* Unified list — queue items (with enriched speed/eta) + unmatched raw torrents */}
           {downloads && (downloadQueue.length > 0 || activeTorrents.length > 0) && (
             <div className="grid gap-2">
               {(() => {
                 const seenKeys = new Map<string, number>();
-                return downloadQueue.map((q) => {
-                  const baseKey = `q-${q.type}-${q.id}-${q.downloadId ?? q.title}`;
+                return downloadQueue.map((item) => {
+                  const baseKey = `q-${item.type}-${item.id}-${item.downloadId ?? item.title}`;
                   const duplicateIndex = seenKeys.get(baseKey) ?? 0;
                   seenKeys.set(baseKey, duplicateIndex + 1);
                   const key = duplicateIndex === 0 ? baseKey : `${baseKey}-${duplicateIndex}`;
                   return (
                     <DownloadQueueRow
                       key={key}
-                      item={q}
+                      item={item}
                       onRetry={handleRetryQueueItem}
                       onRemove={handleRemoveQueueItem}
                       retryingId={retryingQueueId}
-                      retryState={queueRetryState[q.id] ?? "idle"}
-                      removing={removingQueueIds.has(q.id)}
+                      retryState={queueRetryState[item.id] ?? "idle"}
+                      removing={removingQueueIds.has(item.id)}
                     />
                   );
                 });
@@ -1872,24 +2313,25 @@ function MediaPageInner({
           )}
 
           {downloads && downloadQueue.length === 0 && activeTorrents.length === 0 && (
-            <EmptyState icon={Download01Icon} title="Nothing downloading" description="Downloads from Sonarr, Radarr, and qBittorrent will appear here." />
+            <EmptyState fill icon={Download01Icon} title="Nothing downloading" description="Downloads from Sonarr, Radarr and qBittorrent show here." />
           )}
         </div>
       )}
 
       {tab === "calendar" && (
-        <div className="grid gap-4">
-          {/* Loading skeleton */}
-          {!calendar && (
-            <div className="grid gap-2">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 rounded-lg" />
-              ))}
-            </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-6">
+          {!calendar && calendarError && (
+            <ErrorState
+              fill
+              title="Couldn't load the calendar"
+              description="Talome couldn't get upcoming releases from Sonarr and Radarr. Check that they're running, then retry."
+              onRetry={() => void mutateCalendar()}
+            />
           )}
+          {showCalendarSkeleton && <RowsSkeleton rows={4} className="h-18" />}
           {(calendar?.episodes?.length ?? 0) > 0 && (
             <section>
-              <h2 className="media-section-label">Upcoming Episodes</h2>
+              <SectionHeading>Upcoming episodes</SectionHeading>
               <div className="grid gap-2">
                 {calendar!.episodes.map((ep) => (
                   <CalendarCard
@@ -1899,7 +2341,7 @@ function MediaPageInner({
                     title={ep.seriesTitle}
                     subtitle={ep.title}
                     meta={`S${String(ep.season).padStart(2, "0")}E${String(ep.episode).padStart(2, "0")}`}
-                    date={new Date(ep.airDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    date={formatDay(ep.airDate) ?? "TBA"}
                     onRemove={ep.seriesId ? () => setCalendarRemoveTarget({ type: "tv", id: ep.seriesId!, title: ep.seriesTitle }) : undefined}
                     removing={calendarRemoving === `tv-${ep.seriesId}`}
                   />
@@ -1910,7 +2352,7 @@ function MediaPageInner({
 
           {(calendar?.movies?.length ?? 0) > 0 && (
             <section>
-              <h2 className="media-section-label">Upcoming Movies</h2>
+              <SectionHeading>Upcoming movies</SectionHeading>
               <div className="grid gap-2">
                 {calendar!.movies.map((m) => (
                   <CalendarCard
@@ -1919,9 +2361,7 @@ function MediaPageInner({
                     type="movie"
                     title={m.title}
                     subtitle={m.year ? String(m.year) : undefined}
-                    date={m.releaseDate
-                      ? new Date(m.releaseDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })
-                      : "TBA"}
+                    date={formatDay(m.releaseDate) ?? "TBA"}
                     onRemove={() => setCalendarRemoveTarget({ type: "movie", id: m.id, title: m.title })}
                     removing={calendarRemoving === `movie-${m.id}`}
                   />
@@ -1931,90 +2371,14 @@ function MediaPageInner({
           )}
 
           {calendar && !calendar.episodes?.length && !calendar.movies?.length && (
-            <EmptyState icon={Calendar01Icon} title="No upcoming releases" description="Nothing scheduled in the next 14 days." />
+            <EmptyState fill icon={Calendar01Icon} title="No upcoming releases" description="Nothing is scheduled in the next 14 days." />
           )}
         </div>
       )}
 
-      {tab === "activity" && (() => {
-        const hasWatchlist = plexWatchlist?.configured && (plexWatchlist.items?.length ?? 0) > 0;
-        const hasRequests = requestsConfigured && (requestsData?.results?.length ?? 0) > 0;
-        const hasWanted = wantedItems.length > 0;
-        const sectionCount = [hasWatchlist, hasRequests, hasWanted].filter(Boolean).length;
+      {tab === "activity" && renderActivity()}
 
-        if (!hasWatchlist && !hasRequests && !hasWanted) {
-          return <EmptyState icon={PlayListAddIcon} title="No activity" description="Watchlist items, requests, and wanted media will appear here." />;
-        }
-
-        return (
-          <div className="grid gap-6">
-            {hasWatchlist && (
-              <section>
-                {sectionCount > 1 && <h2 className="media-section-label">Watchlist</h2>}
-                <WatchlistSection items={plexWatchlist!.items} libraryTmdbIds={libraryTmdbIds} />
-              </section>
-            )}
-
-            {hasRequests && (
-              <section>
-                {sectionCount > 1 && <h2 className="media-section-label">Requests</h2>}
-                <RequestsTab
-                  requests={requestsData!.results}
-                  onMutate={() => void mutateRequests()}
-                />
-              </section>
-            )}
-
-            {hasWanted && (
-              <section>
-                {sectionCount > 1 && <h2 className="media-section-label">Wanted</h2>}
-                <div className="grid gap-2">
-                  {wantedItems.map((w) => (
-                    <div key={`${w.app}-${w.id}`} className="grid gap-1">
-                      <WantedRow
-                        item={w}
-                        onManualSearch={handleWantedManualSearch}
-                        active={Boolean(wantedPanels[`${w.app}-${w.id}`])}
-                      />
-                      <AnimatePresence initial={false}>
-                        {wantedPanels[`${w.app}-${w.id}`] && (
-                          <motion.div
-                            key={`panel-${w.app}-${w.id}`}
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: "auto", opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ height: tween(DURATION.fast), opacity: { duration: DURATION.fast } }}
-                            className="overflow-hidden"
-                          >
-                            <div className="pt-1">
-                              <WantedReleasePanel
-                                loading={wantedPanels[`${w.app}-${w.id}`].loading}
-                                error={wantedPanels[`${w.app}-${w.id}`].error}
-                                releases={wantedPanels[`${w.app}-${w.id}`].releases}
-                                grabbingTitle={wantedPanels[`${w.app}-${w.id}`].grabbingTitle}
-                                onClose={() => {
-                                  setWantedPanels((prev) => {
-                                    const next = { ...prev };
-                                    delete next[`${w.app}-${w.id}`];
-                                    return next;
-                                  });
-                                }}
-                                onGrab={(release) => handleWantedGrabRelease(w, release)}
-                              />
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* Detail sheet */}
+      {/* Detail sheet (titles found by search that aren't in the library yet) */}
       <UnifiedMediaSheet
         item={selected}
         onClose={() => setSelected(null)}
@@ -2033,7 +2397,7 @@ function MediaPageInner({
             className="fixed bottom-6 inset-x-0 z-50 flex justify-center pointer-events-none pb-[env(safe-area-inset-bottom)]"
           >
             <div className="flex items-center gap-1 rounded-full bg-foreground text-background px-4 py-2 shadow-lg pointer-events-auto">
-              <span className="text-sm font-medium tabular-nums whitespace-nowrap">{selectedIds.size} selected</span>
+              <span className="text-sm font-medium tabular-nums whitespace-nowrap">{numberFormat.format(selectedIds.size)} selected</span>
               <div className="w-px h-4 bg-background/15 mx-1" />
               <Button
                 variant="ghost"
@@ -2122,61 +2486,53 @@ function MediaPageInner({
 }
 
 function MediaFiltersRow({
-  items,
+  genres,
   selectedGenres,
   minRating,
   onToggleGenre,
   onClearFilters,
 }: {
-  items: MediaItem[];
-  selectedGenres: string[];
+  genres: readonly string[];
+  selectedGenres: readonly string[];
   minRating: number | null;
   onToggleGenre: (genre: string) => void;
   onClearFilters: () => void;
 }) {
-  const allGenres = useMemo(() => {
-    const genres = new Set<string>();
-    for (const item of items) {
-      for (const genre of item.genres ?? []) {
-        if (genre) genres.add(genre);
-      }
-    }
-    return Array.from(genres).sort((a, b) => a.localeCompare(b));
-  }, [items]);
-
   const hasActiveFilters = selectedGenres.length > 0 || minRating !== null;
 
-  if (allGenres.length === 0 && !hasActiveFilters) return null;
+  if (genres.length === 0 && !hasActiveFilters) return null;
+
+  const pill = (active: boolean) => cn(
+    "h-6 shrink-0 rounded-full border px-2 text-xs transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    active
+      ? "border-foreground/30 bg-foreground/10 text-foreground"
+      : "border-border text-muted-foreground hover:text-foreground",
+  );
 
   return (
-    <div className="grid gap-2">
-      {allGenres.length > 0 && (
-        <div className="flex items-center gap-1.5 min-w-0">
+    // The window sidebar lists genres; this rail is for classic and narrow windows.
+    <div className={cn("grid gap-2", !hasActiveFilters && WINDOW_SIDEBAR_REPLACES)}>
+      {genres.length > 0 && (
+        <div className={cn("flex min-w-0 items-center gap-1.5", WINDOW_SIDEBAR_REPLACES)}>
           <button
             type="button"
+            aria-pressed={!hasActiveFilters}
             onClick={onClearFilters}
-            className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
-              selectedGenres.length === 0 && minRating === null
-                ? "border-foreground/30 bg-foreground/8 text-foreground"
-                : "border-border text-muted-foreground hover:text-foreground"
-            }`}
+            className={pill(!hasActiveFilters)}
           >
-            all
+            All
           </button>
           <div className="filter-rail min-w-0 flex-1">
             <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none">
-              {allGenres.map((genre) => {
+              {genres.map((genre) => {
                 const active = selectedGenres.includes(genre);
                 return (
                   <button
                     key={genre}
                     type="button"
+                    aria-pressed={active}
                     onClick={() => onToggleGenre(genre)}
-                    className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
-                      active
-                        ? "border-foreground/30 bg-foreground/8 text-foreground"
-                        : "border-border text-muted-foreground hover:text-foreground"
-                    }`}
+                    className={pill(active)}
                   >
                     {genre}
                   </button>
@@ -2189,9 +2545,9 @@ function MediaFiltersRow({
 
       {hasActiveFilters && (
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground truncate">
+          <p className="truncate text-xs text-muted-foreground">
             {selectedGenres.length > 0 ? selectedGenres.join(" · ") : "All genres"}
-            {minRating !== null ? ` · ${minRating.toFixed(1)}+` : ""}
+            {minRating !== null ? ` · Rated ${minRating}+` : ""}
           </p>
           <Button
             type="button"
@@ -2208,35 +2564,10 @@ function MediaFiltersRow({
   );
 }
 
-function MediaPageWithParams() {
-  const searchParams = useSearchParams();
-  const rawTab = searchParams.get("tab");
-  const initialTab: Tab =
-    rawTab === "movies" || rawTab === "tv" || rawTab === "downloads" || rawTab === "calendar" || rawTab === "activity"
-      ? rawTab
-      : "movies";
-  const initialSearch = searchParams.get("q") ?? "";
-  const initialGenres = searchParams.getAll("genre").filter(Boolean);
-  const initialMinRatingRaw = searchParams.get("rating");
-  const initialMinRating = initialMinRatingRaw ? Number(initialMinRatingRaw) : null;
-  const initialCinema = searchParams.get("cinema") === "1";
-
-  return (
-    <MediaPageInner
-      key={searchParams.toString()}
-      initialTab={initialTab}
-      initialSearch={initialSearch}
-      initialGenres={initialGenres}
-      initialMinRating={Number.isFinite(initialMinRating) ? initialMinRating : null}
-      initialCinema={initialCinema}
-    />
-  );
-}
-
 export default function MediaPage() {
   return (
-    <Suspense fallback={<div className="grid gap-5"><Skeleton className="h-10 rounded-lg" /></div>}>
-      <MediaPageWithParams />
+    <Suspense fallback={null}>
+      <MediaPageInner />
     </Suspense>
   );
 }

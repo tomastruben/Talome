@@ -759,14 +759,15 @@ export function UnifiedMediaSheet({
   return (
     <Sheet open={isOpen} onOpenChange={handleOpenChange} modal={false}>
       <div
-        className="fixed inset-0 z-50 bg-black/50 animate-in fade-in-0"
+        className="fixed inset-0 z-50 bg-scrim animate-in fade-in-0"
         onClick={() => handleOpenChange(false)}
       />
       <SheetContent
         side={isMobile ? "bottom" : "right"}
         className={cn(
           "w-full p-0 flex flex-col overflow-hidden",
-          isMobile ? "h-[92svh] rounded-t-xl" : "sm:max-w-md",
+          // A window is narrower than a screen: the sheet takes less of it.
+          isMobile ? "h-[92svh] rounded-t-xl" : embeddedFrame ? "sm:max-w-sm" : "sm:max-w-md",
           embeddedFrame && "pb-20"
         )}
       >
