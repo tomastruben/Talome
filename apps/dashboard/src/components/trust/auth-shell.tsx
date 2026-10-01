@@ -199,7 +199,7 @@ export function SignInFrame({
           {children}
         </div>
 
-        {footer ? <p className="mt-6 text-center text-sm text-foreground/70">{footer}</p> : null}
+        {footer ? <p className="tm-on-scrim mt-6 text-center text-sm text-foreground/80">{footer}</p> : null}
       </motion.div>
     </main>
   );
@@ -272,11 +272,11 @@ function LockClock() {
   if (minute === null) return <div className="mb-6 h-16" />;
   const now = new Date(minute);
   return (
-    <div className="mb-6 select-none text-center">
+    <div className="tm-on-scrim mb-6 select-none text-center">
       <p className="text-2xl font-medium tabular-nums text-foreground">
-        <PopText value={now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} />
+        <PopText value={now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} />
       </p>
-      <p className="mt-1 text-sm text-foreground/70">
+      <p className="mt-1 text-sm text-foreground/80">
         {now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
       </p>
     </div>

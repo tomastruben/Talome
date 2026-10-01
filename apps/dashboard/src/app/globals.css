@@ -2504,21 +2504,36 @@ html[data-embedded-frame] body {
   box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%);
 }
 
-/* Denser glass for surfaces you read and type on (the sign-in card): the
-   wallpaper's colour comes through, its detail doesn't */
+/* Frosted glass for surfaces you read and type on (the sign-in card): the
+   wallpaper's colour comes through, its detail doesn't. The backdrop is dimmed
+   (lifted in light) rather than the tint thickened, which keeps muted text at
+   4.5:1 or better over the brightest (darkest, in light) blurred patch of every
+   bundled wallpaper. */
 .tm-glass-dense {
-  background: color-mix(in oklch, var(--background) 82%, transparent);
-  border-color: oklch(1 0 0 / 10%);
-  backdrop-filter: blur(32px) saturate(1.5);
+  background: color-mix(in oklch, var(--card) 50%, transparent);
+  border-color: oklch(1 0 0 / 12%);
+  -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(0.7);
+  backdrop-filter: blur(48px) saturate(1.8) brightness(0.7);
   box-shadow:
     0 0 0 1px oklch(0 0 0 / 35%),
-    inset 0 1px 0 oklch(1 0 0 / 8%),
+    inset 0 1px 0 oklch(1 0 0 / 10%),
     0 24px 60px -20px oklch(0 0 0 / 60%);
 }
 :root:not(.dark) .tm-glass-dense {
-  background: color-mix(in oklch, var(--background) 85%, transparent);
+  background: color-mix(in oklch, var(--card) 72%, transparent);
   border-color: oklch(0 0 0 / 8%);
+  -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(1.3);
+  backdrop-filter: blur(48px) saturate(1.8) brightness(1.3);
   box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%), 0 24px 60px -20px oklch(0 0 0 / 25%);
+}
+
+/* Text set on the sign-in wallpaper (lock clock, date, footer): a halo in the
+   scrim's colour, so it stays legible on a bright (or, in light, dark) photo */
+.tm-on-scrim {
+  text-shadow: 0 1px 2px oklch(0 0 0 / 60%), 0 0 16px oklch(0 0 0 / 50%);
+}
+:root:not(.dark) .tm-on-scrim {
+  text-shadow: 0 0 2px oklch(1 0 0 / 80%), 0 0 16px oklch(1 0 0 / 70%);
 }
 
 /* Text set straight on the wallpaper (desktop icon names): white with a soft
