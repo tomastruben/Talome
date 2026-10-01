@@ -41,6 +41,16 @@ import { toast } from "sonner";
 import { useFeatureStack } from "@/hooks/use-feature-stacks";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { StackSetup } from "@/components/ui/stack-setup";
+import {
+  SourceList,
+  SourceListItem,
+  SourceListSection,
+  SourceListSkeleton,
+  WINDOW_SIDEBAR_REPLACES,
+  WINDOW_SIDEBAR_SHOWS,
+  WindowSidebarLayout,
+  useWindowSidebarShown,
+} from "@/components/ui/source-list";
 
 /* ── Types ─────────────────────────────────────────────── */
 
@@ -254,7 +264,7 @@ function AudiobookCard({
             <p className="text-xs text-muted-foreground truncate flex-1">{meta.authorName}</p>
           )}
           {duration && (
-            <span className="text-xs text-dim-foreground tabular-nums shrink-0 flex items-center gap-0.5">
+            <span className="text-xs text-muted-foreground tabular-nums shrink-0 flex items-center gap-0.5">
               <HugeiconsIcon icon={Clock01Icon} size={10} />
               {formatDuration(duration)}
             </span>
@@ -428,7 +438,7 @@ function DownloadRow({
         <p className="text-sm font-medium truncate leading-tight">{record.name}</p>
         <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
           <span>{formatSize(record.size)}</span>
-          {record.category && <span className="text-dim-foreground">{record.category}</span>}
+          {record.category && <span className="text-muted-foreground">{record.category}</span>}
           {!isCompleted && record.dlspeed > 0 && <span>{formatSpeed(record.dlspeed)}</span>}
           {!isCompleted && record.eta > 0 && <span>{formatEta(record.eta)}</span>}
         </div>
@@ -457,7 +467,7 @@ function DownloadRow({
         <button
           type="button"
           onClick={() => onRemove(record.hash)}
-          className="h-6 w-6 inline-flex items-center justify-center rounded-md text-dim-foreground hover:text-foreground transition-colors"
+          className="h-6 w-6 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground transition-colors"
           aria-label="Remove download"
         >
           ×
@@ -523,7 +533,7 @@ function AudibleCard({ item, isLocal, localLibraryName, importJob, canImport, on
             <p className="text-xs text-muted-foreground truncate flex-1">{authorStr}</p>
           )}
           {durationStr && (
-            <span className="text-xs text-dim-foreground tabular-nums shrink-0 flex items-center gap-0.5">
+            <span className="text-xs text-muted-foreground tabular-nums shrink-0 flex items-center gap-0.5">
               <HugeiconsIcon icon={Clock01Icon} size={10} />
               {durationStr}
             </span>
@@ -533,7 +543,7 @@ function AudibleCard({ item, isLocal, localLibraryName, importJob, canImport, on
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onImport?.(item); }}
-            className="mt-1.5 flex items-center gap-1 text-xs text-dim-foreground hover:text-muted-foreground transition-colors"
+            className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <HugeiconsIcon icon={Download01Icon} size={10} />
             {importJob?.status === "error" ? "Retry" : "Import"}
@@ -555,7 +565,7 @@ function AudibleCard({ item, isLocal, localLibraryName, importJob, canImport, on
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onRemove?.(item); }}
-            className="mt-1.5 flex items-center gap-1 text-xs text-dim-foreground hover:text-status-critical/70 transition-colors"
+            className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-status-critical transition-colors"
           >
             <HugeiconsIcon icon={Delete01Icon} size={10} />
             Remove
@@ -574,6 +584,9 @@ export default function AudiobooksPage() {
 
   // Feature stack readiness
   const { stack: booksStack, isLoading: stackLoading } = useFeatureStack("books");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // In a wide desktop window the sidebar replaces the tabs and library picker.
+  const windowSidebarShown = useWindowSidebarShown();
 
   // Tab state — always initialize to "library" to avoid hydration mismatch,
   // then restore from URL on mount
@@ -622,7 +635,7 @@ export default function AudiobooksPage() {
   const [downloadedUrls, setDownloadedUrls] = useState<Set<string>>(new Set());
 
   // Data fetching
-  const { data: libraries, error: libError } = useSWR<Library[]>(
+  const { data: libraries, error: libError, mutate: mutateLibraries } = useSWR<Library[]>(
     `${CORE_URL}/api/audiobooks/libraries`,
     fetcher,
     { revalidateOnFocus: false },
@@ -643,7 +656,8 @@ export default function AudiobooksPage() {
   );
 
   const { data: downloadsData, mutate: mutateDownloads } = useSWR<{ totalRecords: number; records: DownloadRecord[] }>(
-    tab === "downloads" ? `${CORE_URL}/api/audiobooks/downloads` : null,
+    // The window sidebar shows the in-flight count on every tab, so it needs the list too.
+    tab === "downloads" || windowSidebarShown ? `${CORE_URL}/api/audiobooks/downloads` : null,
     fetcher,
     { refreshInterval: 15_000 },
   );
@@ -839,13 +853,13 @@ export default function AudiobooksPage() {
     if (!savedY) return;
     sessionStorage.removeItem("audiobooks-scroll-y");
     requestAnimationFrame(() => {
-      const scrollParent = document.querySelector(".overflow-y-auto") as HTMLElement | null;
+      const scrollParent = rootRef.current?.closest<HTMLElement>("[data-content-scroll]");
       if (scrollParent) scrollParent.scrollTo({ top: Number(savedY) });
     });
   }, [itemsLoading]);
 
   function handleSelect(item: AudiobookItem) {
-    const scrollParent = document.querySelector(".overflow-y-auto") as HTMLElement | null;
+    const scrollParent = rootRef.current?.closest<HTMLElement>("[data-content-scroll]");
     if (scrollParent) {
       sessionStorage.setItem("audiobooks-scroll-y", String(scrollParent.scrollTop));
     }
@@ -999,24 +1013,118 @@ export default function AudiobooksPage() {
     );
   }
 
+  const formatCount = (n: number) => new Intl.NumberFormat().format(n);
+  const selectLibrary = (id: string) => {
+    setTab("library");
+    setSelectedLibrary(id);
+  };
+  const downloadsLabel = downloadCount > 0 ? `Downloads, ${formatCount(downloadCount)} in progress` : "Downloads";
+  // The libraries a picker can offer once the list has settled: none when it
+  // couldn't be loaded, so Audible stays reachable (the sidebar and the
+  // classic pickers follow the same rule). Undefined while it loads.
+  const pickerLibraries = libraries ?? (libError ? [] : undefined);
+  // Names the view in a wide window, where the sidebar replaces the tabs.
+  const viewHeading =
+    tab === "search" ? "Search"
+    : tab === "downloads" ? "Downloads"
+    : selectedLibrary === "__audible__" ? "Audible"
+    : libraries?.find((l) => l.id === selectedLibrary)?.name ?? "Library";
+
+  // In a desktop window: your libraries (and Audible), then search and downloads
+  const sidebar = (
+    <SourceList label="Audiobooks">
+      <SourceListSection title="Libraries">
+        {libError ? (
+          <div role="status" className="flex flex-wrap items-center gap-x-1 px-2.5 text-xs text-muted-foreground">
+            <span>Couldn&apos;t load libraries.</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="px-1.5 text-foreground/80 hover:text-foreground pointer-coarse:h-11"
+              onClick={() => void mutateLibraries()}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : !libraries ? (
+          <SourceListSkeleton rows={2} />
+        ) : libraries.length === 0 ? (
+          <SourceListItem
+            icon={BookOpen01Icon}
+            label="Library"
+            active={tab === "library" && selectedLibrary !== "__audible__"}
+            onSelect={() => {
+              setTab("library");
+              setSelectedLibrary(null);
+            }}
+          />
+        ) : (
+          libraries.map((lib) => (
+            <SourceListItem
+              key={lib.id}
+              icon={BookOpen01Icon}
+              label={lib.name}
+              active={tab === "library" && selectedLibrary === lib.id}
+              onSelect={() => selectLibrary(lib.id)}
+            />
+          ))
+        )}
+        {/* Audible doesn't come from Audiobookshelf, so it stays reachable with
+            no libraries, or when they couldn't be loaded. */}
+        {audibleConnected && pickerLibraries && (
+          <SourceListItem
+            icon={HeadphonesIcon}
+            label="Audible"
+            active={tab === "library" && selectedLibrary === "__audible__"}
+            onSelect={() => selectLibrary("__audible__")}
+          />
+        )}
+      </SourceListSection>
+      <SourceListSection title="Find">
+        <SourceListItem
+          icon={Search01Icon}
+          label="Search"
+          active={tab === "search"}
+          onSelect={() => setTab("search")}
+        />
+        <SourceListItem
+          icon={DownloadCircle01Icon}
+          label="Downloads"
+          active={tab === "downloads"}
+          trailing={downloadCount > 0 ? downloadCount : undefined}
+          onSelect={() => setTab("downloads")}
+        />
+      </SourceListSection>
+    </SourceList>
+  );
+
   return (
-    <div className="grid gap-5 pb-12">
+    <WindowSidebarLayout sidebar={sidebar}>
+    <div ref={rootRef} className="flex min-w-0 flex-1 flex-col gap-5 pb-12">
       {/* Controls — tabs + search/sort */}
       <DesktopAppToolbar className="page-controls-row flex-wrap justify-between gap-2">
+        <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 items-center truncate text-sm font-medium text-foreground")}>
+          {viewHeading}
+        </h2>
         <Tabs
+          className={WINDOW_SIDEBAR_REPLACES}
           value={tab}
           onValueChange={(v) => setTab(v as PageTab)}
         >
           <TabsList>
-            <TabsTrigger value="library" className="text-xs gap-1.5">
-              <HugeiconsIcon icon={BookOpen01Icon} size={14} />
+            <TabsTrigger value="library" className="text-xs gap-1.5" aria-label="Library" title="Library">
+              <HugeiconsIcon icon={BookOpen01Icon} size={14} aria-hidden="true" />
+              <span className="hidden md:inline">Library</span>
             </TabsTrigger>
-            <TabsTrigger value="search" className="text-xs gap-1.5">
-              <HugeiconsIcon icon={Search01Icon} size={14} />
+            <TabsTrigger value="search" className="text-xs gap-1.5" aria-label="Search" title="Search">
+              <HugeiconsIcon icon={Search01Icon} size={14} aria-hidden="true" />
+              <span className="hidden md:inline">Search</span>
             </TabsTrigger>
-            <TabsTrigger value="downloads" className="text-xs gap-1.5">
-              <HugeiconsIcon icon={DownloadCircle01Icon} size={14} />
-              {downloadCount > 0 && <TabsBadge>{downloadCount}</TabsBadge>}
+            <TabsTrigger value="downloads" className="text-xs gap-1.5" aria-label={downloadsLabel} title="Downloads">
+              <HugeiconsIcon icon={DownloadCircle01Icon} size={14} aria-hidden="true" />
+              <span className="hidden md:inline">Downloads</span>
+              {downloadCount > 0 && <TabsBadge>{formatCount(downloadCount)}</TabsBadge>}
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -1038,13 +1146,13 @@ export default function AudiobooksPage() {
                   <SelectItem value="duration-asc">Shortest</SelectItem>
                 </SelectContent>
               </Select>
-              {libraries && libraries.length > 0 && (
+              {pickerLibraries && (pickerLibraries.length > 0 || audibleConnected) && (
                 <Select value={selectedLibrary ?? ""} onValueChange={setSelectedLibrary}>
-                  <SelectTrigger className="h-8 w-full min-w-0 text-xs sm:hidden">
-                    <SelectValue />
+                  <SelectTrigger aria-label="Library" className={cn("h-8 w-full min-w-0 text-xs sm:hidden", WINDOW_SIDEBAR_REPLACES)}>
+                    <SelectValue placeholder="Library" />
                   </SelectTrigger>
                   <SelectContent>
-                    {libraries.map((lib) => (
+                    {pickerLibraries.map((lib) => (
                       <SelectItem key={lib.id} value={lib.id}>{lib.name}</SelectItem>
                     ))}
                     {audibleConnected && (
@@ -1067,14 +1175,16 @@ export default function AudiobooksPage() {
         )}
 
         {/* Library picker — visible on all tabs (desktop: always, mobile: library tab only has its own) */}
-        {libraries && (libraries.length > 1 || audibleConnected) && (
-          <div className={cn("items-center gap-3", tab === "library" ? "hidden sm:flex" : "flex")}>
+        {/* On the library tab the window sidebar lists the libraries; on Search
+            and Downloads this picks where downloads go, so it stays. */}
+        {pickerLibraries && (pickerLibraries.length > 1 || audibleConnected) && (
+          <div className={cn("items-center gap-3", tab === "library" ? cn("hidden sm:flex", WINDOW_SIDEBAR_REPLACES) : "flex")}>
             <Select value={selectedLibrary ?? ""} onValueChange={setSelectedLibrary}>
-              <SelectTrigger className="h-8 text-xs min-w-[8rem]">
-                <SelectValue />
+              <SelectTrigger aria-label="Library" className="h-8 text-xs min-w-[8rem]">
+                <SelectValue placeholder="Library" />
               </SelectTrigger>
               <SelectContent>
-                {libraries.map((lib) => (
+                {pickerLibraries.map((lib) => (
                   <SelectItem key={lib.id} value={lib.id}>{lib.name}</SelectItem>
                 ))}
                 {audibleConnected && (
@@ -1091,7 +1201,7 @@ export default function AudiobooksPage() {
 
       {/* ═══ Library Tab ═══ */}
       {tab === "library" && (
-        <div className="grid gap-5">
+        <div className="flex flex-1 flex-col gap-5">
           {selectedLibrary === "__audible__" ? (
             <>
               {audibleLoading ? (
@@ -1133,7 +1243,7 @@ export default function AudiobooksPage() {
                           }}
                         >
                           <HugeiconsIcon icon={Download01Icon} size={12} />
-                          Import All ({audibleLibrary.filter((b) => !isLocalTitle(b.title) && !importsByAsin.has(b.asin)).length})
+                          Import all ({audibleLibrary.filter((b) => !isLocalTitle(b.title) && !importsByAsin.has(b.asin)).length})
                         </Button>
                       )}
                     </div>
@@ -1163,6 +1273,7 @@ export default function AudiobooksPage() {
                 </>
               ) : (
                 <EmptyState
+                  fill
                   icon={HeadphonesIcon}
                   title={audibleError ? "Failed to load library" : "No audiobooks found"}
                   description={audibleError ? String(audibleError.message ?? audibleError) : "Your Audible library appears to be empty."}
@@ -1173,6 +1284,7 @@ export default function AudiobooksPage() {
             <>
               {isNotConfigured && (
                 <EmptyState
+                  fill
                   icon={BookOpen01Icon}
                   title="Connect Audiobookshelf"
                   description="Add your Audiobookshelf server in Settings to browse your audiobook library."
@@ -1197,7 +1309,7 @@ export default function AudiobooksPage() {
                   <div className="flex items-center gap-2">
                     <HugeiconsIcon icon={BookOpen01Icon} size={14} className="text-dim-foreground" />
                     <p className="media-section-label !mb-0">
-                      {showContinueListening ? "Library" : "All Audiobooks"}
+                      {showContinueListening ? "Library" : "All audiobooks"}
                     </p>
                   </div>
                   {totalCount > 0 && (
@@ -1222,6 +1334,7 @@ export default function AudiobooksPage() {
 
               {!itemsLoading && filtered.length === 0 && search && (
                 <EmptyState
+                  fill
                   icon={BookOpen01Icon}
                   title="No audiobooks found"
                   description="Try a different search term."
@@ -1229,6 +1342,7 @@ export default function AudiobooksPage() {
               )}
               {hasNoBooks && selectedLibrary && (
                 <EmptyState
+                  fill
                   icon={BookOpen01Icon}
                   title="Your library is empty"
                   description="Add audiobooks to your Audiobookshelf library to see them here."
@@ -1250,7 +1364,7 @@ export default function AudiobooksPage() {
 
               {filtered.length > visibleCount && (
                 <div ref={loadSentinelRef} className="flex justify-center py-2">
-                  <span className="text-xs text-muted-foreground">Loading more...</span>
+                  <span className="text-xs text-muted-foreground">Loading more…</span>
                 </div>
               )}
             </>
@@ -1260,9 +1374,10 @@ export default function AudiobooksPage() {
 
       {/* ═══ Search Tab ═══ */}
       {tab === "search" && (
-        <div className="grid gap-5">
+        <div className="flex flex-1 flex-col gap-5">
           {!searchConfigured ? (
             <EmptyState
+              fill
               icon={Search01Icon}
               title="Connect Prowlarr & qBittorrent"
               description="Add Prowlarr and qBittorrent in Settings to search and download audiobooks."
@@ -1308,7 +1423,7 @@ export default function AudiobooksPage() {
                 <div className="grid gap-2">
                   <div className="flex items-center gap-2 py-1">
                     <Spinner className="size-3.5" />
-                    <span className="text-xs text-muted-foreground">Searching indexers... this may take up to 30s</span>
+                    <span className="text-xs text-muted-foreground">Searching indexers… this can take up to 30 seconds</span>
                   </div>
                   {Array.from({ length: 4 }).map((_, i) => (
                     <Skeleton key={i} className="h-12 rounded-md" />
@@ -1322,6 +1437,7 @@ export default function AudiobooksPage() {
 
               {!searchLoading && submittedQuery && allSearchResults.length === 0 && !searchData?.error && (
                 <EmptyState
+                  fill
                   icon={Search01Icon}
                   title="No results found"
                   description={`No audiobooks found for "${submittedQuery}". Try a different search.`}
@@ -1377,7 +1493,7 @@ export default function AudiobooksPage() {
                           <button
                             type="button"
                             onClick={() => { setFilterLang(null); setFilterIndexer(null); }}
-                            className="rounded px-2 py-0.5 text-xs text-dim-foreground hover:text-muted-foreground transition-colors cursor-pointer"
+                            className="rounded px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                           >
                             Clear
                           </button>
@@ -1433,9 +1549,10 @@ export default function AudiobooksPage() {
 
       {/* ═══ Downloads Tab ═══ */}
       {tab === "downloads" && (
-        <div className="grid gap-4">
+        <div className="flex flex-1 flex-col gap-4">
           {!searchConfigured && (importsData?.jobs ?? []).length === 0 ? (
             <EmptyState
+              fill
               icon={DownloadCircle01Icon}
               title="Connect qBittorrent"
               description="Add qBittorrent in Settings to manage audiobook downloads."
@@ -1447,6 +1564,7 @@ export default function AudiobooksPage() {
             />
           ) : (downloadsData?.records?.length ?? 0) === 0 && (importsData?.jobs ?? []).length === 0 ? (
             <EmptyState
+              fill
               icon={DownloadCircle01Icon}
               title="No audiobook downloads"
               description="Search for audiobooks and download them to see them here."
@@ -1482,7 +1600,7 @@ export default function AudiobooksPage() {
                 <>
                   <div className="flex items-center gap-2 mt-2">
                     <HugeiconsIcon icon={HeadphonesIcon} size={12} className="text-dim-foreground" />
-                    <p className="text-xs text-muted-foreground">Audible Imports</p>
+                    <p className="text-xs text-muted-foreground">Audible imports</p>
                   </div>
                   <div className="grid gap-2">
                     {(importsData?.jobs ?? []).map((job) => (
@@ -1519,6 +1637,7 @@ export default function AudiobooksPage() {
       )}
 
     </div>
+    </WindowSidebarLayout>
   );
 }
 

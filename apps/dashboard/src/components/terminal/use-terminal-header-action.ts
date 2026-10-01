@@ -55,26 +55,29 @@ export function useTerminalHeaderAction() {
     },
   ], [agent, selectAgent]);
 
+  const label = agent === "codex" ? "Codex" : agent === "kimi" ? "Kimi Code" : "Claude Code";
+
+  // Named for the agent, so they read apart from the shell's own "New session".
   const commandItems = useMemo<TerminalHeaderActionItem[]>(() => [
     {
       id: "terminal-continue-agent",
-      label: "Continue session",
+      label: `Continue ${label}`,
       disabled: !launchAgent,
       onSelect: () => launchAgent?.(agent, true),
     },
     {
       id: "terminal-new-agent-session",
-      label: "New session",
+      label: `New ${label} session`,
       disabled: !launchAgent,
       onSelect: () => launchAgent?.(agent, false),
     },
-  ], [agent, launchAgent]);
+  ], [agent, label, launchAgent]);
 
   return {
     agent,
     agentItems,
     commandItems,
     disabled: !launchAgent,
-    label: agent === "codex" ? "Codex" : agent === "kimi" ? "Kimi Code" : "Claude Code",
+    label,
   };
 }

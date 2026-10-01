@@ -3,6 +3,8 @@
 import { memo, useRef, useMemo, useState, useCallback } from "react";
 import { toast } from "sonner";
 import { CORE_URL } from "@/lib/constants";
+import { relativeTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,35 +13,25 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   HugeiconsIcon,
   Add01Icon,
-  AlertCircleIcon,
-  Delete02Icon,
+  Cancel01Icon,
   Image01Icon,
   KeyboardIcon,
   ArrowDown01Icon,
   Refresh01Icon,
   SystemUpdate01Icon,
 } from "@/components/icons";
+import { StatusDot } from "@/components/ui/status-dot";
+import { WINDOW_SIDEBAR_REPLACES, WINDOW_SIDEBAR_SHOWS } from "@/components/ui/source-list";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { TerminalSessionSummary } from "./use-terminal-sessions";
+import { nextSessionName, type TerminalSessionSummary } from "./use-terminal-sessions";
+import {
+  canEndTerminalSession,
+  useEndSessionConfirm,
+  type TerminalSessionActionResult,
+} from "./terminal-sidebar";
 import type { TerminalConnectionStatus } from "./terminal-inner";
-
-function formatRelativeTime(ts: number): string {
-  const diff = Math.floor((Date.now() - ts) / 1000);
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 interface TerminalSessionToolbarProps {
   userSessions: TerminalSessionSummary[];
@@ -48,9 +40,13 @@ interface TerminalSessionToolbarProps {
   selectedSessionName?: string;
   loading?: boolean;
   onSelect: (id: string) => void;
-  onCreate: (name?: string) => void | Promise<void>;
-  onDelete: (sessionId: string) => void | Promise<void>;
+  /** Resolve `{ ok: false, error }` to show the failure in the picker. */
+  onCreate: (name?: string) => void | Promise<void | TerminalSessionActionResult>;
+  /** Resolve `{ ok: false, error }` (or reject) to keep the confirm open with the reason. */
+  onDelete: (sessionId: string) => void | Promise<void | TerminalSessionActionResult>;
   onRefresh: () => void;
+  /** Set while the session list can't be refreshed. */
+  refreshError?: string | null;
   onImageUpload?: (file: File) => void;
   showKeyboardToggle?: boolean;
   keyboardMode?: "virtual" | "physical";
@@ -75,44 +71,52 @@ function SessionRow({
   onSelect: (id: string) => void;
   onDelete?: (id: string) => void;
 }) {
-  const isActive = session.clients > 0;
-  const timeText = isActive ? "active" : formatRelativeTime(session.lastActivityAt);
+  const isAttached = session.clients > 0;
+  const timeText = isAttached ? "Attached" : relativeTime(new Date(session.lastActivityAt).toISOString());
   return (
     <div
-      className={`group flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md transition-colors ${
-        isSelected ? "bg-white/5" : "hover:bg-white/5"
-      }`}
+      className={cn(
+        "group flex min-h-8 w-full items-center gap-2 rounded-md px-2.5 transition-colors duration-150 pointer-coarse:min-h-11",
+        isSelected ? "bg-muted" : "hover:bg-muted/60",
+      )}
     >
       <button
         type="button"
-        className="flex items-center gap-2 flex-1 min-w-0 text-left"
+        aria-current={isSelected ? "true" : undefined}
+        className="flex min-w-0 flex-1 items-center gap-2 self-stretch rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={() => onSelect(session.id)}
       >
-        <span
-          className={`size-1.5 rounded-full shrink-0 ${
-            isActive
-              ? "bg-[oklch(0.723_0.191_149.58)]"
-              : "bg-[oklch(0.269_0_0)]"
-          }`}
+        <StatusDot
+          state={isAttached ? "healthy" : "stopped"}
+          size="sm"
+          hideLabel
+          label={isAttached ? "Attached" : "Detached"}
         />
-        <span className={`text-sm truncate ${isSystem ? "text-[#8b949e]" : "text-[#e6edf3]"}`}>
+        <span className={cn("truncate text-sm", isSystem ? "text-muted-foreground" : "text-foreground")}>
           {session.name}
         </span>
       </button>
-      <div className="shrink-0 w-14 relative flex items-center justify-end">
-        <span className={`text-xs text-[#8b949e] transition-opacity duration-150 ${isDeletable ? "group-hover:opacity-0" : ""}`}>
+      <div className="relative flex w-16 shrink-0 items-center justify-end">
+        <span
+          className={cn(
+            "text-xs text-muted-foreground transition-opacity duration-150",
+            isDeletable && "group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0",
+          )}
+        >
           {timeText}
         </span>
         {isDeletable && onDelete && (
           <button
             type="button"
-            className="absolute inset-y-0 right-0 flex items-center opacity-0 group-hover:opacity-100 p-0.5 rounded text-[#8b949e]/50 hover:text-status-critical transition-all duration-150"
+            aria-label={`End ${session.name}`}
+            title={`End ${session.name}`}
+            className="absolute inset-y-0 right-0 flex w-6 items-center justify-center rounded-sm text-muted-foreground opacity-0 outline-none transition-opacity duration-150 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:w-11 pointer-coarse:opacity-100"
             onClick={(e) => {
               e.stopPropagation();
               onDelete(session.id);
             }}
           >
-            <HugeiconsIcon icon={Delete02Icon} size={12} />
+            <HugeiconsIcon icon={Cancel01Icon} size={12} aria-hidden="true" />
           </button>
         )}
       </div>
@@ -156,7 +160,7 @@ function RebuildButton() {
             label: "Fix",
             onClick: async () => {
               toast.dismiss(toastId);
-              toast.loading("Auto-fixing...", { id: "autofix" });
+              toast.loading("Auto-fixing…", { id: "autofix" });
               try {
                 const fixRes = await fetch(`${CORE_URL}/api/evolution/rebuild-dashboard/autofix`, {
                   method: "POST",
@@ -199,12 +203,13 @@ function RebuildButton() {
         <Button
           variant="ghost"
           size="sm"
-          className={`h-7 gap-1.5 px-2 text-xs transition-colors ${
-            state === "building" ? "text-status-warning" :
+          className={cn(
+            "h-7 gap-1.5 px-2 text-xs transition-colors hover:bg-foreground/10",
+            state === "building" ? "text-status-info" :
             state === "success" ? "text-status-healthy" :
             state === "error" ? "text-status-critical" :
-            "text-[#8b949e] hover:text-[#e6edf3]"
-          } hover:bg-white/10`}
+            "text-muted-foreground hover:text-foreground",
+          )}
           onClick={handleRebuild}
           disabled={state === "building"}
         >
@@ -233,6 +238,7 @@ function SessionToolbar({
   onCreate,
   onDelete,
   onRefresh,
+  refreshError,
   onImageUpload,
   showKeyboardToggle,
   keyboardMode,
@@ -244,22 +250,21 @@ function SessionToolbar({
   const safeSelected = selectedSessionId ?? "sess_default";
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [createMode, setCreateMode] = useState(false);
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createName, setCreateName] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const endSession = useEndSessionConfirm(onDelete);
 
   const allSessions = useMemo(
     () => [...userSessions, ...systemSessions],
     [userSessions, systemSessions],
   );
 
-  const suggestedName = useMemo(() => {
-    const taken = new Set(allSessions.map((s) => s.name.toLowerCase()));
-    let n = 1;
-    while (taken.has(`session-${n}`)) n += 1;
-    return `session-${n}`;
-  }, [allSessions]);
+  const suggestedName = useMemo(
+    () => nextSessionName(allSessions.map((s) => s.id)),
+    [allSessions],
+  );
 
   // Count other active sessions (not the currently selected one)
   const otherActiveCount = useMemo(
@@ -267,24 +272,31 @@ function SessionToolbar({
     [allSessions, safeSelected],
   );
 
-  async function handleCreate() {
-    const name = createName.trim() || suggestedName;
-    await onCreate(name);
-    setCreateName("");
+  function resetCreate() {
     setCreateMode(false);
-    setCreateDialogOpen(false);
+    setCreateName("");
+    setCreateError(null);
+  }
+
+  async function handleCreate() {
+    if (creating) return;
+    const name = createName.trim() || suggestedName;
+    setCreating(true);
+    setCreateError(null);
+    const result = await onCreate(name);
+    setCreating(false);
+    if (result && !result.ok) {
+      // Keep the name and the picker open, and say what failed.
+      setCreateError(result.error);
+      return;
+    }
+    resetCreate();
     setPopoverOpen(false);
   }
 
   function requestDelete(id: string, name: string) {
-    setDeleteTarget({ id, name });
-  }
-
-  async function confirmDelete() {
-    if (!deleteTarget) return;
-    await onDelete(deleteTarget.id);
-    setDeleteTarget(null);
     setPopoverOpen(false);
+    void endSession({ id, name });
   }
 
   function handleSelect(id: string) {
@@ -294,38 +306,43 @@ function SessionToolbar({
 
   return (
     <div className={className}>
-      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-white/10">
-        {/* Session selector — opens categorized popover */}
+      <div className="flex items-center gap-1.5 border-b border-border px-3 py-1.5">
+        {/* Session picker. In a desktop window wide enough for the sidebar,
+            the sidebar lists the sessions instead. */}
+        <div className={cn("min-w-0", WINDOW_SIDEBAR_REPLACES)}>
         <Popover
           open={popoverOpen}
           onOpenChange={(open) => {
             setPopoverOpen(open);
-            if (!open) setCreateMode(false);
+            if (!open) resetCreate();
           }}
         >
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="flex items-center gap-1.5 h-7 px-2 rounded-md text-sm text-[#e6edf3] hover:bg-white/10 transition-colors min-w-0"
+              className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-sm text-foreground outline-none transition-colors duration-150 hover:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
-              <span className="truncate">{selectedSessionName ?? "default"}</span>
+              <span className="truncate">{selectedSessionName ?? "Default"}</span>
               {otherActiveCount > 0 && (
-                <span className="inline-flex items-center justify-center size-4 rounded-full bg-white/10 text-xs text-[#8b949e] shrink-0">
+                <span
+                  className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-xs tabular-nums text-muted-foreground"
+                  aria-label={`${otherActiveCount} other ${otherActiveCount === 1 ? "session" : "sessions"} attached`}
+                >
                   {otherActiveCount}
                 </span>
               )}
-              <HugeiconsIcon icon={ArrowDown01Icon} size={12} className="text-[#8b949e] shrink-0" />
+              <HugeiconsIcon icon={ArrowDown01Icon} size={12} className="shrink-0 text-muted-foreground" aria-hidden="true" />
             </button>
           </PopoverTrigger>
           <PopoverContent
             align="start"
-            className="w-[min(22rem,calc(100vw-2rem))] p-0 border-white/10 bg-[#11161d] text-[#e6edf3]"
+            className="w-[min(22rem,calc(100vw-2rem))] p-0"
           >
-            <div className="p-2 space-y-1 max-h-[min(24rem,60svh)] overflow-y-auto">
+            <div className="max-h-[min(24rem,60svh)] space-y-1 overflow-y-auto p-2">
               {/* User sessions */}
               {userSessions.length > 0 && (
                 <div>
-                  <p className="px-2.5 pt-1.5 pb-1 text-xs uppercase tracking-wide text-[#8b949e]">
+                  <p className="px-2.5 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">
                     Sessions
                   </p>
                   {userSessions.map((s) => (
@@ -333,7 +350,7 @@ function SessionToolbar({
                       key={s.id}
                       session={s}
                       isSelected={s.id === safeSelected}
-                      isDeletable={s.id !== "sess_default"}
+                      isDeletable={canEndTerminalSession(s.id)}
                       onSelect={handleSelect}
                       onDelete={(id) => requestDelete(id, s.name)}
                     />
@@ -344,7 +361,7 @@ function SessionToolbar({
               {/* System sessions */}
               {systemSessions.length > 0 && (
                 <div>
-                  <p className="px-2.5 pt-2 pb-1 text-xs uppercase tracking-wide text-[#8b949e]">
+                  <p className="px-2.5 pb-1 pt-2 text-xs font-medium text-muted-foreground">
                     System
                   </p>
                   {systemSessions.map((s) => (
@@ -353,7 +370,7 @@ function SessionToolbar({
                       session={s}
                       isSelected={s.id === safeSelected}
                       isSystem
-                      isDeletable
+                      isDeletable={canEndTerminalSession(s.id)}
                       onSelect={handleSelect}
                       onDelete={(id) => requestDelete(id, s.name)}
                     />
@@ -362,44 +379,55 @@ function SessionToolbar({
               )}
             </div>
 
-            <div className="border-t border-white/10 p-2">
+            <div className="space-y-2 border-t border-border p-2">
+              {refreshError && !createMode && (
+                <p role="status" className="px-2.5 text-xs text-muted-foreground">
+                  Couldn&apos;t refresh the session list. {refreshError}.
+                </p>
+              )}
               {createMode ? (
                 <div className="space-y-2">
                   <Input
                     autoFocus
+                    aria-label="Session name"
                     value={createName}
                     onChange={(e) => setCreateName(e.target.value)}
                     placeholder={suggestedName}
-                    className="h-7 text-xs border-white/15 bg-black/20 text-[#e6edf3] placeholder:text-[#8b949e]/70"
+                    disabled={creating}
+                    className="h-8 text-sm"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
                         void handleCreate();
                       }
                       if (e.key === "Escape") {
-                        setCreateMode(false);
-                        setCreateName("");
+                        // Leave the form, not the picker.
+                        e.preventDefault();
+                        resetCreate();
                       }
                     }}
                   />
+                  {createError && (
+                    <p role="alert" className="px-0.5 text-xs text-muted-foreground">
+                      Couldn&apos;t create the session. {createError}
+                    </p>
+                  )}
                   <div className="flex items-center justify-end gap-1.5">
                     <Button
                       variant="ghost"
-                      size="sm"
-                      className="h-6 px-2 text-xs text-[#8b949e] hover:text-[#e6edf3] hover:bg-white/10"
-                      onClick={() => {
-                        setCreateMode(false);
-                        setCreateName("");
-                      }}
+                      size="xs"
+                      disabled={creating}
+                      onClick={resetCreate}
                     >
                       Cancel
                     </Button>
                     <Button
-                      size="sm"
-                      className="h-6 px-2 text-xs bg-white/10 text-[#e6edf3] hover:bg-white/20"
+                      size="xs"
+                      busy={creating}
+                      busyLabel="Creating session…"
                       onClick={() => void handleCreate()}
                     >
-                      Create
+                      {createError ? "Retry" : "Create"}
                     </Button>
                   </div>
                 </div>
@@ -408,48 +436,60 @@ function SessionToolbar({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 flex-1 justify-start gap-1.5 text-xs text-[#8b949e] hover:text-[#e6edf3] hover:bg-white/10"
+                    className="h-7 flex-1 justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground"
                     onClick={() => setCreateMode(true)}
                   >
-                    <HugeiconsIcon icon={Add01Icon} size={12} />
+                    <HugeiconsIcon icon={Add01Icon} size={12} aria-hidden="true" />
                     New session
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 text-[#8b949e] hover:text-[#e6edf3] hover:bg-white/10"
-                    onClick={() => {
-                      void onRefresh();
-                    }}
-                    disabled={loading}
-                  >
-                    <HugeiconsIcon icon={Refresh01Icon} size={12} />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Refresh sessions"
+                        className="size-7 text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          void onRefresh();
+                        }}
+                        disabled={loading}
+                      >
+                        <HugeiconsIcon icon={Refresh01Icon} size={12} aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">Refresh sessions</TooltipContent>
+                  </Tooltip>
                 </div>
               )}
             </div>
           </PopoverContent>
         </Popover>
+        </div>
+        {/* With the picker in the sidebar, the toolbar still names the session you're typing into. */}
+        <span className={cn(WINDOW_SIDEBAR_SHOWS, "h-7 min-w-0 items-center truncate px-2 text-sm text-foreground")}>
+          {selectedSessionName ?? "Default"}
+        </span>
 
-        {/* Connection status */}
+        {/* Connection status: a breathing info dot while work is in flight, a
+            static critical dot once the connection is gone. */}
         {connectionStatus === "reconnecting" && (
-          <div className="flex items-center gap-1.5 text-xs text-status-warning">
-            <span className="size-1.5 rounded-full bg-status-warning motion-safe:animate-pulse" />
-            reconnecting…
+          <div role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden="true" className="size-1.5 rounded-full bg-status-info motion-safe:animate-breathe" />
+            Reconnecting…
           </div>
         )}
         {connectionStatus === "disconnected" && (
-          <div className="flex items-center gap-1.5">
-            <span className="size-1.5 rounded-full bg-status-critical" />
-            <span className="text-xs text-status-critical">disconnected</span>
+          <div role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden="true" className="size-1.5 rounded-full bg-status-critical" />
+            Disconnected
             {onReconnect && (
               <Button
                 variant="ghost"
-                size="sm"
-                className="h-5 px-1.5 text-xs text-status-critical hover:text-status-critical hover:bg-white/10"
+                size="xs"
+                className="text-foreground/80 hover:text-foreground"
                 onClick={onReconnect}
               >
-                <HugeiconsIcon icon={Refresh01Icon} size={10} className="mr-0.5" />
+                <HugeiconsIcon icon={Refresh01Icon} size={10} aria-hidden="true" />
                 Reconnect
               </Button>
             )}
@@ -467,10 +507,15 @@ function SessionToolbar({
               <Button
                 variant="ghost"
                 size="icon"
-                className={`size-7 hover:bg-white/10 ${keyboardMode === "virtual" ? "text-[#e6edf3]" : "text-[#8b949e]/50"}`}
+                aria-label="Virtual keyboard"
+                aria-pressed={keyboardMode === "virtual"}
+                className={cn(
+                  "size-7 hover:bg-foreground/10",
+                  keyboardMode === "virtual" ? "text-foreground" : "text-muted-foreground",
+                )}
                 onClick={onToggleKeyboard}
               >
-                <HugeiconsIcon icon={KeyboardIcon} size={14} />
+                <HugeiconsIcon icon={KeyboardIcon} size={14} aria-hidden="true" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="text-xs">
@@ -496,10 +541,11 @@ function SessionToolbar({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-7 text-[#8b949e] hover:text-[#e6edf3] hover:bg-white/10"
+                  aria-label="Attach image"
+                  className="size-7 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
                   onClick={() => fileInputRef.current?.click()}
                 >
-                  <HugeiconsIcon icon={Image01Icon} size={14} />
+                  <HugeiconsIcon icon={Image01Icon} size={14} aria-hidden="true" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="text-xs">
@@ -508,63 +554,6 @@ function SessionToolbar({
             </Tooltip>
           </>
         )}
-
-        {/* Delete confirmation dialog */}
-        <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
-          <DialogContent className="max-w-sm" showCloseButton={false}>
-            <DialogHeader>
-              <div className="flex items-center gap-2">
-                <span className="inline-flex size-7 items-center justify-center rounded-md bg-destructive/10 text-destructive">
-                  <HugeiconsIcon icon={AlertCircleIcon} size={14} />
-                </span>
-                <DialogTitle className="text-base">Delete session?</DialogTitle>
-              </div>
-              <DialogDescription className="pt-1">
-                This will terminate <span className="font-medium text-foreground">{deleteTarget?.name}</span> and disconnect any attached clients.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setDeleteTarget(null)}>
-                Cancel
-              </Button>
-              <Button variant="destructive" onClick={() => void confirmDelete()}>
-                Delete
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* Mobile create dialog */}
-        <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-          <DialogContent className="max-w-sm" showCloseButton={false}>
-            <DialogHeader>
-              <DialogTitle className="text-base">New session</DialogTitle>
-              <DialogDescription>
-                Create a named shell you can switch back to later.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-2">
-              <Input
-                autoFocus
-                value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
-                placeholder={suggestedName}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void handleCreate();
-                  }
-                }}
-              />
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={() => void handleCreate()}>Create</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
     </div>
   );

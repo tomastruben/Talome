@@ -27,8 +27,11 @@ import {
   SourceListItem,
   SourceListSection,
   WINDOW_SIDEBAR_REPLACES,
+  WINDOW_SIDEBAR_SHOWS,
   WindowSidebarLayout,
 } from "@/components/ui/source-list";
+import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
+import { cn } from "@/lib/utils";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { Button } from "@/components/ui/button";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
@@ -37,6 +40,12 @@ import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 type StatusFilter = "all" | "running" | "stopped";
 type SourceFilter = "all" | "managed" | "external";
+
+const STATUS_HEADING: Record<StatusFilter, string> = {
+  all: "All services",
+  running: "Running",
+  stopped: "Stopped",
+};
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
 
@@ -111,9 +120,9 @@ export default function ContainersPage() {
   const sidebar = (
     <SourceList label="Services sidebar">
       <SourceListSection title="Status">
-        <SourceListItem icon={Layers01Icon} label="All Services" active={statusFilter === "all"} trailing={count(stacks.length)} onSelect={() => setStatusFilter("all")} />
+        <SourceListItem icon={Layers01Icon} label="All services" active={statusFilter === "all"} trailing={count(stacks.length)} onSelect={() => setStatusFilter("all")} />
         <SourceListItem icon={PlayIcon} iconClassName="text-status-healthy" label="Running" active={statusFilter === "running"} trailing={count(runningCount)} onSelect={() => setStatusFilter("running")} />
-        <SourceListItem icon={StopIcon} iconClassName="text-status-critical" label="Stopped" active={statusFilter === "stopped"} trailing={count(stoppedCount)} onSelect={() => setStatusFilter("stopped")} />
+        <SourceListItem icon={StopIcon} label="Stopped" active={statusFilter === "stopped"} trailing={count(stoppedCount)} onSelect={() => setStatusFilter("stopped")} />
       </SourceListSection>
       {!isLoading && hasExternal && (
         <SourceListSection title="Source">
@@ -127,9 +136,13 @@ export default function ContainersPage() {
 
   return (
     <WindowSidebarLayout sidebar={sidebar}>
-    <div className="grid gap-5">
-      {/* Controls */}
-      <div className="page-controls-row flex-wrap gap-2">
+    <div className="flex min-w-0 flex-1 flex-col gap-5">
+      {/* Controls. In a wide window the sidebar holds the filters, so the
+          toolbar names the view and keeps the search. */}
+      <DesktopAppToolbar className="page-controls-row flex-wrap gap-2">
+        <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 items-center truncate text-sm font-medium text-foreground")}>
+          {STATUS_HEADING[statusFilter]}
+        </h2>
         <Tabs
           className={WINDOW_SIDEBAR_REPLACES}
           value={statusFilter}
@@ -150,7 +163,7 @@ export default function ContainersPage() {
               )}
             </TabsTrigger>
             <TabsTrigger value="stopped" className="text-xs gap-1.5">
-              <TabsDot color="red" />
+              <TabsDot color="muted" />
               <span className="hidden sm:inline">Stopped</span>
               {!isLoading && stoppedCount > 0 && (
                 <TabsBadge>{stoppedCount}</TabsBadge>
@@ -185,17 +198,20 @@ export default function ContainersPage() {
         <div className="w-full sm:ml-auto sm:w-auto">
           <SearchField
             containerClassName="w-full sm:w-auto"
-            placeholder="Search services..."
+            aria-label="Search services"
+            placeholder="Search services…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-      </div>
+      </DesktopAppToolbar>
 
       {/* Content */}
       {error ? (
-        <div className="grid gap-3">
+        // The error is the view: centred in the space left, with its two ways out.
+        <div className="flex min-h-64 flex-1 flex-col items-center justify-center gap-3">
           <ErrorState
+            className="border-0 p-0"
             title="Couldn't load services"
             description="Docker may be unreachable. Check system status."
           />
@@ -231,6 +247,7 @@ export default function ContainersPage() {
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState
+          fill
           icon={Package01Icon}
           title={stacks.length === 0 ? "No services found" : "No services match"}
           description={

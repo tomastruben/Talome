@@ -28,6 +28,7 @@ interface CreateSessionResponse {
   sessionId: string;
   name: string;
   exists: boolean;
+  displayName?: string;
 }
 
 const SESSION_STORAGE_KEY = "talome_terminal_session";
@@ -44,9 +45,15 @@ function formatShortDateTime(ms: number): string {
   return `${month} ${day}, ${hour}:${m}${ampm}`;
 }
 
+export const TERMINAL_DEFAULT_SESSION_ID = DEFAULT_SESSION_ID;
+
+/** Shown while the session list can't be fetched from core or the daemon. */
+export const TERMINAL_SESSIONS_UNREACHABLE = "The terminal service isn't responding";
+
 function deriveSessionName(id: string, displayName?: string): string {
   if (displayName) return displayName;
-  if (id === DEFAULT_SESSION_ID) return "default";
+  if (id === DEFAULT_SESSION_ID) return "Default";
+  if (id === "sess_talome-claude") return "Claude Code";
 
   // Evolution sessions: show "Evolution · Mar 14, 2:30pm" instead of raw ID
   const evMatch = id.match(/^sess_evolution-ev_(\d+)/);
@@ -92,11 +99,25 @@ function withCategory(
   };
 }
 
-function nextSessionName(existingNames: string[]): string {
+/**
+ * The next free "session-N". Compared against session ids, not display names:
+ * names are derived ("session 2"), so comparing names never found a clash and
+ * every new session reopened session-1.
+ */
+export function nextSessionName(existingIds: string[]): string {
   let n = 1;
-  const taken = new Set(existingNames.map((s) => s.toLowerCase()));
+  const taken = new Set(existingIds.map((id) => id.replace(/^sess_/, "").toLowerCase()));
   while (taken.has(`session-${n}`)) n += 1;
   return `session-${n}`;
+}
+
+/** The server's `{ error }` text when it sent one, otherwise the fallback. */
+async function responseError(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown };
+    if (typeof body.error === "string" && body.error.trim()) return body.error;
+  } catch { /* not JSON */ }
+  return fallback;
 }
 
 export function useTerminalSessions({
@@ -108,6 +129,10 @@ export function useTerminalSessions({
 }) {
   const [sessions, setSessions] = useState<TerminalSessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  /** Flips once, when the first refresh settles (success or failure). */
+  const [loaded, setLoaded] = useState(false);
+  /** Set while the list can't be fetched; cleared by the next success. */
+  const [error, setError] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   const initialSelectionDone = useRef(false);
 
@@ -165,11 +190,13 @@ export function useTerminalSessions({
       }
 
       if (!data) {
-        if (throwOnError) throw new Error("Both core and daemon unreachable");
+        setError(TERMINAL_SESSIONS_UNREACHABLE);
+        if (throwOnError) throw new Error(TERMINAL_SESSIONS_UNREACHABLE);
         return;
       }
 
       const active = (data.sessions ?? []).map(withCategory);
+      setError(null);
       // The daemon's session list is the source of truth. Replace the local
       // list entirely so dead sessions (idle timeout, process exit) are removed.
       setSessions(active);
@@ -197,6 +224,7 @@ export function useTerminalSessions({
       if (throwOnError) throw err;
     } finally {
       setLoading(false);
+      setLoaded(true);
     }
   }, [enabled, persistent]);
 
@@ -239,16 +267,18 @@ export function useTerminalSessions({
     [sessionOptions],
   );
 
-  const createNewSession = useCallback(async (preferredName?: string) => {
-    if (!persistent) return;
-    const fallbackName = nextSessionName(sessions.map((s) => s.name));
+  const createNewSession = useCallback(async (preferredName?: string): Promise<{ id: string; name: string } | undefined> => {
+    if (!persistent) return undefined;
+    const fallbackName = nextSessionName(sessions.map((s) => s.id));
     const name = preferredName?.trim() || fallbackName;
     const res = await fetch(`${CORE_URL}/api/terminal/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    if (!res.ok) throw new Error(`Status ${res.status}`);
+    if (!res.ok) {
+      throw new Error(await responseError(res, `The terminal service answered ${res.status}.`));
+    }
     const data = (await res.json()) as CreateSessionResponse;
     const now = Date.now();
     setSessions((prev) => {
@@ -266,7 +296,10 @@ export function useTerminalSessions({
       ];
     });
     setSelectedSessionId(data.sessionId);
-    await refreshSessions({ throwOnError: true });
+    // The session exists now; a failed refresh shows as the list's own error
+    // ("Couldn't refresh"), not as a failed create.
+    await refreshSessions();
+    return { id: data.sessionId, name: deriveSessionName(data.sessionId, data.displayName) };
   }, [persistent, sessions, refreshSessions]);
 
   const deleteSession = useCallback(async (sessionId: string) => {
@@ -275,13 +308,14 @@ export function useTerminalSessions({
       method: "DELETE",
     });
     if (!res.ok && res.status !== 404) {
-      throw new Error(`Status ${res.status}`);
+      throw new Error(await responseError(res, `The terminal service answered ${res.status}.`));
     }
     if (selectedSessionId === sessionId) {
       setSelectedSessionId(DEFAULT_SESSION_ID);
     }
     setSessions((prev) => prev.filter((s) => s.id !== sessionId));
-    await refreshSessions({ throwOnError: true });
+    // Ended is ended; a failed refresh shows as the list's own error.
+    await refreshSessions();
   }, [persistent, selectedSessionId, refreshSessions]);
 
   return {
@@ -296,6 +330,8 @@ export function useTerminalSessions({
     createNewSession,
     deleteSession,
     loading,
+    loaded,
+    error,
     persistent,
   };
 }

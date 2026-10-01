@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSetAtom } from "jotai";
 import useSWR from "swr";
-import { motion } from "motion/react";
 import { SearchField } from "@/components/ui/search-field";
 import {
   HugeiconsIcon,
@@ -316,8 +315,17 @@ function AppsPageContent() {
   // The source-tab fetch is in flight exactly while that tab has no cached result.
   const showSourceLoading = !isInstalled && !loading && !hasSourceCache && !sourceFailed;
   const loadingPhase = useLoadingPhase(loading || showSourceLoading);
-  const leftFadeOpacity = hoveredStackIndex === 0 ? 0 : hoveredStackIndex === null ? 1 : 0.72;
-  const rightFadeOpacity = hoveredStackIndex === stacks.length - 1 ? 0 : hoveredStackIndex === null ? 1 : 0.72;
+  // The stacks rail fades at its edges (a mask, so it reads on window glass
+  // too); the fade lifts on the side whose end card you're pointing at.
+  const fadeLeft = hoveredStackIndex !== 0;
+  const fadeRight = hoveredStackIndex !== stacks.length - 1;
+  const stacksRailMask = fadeLeft && fadeRight
+    ? "[mask-image:linear-gradient(to_right,transparent,black_1rem,black_calc(100%-1rem),transparent)]"
+    : fadeLeft
+      ? "[mask-image:linear-gradient(to_right,transparent,black_1rem)]"
+      : fadeRight
+        ? "[mask-image:linear-gradient(to_right,black_calc(100%-1rem),transparent)]"
+        : undefined;
   useEffect(() => {
     setDesktopAppActions([
       {
@@ -342,7 +350,7 @@ function AppsPageContent() {
   const sidebar = (
     <SourceList label="App Store sidebar">
       <SourceListSection title="Discover">
-        <SourceListItem icon={LayoutGridIcon} label="All Apps" active={tab === "all"} onSelect={() => changeTab("all")} />
+        <SourceListItem icon={LayoutGridIcon} label="All apps" active={tab === "all"} onSelect={() => changeTab("all")} />
         {sourceTypes.filter((t) => t !== "user-created").map((t) => (
           <SourceListItem key={t} icon={Globe02Icon} label={sourceLabel(t)} active={tab === t} onSelect={() => changeTab(t)} />
         ))}
@@ -359,7 +367,7 @@ function AppsPageContent() {
       </SourceListSection>
       {showCategories && (
         <SourceListSection title="Categories">
-          <SourceListItem label="All Categories" active={category === "all"} onSelect={() => changeCategory("all")} />
+          <SourceListItem label="All categories" active={category === "all"} onSelect={() => changeCategory("all")} />
           {categories.map((cat) => (
             <SourceListItem
               key={cat}
@@ -375,7 +383,7 @@ function AppsPageContent() {
 
   return (
     <WindowSidebarLayout sidebar={sidebar}>
-    <div className="min-w-0 grid gap-5">
+    <div className="flex min-w-0 flex-1 flex-col gap-5">
       <DesktopAppToolbar className="grid min-w-0 gap-3">
         {/* ── Source tabs + search ─────────────────────── */}
         <div className="page-controls-row min-w-0 flex-wrap justify-between gap-2">
@@ -425,8 +433,8 @@ function AppsPageContent() {
             >
               all
             </button>
-            <div className="filter-rail min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none">
+            <div className="relative min-w-0 max-w-full flex-1">
+              <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none max-lg:[mask-image:linear-gradient(to_right,transparent,black_1rem,black_calc(100%-1rem),transparent)]">
                 {categories.map((cat) => (
                   <button
                     key={cat}
@@ -451,17 +459,7 @@ function AppsPageContent() {
         <section className="grid gap-3">
           <h2 className="text-sm font-medium text-muted-foreground">Stacks</h2>
           <div className="stacks-scroll-rail -mt-2 -mb-2">
-            <motion.div
-              className="pointer-events-none absolute inset-y-0 left-0 z-10 w-[18px] bg-gradient-to-r from-background to-transparent"
-              animate={{ opacity: leftFadeOpacity }}
-              transition={{ duration: 0.18, ease: "easeOut" }}
-            />
-            <motion.div
-              className="pointer-events-none absolute inset-y-0 right-0 z-10 w-[18px] bg-gradient-to-l from-background to-transparent"
-              animate={{ opacity: rightFadeOpacity }}
-              transition={{ duration: 0.18, ease: "easeOut" }}
-            />
-            <div className="flex items-stretch gap-4 overflow-x-auto py-2 pr-1 pl-0.5 scrollbar-none">
+            <div className={`flex items-stretch gap-4 overflow-x-auto py-2 pr-1 pl-0.5 scrollbar-none ${stacksRailMask ?? ""}`}>
               {stacks.map((s, index) => (
                 <div
                   key={s.id}
@@ -495,18 +493,21 @@ function AppsPageContent() {
         )
       ) : fetchError ? (
         <ErrorState
+          fill
           title="Couldn't load the App Store"
           description={fetchError}
           onRetry={fetchData}
         />
       ) : sourceFailed ? (
         <ErrorState
+          fill
           title={`Couldn't load ${sourceLabel(tab)} apps`}
           description="Check that the Talome server is reachable, then retry."
           onRetry={() => setSourceErrors((prev) => ({ ...prev, [tab]: false }))}
         />
       ) : tab === "all" && apps.length === 0 ? (
         <EmptyState
+          fill
           icon={Package01Icon}
           title={catalogEmpty.title}
           description={catalogEmpty.description}
@@ -518,42 +519,43 @@ function AppsPageContent() {
         />
       ) : filtered.length === 0 ? (
         tab === "user-created" ? (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-24 gap-5">
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-2xl">+</span>
-              <p className="text-sm text-muted-foreground">No apps yet</p>
-            </div>
-            <p className="text-xs text-muted-foreground max-w-xs text-center leading-relaxed">
-              Describe what you want to run and Claude Code will build it for you.
-            </p>
-            <Link
-              href="/dashboard/assistant?prompt=I+want+to+create+a+new+app"
-              className="text-sm font-medium text-foreground underline underline-offset-4 decoration-muted-foreground/40 hover:decoration-foreground transition-colors"
-            >
-              Create your first app
-            </Link>
-          </div>
+          <EmptyState
+            fill
+            icon={Package02Icon}
+            title="No apps yet"
+            description="Describe what you want to run and Claude Code will build it for you."
+            action={
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/dashboard/assistant?prompt=I+want+to+create+a+new+app">Create your first app</Link>
+              </Button>
+            }
+          />
         ) : (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-24 gap-3">
-            <p className="text-sm text-muted-foreground">
-              {isInstalled ? "No apps installed yet" : "No apps found"}
-            </p>
-            {isInstalled ? (
-              <button
-                className="text-sm font-medium text-foreground underline underline-offset-4 decoration-muted-foreground/40 hover:decoration-foreground transition-colors"
-                onClick={() => changeTab("all")}
-              >
-                Browse the store
-              </button>
-            ) : search ? (
-              <Link
-                href={`/dashboard/assistant?prompt=${encodeURIComponent(`Create an app: ${search}`)}`}
-                className="text-sm font-medium text-foreground underline underline-offset-4 decoration-muted-foreground/40 hover:decoration-foreground transition-colors"
-              >
-                Create &ldquo;{search}&rdquo; with AI
-              </Link>
-            ) : null}
-          </div>
+          <EmptyState
+            fill
+            icon={isInstalled ? PackageOpenIcon : Package01Icon}
+            title={isInstalled ? "No apps installed yet" : "No apps found"}
+            description={
+              isInstalled
+                ? "Apps you install from the store show up here."
+                : search
+                  ? "Nothing in the store matches your search. Talome can build it for you."
+                  : "Nothing in this source matches the current filter."
+            }
+            action={
+              isInstalled ? (
+                <Button variant="outline" size="sm" onClick={() => changeTab("all")}>
+                  Browse the store
+                </Button>
+              ) : search ? (
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/dashboard/assistant?prompt=${encodeURIComponent(`Create an app: ${search}`)}`}>
+                    Create &ldquo;{search}&rdquo; with AI
+                  </Link>
+                </Button>
+              ) : undefined
+            }
+          />
         )
       ) : (
         <>

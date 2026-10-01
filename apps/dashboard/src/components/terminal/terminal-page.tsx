@@ -6,6 +6,7 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { terminalCommandAtom, launchTerminalAgentAtom, terminalSessionAtom, terminalFollowUpAtom, terminalAutoAtom, terminalRemoteAtom, terminalRemoteActiveAtom, type TerminalAgent } from "@/atoms/terminal";
 import { HugeiconsIcon, ComputerTerminal01Icon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
+import { WindowSidebarLayout } from "@/components/ui/source-list";
 import { CORE_URL } from "@/lib/constants";
 import { useKeyboardMode } from "@/hooks/use-keyboard-mode";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
@@ -14,6 +15,7 @@ import type { TerminalInnerHandle, TerminalConnectionStatus } from "./terminal-i
 import { TerminalSessionToolbar } from "./terminal-session-toolbar";
 import { useTerminalSessions } from "./use-terminal-sessions";
 import { useTerminalHeaderAction } from "./use-terminal-header-action";
+import { TerminalSidebar, type TerminalSessionActionResult } from "./terminal-sidebar";
 import { Spinner } from "@/components/ui/spinner";
 
 const TerminalInner = dynamic(
@@ -86,9 +88,40 @@ export function buildKimiCommand(projectRoot: string, resume: boolean, auto = fa
   return `${resolveKimi}; if [ -z "$kimi_bin" ]; then echo "Kimi Code CLI not found. Install it from platform.kimi.ai/docs/guide/kimi-code-cli"; elif command -v tmux >/dev/null 2>&1; then ${tmuxCmd}; else ${fallback}; fi`;
 }
 
+/** A terminal-token failure: the server's reason, and whether retrying can help. */
+class TerminalTokenError extends Error {
+  readonly retryable: boolean;
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.retryable = retryable;
+  }
+}
+
+const UNREACHABLE_REASON = "Check that the Talome server is reachable, then retry.";
+
+async function tokenFailure(res: Response): Promise<TerminalTokenError> {
+  let reason = `The terminal service answered ${res.status}.`;
+  try {
+    const body = (await res.json()) as { error?: unknown };
+    if (typeof body.error === "string" && body.error.trim()) reason = body.error;
+  } catch { /* not JSON */ }
+  // A 4xx is a decision (locked mode, signed out), not a hiccup: say it at once.
+  return new TerminalTokenError(reason, res.status >= 500);
+}
+
+function failureMessage(err: unknown, fallback: string): string {
+  if (err instanceof TerminalTokenError) return err.message;
+  // fetch() rejects with a TypeError when the server can't be reached.
+  if (err instanceof TypeError) return UNREACHABLE_REASON;
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
 export function TerminalPage() {
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bumped by Retry so the token effect runs again.
+  const [attempt, setAttempt] = useState(0);
   const [pendingCommand, setPendingCommand] = useAtom(terminalCommandAtom);
   const [pendingSession, setPendingSession] = useAtom(terminalSessionAtom);
   const [followUp, setFollowUp] = useAtom(terminalFollowUpAtom);
@@ -101,6 +134,7 @@ export function TerminalPage() {
   const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
   const embeddedFrame = useIsEmbeddedFrame();
   const {
+    sessions,
     userSessions,
     systemSessions,
     selectedSessionId,
@@ -110,6 +144,8 @@ export function TerminalPage() {
     deleteSession,
     refreshSessions,
     loading: sessionsLoading,
+    loaded: sessionsLoaded,
+    error: sessionsError,
   } = useTerminalSessions({ enabled: true, persistent: true });
   const keyboard = useKeyboardMode();
   const [connectionStatus, setConnectionStatus] = useState<TerminalConnectionStatus | null>(null);
@@ -155,14 +191,14 @@ export function TerminalPage() {
       const MAX_RETRIES = 3;
       const RETRY_DELAY_MS = 1000;
 
-      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      for (let tryNumber = 1; tryNumber <= MAX_RETRIES; tryNumber++) {
         if (cancelled) return;
         try {
           const [sessionRes, rootRes] = await Promise.all([
             fetch(`${CORE_URL}/api/terminal/session`, { method: "POST" }),
             fetch(`${CORE_URL}/api/terminal/project-root`),
           ]);
-          if (!sessionRes.ok) throw new Error(`Status ${sessionRes.status}`);
+          if (!sessionRes.ok) throw await tokenFailure(sessionRes);
           const { token } = (await sessionRes.json()) as { token: string };
           const { path } = rootRes.ok
             ? ((await rootRes.json()) as { path: string })
@@ -174,18 +210,20 @@ export function TerminalPage() {
           return; // success
         } catch (err) {
           if (cancelled) return;
-          if (attempt < MAX_RETRIES) {
+          const retryable = !(err instanceof TerminalTokenError) || err.retryable;
+          if (retryable && tryNumber < MAX_RETRIES) {
             await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
           } else {
-            setError(String(err));
+            setError(failureMessage(err, UNREACHABLE_REASON));
+            return;
           }
         }
       }
     }
 
-    init();
+    void init();
     return () => { cancelled = true; };
-  }, []);
+  }, [attempt]);
 
   const launchClaudeCode = useCallback((resume = true) => {
     if (!projectRoot) return;
@@ -205,32 +243,33 @@ export function TerminalPage() {
     launchClaudeCode(resume);
   }, [autoMode, launchClaudeCode, projectRoot]);
 
-  const handleCreateSession = useCallback(async (name?: string) => {
+  // Session actions report their own outcome where they were asked for (the
+  // sidebar row, the picker's footer, the confirm dialog). They never replace
+  // a working terminal with the connection-error screen.
+  const handleCreateSession = useCallback(async (name?: string): Promise<TerminalSessionActionResult> => {
     try {
-      await createNewSession(name);
-      setError(null);
+      const created = await createNewSession(name);
+      return { ok: true, name: created?.name };
     } catch (err) {
-      setError(String(err));
+      return { ok: false, error: failureMessage(err, UNREACHABLE_REASON) };
     }
   }, [createNewSession]);
 
-  const handleDeleteSession = useCallback(async (sessionId: string) => {
-    if (!sessionId || sessionId === "sess_default") return;
+  const handleDeleteSession = useCallback(async (sessionId: string): Promise<TerminalSessionActionResult> => {
+    if (!sessionId || sessionId === "sess_default") {
+      return { ok: false, error: "The default session can't be ended." };
+    }
     try {
       await deleteSession(sessionId);
-      setError(null);
+      return { ok: true };
     } catch (err) {
-      setError(String(err));
+      return { ok: false, error: failureMessage(err, UNREACHABLE_REASON) };
     }
   }, [deleteSession]);
 
-  const handleRefreshSessions = useCallback(async () => {
-    try {
-      await refreshSessions({ throwOnError: true });
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-    }
+  // A failed refresh keeps the list and says "Couldn't refresh" (the hook's error).
+  const handleRefreshSessions = useCallback(() => {
+    void refreshSessions();
   }, [refreshSessions]);
 
   const handleImageUpload = useCallback((file: File) => {
@@ -310,32 +349,46 @@ export function TerminalPage() {
   function retry() {
     setToken(null);
     setError(null);
+    setAttempt((n) => n + 1);
   }
 
+  const sidebar = (
+    <TerminalSidebar
+      userSessions={userSessions}
+      systemSessions={systemSessions}
+      listedSessions={sessions}
+      selectedSessionId={selectedSessionId}
+      loaded={sessionsLoaded}
+      error={sessionsError}
+      canCreate={!!token && !error}
+      onSelect={setSelectedSessionId}
+      onCreate={handleCreateSession}
+      onDelete={handleDeleteSession}
+      onRetry={handleRefreshSessions}
+    />
+  );
+
   return (
+    <WindowSidebarLayout sidebar={sidebar}>
     <div
       // The terminal stays dark in both themes, so its status and text tokens
       // use the dark values (the light ones are too dark for this surface).
-      className="dark absolute inset-0 flex flex-col overflow-hidden"
-      style={{ background: "#0d1117" }}
+      className="dark absolute inset-0 flex flex-col overflow-hidden bg-terminal text-terminal-foreground"
     >
       {error ? (
-        <div className="flex flex-col items-center justify-center flex-1 gap-4 px-8">
+        <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
           <HugeiconsIcon
             icon={ComputerTerminal01Icon}
-            size={40}
-            className="text-[#8b949e]"
+            size={32}
+            strokeWidth={1.5}
+            aria-hidden="true"
+            className="text-muted-foreground"
           />
-          <div className="text-center">
-            <p className="text-[#e6edf3] font-medium mb-1">Connection Failed</p>
-            <p className="text-status-critical text-sm">{error}</p>
+          <div className="grid max-w-sm gap-1">
+            <p className="text-sm font-medium text-terminal-foreground">Couldn&apos;t connect to the terminal</p>
+            <p className="text-sm text-muted-foreground">{error}</p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-white/20 text-[#e6edf3] hover:bg-white/10"
-            onClick={retry}
-          >
+          <Button variant="outline" size="sm" onClick={retry}>
             Retry
           </Button>
         </div>
@@ -347,6 +400,7 @@ export function TerminalPage() {
             selectedSessionId={selectedSessionId}
             selectedSessionName={selectedSession?.name}
             loading={sessionsLoading}
+            refreshError={sessionsError}
             onSelect={setSelectedSessionId}
             onCreate={handleCreateSession}
             onDelete={handleDeleteSession}
@@ -389,5 +443,6 @@ export function TerminalPage() {
         </div>
       )}
     </div>
+    </WindowSidebarLayout>
   );
 }

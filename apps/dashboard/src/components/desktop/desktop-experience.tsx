@@ -649,7 +649,8 @@ function defaultBounds(appId: string, area: DesktopArea): DesktopBounds {
 
   const offset = (appId.length % 5) * 24;
   return clampDesktopBounds(
-    { x: 160 + offset, y: 120 + offset, width: 720, height: 520 },
+    // Terminal opens wide enough to show its sidebar beside the session
+    { x: 160 + offset, y: 120 + offset, width: appId === "terminal" ? 860 : 720, height: 520 },
     area,
     { width: 440, height: 340 },
   );

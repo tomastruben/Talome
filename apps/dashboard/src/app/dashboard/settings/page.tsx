@@ -13,18 +13,18 @@ import {
 import { useUser } from "@/hooks/use-user";
 import { CORE_URL } from "@/lib/constants";
 import { SettingsGroup, ToggleRow, InfoRow } from "@/components/settings/settings-primitives";
-import { Badge } from "@/components/ui/badge";
 import { usePendingApprovals } from "@/components/trust/api";
 import { Spinner } from "@/components/ui/spinner";
 import { ServicesSection } from "@/components/system/services-section";
 import { logOut } from "@/lib/session";
 import { toast } from "sonner";
 import { SETTINGS_CATEGORIES, type SettingsLink } from "@/components/settings/settings-nav";
+import { WaitingBadge } from "@/components/settings/settings-sidebar";
 import { useSettingsLayout } from "@/components/settings/settings-layout-context";
 
 function CategoryLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground px-1 mb-2">
+    <p className="text-xs font-medium text-muted-foreground px-1 mb-2">
       {children}
     </p>
   );
@@ -45,11 +45,7 @@ function SettingsLinkRow({ item, badge }: { item: SettingsLink; badge?: number }
           <p className="text-sm font-medium">{item.title}</p>
           <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>
         </div>
-        {badge !== undefined && badge > 0 && (
-          <Badge className="bg-status-warning text-background tabular-nums" aria-label={`${badge} pending`}>
-            {badge}
-          </Badge>
-        )}
+        {badge !== undefined && badge > 0 && <WaitingBadge count={badge} />}
         <HugeiconsIcon icon={ArrowRight01Icon} size={14} className="text-dim-foreground shrink-0" />
       </div>
     </Link>
@@ -126,7 +122,7 @@ function ServerModeToggle() {
   return (
     <div className="px-4 py-3.5">
       <div className="flex items-center gap-2 mb-3">
-        <p className="text-sm font-medium">Server Mode</p>
+        <p className="text-sm font-medium">Server mode</p>
         {switching && (
           <span className="text-xs text-muted-foreground motion-safe:animate-pulse">
             {currentMode === "dev" ? "Building and restarting…" : "Switching to dev…"}
@@ -135,7 +131,7 @@ function ServerModeToggle() {
       </div>
       {!managed && (
         <p className="text-xs text-muted-foreground mb-2">
-          Start with <span className="font-mono text-[11px]">pnpm start</span> to enable mode switching.
+          Start with <span className="font-mono">pnpm start</span> to enable mode switching.
         </p>
       )}
       <div className="grid grid-cols-2 gap-2">
@@ -179,7 +175,7 @@ function GeneralInline({ isAdmin }: { isAdmin: boolean }) {
       <SettingsGroup>
         {mounted && (
           <ToggleRow
-            label="Dark Mode"
+            label="Dark mode"
             hint="Use dark theme throughout"
             checked={theme === "dark"}
             onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
@@ -187,7 +183,7 @@ function GeneralInline({ isAdmin }: { isAdmin: boolean }) {
         )}
         {/* Switching the server mode restarts it: administration, like Services below. */}
         {isAdmin ? <ServerModeToggle /> : null}
-        <InfoRow label="Docker Socket" value={system?.dockerSocket ?? "detecting…"} />
+        <InfoRow label="Docker socket" value={system?.dockerSocket ?? "detecting…"} />
       </SettingsGroup>
     </section>
   );
@@ -244,7 +240,7 @@ export default function SettingsPage() {
         />
       ))}
       <LogoutButton />
-      <p className="text-center text-xs text-muted-foreground/30 pt-2">
+      <p className="text-center text-xs text-muted-foreground pt-2">
         Designed and built by Tomas Truben &middot; AGPL-3.0
       </p>
     </div>

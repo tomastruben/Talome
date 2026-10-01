@@ -5,11 +5,30 @@ import { usePathname } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
 import { DURATION, TRAVEL, enter } from "@/lib/motion";
 import { StackLayout } from "@/components/layout/stack-layout";
-import { SettingsSidebar } from "@/components/settings/settings-sidebar";
+import { SettingsSidebar, SettingsWindowSidebar } from "@/components/settings/settings-sidebar";
 import { SettingsLayoutContext } from "@/components/settings/settings-layout-context";
+import { WindowSidebarLayout, useWindowSidebarShown } from "@/components/ui/source-list";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 
 /** Width (px) at which Settings switches from a pushed list to sidebar + detail. */
 const TWO_PANE_MIN_WIDTH = 900;
+
+/** The detail settles in as you move between sections; static under reduced motion. */
+function SettledDetail({ children, className }: { children: React.ReactNode; className?: string }) {
+  const pathname = usePathname();
+  const reduceMotion = useReducedMotion();
+  return (
+    <motion.div
+      key={pathname}
+      initial={reduceMotion ? false : { opacity: 0, y: TRAVEL.lift, filter: "blur(2px)" }}
+      animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+      transition={enter(DURATION.base)}
+      className={className}
+    >
+      {children}
+    </motion.div>
+  );
+}
 
 export default function SettingsLayout({
   children,
@@ -17,45 +36,45 @@ export default function SettingsLayout({
   children: React.ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const [twoPane, setTwoPane] = useState(false);
-  const pathname = usePathname();
-  const reduceMotion = useReducedMotion();
+  const [measuredWide, setMeasuredWide] = useState(false);
+  const embedded = useIsEmbeddedFrame();
+  // In a desktop window the window decides: its sidebar slot shows exactly
+  // when the window is wide enough, and then the sections live there.
+  const windowSidebarShown = useWindowSidebarShown();
+  const twoPane = embedded ? windowSidebarShown : measuredWide;
 
-  // Measure the space Settings actually has (a desktop window, or the page next
-  // to the app sidebar), not the browser viewport.
+  // Classic: measure the space Settings actually has (the page next to the
+  // app sidebar), not the browser viewport.
   useLayoutEffect(() => {
     const element = rootRef.current;
     if (!element) return;
-    const update = () => setTwoPane(element.clientWidth >= TWO_PANE_MIN_WIDTH);
+    const update = () => setMeasuredWide(element.clientWidth >= TWO_PANE_MIN_WIDTH);
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
 
+  // One tree in both modes (the sidebar is simply absent outside a window), so
+  // learning that this is a window after hydration doesn't remount the page.
   return (
-    <div ref={rootRef} className="min-w-0">
-      <SettingsLayoutContext.Provider value={{ twoPane }}>
-        {twoPane ? (
-          <div className="grid grid-cols-[15rem_minmax(0,1fr)]">
-            <aside className="sticky top-0 self-start max-h-dvh overflow-y-auto border-r border-border/60 pb-6 pr-4">
-              <SettingsSidebar />
-            </aside>
-            {/* The detail settles in as you move between sections; static under reduced motion */}
-            <motion.div
-              key={pathname}
-              initial={reduceMotion ? false : { opacity: 0, y: TRAVEL.lift, filter: "blur(2px)" }}
-              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-              transition={enter(DURATION.base)}
-              className="min-w-0 pl-8"
-            >
-              {children}
-            </motion.div>
-          </div>
-        ) : (
-          <StackLayout rootPath="/dashboard/settings">{children}</StackLayout>
-        )}
-      </SettingsLayoutContext.Provider>
-    </div>
+    <WindowSidebarLayout sidebar={embedded ? <SettingsWindowSidebar /> : null}>
+      <div ref={rootRef} className="min-w-0">
+        <SettingsLayoutContext.Provider value={{ twoPane }}>
+          {!twoPane ? (
+            <StackLayout rootPath="/dashboard/settings">{children}</StackLayout>
+          ) : embedded ? (
+            <SettledDetail className="min-w-0">{children}</SettledDetail>
+          ) : (
+            <div className="grid grid-cols-[15rem_minmax(0,1fr)]">
+              <aside className="sticky top-0 self-start max-h-dvh overflow-y-auto border-r border-border/60 pb-6 pr-4">
+                <SettingsSidebar />
+              </aside>
+              <SettledDetail className="min-w-0 pl-8">{children}</SettledDetail>
+            </div>
+          )}
+        </SettingsLayoutContext.Provider>
+      </div>
+    </WindowSidebarLayout>
   );
 }

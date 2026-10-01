@@ -56,6 +56,7 @@ import { pageTitleAtom } from "@/atoms/page-title";
 import { hideShellHeaderAtom } from "@/atoms/shell";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { CORE_URL } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import type { BlueprintState } from "@/components/creator/blueprint-draft-bar";
 import { BlueprintDraftBar } from "@/components/creator/blueprint-draft-bar";
 import { ClaudeTerminal } from "@/components/terminal/claude-terminal";
@@ -188,7 +189,9 @@ function AssistantHeader({
   const title = activeId ? conversations.find((c) => c.id === activeId)?.title : undefined;
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-1.5 bg-background/75 px-4 backdrop-blur-sm">
+    // Nothing scrolls under this header (the conversation is its own scroller),
+    // so it needs no backdrop: it sits on the page like the rest of the view.
+    <header className="flex h-12 shrink-0 items-center gap-1.5 px-4">
       {/* Desktop: sidebar toggle */}
       <div className="hidden md:flex">
         <SidebarTrigger className="size-8 shrink-0 text-muted-foreground hover:text-foreground transition-colors">
@@ -669,9 +672,19 @@ export default function AssistantPage() {
 
   // ── Chat content ──────────────────────────────────────────────────────────
 
+  // The scroller fades into the input bar below it. A mask, not a gradient in
+  // the background colour, so it reads the same on window glass.
+  const showInputBar = !buildSession && !buildResult;
+  const bottomFade = showInputBar
+    ? "[mask-image:linear-gradient(to_bottom,black_calc(100%-3rem),transparent)]"
+    : undefined;
+
   const chatContent = showingChat ? (
     <Conversation className="flex-1 min-h-0" initial="smooth" resize="smooth">
-      <ConversationContent className="max-w-2xl mx-auto w-full py-4 sm:py-6 px-4 sm:px-6">
+      <ConversationContent
+        scrollClassName={bottomFade}
+        className="max-w-2xl mx-auto w-full py-4 sm:py-6 px-4 sm:px-6"
+      >
         {messages.map((message, index) => (
           <ChatMessage
             key={`${message.id}-${index}`}
@@ -688,9 +701,10 @@ export default function AssistantPage() {
       <ConversationScrollButton />
     </Conversation>
   ) : (
-    <div className="flex-1 min-h-0 overflow-y-auto overscroll-none">
-      <div className="max-w-2xl mx-auto w-full py-4 sm:py-6 px-4 sm:px-6">
-        <div className="flex size-full flex-col items-center justify-center px-2 sm:px-4">
+    // Centred while it fits (auto margins), scrolls from the top when it doesn't.
+    <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-none", bottomFade)}>
+      <div className="m-auto w-full max-w-2xl px-4 py-4 sm:px-6 sm:py-6">
+        <div className="flex w-full flex-col items-center px-2 sm:px-4">
           {error ? (
             <div className="w-full max-w-md mb-6">
               <AssistantChatError error={error} provider={activeProvider} onDismiss={clearError} />
@@ -792,7 +806,7 @@ export default function AssistantPage() {
       onSubmit={onSubmit}
       onStop={stop}
       onVoiceMode={() => setVoiceOpen(true)}
-      placeholder="Ask Talome anything..."
+      placeholder="Ask Talome anything…"
       extraTools={
         <>
           <AssistantModelSelector
@@ -809,7 +823,7 @@ export default function AssistantPage() {
               <button
                 type="button"
                 onClick={keyboard.toggle}
-                className={`inline-flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent ${keyboard.mode === "virtual" ? "text-foreground" : "text-dim-foreground"}`}
+                className={`inline-flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent ${keyboard.mode === "virtual" ? "text-foreground" : "text-muted-foreground"}`}
                 hidden={!keyboard.showToggle}
               >
                 <HugeiconsIcon icon={KeyboardIcon} size={16} />
@@ -828,7 +842,7 @@ export default function AssistantPage() {
   const sidebar = (
     <SourceList label="Chats">
       <SourceListSection>
-        <SourceListItem icon={Add01Icon} label="New Chat" active={!showingChat} onSelect={() => void handleNew()} />
+        <SourceListItem icon={Add01Icon} label="New chat" active={!showingChat} onSelect={() => void handleNew()} />
       </SourceListSection>
       {Object.entries(grouped).map(([group, convs]) => (
         <SourceListSection key={group} title={group}>
@@ -878,10 +892,10 @@ export default function AssistantPage() {
       {buildResult && !buildSession && (
         <BuildResultCard result={buildResult} onDismiss={handleBuildResultDismiss} />
       )}
-      {/* Bottom section: fade + blueprint bar + input */}
-      {!buildSession && !buildResult && (
-        <div className="relative shrink-0">
-          <div className="pointer-events-none absolute inset-x-0 -top-12 h-12 bg-gradient-to-t from-background to-transparent" />
+      {/* Bottom section: blueprint bar + input. In a window the space under
+          the input matches the window's gutter (the bar brings 0.75rem). */}
+      {showInputBar && (
+        <div className={cn("relative shrink-0", embeddedFrame && "pb-[calc(var(--window-pad,1rem)-0.75rem)]")}>
           {hasBlueprint && showingChat && (
             <div className="max-w-2xl mx-auto w-full px-4 sm:px-6 pb-2 pt-1">
               {buildError && <Alert variant="destructive" className="mb-2">

@@ -6,11 +6,67 @@ import { usePathname } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
 import { HugeiconsIcon, Search01Icon, Settings01Icon } from "@/components/icons";
 import type { IconSvgElement } from "@/components/icons";
+import { Badge } from "@/components/ui/badge";
+import { SearchField } from "@/components/ui/search-field";
+import { SourceList, SourceListItem, SourceListSection } from "@/components/ui/source-list";
 import { useUser } from "@/hooks/use-user";
 import { cn } from "@/lib/utils";
 import { SETTINGS_CATEGORIES } from "@/components/settings/settings-nav";
 import { usePendingApprovals } from "@/components/trust/api";
 import { DURATION, EASE_ENTER } from "@/lib/motion";
+
+const GENERAL_KEYWORDS = "general dark mode server mode services log out";
+
+/**
+ * What the Settings navigation shows for a search: the visible categories
+ * (admin-only sections only for admins), whether General matches, and the
+ * approvals waiting. Shared by the classic sidebar and the window sidebar.
+ */
+export function useSettingsNav(query: string) {
+  const pathname = usePathname();
+  const { isAdmin } = useUser();
+  const { count: pendingApprovals } = usePendingApprovals(isAdmin);
+  const q = query.trim().toLowerCase();
+
+  const categories = useMemo(() => {
+    return SETTINGS_CATEGORIES.map((category) => ({
+      ...category,
+      items: category.items.filter(
+        (item) =>
+          (!item.adminOnly || isAdmin) &&
+          (!q || item.title.toLowerCase().includes(q) || item.description.toLowerCase().includes(q)),
+      ),
+    })).filter((category) => category.items.length > 0);
+  }, [isAdmin, q]);
+
+  const showGeneral = !q || GENERAL_KEYWORDS.includes(q);
+
+  return {
+    pathname,
+    isAdmin,
+    pendingApprovals,
+    categories,
+    showGeneral,
+    noMatch: categories.length === 0 && !showGeneral,
+  };
+}
+
+const sectionHref = (slug: string) => `/dashboard/settings/${slug}`;
+
+/**
+ * The amber "needs you" count: approvals waiting for a decision. The word
+ * "waiting" is screen-reader text, so the link reads "Approvals 2 waiting"
+ * (aria-label is not allowed on a plain span).
+ */
+export function WaitingBadge({ count, className }: { count: number; className?: string }) {
+  const formatted = new Intl.NumberFormat().format(count);
+  return (
+    <Badge variant="count" className={className}>
+      {formatted}
+      <span className="sr-only"> waiting</span>
+    </Badge>
+  );
+}
 
 function SidebarLink({ href, icon, title, active, badge }: { href: string; icon: IconSvgElement; title: string; active: boolean; badge?: number }) {
   const reduceMotion = useReducedMotion();
@@ -41,36 +97,15 @@ function SidebarLink({ href, icon, title, active, badge }: { href: string; icon:
       </span>
       <span className="truncate">{title}</span>
       {/* Amber count = needs you (status grammar); only approvals carry one. */}
-      {badge ? (
-        <span className="ml-auto rounded-full bg-status-warning/15 px-1.5 text-xs font-medium tabular-nums text-status-warning">
-          {badge}
-          <span className="sr-only"> waiting</span>
-        </span>
-      ) : null}
+      {badge ? <WaitingBadge count={badge} className="ml-auto" /> : null}
     </Link>
   );
 }
 
 /** System Settings–style sidebar: search, General, then grouped sections. */
 export function SettingsSidebar() {
-  const pathname = usePathname();
-  const { isAdmin } = useUser();
-  const { count: pendingApprovals } = usePendingApprovals(isAdmin);
   const [query, setQuery] = useState("");
-
-  const categories = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return SETTINGS_CATEGORIES.map((category) => ({
-      ...category,
-      items: category.items.filter(
-        (item) =>
-          (!item.adminOnly || isAdmin) &&
-          (!q || item.title.toLowerCase().includes(q) || item.description.toLowerCase().includes(q)),
-      ),
-    })).filter((category) => category.items.length > 0);
-  }, [isAdmin, query]);
-
-  const showGeneral = !query.trim() || "general dark mode server mode services log out".includes(query.trim().toLowerCase());
+  const { pathname, pendingApprovals, categories, showGeneral, noMatch } = useSettingsNav(query);
 
   return (
     <nav aria-label="Settings sections" className="isolate flex flex-col gap-4">
@@ -100,19 +135,88 @@ export function SettingsSidebar() {
           {category.items.map((item) => (
             <SidebarLink
               key={item.slug}
-              href={`/dashboard/settings/${item.slug}`}
+              href={sectionHref(item.slug)}
               icon={item.icon}
               title={item.title}
-              active={pathname === `/dashboard/settings/${item.slug}`}
+              active={pathname === sectionHref(item.slug)}
               badge={item.slug === "approvals" ? pendingApprovals : undefined}
             />
           ))}
         </div>
       ))}
 
-      {categories.length === 0 && !showGeneral && (
+      {noMatch && (
         <p className="px-2 text-sm text-muted-foreground">No settings match “{query.trim()}”.</p>
       )}
     </nav>
+  );
+}
+
+/**
+ * Settings in a desktop window: the same sections as a Finder-style source
+ * list on the window's glass, with search at the top. The window shell shows
+ * it only when the window is wide enough; otherwise Settings pushes from its
+ * index like on a phone.
+ */
+export function SettingsWindowSidebar() {
+  const [query, setQuery] = useState("");
+  const { pathname, pendingApprovals, categories, showGeneral, noMatch } = useSettingsNav(query);
+
+  return (
+    <SourceList label="Settings">
+      <SearchField
+        type="search"
+        aria-label="Search settings"
+        placeholder="Search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          // Escape clears the search first; a second Escape goes on as usual.
+          if (event.key === "Escape" && query) {
+            event.preventDefault();
+            event.stopPropagation();
+            setQuery("");
+          }
+        }}
+        className="h-8"
+        containerClassName="shrink-0"
+      />
+
+      {showGeneral && (
+        <SourceListSection>
+          <SourceListItem
+            icon={Settings01Icon}
+            label="General"
+            href="/dashboard/settings"
+            active={pathname === "/dashboard/settings"}
+          />
+        </SourceListSection>
+      )}
+
+      {categories.map((category) => (
+        <SourceListSection key={category.label} title={category.label}>
+          {category.items.map((item) => (
+            <SourceListItem
+              key={item.slug}
+              icon={item.icon}
+              label={item.title}
+              href={sectionHref(item.slug)}
+              active={pathname === sectionHref(item.slug)}
+              trailing={
+                item.slug === "approvals" && pendingApprovals > 0 ? (
+                  <WaitingBadge count={pendingApprovals} />
+                ) : undefined
+              }
+            />
+          ))}
+        </SourceListSection>
+      ))}
+
+      {noMatch && (
+        <p role="status" className="px-2.5 text-sm text-muted-foreground">
+          No settings match “{query.trim()}”.
+        </p>
+      )}
+    </SourceList>
   );
 }
