@@ -38,7 +38,6 @@ import {
   PlayIcon,
   Notification01Icon,
   CheckmarkCircle01Icon,
-  Cancel01Icon,
   Add01Icon,
   UserIcon,
 } from "@/components/icons";
@@ -66,7 +65,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { AnimatePresence, motion } from "motion/react";
-import { DURATION, SKELETON_DELAY_MS, enter, tween } from "@/lib/motion";
+import { DURATION, SKELETON_DELAY_MS, tween } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import {
@@ -77,6 +76,8 @@ import {
   type SheetItem,
 } from "@/components/media/media-detail-sheet";
 import { ReleaseSearchPanel } from "@/components/media/release-search-panel";
+import { MediaFiltersRow } from "@/components/media/media-filters-row";
+import { MediaSelectionBar } from "@/components/media/media-selection-bar";
 import { RequestsTab } from "@/components/media/requests-tab";
 import { WatchlistSection } from "@/components/media/watching-tab";
 import { useCinemaBrowser } from "@/components/media/cinema-browser-context";
@@ -325,7 +326,7 @@ function SourceStatusLine({ message, onRetry }: { message: string; onRetry: () =
   return (
     <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status">
       {message} ·
-      <Button variant="ghost" size="xs" onClick={onRetry}>Retry</Button>
+      <Button variant="ghost" size="xs" className="pointer-coarse:h-11 pointer-coarse:px-3" onClick={onRetry}>Retry</Button>
     </p>
   );
 }
@@ -438,7 +439,7 @@ function DownloadQueueRow({
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-primary/80 hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-60"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-primary/80 hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-60 pointer-coarse:size-11"
                     onClick={() => onRetry(item)}
                     disabled={retryingId === item.id}
                     aria-label={retryingId === item.id ? "Retrying download" : "Retry download"}
@@ -1466,7 +1467,7 @@ function MediaPageInner() {
         <Button
           variant="ghost"
           size="sm"
-          className="hidden md:inline-flex h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+          className="hidden md:inline-flex h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11"
           onClick={() => cinemaBrowser.open(tab)}
           onPointerEnter={preloadCinemaBrowser}
           onFocus={preloadCinemaBrowser}
@@ -1477,7 +1478,7 @@ function MediaPageInner() {
         <Button
           variant={selectionMode ? "secondary" : "ghost"}
           size="sm"
-          className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+          className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11"
           onClick={() => selectionMode ? exitSelectionMode() : setSelectionMode(true)}
         >
           {selectionMode ? "Cancel" : "Select"}
@@ -1730,7 +1731,8 @@ function MediaPageInner() {
         value={tab}
         onValueChange={(v) => selectTab(v as MediaTab)}
       >
-        <TabsList>
+        {/* On touch each tab is a 44px target; below @4xl they are icon-only */}
+        <TabsList className="pointer-coarse:h-12">
           {tabs.map((t) => (
             <TabsTrigger
               key={t.id}
@@ -1738,7 +1740,7 @@ function MediaPageInner() {
               value={t.id}
               aria-label={t.ariaLabel}
               title={t.label}
-              className="text-xs gap-1.5"
+              className="text-xs gap-1.5 pointer-coarse:h-11 pointer-coarse:min-w-11"
             >
               <HugeiconsIcon icon={t.icon} size={14} />
               <span className="hidden @4xl:inline">{t.label}</span>
@@ -1758,7 +1760,7 @@ function MediaPageInner() {
         <div data-media-view-controls="" className="ml-auto flex min-w-0 items-center justify-end gap-2 @max-md:w-full">
           <SearchField
             containerClassName="min-w-0 w-48 @3xl/content:w-56 @max-md:w-auto @max-md:max-w-none @max-md:flex-1"
-            className="h-8"
+            className="h-8 pointer-coarse:h-11"
             placeholder={tab === "movies" ? "Search movies…" : "Search shows…"}
             aria-label={tab === "movies" ? "Search movies" : "Search shows"}
             value={search}
@@ -1769,7 +1771,7 @@ function MediaPageInner() {
               <Select value={collection} onValueChange={(v) => setCollection(v as MediaCollection)}>
                 <SelectTrigger
                   aria-label="Show"
-                  className={cn(WINDOW_SIDEBAR_REPLACES, "h-8 min-w-28 text-xs")}
+                  className={cn(WINDOW_SIDEBAR_REPLACES, "h-8 min-w-28 text-xs pointer-coarse:h-11")}
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -1781,7 +1783,7 @@ function MediaPageInner() {
               </Select>
             )}
             <Select value={sort} onValueChange={(v) => setSort(v as MediaSortKey)}>
-              <SelectTrigger aria-label="Sort" className="h-8 min-w-28 text-xs">
+              <SelectTrigger aria-label="Sort" className="h-8 min-w-28 text-xs pointer-coarse:h-11">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1794,7 +1796,7 @@ function MediaPageInner() {
               value={minRating === null ? "any" : String(minRating)}
               onValueChange={(v) => setMinRating(v === "any" ? null : Number(v))}
             >
-              <SelectTrigger aria-label="Minimum rating" className="h-8 min-w-24 text-xs">
+              <SelectTrigger aria-label="Minimum rating" className="h-8 min-w-24 text-xs pointer-coarse:h-11">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -2251,7 +2253,7 @@ function MediaPageInner() {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 text-xs shrink-0"
+            className="h-7 gap-1.5 text-xs shrink-0 pointer-coarse:h-11"
             disabled={scanning}
             onClick={async () => {
               setScanning(true);
@@ -2416,40 +2418,11 @@ function MediaPageInner() {
       />
 
       {/* Floating selection bar */}
-      <AnimatePresence>
-        {selectionMode && selectedIds.size > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            transition={enter()}
-            className="fixed bottom-6 inset-x-0 z-50 flex justify-center pointer-events-none pb-[env(safe-area-inset-bottom)]"
-          >
-            <div className="flex items-center gap-1 rounded-full bg-foreground text-background px-4 py-2 shadow-lg pointer-events-auto">
-              <span className="text-sm font-medium tabular-nums whitespace-nowrap">{numberFormat.format(selectedIds.size)} selected</span>
-              <div className="w-px h-4 bg-background/15 mx-1" />
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 px-2.5 text-xs text-status-critical hover:text-status-critical hover:bg-status-critical/15"
-                onClick={() => setShowBulkDeleteDialog(true)}
-              >
-                <HugeiconsIcon icon={Delete01Icon} size={14} />
-                <span className="hidden sm:inline">Remove</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-background/10"
-                onClick={exitSelectionMode}
-              >
-                <HugeiconsIcon icon={Cancel01Icon} size={14} />
-                <span className="hidden sm:inline">Cancel</span>
-              </Button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <MediaSelectionBar
+        count={selectionMode ? selectedIds.size : 0}
+        onRemove={() => setShowBulkDeleteDialog(true)}
+        onCancel={exitSelectionMode}
+      />
 
       {/* Bulk delete confirmation dialog */}
       <Dialog
@@ -2511,85 +2484,6 @@ function MediaPageInner() {
       </Dialog>
     </div>
     </WindowSidebarLayout>
-  );
-}
-
-function MediaFiltersRow({
-  genres,
-  selectedGenres,
-  minRating,
-  onToggleGenre,
-  onClearFilters,
-}: {
-  genres: readonly string[];
-  selectedGenres: readonly string[];
-  minRating: number | null;
-  onToggleGenre: (genre: string) => void;
-  onClearFilters: () => void;
-}) {
-  const hasActiveFilters = selectedGenres.length > 0 || minRating !== null;
-
-  if (genres.length === 0 && !hasActiveFilters) return null;
-
-  const pill = (active: boolean) => cn(
-    "h-6 shrink-0 rounded-full border px-2 text-xs transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-    active
-      ? "border-foreground/30 bg-foreground/10 text-foreground"
-      : "border-border text-muted-foreground hover:text-foreground",
-  );
-
-  return (
-    // The window sidebar lists genres; this rail is for classic and narrow windows.
-    <div className={cn("grid gap-2", !hasActiveFilters && WINDOW_SIDEBAR_REPLACES)}>
-      {genres.length > 0 && (
-        <div className={cn("flex min-w-0 items-center gap-1.5", WINDOW_SIDEBAR_REPLACES)}>
-          <button
-            type="button"
-            aria-pressed={!hasActiveFilters}
-            onClick={onClearFilters}
-            className={pill(!hasActiveFilters)}
-          >
-            All
-          </button>
-          <div className="filter-rail min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none">
-              {genres.map((genre) => {
-                const active = selectedGenres.includes(genre);
-                return (
-                  <button
-                    key={genre}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => onToggleGenre(genre)}
-                    className={pill(active)}
-                  >
-                    {genre}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {hasActiveFilters && (
-        <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-xs text-muted-foreground">
-            {selectedGenres.length > 0 ? selectedGenres.join(" · ") : "All genres"}
-            {minRating !== null ? ` · Rated ${minRating}+` : ""}
-          </p>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-xs shrink-0"
-            onClick={onClearFilters}
-          >
-            Clear
-          </Button>
-        </div>
-      )}
-    </div>
   );
 }
 
