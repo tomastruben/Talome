@@ -4,17 +4,16 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { terminalCommandAtom, launchTerminalAgentAtom, terminalSessionAtom, terminalFollowUpAtom, terminalAutoAtom, terminalRemoteAtom, terminalRemoteActiveAtom, type TerminalAgent } from "@/atoms/terminal";
+import { pageTitleAtom } from "@/atoms/page-title";
 import { HugeiconsIcon, ComputerTerminal01Icon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { WindowSidebarLayout } from "@/components/ui/source-list";
 import { CORE_URL } from "@/lib/constants";
 import { useKeyboardMode } from "@/hooks/use-keyboard-mode";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
-import { desktopAppActionsAtom, type DesktopAppAction } from "@/atoms/desktop-app-actions";
 import type { TerminalInnerHandle, TerminalConnectionStatus } from "./terminal-inner";
-import { TerminalSessionToolbar } from "./terminal-session-toolbar";
+import { TerminalToolbar } from "./terminal-toolbar";
 import { useTerminalSessions } from "./use-terminal-sessions";
-import { useTerminalHeaderAction } from "./use-terminal-header-action";
 import { TerminalSidebar, type TerminalSessionActionResult } from "./terminal-sidebar";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -131,7 +130,7 @@ export function TerminalPage() {
   const [mounted, setMounted] = useState(false);
   const termRef = useRef<TerminalInnerHandle>(null);
   const setLaunchTerminalAgent = useSetAtom(launchTerminalAgentAtom);
-  const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
+  const setPageTitle = useSetAtom(pageTitleAtom);
   const embeddedFrame = useIsEmbeddedFrame();
   const {
     sessions,
@@ -149,16 +148,24 @@ export function TerminalPage() {
   } = useTerminalSessions({ enabled: true, persistent: true });
   const keyboard = useKeyboardMode();
   const [connectionStatus, setConnectionStatus] = useState<TerminalConnectionStatus | null>(null);
-  const terminalHeaderAction = useTerminalHeaderAction();
   const [autoMode, setAutoMode] = useAtom(terminalAutoAtom);
   const [remote, setRemote] = useAtom(terminalRemoteAtom);
   const remoteActive = useAtomValue(terminalRemoteActiveAtom);
   const setRemoteActive = useSetAtom(terminalRemoteActiveAtom);
+  const sessionTitle = selectedSession?.name ?? "Default";
 
   useEffect(() => setMounted(true), []);
 
-  // The embedded desktop app has no SiteHeader, so hydrate the same terminal
-  // preferences that the classic terminal header uses.
+  // In a window the title bar says where you are: the session you're typing
+  // into (the sidebar lists the others). Classic mode keeps "Terminal" in the
+  // header; its toolbar's session picker names the session.
+  useEffect(() => {
+    if (!embeddedFrame) return;
+    setPageTitle(sessionTitle);
+    return () => setPageTitle(null);
+  }, [embeddedFrame, sessionTitle, setPageTitle]);
+
+  // Auto mode and remote control are remembered on this device.
   useEffect(() => {
     setAutoMode(localStorage.getItem("talome-auto-mode") === "true");
     setRemote(localStorage.getItem("talome-remote-mode") === "true");
@@ -276,69 +283,22 @@ export function TerminalPage() {
     termRef.current?.uploadImage(file);
   }, []);
 
-  const handleToggleAutoMode = useCallback(() => {
-    const next = !autoMode;
+  const handleAutoModeChange = useCallback((next: boolean) => {
     setAutoMode(next);
     localStorage.setItem("talome-auto-mode", String(next));
-  }, [autoMode, setAutoMode]);
+  }, [setAutoMode]);
 
-  const handleToggleRemote = useCallback(() => {
-    const next = !remote;
+  const handleRemoteChange = useCallback((next: boolean) => {
     setRemote(next);
     localStorage.setItem("talome-remote-mode", String(next));
-  }, [remote, setRemote]);
+  }, [setRemote]);
 
-  useEffect(() => {
-    if (!embeddedFrame) return;
+  const handleReconnect = useCallback(() => {
+    termRef.current?.retryConnect();
+  }, []);
 
-    const actions: DesktopAppAction[] = [
-      {
-        id: "terminal-auto",
-        label: "Auto",
-        kind: "toggle",
-        active: autoMode,
-        onSelect: handleToggleAutoMode,
-      },
-      {
-        id: "terminal-remote",
-        label: remoteActive ? "Remote session active" : "Remote",
-        icon: "remote",
-        active: remote,
-        onSelect: handleToggleRemote,
-      },
-      {
-        id: "terminal-agent",
-        label: terminalHeaderAction.label,
-        icon: "source-code",
-        kind: "menu",
-        items: terminalHeaderAction.agentItems,
-      },
-      {
-        id: "terminal-session",
-        label: "Session",
-        kind: "menu",
-        disabled: terminalHeaderAction.disabled,
-        items: terminalHeaderAction.commandItems,
-      },
-    ];
-
-    setDesktopAppActions(actions);
-    return () => setDesktopAppActions([]);
-  }, [
-    embeddedFrame,
-    autoMode,
-    handleToggleAutoMode,
-    handleToggleRemote,
-    remote,
-    remoteActive,
-    setDesktopAppActions,
-    terminalHeaderAction.agentItems,
-    terminalHeaderAction.commandItems,
-    terminalHeaderAction.disabled,
-    terminalHeaderAction.label,
-  ]);
-
-  // Register one launch callback for both the classic SiteHeader and Desktop titlebar bridge.
+  // The launch callback behind the toolbar's agent button, once the terminal
+  // can take a command.
   useEffect(() => {
     if (projectRoot && token) {
       setLaunchTerminalAgent(() => launchTerminalAgent);
@@ -368,50 +328,65 @@ export function TerminalPage() {
     />
   );
 
+  const connected = Boolean(token && mounted && !error);
+
   return (
     <WindowSidebarLayout sidebar={sidebar}>
-    <div
-      // The terminal stays dark in both themes, so its status and text tokens
-      // use the dark values (the light ones are too dark for this surface).
-      className="dark absolute inset-0 flex flex-col overflow-hidden bg-terminal text-terminal-foreground"
-    >
-      {error ? (
-        <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
-          <HugeiconsIcon
-            icon={ComputerTerminal01Icon}
-            size={32}
-            strokeWidth={1.5}
-            aria-hidden="true"
-            className="text-muted-foreground"
-          />
-          <div className="grid max-w-sm gap-1">
-            <p className="text-sm font-medium text-terminal-foreground">Couldn&apos;t connect to the terminal</p>
-            <p className="text-sm text-muted-foreground">{error}</p>
+    {/* One column: the toolbar (in a window it moves into the window's toolbar
+        row, on the glass), then the terminal well. */}
+    <div className="@container absolute inset-0 flex min-h-0 flex-col">
+      <TerminalToolbar
+        userSessions={userSessions}
+        systemSessions={systemSessions}
+        selectedSessionId={selectedSessionId}
+        selectedSessionName={selectedSession?.name}
+        loading={sessionsLoading}
+        refreshError={sessionsError}
+        canCreate={!!token && !error}
+        onSelect={setSelectedSessionId}
+        onCreate={handleCreateSession}
+        onDelete={handleDeleteSession}
+        onRefresh={handleRefreshSessions}
+        connected={connected}
+        connectionStatus={connected ? connectionStatus : null}
+        onReconnect={handleReconnect}
+        autoMode={autoMode}
+        onAutoModeChange={handleAutoModeChange}
+        remote={remote}
+        onRemoteChange={handleRemoteChange}
+        remoteActive={remoteActive}
+        onImageUpload={handleImageUpload}
+        showKeyboardToggle={!embeddedFrame && keyboard.showToggle}
+        keyboardMode={keyboard.mode}
+        onToggleKeyboard={keyboard.toggle}
+      />
+      <div className="relative min-h-0 flex-1">
+      <div
+        // The terminal stays dark in both themes, so its status and text tokens
+        // use the dark values (the light ones are too dark for this surface).
+        // On a phone its last rows clear the home indicator (a window's
+        // iframe has no safe-area inset; md+ Home Screen apps get it from the
+        // shell's inset margin).
+        className="dark absolute inset-0 flex flex-col overflow-hidden bg-terminal pb-[env(safe-area-inset-bottom)] text-terminal-foreground md:pb-0"
+      >
+        {error ? (
+          <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
+            <HugeiconsIcon
+              icon={ComputerTerminal01Icon}
+              size={32}
+              strokeWidth={1.5}
+              aria-hidden="true"
+              className="text-muted-foreground"
+            />
+            <div className="grid max-w-sm gap-1">
+              <p className="text-sm font-medium text-terminal-foreground">Couldn&apos;t connect to the terminal</p>
+              <p className="text-sm text-muted-foreground">{error}</p>
+            </div>
+            <Button variant="outline" size="sm" className="pointer-coarse:h-11" onClick={retry}>
+              Retry
+            </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={retry}>
-            Retry
-          </Button>
-        </div>
-      ) : token && mounted ? (
-        <>
-          <TerminalSessionToolbar
-            userSessions={userSessions}
-            systemSessions={systemSessions}
-            selectedSessionId={selectedSessionId}
-            selectedSessionName={selectedSession?.name}
-            loading={sessionsLoading}
-            refreshError={sessionsError}
-            onSelect={setSelectedSessionId}
-            onCreate={handleCreateSession}
-            onDelete={handleDeleteSession}
-            onRefresh={handleRefreshSessions}
-            onImageUpload={handleImageUpload}
-            showKeyboardToggle={!embeddedFrame && keyboard.showToggle}
-            keyboardMode={keyboard.mode}
-            onToggleKeyboard={keyboard.toggle}
-            connectionStatus={connectionStatus}
-            onReconnect={() => termRef.current?.retryConnect()}
-          />
+        ) : token && mounted ? (
           <TerminalInner
             key={selectedSessionId ?? "sess_default"}
             ref={termRef}
@@ -433,15 +408,16 @@ export function TerminalPage() {
             inputMode={keyboard.inputMode}
             onRemoteSession={setRemoteActive}
           />
-        </>
-      ) : (
-        <div className="flex items-center justify-center flex-1">
-          <div className="flex items-center gap-2 text-terminal-foreground/70 text-sm">
-            <Spinner decorative className="size-3.5" />
-            Connecting…
+        ) : (
+          <div className="flex items-center justify-center flex-1">
+            <div className="flex items-center gap-2 text-terminal-foreground/70 text-sm">
+              <Spinner decorative className="size-3.5" />
+              Connecting…
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
+      </div>
     </div>
     </WindowSidebarLayout>
   );

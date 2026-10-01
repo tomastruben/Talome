@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DesktopWindow } from "@/components/desktop/desktop-window";
@@ -425,59 +427,37 @@ describe("DesktopWindow", () => {
     expect(onAction).toHaveBeenCalledWith("session-refresh");
   });
 
-  it("separates terminal agent selection from session commands", async () => {
+  it("has no app-specific controls: a menu action is a quiet trigger on the glass, never an opaque patch", async () => {
     const onAction = vi.fn();
 
     render(
       <DesktopWindow
         {...defaultProps}
-        title="Terminal"
-        actions={[
-          { id: "terminal-auto", label: "Auto", kind: "toggle", active: true },
-          { id: "terminal-remote", label: "Remote", icon: "remote", active: false },
-          {
-            id: "terminal-agent",
-            label: "Codex",
-            icon: "source-code",
-            kind: "menu",
-            items: [
-              { id: "terminal-agent-claude", label: "Claude Code" },
-              { id: "terminal-agent-codex", label: "Codex", active: true },
-            ],
-          },
-          {
-            id: "terminal-session",
-            label: "Session",
-            kind: "menu",
-            items: [
-              { id: "terminal-continue-agent", label: "Continue session" },
-              { id: "terminal-new-agent-session", label: "New session" },
-            ],
-          },
-        ]}
+        title="session 2"
+        actions={[{
+          id: "app-menu",
+          label: "View",
+          kind: "menu",
+          items: [{ id: "app-menu-item", label: "As list" }],
+        }]}
         onAction={onAction}
       >
         <div>Terminal content</div>
       </DesktopWindow>,
     );
 
-    expect(screen.getByLabelText("Terminal controls")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("switch", { name: "Auto" }));
-    fireEvent.click(screen.getByRole("button", { name: "Remote" }));
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Codex" }), { button: 0 });
-    expect(await screen.findByRole("menuitem", { name: "Claude Code" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Continue session" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Claude Code" }));
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Session", exact: true }), { button: 0 });
-    expect(await screen.findByRole("menuitem", { name: "New session" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Claude Code" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Continue session" }));
+    // Terminal's controls live in its own toolbar row now (terminal-toolbar.tsx)
+    expect(screen.queryByRole("group", { name: "Terminal controls" })).toBeNull();
+    const trigger = screen.getByRole("button", { name: "View" });
+    expect(trigger.className).not.toMatch(/\bbg-background\b/);
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "As list" }));
+    expect(onAction).toHaveBeenCalledWith("app-menu-item");
+  });
 
-    expect(onAction.mock.calls).toEqual([
-      ["terminal-auto"],
-      ["terminal-remote"],
-      ["terminal-agent-claude"],
-      ["terminal-continue-agent"],
-    ]);
+  it("never special-cases an app's actions in the title bar", () => {
+    const source = readFileSync(join(__dirname, "../components/desktop/desktop-window.tsx"), "utf8");
+    expect(source).not.toMatch(/terminal-(auto|remote|agent|session)/);
+    expect(source).not.toMatch(/\bbg-background\b/);
   });
 });

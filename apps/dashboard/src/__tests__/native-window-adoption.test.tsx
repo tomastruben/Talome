@@ -50,6 +50,7 @@ const ADOPTED = [
   "components/terminal/terminal-page.tsx",
   "components/terminal/terminal-sidebar.tsx",
   "components/terminal/terminal-session-toolbar.tsx",
+  "components/terminal/terminal-toolbar.tsx",
 ];
 
 describe("windowed apps adopt the window shell", () => {
@@ -70,7 +71,7 @@ describe("windowed apps adopt the window shell", () => {
   });
 
   it("keeps the terminal on tokens: no hex colours or inline backgrounds", () => {
-    for (const path of ["components/terminal/terminal-page.tsx", "components/terminal/terminal-session-toolbar.tsx", "components/terminal/terminal-sidebar.tsx"]) {
+    for (const path of ["components/terminal/terminal-page.tsx", "components/terminal/terminal-session-toolbar.tsx", "components/terminal/terminal-toolbar.tsx", "components/terminal/terminal-sidebar.tsx"]) {
       const source = read(path);
       expect(source, path).not.toMatch(/#[0-9a-fA-F]{6}\b/);
       expect(source, path).not.toMatch(/style=\{\{\s*background/);

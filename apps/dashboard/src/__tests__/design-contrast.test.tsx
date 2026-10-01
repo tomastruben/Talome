@@ -161,8 +161,13 @@ describe("critical text on an inverted surface (Files selection bar)", () => {
   });
 
   it("the selection bar uses the token, not a palette hue", () => {
+    // One bar (components/files/selection-bar.tsx); Files marks Delete critical on it
+    const bar = read("components/files/selection-bar.tsx");
+    expect(bar).toContain("text-status-critical-inverse");
+    expect(bar).toMatch(/bg-foreground/);
+    expect(bar).not.toMatch(/text-status-critical(?!-inverse)|text-red-\d|bg-red-\d|hover:bg-black\//);
     const files = read("app/dashboard/files/page.tsx");
-    expect(files).toContain("text-status-critical-inverse");
+    expect(files).toMatch(/<SelectionBarButton[^>]*label="Delete"[^>]*tone="critical"/);
     expect(files).not.toMatch(/text-red-\d|bg-red-\d|hover:bg-black\//);
   });
 });
@@ -366,20 +371,29 @@ describe("desktop window glass", () => {
     }
   });
 
-  it("never writes title-bar text in a status colour (terminal Auto: amber switch fill, foreground label)", () => {
+  it("never writes title-bar text in a status colour; the Terminal's Auto (in its toolbar) is an amber switch fill beside a neutral label", () => {
     const windowSource = read("components/desktop/desktop-window.tsx");
     expect(windowSource).not.toMatch(/text-status-/);
     expect(windowSource).not.toMatch(/(bg|ring)-status-warning\//);
-    expect(windowSource).toContain("data-[state=checked]:bg-status-warning");
 
-    const group = /className="[^"]*\bbg-muted\/(\d+)[^"]*"\s*role="group"\s*aria-label="Terminal controls"/.exec(windowSource);
-    expect(group, "neutral Terminal controls group").not.toBeNull();
+    // Auto sits in the Terminal's toolbar row (the content column in a window)
+    const toolbar = read("components/terminal/terminal-toolbar.tsx");
+    expect(toolbar).toContain('className="data-[state=checked]:bg-status-warning"');
+    expect(toolbar).not.toMatch(/text-status-/);
+    expect(toolbar).not.toMatch(/(bg|ring)-status-warning\//);
+    expect(toolbar).toMatch(/data-terminal-auto=""[\s\S]*?hover:bg-accent dark:hover:bg-accent\/50/);
     for (const theme of ["dark", "light"] as const) {
       const tokens = themes[theme];
-      const bg = over(color(tokens, "--muted"), glassOver(theme, worstBackdrop[theme]), Number(group![1]) / 100);
-      expect(contrast(color(tokens, "--muted-foreground"), bg), `${theme} muted label`).toBeGreaterThanOrEqual(4.5);
-      expect(contrast(color(tokens, "--foreground"), bg), `${theme} active label`).toBeGreaterThanOrEqual(4.5);
-      expect(contrast(color(tokens, "--status-warning"), bg), `${theme} Auto switch fill`).toBeGreaterThanOrEqual(3);
+      const column = contentOver(theme, worstBackdrop[theme]);
+      // In a window --accent is foreground at 10% (dark, hovered at /50) or 7% (light)
+      const hovered = over(color(tokens, "--foreground"), column, theme === "dark" ? 0.05 : 0.07);
+      for (const [state, bg] of Object.entries({ "at rest": column, hovered })) {
+        expect(contrast(color(tokens, "--muted-foreground"), bg), `${theme} Auto label off, ${state}`).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(color(tokens, "--foreground"), bg), `${theme} Auto label on, ${state}`).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(color(tokens, "--status-warning"), bg), `${theme} Auto switch fill, ${state}`).toBeGreaterThanOrEqual(3);
+      }
+      // Classic mode: the toolbar sits on the page
+      expect(contrast(color(tokens, "--status-warning"), color(tokens, "--background")), `${theme} classic Auto fill`).toBeGreaterThanOrEqual(3);
     }
   });
 

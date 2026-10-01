@@ -1,8 +1,6 @@
 "use client";
 
 import { memo, useRef, useMemo, useState, useCallback } from "react";
-import { toast } from "sonner";
-import { CORE_URL } from "@/lib/constants";
 import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -20,10 +18,8 @@ import {
   KeyboardIcon,
   ArrowDown01Icon,
   Refresh01Icon,
-  SystemUpdate01Icon,
 } from "@/components/icons";
 import { StatusDot } from "@/components/ui/status-dot";
-import { WINDOW_SIDEBAR_REPLACES, WINDOW_SIDEBAR_SHOWS } from "@/components/ui/source-list";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { nextSessionName, type TerminalSessionSummary } from "./use-terminal-sessions";
 import {
@@ -33,7 +29,7 @@ import {
 } from "./terminal-sidebar";
 import type { TerminalConnectionStatus } from "./terminal-inner";
 
-interface TerminalSessionToolbarProps {
+export interface TerminalSessionPickerProps {
   userSessions: TerminalSessionSummary[];
   systemSessions: TerminalSessionSummary[];
   selectedSessionId?: string;
@@ -47,13 +43,18 @@ interface TerminalSessionToolbarProps {
   onRefresh: () => void;
   /** Set while the session list can't be refreshed. */
   refreshError?: string | null;
+  /** False while the terminal can't be reached (locked, signed out): no new sessions. */
+  canCreate?: boolean;
+  className?: string;
+}
+
+interface TerminalSessionToolbarProps extends TerminalSessionPickerProps {
   onImageUpload?: (file: File) => void;
   showKeyboardToggle?: boolean;
   keyboardMode?: "virtual" | "physical";
   onToggleKeyboard?: () => void;
   connectionStatus?: TerminalConnectionStatus | null;
   onReconnect?: () => void;
-  className?: string;
 }
 
 function SessionRow({
@@ -97,10 +98,14 @@ function SessionRow({
         </span>
       </button>
       <div className="relative flex w-16 shrink-0 items-center justify-end">
+        {/* With a pointer the time gives way to End on hover or focus. On touch
+            End is always shown, so the time leaves the layout: `hidden`, not
+            opacity, which the global touch rule (globals.css) forces back to 1. */}
         <span
+          data-session-time=""
           className={cn(
             "text-xs text-muted-foreground transition-opacity duration-150",
-            isDeletable && "group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0",
+            isDeletable && "group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:hidden",
           )}
         >
           {timeText}
@@ -124,111 +129,12 @@ function SessionRow({
   );
 }
 
-type RebuildState = "idle" | "building" | "success" | "error";
-
-function RebuildButton() {
-  const isDev = process.env.NODE_ENV === "development";
-  const [state, setState] = useState<RebuildState>("idle");
-
-  const handleRebuild = useCallback(async () => {
-    if (state === "building") return;
-    setState("building");
-
-    try {
-      const res = await fetch(`${CORE_URL}/api/evolution/rebuild-dashboard`, {
-        method: "POST",
-        credentials: "include",
-      });
-      const data = await res.json() as { ok?: boolean; skipped?: boolean; reason?: string; buildError?: string; duration?: number };
-
-      if (data.skipped) {
-        toast("Dev mode — hot reload active", { duration: 2000 });
-        setState("idle");
-        return;
-      }
-
-      if (data.ok) {
-        setState("success");
-        toast.success(`Rebuilt in ${((data.duration ?? 0) / 1000).toFixed(1)}s — refresh to see changes`);
-        setTimeout(() => setState("idle"), 2000);
-      } else {
-        setState("error");
-        const toastId = toast.error("Build failed", {
-          description: "Auto-fix with Claude Code?",
-          duration: 10000,
-          action: {
-            label: "Fix",
-            onClick: async () => {
-              toast.dismiss(toastId);
-              toast.loading("Auto-fixing…", { id: "autofix" });
-              try {
-                const fixRes = await fetch(`${CORE_URL}/api/evolution/rebuild-dashboard/autofix`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({ buildError: data.buildError }),
-                });
-                const fixData = await fixRes.json() as { ok?: boolean; runId?: string };
-                if (fixData.ok) {
-                  toast.success("Autofix started — check Intelligence page", { id: "autofix" });
-                } else {
-                  toast.error("Autofix failed to start", { id: "autofix" });
-                }
-              } catch {
-                toast.error("Network error", { id: "autofix" });
-              }
-            },
-          },
-        });
-        setTimeout(() => setState("idle"), 3000);
-      }
-    } catch {
-      setState("error");
-      toast.error("Could not reach server");
-      setTimeout(() => setState("idle"), 3000);
-    }
-  }, [state]);
-
-  if (isDev) return null;
-
-  const label =
-    state === "building" ? "Rebuilding…" :
-    state === "success" ? "Rebuilt" :
-    state === "error" ? "Build failed" :
-    "Rebuild";
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(
-            "h-7 gap-1.5 px-2 text-xs transition-colors hover:bg-foreground/10",
-            state === "building" ? "text-status-info" :
-            state === "success" ? "text-status-healthy" :
-            state === "error" ? "text-status-critical" :
-            "text-muted-foreground hover:text-foreground",
-          )}
-          onClick={handleRebuild}
-          disabled={state === "building"}
-        >
-          <HugeiconsIcon
-            icon={SystemUpdate01Icon}
-            size={13}
-            className={state === "building" ? "motion-safe:animate-spin" : ""}
-          />
-          {label}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="text-xs max-w-48 text-center">
-        Rebuild Talome after code changes
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-function SessionToolbar({
+/**
+ * The session switcher: the current session's name, opening a list of every
+ * session with New session and End. Classic mode and narrow windows use it;
+ * a window wide enough for the sidebar lists the sessions there instead.
+ */
+export function TerminalSessionPicker({
   userSessions,
   systemSessions,
   selectedSessionId,
@@ -239,21 +145,15 @@ function SessionToolbar({
   onDelete,
   onRefresh,
   refreshError,
-  onImageUpload,
-  showKeyboardToggle,
-  keyboardMode,
-  onToggleKeyboard,
-  connectionStatus,
-  onReconnect,
+  canCreate = true,
   className,
-}: TerminalSessionToolbarProps) {
+}: TerminalSessionPickerProps) {
   const safeSelected = selectedSessionId ?? "sess_default";
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [createMode, setCreateMode] = useState(false);
   const [createName, setCreateName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const endSession = useEndSessionConfirm(onDelete);
 
   const allSessions = useMemo(
@@ -272,6 +172,8 @@ function SessionToolbar({
     [allSessions, safeSelected],
   );
 
+  const sessionName = selectedSessionName ?? "Default";
+
   function resetCreate() {
     setCreateMode(false);
     setCreateName("");
@@ -279,7 +181,7 @@ function SessionToolbar({
   }
 
   async function handleCreate() {
-    if (creating) return;
+    if (creating || !canCreate) return;
     const name = createName.trim() || suggestedName;
     setCreating(true);
     setCreateError(null);
@@ -305,255 +207,336 @@ function SessionToolbar({
   }
 
   return (
-    <div className={className}>
-      <div className="flex items-center gap-1.5 border-b border-border px-3 py-1.5">
-        {/* Session picker. In a desktop window wide enough for the sidebar,
-            the sidebar lists the sessions instead. */}
-        <div className={cn("min-w-0", WINDOW_SIDEBAR_REPLACES)}>
-        <Popover
-          open={popoverOpen}
-          onOpenChange={(open) => {
-            setPopoverOpen(open);
-            if (!open) resetCreate();
-          }}
-        >
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-sm text-foreground outline-none transition-colors duration-150 hover:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            >
-              <span className="truncate">{selectedSessionName ?? "Default"}</span>
-              {otherActiveCount > 0 && (
+    <div className={cn("flex min-w-0", className)}>
+      <Popover
+        open={popoverOpen}
+        onOpenChange={(open) => {
+          setPopoverOpen(open);
+          if (!open) resetCreate();
+        }}
+      >
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Switch session"
+            className="h-8 min-w-0 shrink gap-1.5 px-2 font-normal text-foreground pointer-coarse:h-11"
+          >
+            <span className="truncate">{sessionName}</span>
+            {otherActiveCount > 0 && (
+              <>
                 <span
-                  className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-xs tabular-nums text-muted-foreground"
-                  aria-label={`${otherActiveCount} other ${otherActiveCount === 1 ? "session" : "sessions"} attached`}
+                  aria-hidden="true"
+                  className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-secondary text-xs tabular-nums text-muted-foreground"
                 >
                   {otherActiveCount}
                 </span>
-              )}
-              <HugeiconsIcon icon={ArrowDown01Icon} size={12} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            className="w-[min(22rem,calc(100vw-2rem))] p-0"
-          >
-            <div className="max-h-[min(24rem,60svh)] space-y-1 overflow-y-auto p-2">
-              {/* User sessions */}
-              {userSessions.length > 0 && (
-                <div>
-                  <p className="px-2.5 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">
-                    Sessions
-                  </p>
-                  {userSessions.map((s) => (
-                    <SessionRow
-                      key={s.id}
-                      session={s}
-                      isSelected={s.id === safeSelected}
-                      isDeletable={canEndTerminalSession(s.id)}
-                      onSelect={handleSelect}
-                      onDelete={(id) => requestDelete(id, s.name)}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* System sessions */}
-              {systemSessions.length > 0 && (
-                <div>
-                  <p className="px-2.5 pb-1 pt-2 text-xs font-medium text-muted-foreground">
-                    System
-                  </p>
-                  {systemSessions.map((s) => (
-                    <SessionRow
-                      key={s.id}
-                      session={s}
-                      isSelected={s.id === safeSelected}
-                      isSystem
-                      isDeletable={canEndTerminalSession(s.id)}
-                      onSelect={handleSelect}
-                      onDelete={(id) => requestDelete(id, s.name)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-2 border-t border-border p-2">
-              {refreshError && !createMode && (
-                <p role="status" className="px-2.5 text-xs text-muted-foreground">
-                  Couldn&apos;t refresh the session list. {refreshError}.
+                <span className="sr-only">
+                  , {otherActiveCount} other {otherActiveCount === 1 ? "session" : "sessions"} attached
+                </span>
+              </>
+            )}
+            <HugeiconsIcon icon={ArrowDown01Icon} size={12} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-[min(22rem,calc(100vw-2rem))] p-0"
+        >
+          <div className="max-h-[min(24rem,60svh)] space-y-1 overflow-y-auto p-2">
+            {/* User sessions */}
+            {userSessions.length > 0 && (
+              <div>
+                <p className="px-2.5 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">
+                  Sessions
                 </p>
-              )}
-              {createMode ? (
-                <div className="space-y-2">
-                  <Input
-                    autoFocus
-                    aria-label="Session name"
-                    value={createName}
-                    onChange={(e) => setCreateName(e.target.value)}
-                    placeholder={suggestedName}
-                    disabled={creating}
-                    className="h-8 text-sm"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void handleCreate();
-                      }
-                      if (e.key === "Escape") {
-                        // Leave the form, not the picker.
-                        e.preventDefault();
-                        resetCreate();
-                      }
-                    }}
+                {userSessions.map((s) => (
+                  <SessionRow
+                    key={s.id}
+                    session={s}
+                    isSelected={s.id === safeSelected}
+                    isDeletable={canEndTerminalSession(s.id)}
+                    onSelect={handleSelect}
+                    onDelete={(id) => requestDelete(id, s.name)}
                   />
-                  {createError && (
-                    <p role="alert" className="px-0.5 text-xs text-muted-foreground">
-                      Couldn&apos;t create the session. {createError}
-                    </p>
-                  )}
-                  <div className="flex items-center justify-end gap-1.5">
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      disabled={creating}
-                      onClick={resetCreate}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      size="xs"
-                      busy={creating}
-                      busyLabel="Creating session…"
-                      onClick={() => void handleCreate()}
-                    >
-                      {createError ? "Retry" : "Create"}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 flex-1 justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                    onClick={() => setCreateMode(true)}
-                  >
-                    <HugeiconsIcon icon={Add01Icon} size={12} aria-hidden="true" />
-                    New session
-                  </Button>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Refresh sessions"
-                        className="size-7 text-muted-foreground hover:text-foreground"
-                        onClick={() => {
-                          void onRefresh();
-                        }}
-                        disabled={loading}
-                      >
-                        <HugeiconsIcon icon={Refresh01Icon} size={12} aria-hidden="true" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="text-xs">Refresh sessions</TooltipContent>
-                  </Tooltip>
-                </div>
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
-        </div>
-        {/* With the picker in the sidebar, the toolbar still names the session you're typing into. */}
-        <span className={cn(WINDOW_SIDEBAR_SHOWS, "h-7 min-w-0 items-center truncate px-2 text-sm text-foreground")}>
-          {selectedSessionName ?? "Default"}
-        </span>
+                ))}
+              </div>
+            )}
 
-        {/* Connection status: a breathing info dot while work is in flight, a
-            static critical dot once the connection is gone. */}
-        {connectionStatus === "reconnecting" && (
-          <div role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span aria-hidden="true" className="size-1.5 rounded-full bg-status-info motion-safe:animate-breathe" />
-            Reconnecting…
-          </div>
-        )}
-        {connectionStatus === "disconnected" && (
-          <div role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span aria-hidden="true" className="size-1.5 rounded-full bg-status-critical" />
-            Disconnected
-            {onReconnect && (
-              <Button
-                variant="ghost"
-                size="xs"
-                className="text-foreground/80 hover:text-foreground"
-                onClick={onReconnect}
-              >
-                <HugeiconsIcon icon={Refresh01Icon} size={10} aria-hidden="true" />
-                Reconnect
-              </Button>
+            {/* System sessions */}
+            {systemSessions.length > 0 && (
+              <div>
+                <p className="px-2.5 pb-1 pt-2 text-xs font-medium text-muted-foreground">
+                  System
+                </p>
+                {systemSessions.map((s) => (
+                  <SessionRow
+                    key={s.id}
+                    session={s}
+                    isSelected={s.id === safeSelected}
+                    isSystem
+                    isDeletable={canEndTerminalSession(s.id)}
+                    onSelect={handleSelect}
+                    onDelete={(id) => requestDelete(id, s.name)}
+                  />
+                ))}
+              </div>
             )}
           </div>
-        )}
 
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Right-side actions */}
-        <RebuildButton />
-        {showKeyboardToggle && onToggleKeyboard && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Virtual keyboard"
-                aria-pressed={keyboardMode === "virtual"}
-                className={cn(
-                  "size-7 hover:bg-foreground/10",
-                  keyboardMode === "virtual" ? "text-foreground" : "text-muted-foreground",
+          <div className="space-y-2 border-t border-border p-2">
+            {refreshError && !createMode && (
+              <p role="status" className="px-2.5 text-xs text-muted-foreground">
+                Couldn&apos;t refresh the session list. {refreshError}.
+              </p>
+            )}
+            {createMode ? (
+              <div className="space-y-2">
+                <Input
+                  autoFocus
+                  aria-label="Session name"
+                  value={createName}
+                  onChange={(e) => setCreateName(e.target.value)}
+                  placeholder={suggestedName}
+                  disabled={creating}
+                  className="h-8 text-sm pointer-coarse:h-11"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleCreate();
+                    }
+                    if (e.key === "Escape") {
+                      // Leave the form, not the picker.
+                      e.preventDefault();
+                      resetCreate();
+                    }
+                  }}
+                />
+                {createError && (
+                  <p role="alert" className="px-0.5 text-xs text-muted-foreground">
+                    Couldn&apos;t create the session. {createError}
+                  </p>
                 )}
-                onClick={onToggleKeyboard}
-              >
-                <HugeiconsIcon icon={KeyboardIcon} size={14} aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="text-xs">
-              {keyboardMode === "virtual" ? "Virtual keyboard on" : "Virtual keyboard off"}
-            </TooltipContent>
-          </Tooltip>
-        )}
-        {onImageUpload && (
-          <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) onImageUpload(file);
-                e.target.value = "";
-              }}
-            />
-            <Tooltip>
-              <TooltipTrigger asChild>
+                <div className="flex items-center justify-end gap-1.5">
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="pointer-coarse:h-11 pointer-coarse:px-3"
+                    disabled={creating}
+                    onClick={resetCreate}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="xs"
+                    className="pointer-coarse:h-11 pointer-coarse:px-3"
+                    busy={creating}
+                    busyLabel="Creating session…"
+                    onClick={() => void handleCreate()}
+                  >
+                    {createError ? "Retry" : "Create"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1">
                 <Button
                   variant="ghost"
-                  size="icon"
-                  aria-label="Attach image"
-                  className="size-7 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
-                  onClick={() => fileInputRef.current?.click()}
+                  size="sm"
+                  className="h-7 flex-1 justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11"
+                  disabled={!canCreate}
+                  onClick={() => setCreateMode(true)}
                 >
-                  <HugeiconsIcon icon={Image01Icon} size={14} aria-hidden="true" />
+                  <HugeiconsIcon icon={Add01Icon} size={12} aria-hidden="true" />
+                  New session
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs">
-                Attach image
-              </TooltipContent>
-            </Tooltip>
-          </>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Refresh sessions"
+                      className="size-7 text-muted-foreground hover:text-foreground pointer-coarse:size-11"
+                      onClick={() => {
+                        void onRefresh();
+                      }}
+                      disabled={loading}
+                    >
+                      <HugeiconsIcon icon={Refresh01Icon} size={12} aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs">Refresh sessions</TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+/**
+ * The connection while it isn't simply up: a breathing info dot while it
+ * reconnects (work in flight), a static critical dot once it's gone, with
+ * Reconnect. The text gives way before the controls beside it do.
+ */
+export function TerminalConnectionState({
+  status,
+  onReconnect,
+  className,
+}: {
+  status?: TerminalConnectionStatus | null;
+  onReconnect?: () => void;
+  className?: string;
+}) {
+  if (status === "reconnecting") {
+    return (
+      <div role="status" className={cn("flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground", className)}>
+        <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-status-info motion-safe:animate-breathe" />
+        <span className="truncate">Reconnecting…</span>
+      </div>
+    );
+  }
+  if (status === "disconnected") {
+    return (
+      <div role="status" className={cn("flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground", className)}>
+        <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-status-critical" />
+        <span className="truncate">Disconnected</span>
+        {onReconnect && (
+          <Button
+            variant="ghost"
+            size="xs"
+            className="shrink-0 text-foreground/80 hover:text-foreground pointer-coarse:h-11 pointer-coarse:min-w-11"
+            onClick={onReconnect}
+          >
+            <HugeiconsIcon icon={Refresh01Icon} size={12} aria-hidden="true" />
+            {/* Icon-only where the row is narrow (a phone); the name stays for screen readers */}
+            <span className="sr-only @md:not-sr-only">Reconnect</span>
+          </Button>
         )}
+      </div>
+    );
+  }
+  return null;
+}
+
+/** Virtual keyboard on or off (touch devices only, where the system keyboard can be suppressed). */
+export function TerminalKeyboardToggle({
+  mode,
+  onToggle,
+  className,
+}: {
+  mode?: "virtual" | "physical";
+  onToggle: () => void;
+  className?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Virtual keyboard"
+          aria-pressed={mode === "virtual"}
+          className={cn(
+            "size-8 pointer-coarse:size-11",
+            mode === "virtual" ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+            className,
+          )}
+          onClick={onToggle}
+        >
+          <HugeiconsIcon icon={KeyboardIcon} size={16} aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        {mode === "virtual" ? "Virtual keyboard on" : "Virtual keyboard off"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** A hidden file input for attaching an image to the terminal, and a way to open it. */
+export function useAttachImage(onImageUpload?: (file: File) => void) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const open = useCallback(() => inputRef.current?.click(), []);
+  const input = onImageUpload ? (
+    <input
+      ref={inputRef}
+      type="file"
+      accept="image/*"
+      className="hidden"
+      tabIndex={-1}
+      aria-hidden="true"
+      onChange={(e) => {
+        const file = e.target.files?.[0];
+        if (file) onImageUpload(file);
+        e.target.value = "";
+      }}
+    />
+  ) : null;
+  return { input, open };
+}
+
+export function TerminalAttachImageButton({
+  onClick,
+  disabled,
+  className,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Attach image"
+          disabled={disabled}
+          className={cn("size-8 text-muted-foreground hover:text-foreground pointer-coarse:size-11", className)}
+          onClick={onClick}
+        >
+          <HugeiconsIcon icon={Image01Icon} size={16} aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        Attach image
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * The session row of the slide-over terminal (terminal-sheet.tsx), on its
+ * dark surface: the session picker, the connection state, and the keyboard
+ * and image controls. The Terminal page has its own toolbar (terminal-toolbar.tsx).
+ */
+function SessionToolbar({
+  onImageUpload,
+  showKeyboardToggle,
+  keyboardMode,
+  onToggleKeyboard,
+  connectionStatus,
+  onReconnect,
+  className,
+  ...picker
+}: TerminalSessionToolbarProps) {
+  const attach = useAttachImage(onImageUpload);
+
+  return (
+    <div className={className}>
+      <div className="flex min-w-0 items-center gap-1.5 border-b border-border px-3 py-1.5">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <TerminalSessionPicker {...picker} />
+          <TerminalConnectionState status={connectionStatus} onReconnect={onReconnect} />
+        </div>
+        {showKeyboardToggle && onToggleKeyboard && (
+          <TerminalKeyboardToggle mode={keyboardMode} onToggle={onToggleKeyboard} />
+        )}
+        {attach.input}
+        {onImageUpload && <TerminalAttachImageButton onClick={attach.open} />}
       </div>
     </div>
   );

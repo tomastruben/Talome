@@ -382,11 +382,10 @@ export const DesktopWindow = memo(function DesktopWindow({
     if (restoreBounds) onTile?.(clampDesktopBounds(restoreBounds, area, minimum), undefined);
   };
 
+  // Apps keep their controls in their own toolbar row (DesktopAppToolbar);
+  // the title bar carries only a back button and the odd primary action.
   const leadingActions = actions.filter((action) => action.placement === "leading");
   const trailingActions = actions.filter((action) => action.placement !== "leading");
-  const terminalActionIds = new Set(["terminal-auto", "terminal-remote", "terminal-agent"]);
-  const terminalActions = trailingActions.filter((action) => terminalActionIds.has(action.id));
-  const otherTrailingActions = trailingActions.filter((action) => !terminalActionIds.has(action.id));
 
   const renderAction = (action: DesktopAppActionDescriptor) => {
     const icon = action.icon ? desktopActionIcons[action.icon] : undefined;
@@ -405,7 +404,6 @@ export const DesktopWindow = memo(function DesktopWindow({
               className={cn(
                 "flex h-6 min-w-0 max-w-44 shrink items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
                 action.active && "bg-muted/60 text-foreground",
-                action.id === "terminal-session" && "border border-border bg-background shadow-none",
               )}
               disabled={action.disabled}
               aria-label={action.label}
@@ -484,108 +482,6 @@ export const DesktopWindow = memo(function DesktopWindow({
         {icon && <HugeiconsIcon icon={icon} size={14} />}
         {!isLeading && <span className="tm-cap-trim">{action.label}</span>}
       </button>
-    );
-  };
-
-  const renderTerminalControls = () => {
-    if (terminalActions.length === 0) return null;
-
-    const autoAction = terminalActions.find((action) => action.id === "terminal-auto");
-    const remoteAction = terminalActions.find((action) => action.id === "terminal-remote");
-    const agentAction = terminalActions.find((action) => action.id === "terminal-agent");
-    const stopTitlebarGesture = (event: ReactPointerEvent<HTMLElement>) => {
-      onFocus();
-      event.stopPropagation();
-    };
-
-    return (
-      // Neutral in both states: the title bar sits on the window glass, and
-      // window chrome never carries status colours. Auto mode shows as the
-      // amber switch fill (non-text, 3:1 on glass) beside a foreground label.
-      <div
-        className="flex h-6 shrink-0 items-center overflow-hidden rounded-md bg-muted/30 ring-1 ring-border/50"
-        role="group"
-        aria-label="Terminal controls"
-      >
-        {autoAction && (
-          <label
-            className={cn(
-              "flex h-6 cursor-pointer items-center gap-1.5 rounded-l-md px-2 text-xs transition-colors duration-150 hover:bg-muted/40",
-              autoAction.disabled && "pointer-events-none opacity-40",
-            )}
-            onPointerDown={stopTitlebarGesture}
-            onDoubleClick={(event) => event.stopPropagation()}
-          >
-            <Switch
-              size="sm"
-              checked={autoAction.active === true}
-              disabled={autoAction.disabled}
-              aria-label={autoAction.label}
-              className="data-[state=checked]:bg-status-warning"
-              onCheckedChange={() => onAction?.(autoAction.id)}
-            />
-            <span className={cn("tm-cap-trim font-medium", autoAction.active ? "text-foreground" : "text-muted-foreground")}>Auto</span>
-          </label>
-        )}
-        {remoteAction && (
-          <button
-            type="button"
-            aria-label={remoteAction.label}
-            aria-pressed={remoteAction.active === true}
-            disabled={remoteAction.disabled}
-            className={cn(
-              "relative flex size-6 items-center justify-center transition-colors duration-150 hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-40",
-              remoteAction.active ? "text-foreground" : "text-muted-foreground",
-            )}
-            onPointerDown={stopTitlebarGesture}
-            onDoubleClick={(event) => event.stopPropagation()}
-            onClick={() => onAction?.(remoteAction.id)}
-          >
-            <HugeiconsIcon icon={RemoteControlIcon} size={13} />
-            {remoteAction.label === "Remote session active" && (
-              <span className="absolute right-1 top-1 size-1.5 rounded-full bg-status-healthy" />
-            )}
-          </button>
-        )}
-        {agentAction && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="flex h-6 min-w-0 max-w-40 items-center gap-1.5 rounded-r-md px-2.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-                disabled={agentAction.disabled}
-                aria-label={agentAction.label}
-                onPointerDown={stopTitlebarGesture}
-                onDoubleClick={(event) => event.stopPropagation()}
-              >
-                <HugeiconsIcon icon={SourceCodeCircleIcon} size={14} />
-                <span className="tm-cap-trim truncate">{agentAction.label}</span>
-                <HugeiconsIcon icon={ArrowDown01Icon} size={11} className="shrink-0" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="z-[1400] min-w-40"
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <DropdownMenuGroup>
-              {agentAction.items?.map((item) => (
-                <Fragment key={item.id}>
-                  {item.separatorBefore && <DropdownMenuSeparator />}
-                  <DropdownMenuItem
-                    disabled={item.disabled}
-                    onSelect={() => onAction?.(item.id)}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                    {item.active && <HugeiconsIcon icon={Tick01Icon} size={13} className="ml-auto" />}
-                  </DropdownMenuItem>
-                </Fragment>
-              ))}
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
     );
   };
 
@@ -680,8 +576,7 @@ export const DesktopWindow = memo(function DesktopWindow({
           role="group"
           aria-label={`${title} actions`}
         >
-          {renderTerminalControls()}
-          {otherTrailingActions.map(renderAction)}
+          {trailingActions.map(renderAction)}
         </div>
       </div>
 
