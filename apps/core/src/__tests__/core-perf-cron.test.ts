@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const state = vi.hoisted(() => ({
-  rows: [] as Array<{ id: string; name?: string; trigger: string }>,
+  rows: [] as Array<{ id: string; name?: string; trigger: string; runCount?: number; lastRunAt?: string | null }>,
   updates: [] as Array<{ set: unknown }>,
   settings: new Map<string, string>(),
 }));
@@ -23,7 +23,7 @@ vi.mock("../db/index.js", () => {
   };
   return {
     db: { select: () => chain, update },
-    schema: { automations: { id: "id", name: "name", trigger: "trigger", enabled: "enabled" } },
+    schema: { automations: { id: "id", name: "name", trigger: "trigger", enabled: "enabled", runCount: "run_count", lastRunAt: "last_run_at" } },
   };
 });
 
@@ -138,6 +138,16 @@ describe("one-time pause of dormant schedule automations", () => {
     expect(pauseDormantScheduleAutomations()).toBe(0);
     expect(state.updates).toHaveLength(1);
     expect(writeNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves schedule automations that have already run alone", () => {
+    state.rows = [
+      { id: "live", name: "Self-heal watchdog", trigger: schedule("*/10 * * * *"), runCount: 2047, lastRunAt: "2026-09-27T10:00:55.466Z" },
+      { id: "s1", name: "Nightly prune", trigger: schedule("0 3 * * *"), runCount: 0, lastRunAt: null },
+    ];
+    expect(pauseDormantScheduleAutomations()).toBe(1);
+    expect(writeNotification.mock.calls[0][2]).toContain("Nightly prune");
+    expect(writeNotification.mock.calls[0][2]).not.toContain("Self-heal watchdog");
   });
 
   it("marks fresh installs without touching anything", () => {

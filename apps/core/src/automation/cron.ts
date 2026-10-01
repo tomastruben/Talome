@@ -120,6 +120,8 @@ export async function runScheduleTick(now: Date = new Date()): Promise<void> {
 // some with restart/prune/AI steps), on a UTC clock the user may not expect.
 // Instead, the first boot with the fix pauses them once and tells the user;
 // re-enabling one is the opt-in. Automations created afterwards run normally.
+// Some servers ran a build whose scheduler did work: an automation with runs
+// on record has already been acting for the user, so it is left running.
 
 export const SCHEDULE_ACTIVATION_SETTING = "automation_schedules_activated_at";
 
@@ -133,18 +135,24 @@ function isScheduleTrigger(triggerJson: string): boolean {
 }
 
 /**
- * Pause enabled schedule automations that predate the scheduler fix (runs
- * once, guarded by a settings marker). Returns how many were paused.
+ * Pause enabled schedule automations that predate the scheduler fix and have
+ * never run (runs once, guarded by a settings marker). Returns how many were paused.
  */
 export function pauseDormantScheduleAutomations(): number {
   try {
     if (getSetting(SCHEDULE_ACTIVATION_SETTING)) return 0;
     const dormant = db
-      .select({ id: schema.automations.id, name: schema.automations.name, trigger: schema.automations.trigger })
+      .select({
+        id: schema.automations.id,
+        name: schema.automations.name,
+        trigger: schema.automations.trigger,
+        runCount: schema.automations.runCount,
+        lastRunAt: schema.automations.lastRunAt,
+      })
       .from(schema.automations)
       .where(eq(schema.automations.enabled, true))
       .all()
-      .filter((row) => isScheduleTrigger(row.trigger));
+      .filter((row) => isScheduleTrigger(row.trigger) && !row.runCount && !row.lastRunAt);
 
     if (dormant.length > 0) {
       db.update(schema.automations)
