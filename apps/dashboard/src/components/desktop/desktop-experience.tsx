@@ -78,7 +78,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DOCK_ICON_SIZE, DOCK_MAGNIFY_SPRING, dockMagnification } from "@/lib/dock-magnification";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { IconSwap } from "@/components/ui/micro";
 import {
@@ -256,9 +257,6 @@ const DESKTOP_DRIVES_STORAGE_KEY = "talome-desktop-show-drives-v1";
 /** Status tray buttons beside the Dock's apps (Search, Control Center, notifications, Talome menu). */
 const DOCK_TRAY_BUTTON_CLASS =
   "relative flex size-10 items-center justify-center rounded-xl text-muted-foreground outline-none transition-[background-color,color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-safe:active:scale-95";
-/** Dock magnification: icons within this distance (px) of the pointer grow, peaking at 1 + amount */
-const DOCK_MAGNIFY_RADIUS = 110;
-const DOCK_MAGNIFY_AMOUNT = 0.3;
 /** Pointer x over the Dock (Infinity when elsewhere) — drives magnification */
 const DockPointerContext = createContext<MotionValue<number> | null>(null);
 /** Window minimize (an exit) and restore (an entrance), spec §7.4. */
@@ -2317,6 +2315,8 @@ export function DesktopExperience() {
             }}
             onPointerLeave={() => dockPointerX.set(Number.POSITIVE_INFINITY)}
           >
+            {/* Names appear the moment you point at an item, as in the macOS Dock */}
+            <TooltipProvider delayDuration={0}>
             <DockPointerContext.Provider value={draggingDockAppId ? null : dockPointerX}>
             <ContextMenu>
               <ContextMenuTrigger asChild>
@@ -2437,6 +2437,7 @@ export function DesktopExperience() {
               </SortableContext>
             </DndContext>
             </DockPointerContext.Provider>
+            </TooltipProvider>
             <span className="mx-1 h-9 w-px self-center bg-border" aria-hidden="true" />
             {/* The status tray: what the menu bar used to hold (now playing, approvals,
                 search, Control Center, notifications, the Talome menu with health). */}
@@ -2918,21 +2919,24 @@ function DockButton({
     .filter(Boolean)
     .join(" · ");
 
-  // Magnification: grow with closeness to the pointer (cosine falloff), lifting
-  // from the bottom edge. Overdamped spring (damping ratio > 1), so it never
-  // overshoots; off under reduced motion.
+  // Magnification, as on macOS: grow with closeness to the pointer (cosine
+  // falloff) from the shelf, while the slot widens so neighbours make room and
+  // the Dock grows. A near-critically damped spring (lib/dock-magnification)
+  // tracks the pointer almost directly and never overshoots; off under reduced
+  // motion, and snapped back at once when a drag starts.
   const dockPointer = useContext(DockPointerContext);
   const idlePointer = useMotionValue(Number.POSITIVE_INFINITY);
   const localButton = useRef<HTMLButtonElement | null>(null);
   const magnification = useTransform(dockPointer ?? idlePointer, (pointerX) => {
     const rect = localButton.current?.getBoundingClientRect();
     if (reduceMotion || !rect || !Number.isFinite(pointerX)) return 1;
-    const distance = pointerX - (rect.left + rect.width / 2);
-    if (Math.abs(distance) >= DOCK_MAGNIFY_RADIUS) return 1;
-    return 1 + DOCK_MAGNIFY_AMOUNT * (Math.cos((Math.PI * distance) / DOCK_MAGNIFY_RADIUS) + 1) / 2;
+    return dockMagnification(pointerX - (rect.left + rect.width / 2));
   });
-  const scale = useSpring(magnification, { stiffness: 520, damping: 48, mass: 0.4 });
-  const lift = useTransform(scale, (value) => -(value - 1) * 22);
+  const scale = useSpring(magnification, DOCK_MAGNIFY_SPRING);
+  const slotWidth = useTransform(scale, (value) => DOCK_ICON_SIZE * value);
+  useEffect(() => {
+    if (!dockPointer) scale.jump(1);
+  }, [dockPointer, scale]);
   const button = (
     <motion.button
       ref={(button) => {
@@ -2951,7 +2955,7 @@ function DockButton({
       aria-pressed={undefined}
       data-dock-drag-handle={dragHandle ? "" : undefined}
       data-dock-service-state={serviceState}
-      style={{ scale, y: lift }}
+      style={{ scale }}
       className={cn(
         "relative isolate flex size-12 origin-bottom transform-gpu items-center justify-center rounded-xl border border-transparent bg-transparent outline-none transition-[background-color,border-color] duration-150 ease-out will-change-transform hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         dragHandle && "cursor-grab touch-none active:cursor-grabbing",
@@ -3010,10 +3014,12 @@ function DockButton({
   );
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent side="top" sideOffset={14}>{tooltip}</TooltipContent>
-    </Tooltip>
+    <motion.span className="flex shrink-0 justify-center" style={{ width: slotWidth }}>
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="top" sideOffset={14}>{tooltip}</TooltipContent>
+      </Tooltip>
+    </motion.span>
   );
 }
 
