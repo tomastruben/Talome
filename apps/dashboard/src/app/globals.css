@@ -2436,6 +2436,23 @@ html[data-status-bar="ios"] [data-desktop-root] {
   text-box-edge: cap alphabetic;
 }
 
+/* ── Desktop materials: one scale, assigned by role ─────────────────────────
+   Like Apple's materials, every glass is the same recipe at three densities:
+   blur the backdrop, saturate it (1.8) so the wallpaper's colour stays rich,
+   shift its luminance (brightness <1 in dark, >1 in light) so a bright photo
+   turns smoky instead of foggy, then lay a --card tint over it.
+
+                 dark                       light
+     thin        78%  blur 40  ×0.75        82%  blur 40  ×1.15   Dock, desktop icons (.tm-glass)
+     regular     82%  blur 48  ×0.75        88%  blur 48  ×1.2    Desktop widgets, sign-in card (.tm-glass-dense)
+     thick       85%  blur 56  ×0.7         90%  blur 56  ×1.2    Windows (.tm-window, plus the content tint)
+
+   Denser as the content gets denser: the Dock holds icons, widgets hold short
+   readouts, windows hold whole apps. Over a pure white (dark) / pure black
+   (light) backdrop, muted text keeps 4.5:1 on regular and thick glass; thin
+   glass carries icons and foreground text only (its muted icons keep 3:1).
+   design-contrast.test.tsx checks all of it. */
+
 /* Desktop windows: one frosted glass per window, on .tm-window. The
    wallpaper's colour and light come through, blurred, but not its detail. The
    backdrop is dimmed (lifted, in light) rather than the tint thickened, which
@@ -2447,9 +2464,9 @@ html[data-status-bar="ios"] [data-desktop-root] {
    catches the light along the top edge, and layered shadows lift the window
    you're working in above the rest. */
 .tm-window {
-  background: color-mix(in oklch, var(--card) 70%, transparent);
-  -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(0.65);
-  backdrop-filter: blur(48px) saturate(1.8) brightness(0.65);
+  background: color-mix(in oklch, var(--card) 85%, transparent);
+  -webkit-backdrop-filter: blur(56px) saturate(1.8) brightness(0.7);
+  backdrop-filter: blur(56px) saturate(1.8) brightness(0.7);
   /* Two strokes: a light hairline on the inside catches the edge on dark
      wallpapers, a dark rim outside separates it from bright ones */
   border-color: oklch(1 0 0 / 9%);
@@ -2468,9 +2485,9 @@ html[data-status-bar="ios"] [data-desktop-root] {
     0 12px 28px -8px oklch(0 0 0 / 45%);
 }
 :root:not(.dark) .tm-window {
-  background: color-mix(in oklch, var(--card) 88%, transparent);
-  -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
-  backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
+  background: color-mix(in oklch, var(--card) 90%, transparent);
+  -webkit-backdrop-filter: blur(56px) saturate(1.8) brightness(1.2);
+  backdrop-filter: blur(56px) saturate(1.8) brightness(1.2);
   border-color: oklch(0 0 0 / 10%);
   box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), 0 12px 32px -12px oklch(0 0 0 / 20%), 0 2px 8px -2px oklch(0 0 0 / 12%);
 }
@@ -2534,16 +2551,19 @@ html[data-embedded-frame] body {
 /* Widgets on the desktop are glass too, so the wallpaper stays part of the
    composition (Home keeps solid cards) */
 [data-desktop-widget-canvas] [data-widget] {
-  background: color-mix(in oklch, var(--card) 74%, transparent);
+  background: color-mix(in oklch, var(--card) 82%, transparent);
   border-color: oklch(1 0 0 / 10%);
-  backdrop-filter: blur(40px) saturate(1.8);
+  -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(0.75);
+  backdrop-filter: blur(48px) saturate(1.8) brightness(0.75);
   box-shadow: 0 0 0 1px oklch(0 0 0 / 30%), inset 0 1px 0 oklch(1 0 0 / 7%);
 }
 [data-desktop-widget-canvas] [data-widget] > .border-b {
   border-color: oklch(1 0 0 / 8%);
 }
 :root:not(.dark) [data-desktop-widget-canvas] [data-widget] {
-  background: color-mix(in oklch, var(--card) 60%, transparent);
+  background: color-mix(in oklch, var(--card) 88%, transparent);
+  -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
+  backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
   border-color: oklch(0 0 0 / 8%);
   box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%);
 }
@@ -2554,17 +2574,17 @@ html[data-embedded-frame] body {
    4.5:1 or better over the brightest (darkest, in light) blurred patch of every
    bundled wallpaper. */
 .tm-glass-dense {
-  background: color-mix(in oklch, var(--card) 75%, transparent);
+  background: color-mix(in oklch, var(--card) 82%, transparent);
   border-color: oklch(1 0 0 / 12%);
-  -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(0.85);
-  backdrop-filter: blur(48px) saturate(1.8) brightness(0.85);
+  -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(0.75);
+  backdrop-filter: blur(48px) saturate(1.8) brightness(0.75);
   box-shadow:
     0 0 0 1px oklch(0 0 0 / 35%),
     inset 0 1px 0 oklch(1 0 0 / 10%),
     0 24px 60px -20px oklch(0 0 0 / 60%);
 }
 :root:not(.dark) .tm-glass-dense {
-  background: color-mix(in oklch, var(--card) 82%, transparent);
+  background: color-mix(in oklch, var(--card) 88%, transparent);
   border-color: oklch(0 0 0 / 8%);
   -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
   backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
@@ -2591,16 +2611,19 @@ html[data-embedded-frame] body {
    wallpaper shows through, blurred and a little richer, framed by the same two
    strokes as windows */
 .tm-glass {
-  background: color-mix(in oklch, var(--card) 72%, transparent);
+  background: color-mix(in oklch, var(--card) 78%, transparent);
   border-color: oklch(1 0 0 / 12%);
-  backdrop-filter: blur(40px) saturate(1.8);
+  -webkit-backdrop-filter: blur(40px) saturate(1.8) brightness(0.75);
+  backdrop-filter: blur(40px) saturate(1.8) brightness(0.75);
   box-shadow:
     0 0 0 1px oklch(0 0 0 / 35%),
     inset 0 1px 0 oklch(1 0 0 / 10%),
     0 18px 40px -14px oklch(0 0 0 / 55%);
 }
 :root:not(.dark) .tm-glass {
-  background: color-mix(in oklch, var(--card) 60%, transparent);
+  background: color-mix(in oklch, var(--card) 82%, transparent);
+  -webkit-backdrop-filter: blur(40px) saturate(1.8) brightness(1.15);
+  backdrop-filter: blur(40px) saturate(1.8) brightness(1.15);
   border-color: oklch(0 0 0 / 8%);
   box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%), 0 18px 40px -14px oklch(0 0 0 / 25%);
 }

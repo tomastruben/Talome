@@ -202,9 +202,9 @@ describe("desktop window glass", () => {
   const contentOver = (theme: "dark" | "light", backdrop: number) =>
     over(color(themes[theme], "--background"), glassOver(theme, backdrop), content[theme]);
 
-  it("is one frosted material on the window, as frosted as the sign-in card and never see-through", () => {
-    expect(glass.dark).toMatchObject({ token: "--card", alpha: 0.7, blur: 48, saturate: 1.8, brightness: 0.65 });
-    expect(glass.light).toMatchObject({ token: "--card", alpha: 0.88, blur: 48, saturate: 1.8, brightness: 1.2 });
+  it("is one frosted material on the window (the thick material) and never see-through", () => {
+    expect(glass.dark).toMatchObject({ token: "--card", alpha: 0.85, blur: 56, saturate: 1.8, brightness: 0.7 });
+    expect(glass.light).toMatchObject({ token: "--card", alpha: 0.9, blur: 56, saturate: 1.8, brightness: 1.2 });
     for (const m of Object.values(glass)) expect(m.webkitFilter).toBe(m.filter);
     expect(content).toEqual({ dark: 0.15, light: 0.25 });
 
@@ -213,13 +213,60 @@ describe("desktop window glass", () => {
     // that the window turns see-through
     for (const [name, m] of Object.entries(glass)) {
       const through = (1 - m.alpha) * Math.min(1, m.brightness);
-      expect(through, name).toBeGreaterThanOrEqual(0.1);
+      expect(through, name).toBeGreaterThanOrEqual(0.08);
       expect(through, name).toBeLessThanOrEqual(0.2);
     }
 
     // The title bar and body paint nothing of their own: one glass per window
     expect(ruleBody(".tm-window-titlebar")).not.toMatch(/background|backdrop-filter/);
     expect(css).not.toMatch(/(^|\n)\.tm-window-body\s*\{/);
+  });
+
+  it("uses one material scale: thin (Dock), regular (widgets, sign-in), thick (windows)", () => {
+    const scale = {
+      thin: { dark: material(".tm-glass"), light: material(":root:not(.dark) .tm-glass") },
+      regular: {
+        dark: material("[data-desktop-widget-canvas] [data-widget]"),
+        light: material(":root:not(.dark) [data-desktop-widget-canvas] [data-widget]"),
+      },
+      signIn: { dark: material(".tm-glass-dense"), light: material(":root:not(.dark) .tm-glass-dense") },
+      thick: glass,
+    };
+    for (const theme of ["dark", "light"] as const) {
+      // The sign-in card is the regular material
+      expect(scale.signIn[theme]).toMatchObject({
+        alpha: scale.regular[theme].alpha,
+        blur: scale.regular[theme].blur,
+        brightness: scale.regular[theme].brightness,
+      });
+      // Denser and blurrier as the content gets denser
+      expect(scale.thin[theme].alpha).toBeLessThan(scale.regular[theme].alpha);
+      expect(scale.regular[theme].alpha).toBeLessThan(scale.thick[theme].alpha);
+      expect(scale.thin[theme].blur).toBeLessThan(scale.regular[theme].blur);
+      expect(scale.regular[theme].blur).toBeLessThan(scale.thick[theme].blur);
+      for (const [name, m] of Object.entries(scale)) {
+        const label = `${theme} ${name}`;
+        expect(m[theme].token, label).toBe("--card");
+        expect(m[theme].saturate, label).toBe(1.8);
+        // Dark glass dims its backdrop and light glass lifts it: smoky, never foggy
+        if (theme === "dark") expect(m[theme].brightness, label).toBeLessThan(1);
+        else expect(m[theme].brightness, label).toBeGreaterThan(1);
+        // Safari (iPad) needs the prefixed property, with the same recipe
+        expect(m[theme].webkitFilter, label).toBe(m[theme].filter);
+        // Over the worst backdrop, foreground text keeps AA everywhere. Regular and
+        // thick glass carry muted text too, so it keeps AA there; thin glass (the
+        // Dock, desktop icons) carries icons and foreground text only, and its
+        // muted icons keep the 3:1 non-text minimum.
+        const surface = over(
+          color(themes[theme], "--card"),
+          gray(Math.min(1, worstBackdrop[theme] * m[theme].brightness)),
+          m[theme].alpha,
+        );
+        expect(contrast(color(themes[theme], "--foreground"), surface), label).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(color(themes[theme], "--muted-foreground"), surface), label)
+          .toBeGreaterThanOrEqual(name === "thin" ? 3 : 4.5);
+      }
+    }
   });
 
   it("keeps text at AA on the glass and the content tint over any wallpaper, active or not", () => {
