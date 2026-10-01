@@ -21,6 +21,9 @@ SANDBOX_HOME="${TALOME_SANDBOX_HOME:-${TMPDIR:-/tmp}/talome-sandbox}"
 REAL_HOME="$HOME"
 CORE_PORT="${TALOME_SANDBOX_CORE_PORT:-4210}"
 DASHBOARD_PORT="${TALOME_SANDBOX_DASHBOARD_PORT:-3210}"
+# Use 127.0.0.1 to keep the sandbox's session cookie apart from a Talome on
+# localhost (cookies are per host, not per port).
+DASHBOARD_HOST="${TALOME_SANDBOX_HOST:-localhost}"
 
 mkdir -p "$SANDBOX_HOME"
 if [ ! -f "$SANDBOX_HOME/secret" ]; then
@@ -40,7 +43,7 @@ case "$1" in
       DOCKER_SOCKET="$SANDBOX_HOME/no-docker.sock" \
       DOCKER_HOST="${TALOME_SANDBOX_DOCKER:-unix://$SANDBOX_HOME/no-docker.sock}" \
       TALOME_SELF_BACKUP_DISABLED=1 \
-      DASHBOARD_ORIGIN="http://localhost:$DASHBOARD_PORT" \
+      DASHBOARD_ORIGIN="http://$DASHBOARD_HOST:$DASHBOARD_PORT" \
       DOCKER_CONFIG="${DOCKER_CONFIG:-$REAL_HOME/.docker}" \
       TSX=1 \
       pnpm exec tsx src/index.ts
@@ -50,7 +53,7 @@ case "$1" in
     exec env \
       CORE_BACKEND_URL="http://127.0.0.1:$CORE_PORT" \
       NEXT_PUBLIC_CORE_PORT="$CORE_PORT" \
-      pnpm exec next dev --webpack --hostname localhost --port "$DASHBOARD_PORT"
+      pnpm exec next dev --webpack --hostname "$DASHBOARD_HOST" --port "$DASHBOARD_PORT"
     ;;
   *)
     echo "usage: $0 core|dashboard" >&2
