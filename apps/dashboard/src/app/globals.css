@@ -2413,17 +2413,19 @@ html[data-status-bar="ios"] [data-desktop-root] {
   padding-right: env(safe-area-inset-right, 0px);
 }
 html[data-status-bar="ios"] [data-desktop-dock-band] {
-  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
 }
 
-/* The Dock's band at the bottom of the desktop. Windows may slide under it
-   (it floats over the workspace), but placement, Fill and snapping stop above
-   it, so a filled window's status bar is never hidden. */
-[data-desktop-root] {
-  --desktop-dock-reserve: 5.75rem;
+/* The Dock's band at the bottom of the desktop: the Dock sits 4px off the
+   edge, as on macOS. Windows may slide under it (it floats over the
+   workspace), but placement, Fill and snapping stop above it, so a filled
+   window's status bar is never hidden. Defined on :root so overlays portalled
+   to <body> (Launchpad) can sit above the Dock too. */
+:root {
+  --desktop-dock-reserve: 4.75rem;
 }
-html[data-status-bar="ios"] [data-desktop-root] {
-  --desktop-dock-reserve: calc(5.75rem + env(safe-area-inset-bottom, 0px));
+html[data-status-bar="ios"] {
+  --desktop-dock-reserve: calc(4.75rem + env(safe-area-inset-bottom, 0px));
 }
 
 /* Optical centring for a line of text next to icons: trim the text box to the
