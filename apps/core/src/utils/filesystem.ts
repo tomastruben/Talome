@@ -174,22 +174,57 @@ export function canonicalizePath(inputPath: string): string | null {
   }
 }
 
-/** Talome runtime state is never exposed through an enabled parent drive. */
-function isProtectedTalomeRuntimePath(canonicalPath: string): boolean {
-  const canonicalTalomeHome = canonicalizePath(TALOME_HOME);
-  const canonicalFilesHome = canonicalizePath(TALOME_FILES_HOME);
-  if (!canonicalTalomeHome || !isPathWithin(canonicalPath, canonicalTalomeHome)) return false;
-  return !canonicalFilesHome || !isPathWithin(canonicalPath, canonicalFilesHome);
+/**
+ * A snapshot of the file manager's boundary: the allowed roots and Talome's
+ * protected runtime directory, canonicalized once. A walk over thousands of
+ * entries (search) checks each one against the snapshot instead of reading
+ * settings and resolving every root again per entry.
+ */
+export interface PathGuard {
+  /** `isAllowed` for any path: canonicalizes it (realpath), then checks it. */
+  isAllowed(absPath: string): boolean;
+  /**
+   * Checks a path that is already canonical (built from a canonical folder
+   * plus a name that is not a symlink), without touching the disk.
+   */
+  isCanonicalAllowed(canonicalPath: string): boolean;
+}
+
+export function createPathGuard(): PathGuard {
+  // Each part is resolved on first use and then kept, in the same order as
+  // the checks: a path that can't be canonicalized reads nothing, and a
+  // protected path is refused before settings are read.
+  let runtime: { talomeHome: string | null; filesHome: string | null } | null = null;
+  let roots: string[] | null = null;
+
+  /** Talome runtime state is never exposed through an enabled parent drive. */
+  const isProtectedTalomeRuntimePath = (canonicalPath: string): boolean => {
+    runtime ??= { talomeHome: canonicalizePath(TALOME_HOME), filesHome: canonicalizePath(TALOME_FILES_HOME) };
+    const { talomeHome, filesHome } = runtime;
+    if (!talomeHome || !isPathWithin(canonicalPath, talomeHome)) return false;
+    return !filesHome || !isPathWithin(canonicalPath, filesHome);
+  };
+
+  const isCanonicalAllowed = (canonicalPath: string): boolean => {
+    if (!canonicalPath || canonicalPath.includes("\0")) return false;
+    if (isProtectedTalomeRuntimePath(canonicalPath)) return false;
+    roots ??= getAllowedRoots()
+      .map((root) => canonicalizePath(root))
+      .filter((root): root is string => !!root);
+    return roots.some((root) => isPathWithin(canonicalPath, root));
+  };
+
+  return {
+    isCanonicalAllowed,
+    isAllowed(absPath: string): boolean {
+      const canonicalPath = canonicalizePath(absPath);
+      return !!canonicalPath && isCanonicalAllowed(canonicalPath);
+    },
+  };
 }
 
 export function isAllowed(absPath: string): boolean {
-  const canonicalPath = canonicalizePath(absPath);
-  if (!canonicalPath || isProtectedTalomeRuntimePath(canonicalPath)) return false;
-
-  return getAllowedRoots().some((root) => {
-    const canonicalRoot = canonicalizePath(root);
-    return canonicalRoot ? isPathWithin(canonicalPath, canonicalRoot) : false;
-  });
+  return createPathGuard().isAllowed(absPath);
 }
 
 /** Exact, canonical root comparison for destructive-operation guards. */

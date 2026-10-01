@@ -96,7 +96,7 @@ describe("files page", () => {
     renderPage();
     expect(await screen.findByText("Talome can't open docs")).toBeInTheDocument();
     fail = false;
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("a.txt")).toBeInTheDocument();
   });
 

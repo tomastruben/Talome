@@ -13,6 +13,8 @@ import type { TranscodingConfig } from "@talome/types";
 import {
   TALOME_HOME,
   TALOME_FILES_HOME,
+  canonicalizePath,
+  createPathGuard,
   getAllowedRoots,
   getAllowedRootInfos,
   getDetectedDrives,
@@ -21,6 +23,7 @@ import {
   sanitizePath,
   invalidateDriveCache,
 } from "../utils/filesystem.js";
+import { SEARCH_LIMITS, searchDisk, searchFiles, searchGate, type SearchStart } from "../utils/file-search.js";
 import { createLogger } from "../utils/logger.js";
 import { resolveUploadTarget, streamUpload } from "../utils/upload.js";
 
@@ -86,15 +89,35 @@ export async function buildStreamResponse(
 
 // ── List directory contents ─────────────────────────────────────────────
 
-files.get("/list", async (c) => {
-  const requestedPath = c.req.query("path");
-  // Existing windows may have persisted the former ~/.talome root. Migrate
-  // only that exact path to the new safe user-files root; descendants remain
-  // denied so operational Talome data is never exposed.
+/**
+ * A folder the file manager can't open, as an answer it can explain (404
+ * gone, 400 a file, 403 no permission), or null for an unexpected error.
+ * Shared by /list and /search so both say the same thing.
+ */
+export function folderErrorResponse(err: unknown): Response | null {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  if (code === "ENOENT") return Response.json({ error: "This folder doesn't exist any more.", code }, { status: 404 });
+  if (code === "ENOTDIR") return Response.json({ error: "This is a file, not a folder.", code }, { status: 400 });
+  if (code === "EACCES" || code === "EPERM") {
+    return Response.json({ error: "Talome doesn't have permission to read this folder.", code }, { status: 403 });
+  }
+  return null;
+}
+
+/**
+ * The folder a request names. Existing windows may have persisted the former
+ * ~/.talome root: only that exact path migrates to the user-files root;
+ * descendants remain denied so operational Talome data is never exposed.
+ */
+function requestedFolder(requestedPath: string | undefined): string {
   const dirPath = !requestedPath || resolve(requestedPath) === resolve(TALOME_HOME)
     ? TALOME_FILES_HOME
     : requestedPath;
-  const abs = sanitizePath(dirPath);
+  return sanitizePath(dirPath);
+}
+
+files.get("/list", async (c) => {
+  const abs = requestedFolder(c.req.query("path"));
 
   if (!isAllowed(abs)) {
     return c.json({ error: "Access denied: path outside allowed directories" }, 403);
@@ -149,13 +172,131 @@ files.get("/list", async (c) => {
     });
   } catch (err) {
     // Answers the file manager can explain, instead of a generic 500.
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return c.json({ error: "This folder doesn't exist any more.", code }, 404);
-    if (code === "ENOTDIR") return c.json({ error: "This is a file, not a folder.", code }, 400);
-    if (code === "EACCES" || code === "EPERM") {
-      return c.json({ error: "Talome doesn't have permission to read this folder.", code }, 403);
+    return folderErrorResponse(err) ?? serverError(c, err, { message: "Failed to list directory" });
+  }
+});
+
+// ── Search names ────────────────────────────────────────────────────────
+
+const searchQuerySchema = z.object({
+  path: z.string().max(4096, "That folder path is too long.").optional(),
+  q: z
+    .string({ error: "Type something to search for." })
+    .trim()
+    .min(2, "Type at least 2 characters to search.")
+    .max(200, "Search for 200 characters or fewer."),
+  limit: z.coerce
+    .number({ error: "The result limit must be a number." })
+    .int("The result limit must be a whole number.")
+    .min(1, "Ask for at least 1 result.")
+    .max(SEARCH_LIMITS.maxResults, `Ask for ${SEARCH_LIMITS.maxResults} results or fewer.`)
+    .default(SEARCH_LIMITS.defaultResults),
+  showHidden: z.enum(["true", "false"], { error: "showHidden must be true or false." }).optional(),
+});
+
+/**
+ * Finds files and folders by name below a folder, or in every location when
+ * no path is given. Read-only and bounded (see SEARCH_LIMITS); the payload
+ * says when the result is incomplete and why. Its disk calls go through the
+ * shared `searchDisk` limiter, so a drive that stops answering costs a
+ * search its time budget, never the server its file-system threads.
+ */
+files.get("/search", async (c) => {
+  // Read first: a request the client already dropped shouldn't start a walk.
+  const signal = c.req.raw.signal;
+  const parsed = searchQuerySchema.safeParse(c.req.query());
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.issues[0]?.message ?? "Invalid search." }, 400);
+  }
+  const { q, limit } = parsed.data;
+  const showHidden = parsed.data.showHidden === "true";
+  const requestedPath = parsed.data.path?.trim() || undefined;
+
+  // Every disk slot is held by a call that hasn't answered for a while: a new
+  // walk would only wait out its time budget.
+  if (searchDisk.stalled) {
+    c.header("Retry-After", "10");
+    return c.json({ error: "A drive isn't answering, so search is paused. Check that your drives are connected, then retry." }, 503);
+  }
+
+  let starts: SearchStart[];
+  let shownPath: string | null = null;
+  if (requestedPath) {
+    const abs = requestedFolder(requestedPath);
+    if (!isAllowed(abs)) {
+      return c.json({ error: "Access denied: path outside allowed directories" }, 403);
     }
-    return serverError(c, err, { message: "Failed to list directory" });
+    const checked = await searchDisk.run(
+      () => stat(abs).then((info) => ({ info, err: null }), (err: unknown) => ({ info: null, err })),
+      AbortSignal.any([signal, AbortSignal.timeout(SEARCH_LIMITS.timeBudgetMs)]),
+    );
+    if (signal.aborted) return new Response(null, { status: 499 });
+    if (!checked.ok) {
+      return c.json({ error: "This folder's drive isn't answering. Check that it's connected, then retry." }, 503);
+    }
+    const { info, err } = checked.value;
+    if (!info) return folderErrorResponse(err) ?? serverError(c, err, { message: "Failed to search" });
+    if (!info.isDirectory()) return c.json({ error: "This is a file, not a folder.", code: "ENOTDIR" }, 400);
+    const canonical = canonicalizePath(abs);
+    if (!canonical) return c.json({ error: "This folder doesn't exist any more.", code: "ENOENT" }, 404);
+    starts = [{ path: abs, canonical }];
+    shownPath = abs;
+  } else {
+    starts = getAllowedRoots()
+      .filter((root) => existsSync(root))
+      .map((root) => ({ path: root, canonical: canonicalizePath(root) }))
+      .filter((start): start is SearchStart => !!start.canonical);
+  }
+
+  const release = searchGate.tryAcquire();
+  if (!release) {
+    c.header("Retry-After", "2");
+    return c.json({ error: "Other searches are still running. Retry in a moment." }, 429);
+  }
+
+  const startedAt = Date.now();
+  try {
+    if (signal.aborted) return new Response(null, { status: 499 });
+    const outcome = await searchFiles(
+      { starts, query: q, limit, showHidden, signal },
+      {
+        readdir: (path) => readdir(path, { withFileTypes: true }),
+        stat: (path) => stat(path),
+        now: () => Date.now(),
+        guard: createPathGuard(),
+        disk: searchDisk,
+      },
+    );
+    const elapsedMs = Date.now() - startedAt;
+    if (outcome.aborted || signal.aborted) return new Response(null, { status: 499 });
+    // Counts only: what people search for stays out of the logs.
+    log.debug("search", {
+      hits: outcome.items.length,
+      scanned: outcome.scanned,
+      skipped: outcome.skipped,
+      truncated: outcome.truncated,
+      elapsedMs,
+    });
+    return c.json({
+      path: shownPath,
+      query: q,
+      items: outcome.items,
+      truncated: outcome.truncated,
+      skipped: outcome.skipped,
+      limits: {
+        results: limit,
+        maxDepth: SEARCH_LIMITS.maxDepth,
+        timeBudgetMs: SEARCH_LIMITS.timeBudgetMs,
+        maxEntries: SEARCH_LIMITS.maxEntries,
+      },
+      elapsedMs,
+    });
+  } catch (err) {
+    return serverError(c, err, { message: "Failed to search" });
+  } finally {
+    // The walk has returned, so the slot is free even if a disk call it gave
+    // up on is still waiting on its drive (that call holds a disk slot instead).
+    release();
   }
 });
 

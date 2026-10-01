@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useRef, Suspense } from "react";
+import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, Suspense } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import dynamic from "next/dynamic";
@@ -13,17 +14,10 @@ import {
   Folder01Icon,
   FolderOpenIcon,
   FileAttachmentIcon,
-  FileMusicIcon,
-  FileVideoIcon,
-  Image01Icon,
-  SourceCodeCircleIcon,
-  Settings01Icon,
-  Database01Icon,
   Download01Icon,
   Delete01Icon,
   Edit02Icon,
   MoreHorizontalIcon,
-  Add01Icon,
   CloudUploadIcon,
   FolderAddIcon,
   FileUploadIcon,
@@ -38,6 +32,7 @@ import {
   ArrowRight02Icon,
   PinIcon,
   PinOffIcon,
+  Search01Icon,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,23 +48,43 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { promiseToast } from "@/components/ui/sonner";
-import { toastWarning } from "@/lib/toast";
 import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
 import {
+  SEARCH_MIN_CHARS,
+  displaySegments,
+  ext,
+  fileIcon,
+  filesCountLabel,
+  filterByQuery,
   folderErrorCopy,
-  listDataIsFor,
+  formatDate,
+  isAudioPreviewable,
+  isImagePreviewable,
+  isMarkdownFile,
   isOverTextPreviewLimit,
+  isPDF,
+  isPreviewable,
+  isSvgFile,
+  isVideoPreviewable,
+  listDataIsFor,
+  needsTextFetch,
+  parentPath,
+  samePath,
   shouldHandleQuickLookKey,
   uniqueName,
+  type FileItem,
 } from "@/components/files/file-helpers";
+import { FilesToolbar, type FilesSearchScope } from "@/components/files/files-toolbar";
+import { FilesStatusBar } from "@/components/files/files-status-bar";
+import { FILES_FIRST_CELL, FILES_LAST_CELL, FilesColGroup, FilesListHeader } from "@/components/files/files-list-header";
+import { FileSearchResults, HighlightedName } from "@/components/files/file-search-results";
+import { useFileSearch } from "@/components/files/use-file-search";
 import { fetchJson, fetchErrorStatus } from "@/lib/fetch-json";
+import { SHORTCUTS } from "@/lib/keymap";
 import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import {
@@ -133,14 +148,6 @@ const PDFPreview = dynamic(
 
 // ── Types ───────────────────────────────────────────────────────────────
 
-interface FileItem {
-  name: string;
-  path: string;
-  isDirectory: boolean;
-  size: number;
-  modified: string | null;
-}
-
 interface ListResponse {
   path: string;
   parent: string | null;
@@ -163,101 +170,6 @@ interface ReadResponse {
 // Retry) instead of a skeleton that never ends.
 const fetcher = <T,>(url: string) => fetchJson<T>(url);
 
-function ext(name: string): string {
-  const i = name.lastIndexOf(".");
-  return i > 0 ? name.slice(i + 1).toLowerCase() : "";
-}
-
-const CODE_EXTS = new Set(["js", "ts", "tsx", "jsx", "py", "go", "rs", "sh", "bash", "zsh", "sql", "dockerfile"]);
-const CONFIG_EXTS = new Set(["json", "yml", "yaml", "toml", "ini", "conf", "cfg", "env", "xml", "csv"]);
-const TEXT_EXTS = new Set(["txt", "md", "log", "html", "css"]);
-const MEDIA_AUDIO = new Set(["mp3", "flac", "ogg", "wav", "aac", "m4a", "m4b"]);
-const MEDIA_VIDEO = new Set(["mp4", "mkv", "avi", "mov", "webm"]);
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp"]);
-const DB_EXTS = new Set(["db", "sqlite", "sqlite3"]);
-const PDF_EXT = "pdf";
-
-function isTextPreviewable(name: string): boolean {
-  const e = ext(name);
-  return CODE_EXTS.has(e) || CONFIG_EXTS.has(e) || TEXT_EXTS.has(e) || name.startsWith(".");
-}
-
-function isImagePreviewable(name: string): boolean {
-  return IMAGE_EXTS.has(ext(name));
-}
-
-function isPDF(name: string): boolean {
-  return ext(name) === PDF_EXT;
-}
-
-function isMarkdownFile(name: string): boolean {
-  const e = ext(name);
-  return e === "md" || e === "mdx";
-}
-
-function isSvgFile(name: string): boolean {
-  return ext(name) === "svg";
-}
-
-/** True if the file needs the /api/files/read text fetch. */
-function needsTextFetch(name: string): boolean {
-  return isTextPreviewable(name) || isMarkdownFile(name) || isSvgFile(name);
-}
-
-/** True if this file type can be previewed (for click handling). */
-function isPreviewable(name: string): boolean {
-  return isTextPreviewable(name) || isImagePreviewable(name) || isMediaPreviewable(name) || isPDF(name);
-}
-
-function isAudioPreviewable(name: string): boolean {
-  return MEDIA_AUDIO.has(ext(name));
-}
-
-function isVideoPreviewable(name: string): boolean {
-  return MEDIA_VIDEO.has(ext(name));
-}
-
-function isMediaPreviewable(name: string): boolean {
-  return isAudioPreviewable(name) || isVideoPreviewable(name);
-}
-
-/** Type icons are muted: the glyph says the type, colour is not a signal here. */
-function fileIcon(item: FileItem): { icon: IconSvgElement; color: string } {
-  if (item.isDirectory) return { icon: Folder01Icon, color: "text-muted-foreground" };
-  const e = ext(item.name);
-  const color = "text-dim-foreground";
-  if (CODE_EXTS.has(e)) return { icon: SourceCodeCircleIcon, color };
-  if (CONFIG_EXTS.has(e)) return { icon: Settings01Icon, color };
-  if (IMAGE_EXTS.has(e)) return { icon: Image01Icon, color };
-  if (MEDIA_AUDIO.has(e)) return { icon: FileMusicIcon, color };
-  if (MEDIA_VIDEO.has(e)) return { icon: FileVideoIcon, color };
-  if (DB_EXTS.has(e)) return { icon: Database01Icon, color };
-  return { icon: FileAttachmentIcon, color };
-}
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "\u2014";
-  const d = new Date(iso);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const mins = Math.floor(diffMs / 60_000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined });
-}
-
-function formatFullDate(iso: string | null): string {
-  if (!iso) return "\u2014";
-  return new Date(iso).toLocaleString(undefined, {
-    year: "numeric", month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
-}
-
 function rootLabel(rootPath: string): { label: string; icon: IconSvgElement } {
   const name = rootPath.split("/").filter(Boolean).pop() || rootPath;
   // External drives: /Volumes/*, /media/*, /mnt/*, /run/media/*
@@ -276,45 +188,29 @@ function FilesTableSkeleton({ rows = 12 }: { rows?: number }) {
   // Varying name widths for visual realism
   const nameWidths = ["w-28", "w-36", "w-24", "w-40", "w-32", "w-20", "w-44", "w-28", "w-36", "w-32", "w-24", "w-40"];
   return (
-    <Table className="table-fixed" containerClassName="overflow-visible">
-      <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/85">
-        <TableRow className="hover:bg-transparent border-border/50">
-          <TableHead className="w-9 pl-3 pr-0">
-            <div className="flex items-center justify-center">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-dim-foreground">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" />
-              </svg>
-            </div>
-          </TableHead>
-          <TableHead className="overflow-hidden">Name</TableHead>
-          <TableHead className="hidden sm:table-cell w-[25%]">Modified</TableHead>
-          <TableHead className="hidden sm:table-cell text-right w-[15%]">Size</TableHead>
-          <TableHead className="w-9" />
-        </TableRow>
-      </TableHeader>
+    <Table className="table-fixed" containerClassName="overflow-visible" aria-busy="true">
+      <FilesColGroup />
       <TableBody>
         {Array.from({ length: rows }).map((_, i) => (
-          <TableRow key={i} className="border-transparent">
-            <TableCell className="py-1.5 w-9 pl-3 pr-0">
+          <TableRow key={i} className="h-10 border-transparent hover:bg-transparent pointer-coarse:h-11">
+            <TableCell className={FILES_FIRST_CELL}>
               <div className="flex items-center justify-center">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-dim-foreground">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" />
-                </svg>
+                <SelectMark selected={false} className="text-dim-foreground" />
               </div>
             </TableCell>
-            <TableCell className="py-1.5 overflow-hidden">
+            <TableCell className="overflow-hidden">
               <div className="flex items-center gap-2.5">
                 <Skeleton className="size-5 rounded shrink-0" />
                 <Skeleton className={cn("h-3.5 rounded", nameWidths[i % nameWidths.length])} />
               </div>
             </TableCell>
-            <TableCell className="hidden sm:table-cell py-1.5">
+            <TableCell className="hidden sm:table-cell">
               <Skeleton className="h-3 w-16 rounded" />
             </TableCell>
-            <TableCell className="hidden sm:table-cell py-1.5 text-right">
+            <TableCell className="hidden sm:table-cell text-right">
               {i % 3 !== 0 && <Skeleton className="h-3 w-10 rounded ml-auto" />}
             </TableCell>
-            <TableCell className="py-1.5 w-9" />
+            <TableCell className={FILES_LAST_CELL} />
           </TableRow>
         ))}
       </TableBody>
@@ -350,7 +246,7 @@ function RootsList({ roots, onSelect }: { roots: FileManagerRoot[]; onSelect: (r
   const mounts = stats?.disk.mounts ?? [];
 
   return (
-    <div className="flex min-h-full flex-col justify-center px-4 py-6">
+    <div className="flex flex-1 flex-col justify-center px-[var(--window-pad,0.75rem)] py-6">
       <div className="mx-auto flex w-full max-w-lg flex-col gap-3">
         {roots.map((root) => {
           const icon = root.kind === "talome-files" ? FolderOpenIcon : ExternalDriveIcon;
@@ -519,7 +415,7 @@ function FileQuickLook({
     ? `${CORE_URL}/api/files/thumbnail?path=${encodeURIComponent(filePath)}&w=1920`
     : undefined;
   const { icon, color } = filePath
-    ? fileIcon({ name: fileName, isDirectory: false, path: "", size: 0, modified: null })
+    ? fileIcon({ name: fileName, isDirectory: false })
     : { icon: FileAttachmentIcon, color: "" };
 
   const renderContent = () => {
@@ -678,7 +574,7 @@ function FileQuickLook({
                 >
                   <HugeiconsIcon icon={ArrowLeft02Icon} size={14} />
                 </Button>
-                <span className="text-[10px] tabular-nums text-muted-foreground min-w-[2.5rem] text-center">
+                <span className="text-xs tabular-nums text-muted-foreground min-w-[2.5rem] text-center">
                   {currentIndex + 1} / {previewableFiles.length}
                 </span>
                 <Button
@@ -937,7 +833,7 @@ function FileRowActionItems({
       ? [{ id: "open", label: item.isDirectory ? "Open" : "Quick Look", icon: item.isDirectory ? FolderOpenIcon : FileAttachmentIcon, run: () => onOpen(item) }]
       : []),
     ...(item.isDirectory && onTogglePin
-      ? [{ id: "pin", label: pinned ? "Remove from Sidebar" : "Add to Sidebar", icon: pinned ? PinOffIcon : PinIcon, run: () => onTogglePin(item) }]
+      ? [{ id: "pin", label: pinned ? "Remove from sidebar" : "Add to sidebar", icon: pinned ? PinOffIcon : PinIcon, run: () => onTogglePin(item) }]
       : []),
     { id: "rename", label: "Rename", icon: Edit02Icon, run: () => onRename(item) },
     { id: "move", label: "Move to…", icon: FolderExportIcon, run: () => onMove(item) },
@@ -970,20 +866,50 @@ function FileRowActionItems({
 
 // ── Page component ──────────────────────────────────────────────────────
 
-function FilesPageInner({ initialPath }: { initialPath: string | null }) {
+const NO_ITEMS: FileItem[] = [];
+
+interface NavigateOptions {
+  /** Select and scroll to this item once the folder has loaded */
+  reveal?: string;
+  /** Keep searching for this, below the new folder (otherwise opening a folder ends the search) */
+  search?: string;
+}
+
+function FilesPageInner({
+  initialPath,
+  initialReveal = null,
+  initialQuery = null,
+}: {
+  initialPath: string | null;
+  /** ?reveal=<name>: select this item when the folder opens ("Show in folder") */
+  initialReveal?: string | null;
+  /** ?q=<query>: open with a search below the folder */
+  initialQuery?: string | null;
+}) {
   const router = useRouter();
   const [currentPath, setCurrentPath] = useState<string | null>(initialPath);
   const [previewFile, setPreviewFile] = useState<string | null>(null);
   const [renamingItem, setRenamingItem] = useState<FileItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [showHidden, setShowHidden] = useState(false);
+  // A dotfile shown from search results is only listed with hidden files on.
+  const [showHidden, setShowHidden] = useState(() => initialReveal?.startsWith(".") ?? false);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
-  const [highlightedFolder, setHighlightedFolder] = useState<string | null>(null);
+  /** A row that was just created or revealed, highlighted for a moment */
+  const [highlightedName, setHighlightedName] = useState<string | null>(null);
+  const [pendingReveal, setPendingReveal] = useState<string | null>(initialReveal);
   const [movingPaths, setMovingPaths] = useState<string[]>([]);
+  // Search: typing filters this folder; Enter or "Include subfolders" searches below it.
+  const [query, setQuery] = useState(initialQuery ?? "");
+  const [scopeChoice, setScopeChoice] = useState<FilesSearchScope>(initialQuery ? "deep" : "folder");
+  /** The table row that takes Tab (roving focus) */
+  const [activeRowPath, setActiveRowPath] = useState<string | null>(null);
   const confirm = useConfirm();
   const scrollPositions = useRef<Map<string, number>>(new Map());
   const contentRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const resultsListRef = useRef<HTMLDivElement>(null);
+  const highlightTimer = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
@@ -1039,12 +965,81 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     scrollParent.scrollTo({ top: saved ?? 0 });
   }, [currentPath]);
 
-  const hasSelection = selectedPaths.size > 0;
+  // ── Search ──────────────────────────────────────────────────────────
+
+  const trimmedQuery = query.trim();
+  // At the list of locations there's no folder to filter: search goes everywhere.
+  const scope: FilesSearchScope = isAtVirtualRoot ? "deep" : scopeChoice;
+  const deepSearch = trimmedQuery.length > 0 && scope === "deep";
+  const folderFilter = trimmedQuery.length > 0 && scope === "folder";
+  const listItems = data?.items ?? NO_ITEMS;
+  /** The rows on screen: selection, select-all, Quick Look and downloads act on these only */
+  const visibleItems = useMemo(
+    () => (deepSearch ? NO_ITEMS : folderFilter ? filterByQuery(listItems, trimmedQuery) : listItems),
+    [deepSearch, folderFilter, listItems, trimmedQuery],
+  );
+  const selectedVisible = useMemo(() => {
+    if (selectedPaths.size === 0) return selectedPaths;
+    return new Set(visibleItems.filter((item) => selectedPaths.has(item.path)).map((item) => item.path));
+  }, [selectedPaths, visibleItems]);
+
+  // Locations with their labels, and the folder's path read from its location
+  const knownRoots = useMemo(
+    () => data?.roots?.map((root) => ({ path: root.path, label: root.label }))
+      ?? (data?.allowedRoots ?? []).map((root) => ({ path: root, label: rootLabel(root).label })),
+    [data?.roots, data?.allowedRoots],
+  );
+  const shownPath = isAtVirtualRoot ? null : dataIsForThisFolder ? (data?.path ?? currentPath) : (currentPath ?? data?.path ?? null);
+  const segments = useMemo(() => displaySegments(shownPath, knownRoots), [shownPath, knownRoots]);
+  const folderLabel = segments.length > 0 ? segments[segments.length - 1].name : "Files";
+  const locationLabel = isAtVirtualRoot ? "all locations" : folderLabel;
+
+  const search = useFileSearch({
+    enabled: deepSearch,
+    path: isAtVirtualRoot ? null : shownPath,
+    query: trimmedQuery,
+    showHidden,
+    locationName: locationLabel,
+  });
+  const { cancel: cancelSearch, runNow: runSearchNow } = search;
+
+  /** Keeps only selected items that are still on screen after the search changes */
+  const pruneSelection = useCallback((nextQuery: string, nextScope: FilesSearchScope) => {
+    setSelectedPaths((prev) => {
+      if (prev.size === 0) return prev;
+      const trimmed = nextQuery.trim();
+      const deep = trimmed.length > 0 && (isAtVirtualRoot || nextScope === "deep");
+      if (deep) return new Set();
+      const visible = new Set(filterByQuery(listItems, trimmed).map((item) => item.path));
+      const next = new Set([...prev].filter((path) => visible.has(path)));
+      return next.size === prev.size ? prev : next;
+    });
+    lastSelectedIdx.current = null;
+  }, [isAtVirtualRoot, listItems]);
+
+  const changeQuery = useCallback((next: string) => {
+    setQuery(next);
+    pruneSelection(next, scopeChoice);
+  }, [pruneSelection, scopeChoice]);
+
+  const changeScope = useCallback((next: FilesSearchScope) => {
+    setScopeChoice(next);
+    pruneSelection(query, next);
+    if (next === "deep") runSearchNow();
+  }, [pruneSelection, query, runSearchNow]);
+
+  const clearSearch = useCallback(() => {
+    cancelSearch();
+    setQuery("");
+    setScopeChoice("folder");
+  }, [cancelSearch]);
+
+  const hasSelection = selectedVisible.size > 0;
   const reduceMotion = useReducedMotion();
 
   // Into a folder the list arrives from the right; back out, from the left
   const [navDirection, setNavDirection] = useState(0);
-  const navigate = useCallback((path: string) => {
+  const navigate = useCallback((path: string, options: NavigateOptions = {}) => {
     setNavDirection(
       !currentPath || path.startsWith(`${currentPath}/`) ? 1 : currentPath.startsWith(`${path}/`) ? -1 : 0,
     );
@@ -1057,14 +1052,24 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     setCurrentPath(path);
     setSelectedPaths(new Set());
     lastSelectedIdx.current = null;
+    setActiveRowPath(null);
+    // Opening a folder ends a search, unless the search moves with it.
+    cancelSearch();
+    setQuery(options.search ?? "");
+    setScopeChoice(options.search ? "deep" : "folder");
+    setPendingReveal(options.reveal ?? null);
+    if (options.reveal?.startsWith(".")) setShowHidden(true);
     // Update title atomically to prevent blink
     const isRoot = data?.allowedRoots?.includes(path);
     const folderName = isRoot
       ? rootLabel(path).label
       : path.split("/").filter(Boolean).pop() || "Files";
     setPageTitle(folderName);
-    router.replace(`/dashboard/files?path=${encodeURIComponent(path)}`, { scroll: false });
-  }, [currentPath, router, data?.allowedRoots, setPageTitle]);
+    let url = `/dashboard/files?path=${encodeURIComponent(path)}`;
+    if (options.reveal) url += `&reveal=${encodeURIComponent(options.reveal)}`;
+    if (options.search) url += `&q=${encodeURIComponent(options.search)}`;
+    router.replace(url, { scroll: false });
+  }, [currentPath, router, data?.allowedRoots, setPageTitle, cancelSearch]);
 
   const handleDownload = useCallback((filePath: string, fileName: string) => {
     const a = document.createElement("a");
@@ -1154,6 +1159,8 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
 
   const handleNewFolder = useCallback(async () => {
     if (!currentPath) return;
+    // The new folder must be on screen to be named.
+    clearSearch();
     const existing = (data?.items ?? []).map((item) => item.name);
     // A free name ("New Folder 2", …) instead of silently reusing "New Folder".
     // The server also refuses an existing name, so a race (or a hidden item)
@@ -1176,9 +1183,10 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         return;
       }
       if (result?.ok) {
-        setHighlightedFolder(name);
+        setHighlightedName(name);
         await mutate();
-        setTimeout(() => setHighlightedFolder(null), 2000);
+        if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current);
+        highlightTimer.current = window.setTimeout(() => setHighlightedName(null), 2000);
         // Name it right away, like a desktop file manager.
         setRenamingItem({ name, path: `${currentPath}/${name}`, isDirectory: true, size: 0, modified: null });
         setRenameValue(name);
@@ -1192,7 +1200,7 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
       existing.push(name);
     }
     toast.error("Couldn't create a folder", { description: "A folder with that name already exists. Refresh and try again." });
-  }, [currentPath, data?.items, mutate]);
+  }, [currentPath, data?.items, mutate, clearSearch]);
 
   // Refresh the listing as uploads land, at most twice a second
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1234,14 +1242,16 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
 
   // ── Multi-select ──────────────────────────────────────────────────────
 
+  // Indexes are into the rows on screen, so a shift-range never takes in rows a filter hides.
   const toggleSelect = useCallback((path: string, idx: number, shiftKey: boolean) => {
     setSelectedPaths(prev => {
       const next = new Set(prev);
-      if (shiftKey && lastSelectedIdx.current !== null && data?.items) {
+      if (shiftKey && lastSelectedIdx.current !== null) {
         const start = Math.min(lastSelectedIdx.current, idx);
         const end = Math.max(lastSelectedIdx.current, idx);
         for (let i = start; i <= end; i++) {
-          next.add(data.items[i].path);
+          const item = visibleItems[i];
+          if (item) next.add(item.path);
         }
       } else {
         if (next.has(path)) next.delete(path);
@@ -1250,21 +1260,21 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
       return next;
     });
     lastSelectedIdx.current = idx;
-  }, [data?.items]);
+  }, [visibleItems]);
 
-  const allSelected = !!(data?.items && data.items.length > 0 && data.items.every(item => selectedPaths.has(item.path)));
+  const allSelected = visibleItems.length > 0 && visibleItems.every(item => selectedPaths.has(item.path));
 
   const toggleSelectAll = useCallback(() => {
-    if (!data?.items) return;
     if (allSelected) {
       setSelectedPaths(new Set());
     } else {
-      setSelectedPaths(new Set(data.items.map(i => i.path)));
+      setSelectedPaths(new Set(visibleItems.map(i => i.path)));
     }
-  }, [data?.items, allSelected]);
+    lastSelectedIdx.current = null;
+  }, [visibleItems, allSelected]);
 
   const confirmBulkDelete = useCallback(async () => {
-    const paths = Array.from(selectedPaths);
+    const paths = Array.from(selectedVisible);
     if (paths.length === 0) return;
     const items = paths.map((path) => data?.items?.find((i) => i.path === path) ?? { name: path.split("/").pop() ?? path, path });
     const first = items[0].name;
@@ -1297,16 +1307,15 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
       },
       receipt: (n) => `Deleted ${n} item${n === 1 ? "" : "s"}`,
     });
-  }, [confirm, currentPath, data?.items, deletePath, mutate, selectedPaths]);
+  }, [confirm, currentPath, data?.items, deletePath, mutate, selectedVisible]);
 
   const handleBulkDownload = useCallback(() => {
-    for (const path of selectedPaths) {
-      const item = data?.items?.find(i => i.path === path);
-      if (item && !item.isDirectory) {
+    for (const item of visibleItems) {
+      if (selectedVisible.has(item.path) && !item.isDirectory) {
         handleDownload(item.path, item.name);
       }
     }
-  }, [selectedPaths, data?.items, handleDownload]);
+  }, [selectedVisible, visibleItems, handleDownload]);
 
   const handleMove = useCallback(async (destination: string) => {
     const sources = movingPaths;
@@ -1399,9 +1408,10 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     }
   }, [data?.parent, data?.path, data?.allowedRoots, hasMultipleRoots, navigate, goToVirtualRoot]);
 
-  // Escape to clear selection
+  // Escape to clear selection (Escape in the search field clears the search instead)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.target === searchInputRef.current) return;
       if (e.key === "Escape" && selectedPaths.size > 0) {
         setSelectedPaths(new Set());
         lastSelectedIdx.current = null;
@@ -1465,48 +1475,453 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
     };
   }, [currentPath, hasMultipleRoots, data?.allowedRoots, goBack, setPageTitle, setPageBack]);
 
-  // ── Path segments ───────────────────────────────────────────────────
+  // ── Reveal ("Show in folder") ───────────────────────────────────────
 
-  // Path bar starts at the root the folder lives in ("Talome Files / Photos / 2025"),
-  // built from the user-visible root instead of exposing the server's host path
-  // (for example /Users/<name>/.talome/files). This also keeps external-drive
-  // breadcrumbs stable when their mount path changes.
-  const segments: { name: string; path: string }[] = [];
-  if (data?.path) {
-    const knownRoots: { path: string; label: string }[] = data.roots ?? (data.allowedRoots ?? []).map((root) => ({ path: root, label: rootLabel(root).label }));
-    const matchingRoot = knownRoots
-      .filter((root) => data.path === root.path || data.path.startsWith(`${root.path}/`))
-      .sort((a, b) => b.path.length - a.path.length)[0];
-
-    if (matchingRoot) {
-      segments.push({ name: matchingRoot.label, path: matchingRoot.path });
-      const parts = data.path.slice(matchingRoot.path.length).split("/").filter(Boolean);
-      let accumulated = matchingRoot.path;
-      for (const part of parts) {
-        accumulated += `/${part}`;
-        segments.push({ name: part, path: accumulated });
-      }
-    } else {
-      segments.push({
-        name: data.path.split("/").filter(Boolean).pop() || "Files",
-        path: data.path,
-      });
+  const hasDataForKey = swrCache.get(listUrl)?.data !== undefined;
+  const [revealed, setRevealed] = useState<{ path: string; index: number } | null>(null);
+  // Once this exact listing is here (hidden files may just have been turned
+  // on), select the item; the effect below scrolls to it.
+  if (pendingReveal && !deepSearch && dataIsForThisFolder && hasDataForKey && data?.items) {
+    const index = data.items.findIndex((entry) => entry.name === pendingReveal);
+    setPendingReveal(null);
+    if (index >= 0) {
+      const item = data.items[index];
+      setSelectedPaths(new Set([item.path]));
+      setActiveRowPath(item.path);
+      setHighlightedName(item.name);
+      setRevealed({ path: item.path, index });
     }
   }
 
-  if (error && !dataIsForThisFolder) {
-    const copy = folderErrorCopy(fetchErrorStatus(error), currentPath);
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6">
-        <ErrorState title={copy.title} description={copy.description} onRetry={() => void mutate()} className="w-full max-w-lg" />
-        {currentPath && (
-          <Button variant="ghost" size="sm" onClick={goToVirtualRoot}>
-            Back to Files
-          </Button>
-        )}
-      </div>
-    );
+  useEffect(() => {
+    if (!revealed) return;
+    lastSelectedIdx.current = revealed.index;
+    if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current);
+    highlightTimer.current = window.setTimeout(() => setHighlightedName(null), 2000);
+    const frame = window.requestAnimationFrame(() => {
+      const row = Array.from(contentRef.current?.querySelectorAll<HTMLElement>("[data-file-path]") ?? [])
+        .find((element) => element.dataset.filePath === revealed.path);
+      row?.scrollIntoView?.({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [revealed, reduceMotion]);
+
+  useEffect(() => () => {
+    if (highlightTimer.current !== null) window.clearTimeout(highlightTimer.current);
+  }, []);
+
+  /** Shows a search result in its folder, selected: here if it's in this folder, otherwise there. */
+  const showInFolder = useCallback((item: FileItem) => {
+    const folder = parentPath(item.path);
+    if (!isAtVirtualRoot && shownPath && samePath(folder, shownPath)) {
+      clearSearch();
+      if (item.name.startsWith(".")) setShowHidden(true);
+      setPendingReveal(item.name);
+      return;
+    }
+    navigate(folder, { reveal: item.name });
+  }, [isAtVirtualRoot, shownPath, clearSearch, navigate]);
+
+  const openSearchResult = useCallback((item: FileItem) => {
+    if (item.isDirectory) navigate(item.path);
+    else if (isPreviewable(item.name)) setPreviewFile(item.path);
+    else showInFolder(item);
+  }, [navigate, showInFolder]);
+
+  // ── Keyboard ────────────────────────────────────────────────────────
+
+  const dialogOpen = !!previewFile || !!renamingItem || movingPaths.length > 0;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!SHORTCUTS.filesSearch.matches(event)) return;
+      const field = searchInputRef.current;
+      if (!field) return;
+      // Pressed again in the field: the browser's own find takes it.
+      if (document.activeElement === field) return;
+      if (dialogOpen || document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      event.preventDefault();
+      field.focus();
+      field.select();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [dialogOpen]);
+
+  const tableRows = useCallback(
+    () => Array.from(contentRef.current?.querySelectorAll<HTMLElement>("tr[data-file-path]") ?? []),
+    [],
+  );
+  const focusTableRow = useCallback((index: number) => {
+    const rows = tableRows();
+    const row = rows[Math.max(0, Math.min(rows.length - 1, index))];
+    if (!row) return;
+    setActiveRowPath(row.dataset.filePath ?? null);
+    row.focus();
+  }, [tableRows]);
+
+  const focusSearchField = useCallback(() => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, []);
+
+  const onFieldKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    switch (event.key) {
+      case "Escape":
+        event.preventDefault();
+        // First Escape clears the search, the next leaves the field.
+        if (query) clearSearch();
+        else event.currentTarget.blur();
+        break;
+      case "Enter": {
+        event.preventDefault();
+        if (!trimmedQuery) return;
+        if (!deepSearch) {
+          changeScope("deep");
+          return;
+        }
+        const first = search.result?.items[0];
+        if (first && !search.stale && !search.error) openSearchResult(first);
+        else runSearchNow();
+        break;
+      }
+      case "ArrowDown": {
+        event.preventDefault();
+        if (deepSearch) {
+          resultsListRef.current?.querySelector<HTMLElement>('[data-search-result="name"]')?.focus();
+        } else {
+          focusTableRow(0);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  };
+
+  const onTableRowKeyDown = (event: ReactKeyboardEvent<HTMLTableRowElement>, item: FileItem, index: number) => {
+    // Keys in the row's own buttons and menus belong to them.
+    if (event.target !== event.currentTarget) return;
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        focusTableRow(index + 1);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        if (index === 0) focusSearchField();
+        else focusTableRow(index - 1);
+        break;
+      case "Home":
+        event.preventDefault();
+        focusTableRow(0);
+        break;
+      case "End":
+        event.preventDefault();
+        focusTableRow(visibleItems.length - 1);
+        break;
+      case "Enter":
+        event.preventDefault();
+        handleRowClick(item);
+        break;
+      case " ":
+        event.preventDefault();
+        toggleSelect(item.path, index, event.shiftKey);
+        break;
+      case "Escape":
+        event.preventDefault();
+        event.stopPropagation();
+        focusSearchField();
+        break;
+      default:
+        break;
+    }
+  };
+
+  // ── What the column shows ───────────────────────────────────────────
+
+  const folderError = !!error && !dataIsForThisFolder;
+  const uploadFiles = () => fileInputRef.current?.click();
+  const searchSubfolders = () => changeScope("deep");
+  const rovingRowPath = visibleItems.some((item) => item.path === activeRowPath) ? activeRowPath : visibleItems[0]?.path ?? null;
+
+  let countLabel: string | null = null;
+  if (deepSearch) {
+    if (search.result && !search.stale && !search.error) {
+      countLabel = filesCountLabel({ kind: "results", count: search.result.items.length, truncated: search.result.truncated });
+    }
+  } else if (!isAtVirtualRoot && dataIsForThisFolder && data?.items) {
+    countLabel = folderFilter
+      ? filesCountLabel({ kind: "filtered", shown: visibleItems.length, total: data.items.length })
+      : filesCountLabel({ kind: "folder", total: data.items.length });
   }
+
+  type BodyKind = "error" | "search" | "wait" | "table-skeleton" | "roots-skeleton" | "roots" | "empty" | "no-matches" | "table";
+  const bodyKind: BodyKind = folderError
+    ? "error"
+    : deepSearch
+      ? "search"
+      : loadingPhase === "skeleton" || !data
+        ? loadingPhase !== "skeleton" ? "wait" : currentPath ? "table-skeleton" : "roots-skeleton"
+        : isAtVirtualRoot && data.allowedRoots
+          ? "roots"
+          : !data.items
+            ? "wait"
+            : data.items.length === 0
+              ? "empty"
+              : visibleItems.length === 0
+                ? "no-matches"
+                : "table";
+  const showListHeader = bodyKind === "table" || bodyKind === "table-skeleton";
+  // The results grid is on screen (FileSearchResults renders it exactly then),
+  // so the search field may point at it.
+  const resultsShown = bodyKind === "search"
+    && trimmedQuery.length >= SEARCH_MIN_CHARS
+    && !!search.result
+    && !search.error
+    && search.result.items.length > 0;
+  // The rootmost folder of this one, for "Search all of Talome Files"
+  const rootSegment = segments.length > 1 ? segments[0] : null;
+
+  const renderBody = () => {
+    switch (bodyKind) {
+      case "error": {
+        const copy = folderErrorCopy(fetchErrorStatus(error), currentPath);
+        return (
+          <div className="flex flex-1 flex-col items-center justify-center pb-12">
+            <ErrorState fill title={copy.title} description={copy.description} onRetry={() => void mutate()} className="min-h-0 flex-none pb-3" />
+            {currentPath && (
+              <Button variant="ghost" size="sm" onClick={goToVirtualRoot}>
+                Back to Files
+              </Button>
+            )}
+          </div>
+        );
+      }
+      case "search":
+        return (
+          <FileSearchResults
+            search={search}
+            query={trimmedQuery}
+            locationLabel={locationLabel}
+            everywhere={isAtVirtualRoot}
+            roots={knownRoots}
+            showHidden={showHidden}
+            widen={rootSegment ? { label: `Search all of ${rootSegment.name}`, onSelect: () => navigate(rootSegment.path, { search: trimmedQuery }) } : null}
+            onIncludeHidden={() => setShowHidden(true)}
+            onOpen={openSearchResult}
+            onShowInFolder={showInFolder}
+            onDownload={(item) => handleDownload(item.path, item.name)}
+            onExitToField={focusSearchField}
+            listRef={resultsListRef}
+          />
+        );
+      case "wait":
+        return <div className="min-h-64 flex-1" aria-busy="true" />;
+      case "table-skeleton":
+        return <FilesTableSkeleton />;
+      case "roots-skeleton":
+        return (
+          <div className="mx-auto flex w-full max-w-lg flex-col gap-3 px-[var(--window-pad,0.75rem)] pt-2" aria-busy="true">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 rounded-xl border px-4 py-3.5">
+                <Skeleton className="size-8 rounded-lg shrink-0" />
+                <div className="flex-1 min-w-0 space-y-2">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-1 w-full" />
+                  <Skeleton className="h-3 w-32" />
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      case "roots":
+        return (
+          <RootsList
+            roots={getVisibleFileRoots(
+              data?.roots ?? (data?.allowedRoots ?? []).map((root) => ({
+                id: root,
+                path: root,
+                label: rootLabel(root).label,
+                kind: root.includes(".talome/files") ? "talome-files" : "external",
+              })),
+              { keepTalomeFallback: true },
+            )}
+            onSelect={(root) => navigate(root)}
+          />
+        );
+      case "empty":
+        return (
+          <EmptyState
+            fill
+            icon={FolderOpenIcon}
+            title="This folder is empty"
+            description="Drop files here, or upload them."
+            action={
+              <Button variant="outline" size="sm" onClick={uploadFiles}>
+                <HugeiconsIcon icon={CloudUploadIcon} size={14} />
+                Upload files
+              </Button>
+            }
+          />
+        );
+      case "no-matches":
+        return (
+          <EmptyState
+            fill
+            icon={Search01Icon}
+            title={`Nothing in ${folderLabel} matches “${trimmedQuery}”`}
+            description={`Search its subfolders to look further down.${showHidden ? "" : " Hidden files aren't shown."}`}
+            action={
+              <Button variant="outline" size="sm" onClick={searchSubfolders}>
+                Search subfolders
+              </Button>
+            }
+          />
+        );
+      case "table":
+        return (
+          <>
+            <Table className="table-fixed" containerClassName="overflow-visible">
+              <FilesColGroup />
+              <TableBody>
+                {visibleItems.map((item, idx) => {
+                  const { icon, color } = fileIcon(item);
+                  const clickable = item.isDirectory || isPreviewable(item.name);
+                  const isSelected = selectedPaths.has(item.path);
+                  const isHighlighted = item.name === highlightedName;
+
+                  return (
+                    <ContextMenu key={item.path}>
+                      <ContextMenuTrigger asChild>
+                      <TableRow
+                        data-file-path={item.path}
+                        tabIndex={item.path === rovingRowPath ? 0 : -1}
+                        aria-selected={isSelected}
+                        className={cn(
+                          "group h-10 border-transparent transition-colors pointer-coarse:h-11",
+                          "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                          clickable && "cursor-pointer",
+                          isSelected && "bg-muted/60",
+                        )}
+                        style={isHighlighted ? { animation: "folder-highlight 2s ease-out" } : undefined}
+                        onClick={() => handleRowClick(item)}
+                        onFocus={(event) => {
+                          if (event.target === event.currentTarget) setActiveRowPath(item.path);
+                        }}
+                        onKeyDown={(event) => onTableRowKeyDown(event, item, idx)}
+                      >
+                        <TableCell className={FILES_FIRST_CELL}>
+                          <div className="flex items-center justify-center">
+                            <button
+                              type="button"
+                              tabIndex={-1}
+                              aria-label={isSelected ? `Deselect ${item.name}` : `Select ${item.name}`}
+                              className={cn(
+                                "flex items-center justify-center rounded-full transition-opacity duration-150 focus-visible:opacity-100 pointer-coarse:size-11",
+                                hasSelection || isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100",
+                              )}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleSelect(item.path, idx, e.shiftKey);
+                              }}
+                            >
+                              <SelectMark
+                                selected={isSelected}
+                                className={isSelected ? "text-foreground" : "text-muted-foreground"}
+                              />
+                            </button>
+                          </div>
+                        </TableCell>
+                        <TableCell className="overflow-hidden">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <HugeiconsIcon icon={icon} size={18} aria-hidden="true" className={cn("shrink-0", color)} />
+                            <span className="truncate text-sm">
+                              {folderFilter ? <HighlightedName name={item.name} query={trimmedQuery} /> : item.name}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell text-muted-foreground text-xs">
+                          {formatDate(item.modified)}
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell text-right text-muted-foreground text-xs tabular-nums">
+                          {item.isDirectory ? "—" : formatBytes(item.size)}
+                        </TableCell>
+                        <TableCell className={FILES_LAST_CELL}>
+                          <div className="flex justify-end">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  // Tab from the focused row reaches its menu; other rows' menus stay out of the tab order.
+                                  tabIndex={item.path === rovingRowPath ? 0 : -1}
+                                  className="size-6 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus-visible:opacity-100 transition-opacity pointer-coarse:size-11"
+                                  onClick={(e) => e.stopPropagation()}
+                                  onKeyDown={(e) => e.stopPropagation()}
+                                  aria-label="File actions"
+                                >
+                                  <HugeiconsIcon icon={MoreHorizontalIcon} size={14} />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-40">
+                                <FileRowActionItems
+                                  menu="dropdown"
+                                  item={item}
+                                  onOpen={handleRowClick}
+                                  onRename={renameItem}
+                                  onMove={moveItem}
+                                  onDownload={handleDownload}
+                                  onDelete={deleteItem}
+                                  pinned={favoriteFolders.isFavorite(item.path)}
+                                  onTogglePin={embedded ? (folder) => favoriteFolders.toggle(folder.path) : undefined}
+                                />
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="w-44">
+                        <FileRowActionItems
+                          menu="context"
+                          item={item}
+                          onOpen={handleRowClick}
+                          onRename={renameItem}
+                          onMove={moveItem}
+                          onDownload={handleDownload}
+                          onDelete={deleteItem}
+                          pinned={favoriteFolders.isFavorite(item.path)}
+                          onTogglePin={embedded ? (folder) => favoriteFolders.toggle(folder.path) : undefined}
+                        />
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  );
+                })}
+              </TableBody>
+            </Table>
+            {folderFilter && (
+              <button
+                type="button"
+                onClick={searchSubfolders}
+                className="flex min-h-10 w-full items-center gap-2.5 px-[var(--window-pad,0.75rem)] text-left text-sm text-muted-foreground transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+              >
+                <HugeiconsIcon icon={Search01Icon} size={16} aria-hidden="true" className="shrink-0" />
+                <span className="truncate">
+                  Search “{trimmedQuery}” in {folderLabel} and its subfolders
+                </span>
+              </button>
+            )}
+          </>
+        );
+    }
+  };
+
+  const quickLookItems = deepSearch ? (search.result?.items ?? NO_ITEMS) : visibleItems;
+  const quickLookFiles = useMemo(
+    () => quickLookItems.filter((i) => !i.isDirectory && isPreviewable(i.name)).map((i) => i.path),
+    [quickLookItems],
+  );
+  const quickLookSizes = useMemo(() => new Map(quickLookItems.map((i) => [i.path, i.size])), [quickLookItems]);
 
   return (
     <>
@@ -1554,14 +1969,30 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
           />
         ) : null}
       >
+      {/* Files is a fill route in a window: it owns this column and its one scroller (no shell padding) */}
       <div
-        // In a window Files runs edge to edge, like Finder: no shell padding around the list and path bar
-        className={cn("flex flex-col flex-1 min-h-0 relative", embedded && "-m-4")}
+        className="relative flex min-h-0 flex-1 flex-col"
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
+        <FilesToolbar
+          inputRef={searchInputRef}
+          query={query}
+          onQueryChange={changeQuery}
+          onClear={() => {
+            clearSearch();
+            searchInputRef.current?.focus();
+          }}
+          onFieldKeyDown={onFieldKeyDown}
+          locationLabel={locationLabel}
+          scope={scope}
+          onScopeChange={changeScope}
+          showScope={trimmedQuery.length > 0 && !isAtVirtualRoot}
+          expanded={resultsShown}
+        />
+
         {/* ── Drag overlay ────────────────────────────────────────────── */}
         <AnimatePresence>
           {isDragging && (
@@ -1570,204 +2001,40 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
-              className="absolute inset-0 z-20 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/30 bg-primary/5 backdrop-blur-sm"
+              className="absolute inset-0 z-20 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/30 bg-primary/5"
             >
               <div className="flex flex-col items-center gap-3">
                 <div className="size-12 rounded-full bg-primary/10 flex items-center justify-center">
-                  <HugeiconsIcon icon={CloudUploadIcon} size={24} className="text-primary/60" />
+                  <HugeiconsIcon icon={CloudUploadIcon} size={24} className="text-muted-foreground" />
                 </div>
-                <p className="text-sm text-primary/60 font-medium">Drop files to upload</p>
+                <p className="text-sm text-foreground font-medium">Drop files to upload</p>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* ── File table ──────────────────────────────────────────────── */}
-        <div ref={contentRef} className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
+        {showListHeader && (
+          <FilesListHeader allSelected={allSelected} hasSelection={hasSelection} onToggleSelectAll={toggleSelectAll} />
+        )}
+
+        {/* ── List, results or state ──────────────────────────────────── */}
+        <div id="files-results" ref={contentRef} className="min-h-0 flex-1 overflow-y-auto scrollbar-none">
           {/* Into a folder the list arrives from the right, back out from the left.
               Keyed on the folder actually shown, so a kept previous listing
               doesn't replay the entrance while the next one loads. */}
           <motion.div
-            key={isAtVirtualRoot ? "roots" : (data?.path ?? "loading")}
-            initial={reduceMotion ? false : { opacity: 0, x: navDirection * TRAVEL.lift * 2, filter: navDirection ? "blur(3px)" : "blur(0px)" }}
+            key={deepSearch ? "search" : isAtVirtualRoot ? "roots" : (data?.path ?? "loading")}
+            className="flex min-h-full flex-col"
+            initial={reduceMotion ? false : deepSearch
+              ? { opacity: 0 }
+              : { opacity: 0, x: navDirection * TRAVEL.lift * 2, filter: navDirection ? "blur(3px)" : "blur(0px)" }}
             animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
             transition={enter()}
           >
-              {error && dataIsForThisFolder && (
-                <StaleRow loadedAt={listLoadedAt} subject="files" onRetry={() => void mutate()} retrying={isValidating} className="px-3 pt-2" />
-              )}
-              {loadingPhase === "skeleton" || !data ? (
-                // Branch on the phase itself: once shown, the skeleton stays its
-                // minimum time even if the data arrived (no flash).
-                loadingPhase !== "skeleton" ? (
-                  <div className="min-h-64" aria-busy="true" />
-                ) : currentPath ? (
-                  <FilesTableSkeleton />
-                ) : (
-                  <div className="flex flex-col gap-3 max-w-lg mx-auto px-4 pt-2">
-                    {Array.from({ length: 4 }).map((_, i) => (
-                      <div key={i} className="flex items-center gap-3 rounded-xl border px-4 py-3.5">
-                        <Skeleton className="size-8 rounded-lg shrink-0" />
-                        <div className="flex-1 min-w-0 space-y-2">
-                          <Skeleton className="h-4 w-24" />
-                          <Skeleton className="h-1 w-full" />
-                          <Skeleton className="h-3 w-32" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )
-              ) : isAtVirtualRoot && data?.allowedRoots ? (
-                <RootsList
-                  roots={getVisibleFileRoots(
-                    data.roots ?? data.allowedRoots.map((root) => ({
-                      id: root,
-                      path: root,
-                      label: rootLabel(root).label,
-                      kind: root.includes(".talome/files") ? "talome-files" : "external",
-                    })),
-                    { keepTalomeFallback: true },
-                  )}
-                  onSelect={(root) => navigate(root)}
-                />
-              ) : !data?.items ? (
-                <div className="min-h-64" aria-busy="true" />
-              ) : data.items.length === 0 ? (
-                <EmptyState
-                  icon={FolderOpenIcon}
-                  title="Empty folder"
-                  description="Drop files here or use the upload button."
-                  action={
-                    <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-                      <HugeiconsIcon icon={CloudUploadIcon} size={14} />
-                      Upload files
-                    </Button>
-                  }
-                />
-              ) : (
-                <Table className="table-fixed" containerClassName="overflow-visible">
-                  <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/85">
-                    <TableRow className="group/header hover:bg-transparent border-border/50 [&>th]:h-9 [&>th]:text-xs [&>th]:font-normal [&>th]:text-muted-foreground">
-                      <TableHead className="w-9 pl-3 pr-0">
-                        <div className="flex items-center justify-center">
-                          <button
-                            aria-label={allSelected ? "Deselect all" : "Select all"}
-                            className={cn(
-                              "flex items-center justify-center transition-opacity duration-150 focus-visible:opacity-100",
-                              hasSelection ? "opacity-100" : "opacity-0 group-hover/header:opacity-100",
-                            )}
-                            onClick={toggleSelectAll}
-                          >
-                            <SelectMark selected={allSelected} className={allSelected ? "text-foreground" : "text-dim-foreground"} />
-                          </button>
-                        </div>
-                      </TableHead>
-                      <TableHead className="overflow-hidden">Name</TableHead>
-                      <TableHead className="hidden sm:table-cell w-[25%]">Modified</TableHead>
-                      <TableHead className="hidden sm:table-cell text-right w-[15%]">Size</TableHead>
-                      <TableHead className="w-9" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {data?.items?.map((item, idx) => {
-                      const { icon, color } = fileIcon(item);
-                      const clickable = item.isDirectory || isPreviewable(item.name);
-                      const isSelected = selectedPaths.has(item.path);
-                      const isHighlighted = item.name === highlightedFolder;
-
-                      return (
-                        <ContextMenu key={item.path}>
-                          <ContextMenuTrigger asChild>
-                          <TableRow
-                            className={cn(
-                              "group border-transparent transition-colors",
-                              clickable && "cursor-pointer",
-                              isSelected && "bg-muted/40",
-                            )}
-                            style={isHighlighted ? { animation: "folder-highlight 2s ease-out" } : undefined}
-                            onClick={() => handleRowClick(item)}
-                          >
-                            <TableCell className="py-1.5 w-9 pl-3 pr-0">
-                              <div className="flex items-center justify-center">
-                                <button
-                                  aria-label={isSelected ? `Deselect ${item.name}` : `Select ${item.name}`}
-                                  className={cn(
-                                    "flex items-center justify-center transition-opacity duration-150 focus-visible:opacity-100",
-                                    hasSelection || isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-                                  )}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleSelect(item.path, idx, e.shiftKey);
-                                  }}
-                                >
-                                  <SelectMark
-                                    selected={isSelected}
-                                    className={isSelected ? "text-foreground" : hasSelection ? "text-dim-foreground" : "text-dim-foreground group-hover:text-muted-foreground"}
-                                  />
-                                </button>
-                              </div>
-                            </TableCell>
-                            <TableCell className="py-1.5 overflow-hidden">
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <HugeiconsIcon icon={icon} size={18} className={cn("shrink-0", color)} />
-                                <span className="truncate text-sm">{item.name}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="hidden sm:table-cell py-1.5 text-muted-foreground text-xs">
-                              {formatDate(item.modified)}
-                            </TableCell>
-                            <TableCell className="hidden sm:table-cell py-1.5 text-right text-muted-foreground text-xs tabular-nums">
-                              {item.isDirectory ? "\u2014" : formatBytes(item.size)}
-                            </TableCell>
-                            <TableCell className="py-1.5 w-9 pr-1">
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-6 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-                                    onClick={(e) => e.stopPropagation()}
-                                    aria-label="File actions"
-                                  >
-                                    <HugeiconsIcon icon={MoreHorizontalIcon} size={14} />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-40">
-                                  <FileRowActionItems
-                                    menu="dropdown"
-                                    item={item}
-                                    onOpen={handleRowClick}
-                                    onRename={renameItem}
-                                    onMove={moveItem}
-                                    onDownload={handleDownload}
-                                    onDelete={deleteItem}
-                                    pinned={favoriteFolders.isFavorite(item.path)}
-                                    onTogglePin={embedded ? (folder) => favoriteFolders.toggle(folder.path) : undefined}
-                                  />
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
-                          </TableRow>
-                          </ContextMenuTrigger>
-                          <ContextMenuContent className="w-44">
-                            <FileRowActionItems
-                              menu="context"
-                              item={item}
-                              onOpen={handleRowClick}
-                              onRename={renameItem}
-                              onMove={moveItem}
-                              onDownload={handleDownload}
-                              onDelete={deleteItem}
-                              pinned={favoriteFolders.isFavorite(item.path)}
-                              onTogglePin={embedded ? (folder) => favoriteFolders.toggle(folder.path) : undefined}
-                            />
-                          </ContextMenuContent>
-                        </ContextMenu>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
+            {error && dataIsForThisFolder && (
+              <StaleRow loadedAt={listLoadedAt} subject="files" onRetry={() => void mutate()} retrying={isValidating} className="px-[var(--window-pad,0.75rem)] pt-2" />
+            )}
+            {renderBody()}
           </motion.div>
         </div>
 
@@ -1779,16 +2046,17 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 8 }}
               transition={enter()}
-              className="absolute bottom-14 inset-x-0 z-20 flex justify-center pointer-events-none"
+              // In a window the status bar sits outside this column; in classic it's the last row of it.
+              className={cn("absolute inset-x-0 z-20 flex justify-center pointer-events-none", embedded ? "bottom-3" : "bottom-14")}
             >
               {/* Inverted surface: status text uses the -inverse token (both themes checked in design-contrast.test). */}
               <div className="flex items-center gap-1 rounded-full bg-foreground text-background px-4 py-2 shadow-lg pointer-events-auto">
-                <span className="text-sm font-medium tabular-nums whitespace-nowrap">{selectedPaths.size} selected</span>
+                <span className="text-sm font-medium tabular-nums whitespace-nowrap">{selectedVisible.size} selected</span>
                 <div className="w-px h-4 bg-background/15 mx-1" />
                 <button
                   type="button"
                   className="inline-flex items-center h-7 gap-1.5 px-2.5 text-xs text-background/70 hover:text-background hover:bg-background/10 rounded-full transition-colors"
-                  onClick={() => setMovingPaths(Array.from(selectedPaths))}
+                  onClick={() => setMovingPaths(Array.from(selectedVisible))}
                 >
                   <HugeiconsIcon icon={FolderExportIcon} size={14} />
                   <span className="hidden sm:inline">Move</span>
@@ -1814,48 +2082,15 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
           )}
         </AnimatePresence>
 
-        {/* ── Finder-style path bar — frosted glass, fixed bottom ────── */}
-        {!isAtVirtualRoot && segments.length > 0 && (
-        <div className="shrink-0 z-10 pb-[env(safe-area-inset-bottom)] relative">
-          <div className="absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-background/80 to-transparent pointer-events-none" />
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-xl border-t border-border/40" />
-          <div className="relative flex items-center h-9 px-3">
-            <div className="flex items-center min-w-0 flex-1 overflow-x-auto scrollbar-none [mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]">
-              {segments.map((seg, i) => {
-                const isLast = i === segments.length - 1;
-                return (
-                  <span key={seg.path} className="flex items-center shrink-0">
-                    {i > 0 && (
-                      <span className="text-dim-foreground text-xs mx-0.5 select-none">/</span>
-                    )}
-                    <button
-                      className={cn(
-                        "text-xs tracking-wide px-1.5 py-1 rounded-md transition-colors truncate max-w-36",
-                        isLast
-                          ? "text-muted-foreground font-medium"
-                          : "text-muted-foreground hover:text-foreground hover:bg-white/[0.06]",
-                      )}
-                      onClick={() => {
-                        if (isLast) return;
-                        navigate(seg.path);
-                      }}
-                      disabled={isLast}
-                    >
-                      {seg.name}
-                    </button>
-                  </span>
-                );
-              })}
-            </div>
-            <button
-              className="text-xs tracking-wide text-dim-foreground hover:text-muted-foreground transition-colors shrink-0 px-1.5 py-1 rounded-md hover:bg-white/[0.06]"
-              onClick={() => setShowHidden((v) => !v)}
-            >
-              {showHidden ? "Hide dotfiles" : "Dotfiles"}
-            </button>
-          </div>
-        </div>
-        )}
+        <FilesStatusBar
+          segments={segments}
+          atVirtualRoot={isAtVirtualRoot}
+          onNavigate={(path) => navigate(path)}
+          countLabel={countLabel}
+          searching={deepSearch && search.searching}
+          showHidden={showHidden}
+          onToggleHidden={() => setShowHidden((v) => !v)}
+        />
       </div>
       </WindowSidebarLayout>
 
@@ -1895,10 +2130,8 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
         filePath={previewFile}
         onClose={() => setPreviewFile(null)}
         onDownload={handleDownload}
-        previewableFiles={(data?.items ?? [])
-          .filter((i) => !i.isDirectory && isPreviewable(i.name))
-          .map((i) => i.path)}
-        fileSizes={new Map((data?.items ?? []).map((i) => [i.path, i.size]))}
+        previewableFiles={quickLookFiles}
+        fileSizes={quickLookSizes}
         onNavigate={setPreviewFile}
       />
     </>
@@ -1908,7 +2141,14 @@ function FilesPageInner({ initialPath }: { initialPath: string | null }) {
 function FilesPageWithParams() {
   const searchParams = useSearchParams();
   const initialPath = searchParams.get("path");
-  return <FilesPageInner key={initialPath ?? "__root__"} initialPath={initialPath} />;
+  return (
+    <FilesPageInner
+      key={initialPath ?? "__root__"}
+      initialPath={initialPath}
+      initialReveal={searchParams.get("reveal")}
+      initialQuery={searchParams.get("q")}
+    />
+  );
 }
 
 export default function FilesPage() {

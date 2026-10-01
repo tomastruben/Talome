@@ -174,7 +174,7 @@ export function FilesSidebar({
               <ContextMenuContent className="w-48">
                 <ContextMenuItem onSelect={() => onUnpin(path)}>
                   <HugeiconsIcon icon={PinOffIcon} size={14} />
-                  Remove from Sidebar
+                  Remove from sidebar
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>
@@ -186,7 +186,7 @@ export function FilesSidebar({
         {onShowAllLocations && roots.length > 1 && (
           <SourceListItem
             icon={LayoutGridIcon}
-            label="All Locations"
+            label="All locations"
             active={currentPath === null}
             onSelect={onShowAllLocations}
           />
