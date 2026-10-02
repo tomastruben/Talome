@@ -105,3 +105,19 @@ describe("Launchpad on the regular glass", () => {
     }
   });
 });
+
+describe("Launchpad Customize wiggle", () => {
+  it("sways the icons like home-screen edit mode, holds still under the pointer, and stops for reduced motion", () => {
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { join } = require("node:path") as typeof import("node:path");
+    const css = readFileSync(join(__dirname, "..", "app/globals.css"), "utf8");
+    const launchpad = readFileSync(join(__dirname, "..", "components/desktop/desktop-launchpad.tsx"), "utf8");
+    expect(launchpad).toMatch(/editing \? "tm-jiggle-icon" : "motion-safe:group-active:scale-96"/);
+    expect(launchpad).toMatch(/cn\(TILE, FOCUS_RING_INSET, "tm-jiggle-tile"\)/);
+    expect(css).toMatch(/@keyframes tm-jiggle-icon \{\s*from \{ transform: rotate\(-1\.5deg\); \}/);
+    expect(css).toMatch(/\.tm-jiggle-tile:hover \.tm-jiggle-icon,\s*\.tm-jiggle-tile:focus-visible \.tm-jiggle-icon \{ animation-play-state: paused; \}/);
+    // Inside the reduced-motion block, alongside the widgets' jiggle
+    const reduced = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)", css.indexOf("tm-widget-leave")));
+    expect(reduced.slice(0, 600)).toMatch(/\.tm-jiggle-tile \.tm-jiggle-icon,/);
+  });
+});

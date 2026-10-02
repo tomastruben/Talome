@@ -2318,6 +2318,19 @@
 .tm-jiggle:hover > div,
 .tm-jiggle:focus-within > div { animation-play-state: paused; }
 
+/* Launchpad Customize: icons sway like a home screen in edit mode. The same
+   rhythm as the widgets, a wider swing because a 56px icon barely shows
+   0.35deg; the tile under the pointer or keyboard holds still. */
+@keyframes tm-jiggle-icon {
+  from { transform: rotate(-1.5deg); }
+  to   { transform: rotate(1.5deg); }
+}
+.tm-jiggle-tile .tm-jiggle-icon { animation: tm-jiggle-icon 260ms ease-in-out infinite alternate; }
+.tm-jiggle-tile:nth-child(2n) .tm-jiggle-icon { animation-delay: -130ms; animation-duration: 290ms; }
+.tm-jiggle-tile:nth-child(3n) .tm-jiggle-icon { animation-delay: -60ms; animation-duration: 240ms; }
+.tm-jiggle-tile:hover .tm-jiggle-icon,
+.tm-jiggle-tile:focus-visible .tm-jiggle-icon { animation-play-state: paused; }
+
 /* A removed widget shrinks away before the grid closes the gap */
 @keyframes tm-widget-leave {
   to { opacity: 0; transform: scale(0.92); filter: blur(3px); }
@@ -2330,6 +2343,7 @@
 @media (prefers-reduced-motion: reduce) {
   [data-sonner-toast][data-type="error"] [data-icon],
   .tm-jiggle > div,
+  .tm-jiggle-tile .tm-jiggle-icon,
   .tm-widget-leave,
   .tm-select-mark *,
   .tm-tilt,

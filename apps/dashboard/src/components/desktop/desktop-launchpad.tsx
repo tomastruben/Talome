@@ -191,7 +191,15 @@ function LaunchpadTile({
 
   const content = (
     <span className="relative z-10 flex w-full min-w-0 flex-col items-center gap-1.5">
-      <span aria-hidden="true" className="relative size-14 transition-transform duration-100 motion-safe:group-active:scale-96">
+      {/* In Customize the icon and its badge sway like a home screen in edit
+          mode (globals.css tm-jiggle-icon); otherwise a press dips it */}
+      <span
+        aria-hidden="true"
+        className={cn(
+          "relative size-14 transition-transform duration-100",
+          editing ? "tm-jiggle-icon" : "motion-safe:group-active:scale-96",
+        )}
+      >
         {/* Stopped is grey. A hidden app in Customize dims its icon only: the name
             and second line stay at full strength (AA on the glass), and the empty
             badge and aria-pressed carry the hidden state. */}
@@ -236,7 +244,7 @@ function LaunchpadTile({
         title={label}
         data-launchpad-tile=""
         data-launchpad-stopped={entry.stopped || undefined}
-        className={cn(TILE, FOCUS_RING_INSET)}
+        className={cn(TILE, FOCUS_RING_INSET, "tm-jiggle-tile")}
         onClick={onActivate}
       >
         {content}
@@ -542,7 +550,9 @@ export function DesktopLaunchpad({
   }, [selectedKey]);
 
   const bottom = placement.bottom === null ? BOTTOM_FALLBACK : `${placement.bottom}px`;
-  const maxHeight = `min(32rem, calc(100dvh - ${bottom} - 1.5rem))`;
+  // Tall enough for five rows of apps plus search on a typical screen (the
+  // owner asked to fit more), never past 1.5rem from the top edge.
+  const maxHeight = `min(42rem, calc(100dvh - ${bottom} - 1.5rem))`;
   const panelStyle: CSSProperties = {
     zIndex,
     width: "min(38rem, calc(100vw - 2rem))",
