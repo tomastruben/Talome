@@ -145,7 +145,7 @@ export function DesktopDriveIcons({
               <span className="tm-glass flex size-14 items-center justify-center rounded-2xl border text-foreground/80 transition-colors duration-150 group-hover:text-foreground">
                 <HugeiconsIcon icon={drive.icon} size={30} strokeWidth={1.25} />
               </span>
-              <span className="tm-on-wallpaper max-w-full truncate px-1 text-xs font-medium">
+              <span className="tm-glass tm-glass-label max-w-full truncate rounded-md border px-1.5 py-0.5 text-xs font-medium text-foreground">
                 {drive.label}
               </span>
             </button>

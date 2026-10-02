@@ -2686,11 +2686,15 @@ html[data-embedded-frame] body {
   text-shadow: 0 0 2px oklch(1 0 0 / 80%), 0 0 16px oklch(1 0 0 / 70%);
 }
 
-/* Text set straight on the wallpaper (desktop icon names): white with a soft
-   shadow, legible on any photo without a chip behind it */
-.tm-on-wallpaper {
-  color: oklch(0.985 0 0);
-  text-shadow: 0 1px 2px oklch(0 0 0 / 55%), 0 0 12px oklch(0 0 0 / 35%);
+/* Names under desktop icons sit on a small pill of the thin material, so they
+   read on any wallpaper: white text with a shadow straight on the photo fell
+   below 3:1 on 35 of the 74 bundled wallpapers (1.5:1 on the dunes). Flat:
+   the icon tile above carries the lift, so the pill keeps only its edge. */
+.tm-glass.tm-glass-label {
+  box-shadow: 0 0 0 1px oklch(0 0 0 / 30%), inset 0 1px 0 oklch(1 0 0 / 8%);
+}
+:root:not(.dark) .tm-glass.tm-glass-label {
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%);
 }
 
 /* Frosted glass for floating desktop chrome (the Dock, desktop icons): the
@@ -2736,7 +2740,6 @@ html[data-embedded-frame] body {
   :root:not(.dark) .tm-window-content {
     background: var(--background);
   }
-  .tm-on-wallpaper { text-shadow: 0 1px 2px oklch(0 0 0 / 90%), 0 0 12px oklch(0 0 0 / 70%); }
 }
 
 /* No hover on a touch screen: whatever would appear on hover is simply shown,
