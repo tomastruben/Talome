@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -12,7 +12,8 @@ import {
 } from "@/components/icons";
 import { useUser } from "@/hooks/use-user";
 import { CORE_URL } from "@/lib/constants";
-import { SettingsGroup, ToggleRow, InfoRow } from "@/components/settings/settings-primitives";
+import { SettingsGroup, SettingsRow, ToggleRow, InfoRow } from "@/components/settings/settings-primitives";
+import { RebuildDashboardButton } from "@/components/terminal/rebuild-dashboard-button";
 import { usePendingApprovals } from "@/components/trust/api";
 import { Spinner } from "@/components/ui/spinner";
 import { ServicesSection } from "@/components/system/services-section";
@@ -161,6 +162,26 @@ function ServerModeToggle() {
   );
 }
 
+/**
+ * Rebuild sits with Server mode: both are about how this server serves the
+ * dashboard (admins only, like the endpoint). The button shows the build in
+ * flight; the outcome arrives as a toast.
+ */
+function RebuildDashboardRow() {
+  const labelId = useId();
+  return (
+    <SettingsRow>
+      <div id={labelId} className="min-w-0 flex-1">
+        <p className="text-sm font-medium">Rebuild dashboard</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Compile the dashboard again after code changes. If the build fails, the current one keeps running.
+        </p>
+      </div>
+      <RebuildDashboardButton aria-describedby={labelId} className="pointer-coarse:h-11" />
+    </SettingsRow>
+  );
+}
+
 function GeneralInline({ isAdmin }: { isAdmin: boolean }) {
   const [mounted, setMounted] = useState(false);
   const { theme, setTheme } = useTheme();
@@ -183,6 +204,7 @@ function GeneralInline({ isAdmin }: { isAdmin: boolean }) {
         )}
         {/* Switching the server mode restarts it: administration, like Services below. */}
         {isAdmin ? <ServerModeToggle /> : null}
+        {isAdmin ? <RebuildDashboardRow /> : null}
         <InfoRow label="Docker socket" value={system?.dockerSocket ?? "detecting…"} />
       </SettingsGroup>
     </section>
