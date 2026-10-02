@@ -6,7 +6,7 @@ Updated 2026-10-02 after the Codex desktop UI pass.
 
 - Continue in `/Volumes/Media Hub/dev/Talome-wt/combine`, branch `parity/combine`.
 - Production source: `/Volumes/Media Hub/Talome-Data/server`; dashboard on port 3000.
-- Original Claude handoff commit: `2e606ca`. Desktop UI changes are committed locally through `71ca4959` and deployed on port 3000. Nothing was pushed to GitHub.
+- Original Claude handoff commit: `2e606ca`. Desktop UI changes are committed locally through `fe57ba96` and deployed on port 3000. Nothing was pushed to GitHub.
 - `AGENTS.md` already exists as a regular file. It was preserved. Read it and `CLAUDE.md` before changes; do not replace either without saving the original.
 - Existing uncommitted `apps/web/.source/browser.ts` and `server.ts` changes belong to the earlier work and were preserved in both working copies.
 
