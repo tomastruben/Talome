@@ -36,6 +36,7 @@ export const MEDIA_VIEW_INLINE = "hidden @3xl/content:flex @7xl:flex";
 export const MEDIA_VIEW_MENU = "@3xl/content:hidden @7xl:hidden";
 
 export interface MediaViewMenuProps {
+  navigation?: { value: string; items: readonly { value: string; label: string }[]; onChange: (value: string) => void };
   libraryTab: LibraryTab;
   /** Collections to offer, or null where the window sidebar lists them. */
   collections: readonly MediaCollection[] | null;
@@ -54,6 +55,7 @@ export interface MediaViewMenuProps {
  * filter narrows the view, so a hidden filter is never a surprise.
  */
 export function MediaViewMenu({
+  navigation,
   libraryTab,
   collections,
   collection,
@@ -74,13 +76,26 @@ export function MediaViewMenu({
           variant={filtered ? "secondary" : "outline"}
           size="icon-sm"
           className={cn("pointer-coarse:size-11", className)}
-          aria-label={filtered ? "Sort and filter, filtered" : "Sort and filter"}
-          title="Sort and filter"
+          aria-label={`${navigation ? "View options" : "Sort and filter"}${filtered ? ", filtered" : ""}`}
+          title={navigation ? "View options" : "Sort and filter"}
         >
           <HugeiconsIcon icon={SlidersHorizontalIcon} size={16} aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-52">
+        {navigation && (
+          <>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="text-sm font-normal text-muted-foreground">View</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={navigation.value} onValueChange={navigation.onChange}>
+                {navigation.items.map((item) => (
+                  <DropdownMenuRadioItem key={item.value} value={item.value}>{item.label}</DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+          </>
+        )}
         {showCollections && (
           <>
             <DropdownMenuGroup>

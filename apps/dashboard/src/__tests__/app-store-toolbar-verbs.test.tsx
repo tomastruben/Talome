@@ -10,7 +10,7 @@
  *   tab strip scrolls sideways instead of pushing a phone's page sideways.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import { SWRConfig } from "swr";
 import type { ReactNode } from "react";
@@ -98,12 +98,17 @@ describe("App Store in a desktop window", () => {
     expect(store.get(desktopAppActionsAtom)).toEqual([]);
   });
 
-  it("reaches My Apps and Installed from the tabs where the sidebar is hidden", async () => {
+  it("reaches My Apps, Installed and categories from one compact menu", async () => {
     renderPage();
     const toolbar = await screen.findByTestId("toolbar-slot");
-    const tablist = await within(toolbar).findByRole("tablist");
-    expect(await within(tablist).findByRole("tab", { name: "My Apps" })).toBeInTheDocument();
-    expect(within(tablist).getByRole("tab", { name: "Installed" })).toBeInTheDocument();
+    const view = await within(toolbar).findByRole("button", { name: "View options" });
+    fireEvent.keyDown(view, { key: "Enter" });
+    expect(await screen.findByRole("menuitemradio", { name: "My Apps" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "Installed" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "Media" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "All apps" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Installed" }));
+    expect(within(toolbar).queryByRole("tablist")).toBeNull();
   });
 
   it("keeps search usable and allows controls to wrap in compact windows", async () => {
@@ -113,7 +118,7 @@ describe("App Store in a desktop window", () => {
     const field = search.closest(".search-field");
     expect(field).toHaveClass("min-w-40", "flex-1");
     expect(field?.parentElement).toHaveClass("flex", "flex-wrap");
-    expect(within(toolbar).getByRole("tablist").closest('[class*="overflow-x-auto"]')).not.toBeNull();
+    expect(within(toolbar).queryByRole("tablist")).toBeNull();
   });
 });
 

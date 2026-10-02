@@ -146,6 +146,7 @@ import {
   type MediaViewState,
 } from "@/components/media/media-library-view";
 import { MediaWindowSidebar } from "@/components/media/media-window-sidebar";
+import { DesktopViewMenu } from "@/components/desktop/desktop-view-menu";
 import { MEDIA_VIEW_INLINE, MEDIA_VIEW_MENU, MediaViewMenu } from "@/components/media/media-view-menu";
 
 interface WantedReleaseResult {
@@ -1717,26 +1718,21 @@ function MediaPageInner() {
   const setSort = (next: MediaSortKey) => patchView({ sort: next });
   const setMinRating = (next: number | null) => patchView({ minRating: next });
 
-  // One row, in Finder order: the tab strip (where the window sidebar doesn't
-  // replace it) and the view controls lead; the verbs (in a window) and the
-  // search trail. Where you are is the window's title, and the count is in
-  // its status bar. The selects fold into one menu where the content column
-  // is narrow; only when the tab strip and the controls can't share a row do
-  // the controls drop to a second line (narrow windows without a sidebar,
-  // phones). The search widens only in a window's column: on the classic page
-  // the labelled tab strip shares the row, and it fits with every count and
-  // badge showing only at w-48 (the toolbar-fit model in
-  // media-window-layout.test.tsx). With the sidebar showing, Downloads,
-  // Calendar and Activity have nothing for the toolbar, so it hides there.
+  // Desktop navigation lives in the sidebar or compact view menu. Classic
+  // mode keeps its tab rail. Search and actions share the remaining row.
+  const compactNavigation = {
+    value: tab,
+    items: tabs.map((item) => ({ value: item.id, label: item.label })),
+    onChange: (value: string) => selectTab(value as MediaTab),
+  };
   const toolbar = (
     <DesktopAppToolbar className={cn("flex min-w-0 flex-wrap items-center gap-2", !isLibrary && WINDOW_SIDEBAR_REPLACES)}>
-      <Tabs
+      {!embedded && <Tabs
         className={cn(WINDOW_SIDEBAR_REPLACES, "min-w-0 max-w-full overflow-x-auto scrollbar-none")}
         value={tab}
         onValueChange={(v) => selectTab(v as MediaTab)}
       >
-        {/* Window navigation keeps its labels and scrolls at small widths;
-            classic mode folds labels until the whole toolbar fits. */}
+        {/* Classic mode folds labels until the whole toolbar fits. */}
         <TabsList className="pointer-coarse:h-12">
           {tabs.map((t) => (
             <TabsTrigger
@@ -1753,7 +1749,8 @@ function MediaPageInner() {
             </TabsTrigger>
           ))}
         </TabsList>
-      </Tabs>
+      </Tabs>}
+      {embedded && !isLibrary && <DesktopViewMenu className={WINDOW_SIDEBAR_REPLACES} groups={[{ label: "View", ...compactNavigation }]} />}
 
       {isLibrary && (
         <div data-media-view-controls="" className="flex min-w-0 grow items-center gap-2 @max-md:w-full">
@@ -1802,6 +1799,7 @@ function MediaPageInner() {
           </div>
           <MediaViewMenu
             className={cn(MEDIA_VIEW_MENU, "shrink-0")}
+            navigation={embedded && !windowSidebarShown ? compactNavigation : undefined}
             libraryTab={libraryTab}
             collections={windowSidebarShown ? null : showCollections}
             collection={collection}
@@ -1811,9 +1809,6 @@ function MediaPageInner() {
             onSortChange={setSort}
             onMinRatingChange={setMinRating}
           />
-          {/* The search shrinks (to 6rem) before anything wraps, so tabs, view
-              menu, Cinema, Select and search share one toolbar row in a
-              ~600px window; it grows back to 14-16rem when there is room. */}
           <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
             {embedded && (
               <div data-media-actions="" className="flex shrink-0 items-center gap-1">

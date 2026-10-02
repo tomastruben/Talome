@@ -32,6 +32,7 @@ import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
 import { fetchJson } from "@/lib/fetch-json";
+import { DesktopViewMenu } from "@/components/desktop/desktop-view-menu";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { CORE_URL } from "@/lib/constants";
@@ -382,16 +383,10 @@ function AppsPageContent() {
     <WindowSidebarLayout sidebar={sidebar}>
     <div className="flex min-w-0 flex-1 flex-col gap-5">
       <DesktopAppToolbar windowTitle={`${appStoreViewTitle(tab)}${showCategories && category !== "all" ? ` · ${categoryLabel(category)}` : ""}`} className="grid min-w-0 gap-3">
-        {/* Source navigation, Create and search wrap by the content column.
-            Wide windows put source navigation in the sidebar; the selected
-            view is published as the window title in both layouts. */}
+        {/* Windows use sidebar navigation or a compact Source/Category menu.
+            Classic mode keeps its scrollable tabs and category rail. */}
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {/* Where the sidebar is hidden (a narrow window, or classic) the
-              tabs reach every place it does, My Apps and Installed included.
-              On touch each tab is a 44px target. With every source on a
-              phone the strip is wider than the screen, so it scrolls sideways
-              instead of pushing the page off the screen. */}
-          <Tabs
+          {!embeddedFrame && <Tabs
             className={cn(WINDOW_SIDEBAR_REPLACES, "min-w-0 max-w-full overflow-x-auto scrollbar-none")}
             value={tab}
             onValueChange={changeTab}
@@ -408,7 +403,22 @@ function AppsPageContent() {
                 {totalInstalled > 0 && <TabsBadge>{totalInstalled}</TabsBadge>}
               </TabsTrigger>
             </TabsList>
-          </Tabs>
+          </Tabs>}
+          {embeddedFrame && (
+            <DesktopViewMenu className={WINDOW_SIDEBAR_REPLACES} groups={[
+              {
+                label: "Source",
+                value: tab,
+                onChange: changeTab,
+                items: [
+                  { value: "all", label: "All apps" },
+                  ...sourceTypes.map((source) => ({ value: source, label: source === "user-created" ? "My Apps" : sourceLabel(source) })),
+                  { value: "installed", label: "Installed" },
+                ],
+              },
+              ...(showCategories ? [{ label: "Category", value: category, onChange: changeCategory, items: [{ value: "all", label: "All categories" }, ...categories.map((value) => ({ value, label: categoryLabel(value) }))] }] : []),
+            ]} />
+          )}
 
           {embeddedFrame && (
             <Button
@@ -436,7 +446,7 @@ function AppsPageContent() {
         </div>
 
         {/* ── Category pills — "All" pinned, the rest scroll ── */}
-        {showCategories && (
+        {showCategories && !embeddedFrame && (
           <div className={cn("flex min-w-0 items-center gap-1.5", WINDOW_SIDEBAR_REPLACES)}>
             <button
               type="button"
