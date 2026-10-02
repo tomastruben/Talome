@@ -1810,7 +1810,7 @@ function MediaPageInner() {
             onSortChange={setSort}
             onMinRatingChange={setMinRating}
           />
-          {/* The search shrinks (to 8rem) before anything wraps, so tabs, view
+          {/* The search shrinks (to 6rem) before anything wraps, so tabs, view
               menu, Cinema, Select and search share one toolbar row in a
               ~600px window; it grows back to 14-16rem when there is room. */}
           <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
@@ -1826,7 +1826,7 @@ function MediaPageInner() {
               </div>
             )}
             <SearchField
-              containerClassName="min-w-32 flex-1 max-w-56 @3xl/content:max-w-64 @max-md:max-w-none"
+              containerClassName="min-w-24 flex-1 max-w-56 @3xl/content:max-w-64 @max-md:max-w-none"
               className="h-8 pointer-coarse:h-11 pointer-coarse:text-base"
               placeholder={tab === "movies" ? "Search movies…" : "Search shows…"}
               aria-label={tab === "movies" ? "Search movies" : "Search shows"}

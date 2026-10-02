@@ -10,6 +10,7 @@ import {
   FolderUploadIcon,
 } from "@/components/icons";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
+import { ToolbarGroup, ToolbarGroupButton } from "@/components/desktop/toolbar-group";
 import { SEARCH_RESULTS_ID } from "@/components/files/file-search-results";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,10 +59,10 @@ interface FilesToolbarProps {
  * under the field rather than above it so the field doesn't move while
  * you type the first letter.
  *
- * In a desktop window it sits in the window's toolbar slot and carries the
- * verbs, so the title bar holds only the window controls, Back and the
- * title. In classic mode it sits above the list and the verbs stay in the
- * page header (pageActionAtom).
+ * In a desktop window it sits in the window's unified toolbar, after Back
+ * and the title, and carries the verbs as one capsule. In classic mode it
+ * sits above the list and the verbs stay in the page header
+ * (pageActionAtom).
  */
 export function FilesToolbar({
   inputRef,
@@ -155,9 +156,9 @@ interface FilesActionsProps {
   onUploadFolder: () => void;
   onNewFolder: () => void;
   /**
-   * "toolbar": a desktop window's toolbar row, where the labels show once the
-   * content column is `@2xl` wide (icon buttons with names below that).
-   * "header": the classic page header, where they show from `sm` up.
+   * "toolbar": a desktop window's unified toolbar, as one capsule of icon
+   * buttons (named, with tooltips). "header": the classic page header, where
+   * the labels show from `sm` up.
    */
   placement: "toolbar" | "header";
 }
@@ -168,12 +169,36 @@ interface FilesActionsProps {
  * in the classic header, so both modes reach the same actions.
  */
 export function FilesActions({ onUploadFiles, onUploadFolder, onNewFolder, placement }: FilesActionsProps) {
-  const toolbar = placement === "toolbar";
-  const buttonClass = cn(
-    "gap-1.5 text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:min-w-11",
-    toolbar ? "h-8 px-2" : "h-7 px-2.5 text-xs",
+  const uploadMenu = (
+    <DropdownMenuContent align="end" className="w-40">
+      <DropdownMenuItem onSelect={onUploadFiles}>
+        <HugeiconsIcon icon={FileUploadIcon} size={14} aria-hidden="true" />
+        Files…
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={onUploadFolder}>
+        <HugeiconsIcon icon={FolderUploadIcon} size={14} aria-hidden="true" />
+        Folder…
+      </DropdownMenuItem>
+    </DropdownMenuContent>
   );
-  const labelClass = toolbar ? "sr-only @2xl:not-sr-only" : "sr-only sm:not-sr-only";
+
+  if (placement === "toolbar") {
+    // Related verbs share one capsule (Finder's grouped toolbar items)
+    return (
+      <ToolbarGroup aria-label="Folder actions">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <ToolbarGroupButton icon={CloudUploadIcon} label="Upload" />
+          </DropdownMenuTrigger>
+          {uploadMenu}
+        </DropdownMenu>
+        <ToolbarGroupButton icon={FolderAddIcon} label="New folder" onClick={onNewFolder} />
+      </ToolbarGroup>
+    );
+  }
+
+  const buttonClass = "h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:min-w-11";
+  const labelClass = "sr-only sm:not-sr-only";
   return (
     <>
       <DropdownMenu>
@@ -183,16 +208,7 @@ export function FilesActions({ onUploadFiles, onUploadFolder, onNewFolder, place
             <span className={labelClass}>Upload</span>
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-40">
-          <DropdownMenuItem onSelect={onUploadFiles}>
-            <HugeiconsIcon icon={FileUploadIcon} size={14} aria-hidden="true" />
-            Files…
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={onUploadFolder}>
-            <HugeiconsIcon icon={FolderUploadIcon} size={14} aria-hidden="true" />
-            Folder…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
+        {uploadMenu}
       </DropdownMenu>
       <Button type="button" variant="ghost" size="sm" title="New folder" className={buttonClass} onClick={onNewFolder}>
         <HugeiconsIcon icon={FolderAddIcon} size={14} aria-hidden="true" />

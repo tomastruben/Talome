@@ -51,3 +51,12 @@ describe("microphone error messages", () => {
     expect(message).toMatch(/Couldn't start the microphone/);
   });
 });
+
+describe("desktop windows allow the microphone", () => {
+  it("lists microphone in the window frame's permissions, so voice works in a window", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const source = readFileSync(join(__dirname, "..", "components/desktop/desktop-experience.tsx"), "utf8");
+    expect(source).toMatch(/allow="[^"]*\bmicrophone\b[^"]*"/);
+  });
+});

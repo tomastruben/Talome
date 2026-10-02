@@ -1,9 +1,10 @@
 /**
  * Files' verbs and selection bar, in a desktop window and in classic mode:
  *
- * - A window's title bar holds only Back and the title, so Files publishes no
- *   title-bar actions; Upload (Files… or Folder…) and New folder sit at the
- *   trailing end of the toolbar, before the search field (Finder order).
+ * - A window's unified toolbar holds Back, the title and the app's own
+ *   controls, so Files publishes no window actions; Upload (Files… or
+ *   Folder…) and New folder share one capsule at the trailing end of its
+ *   controls, before the search field (Finder order).
  * - Classic mode reaches the same verbs from the page header.
  * - The selection bar floats above the status bar (whatever its height on a
  *   phone) and its buttons keep their names when the labels are hidden.
@@ -126,8 +127,17 @@ describe("Files verbs in a window", () => {
     // Finder order: verbs, then the search field at the trailing end
     expect(upload.compareDocumentPosition(newFolder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(newFolder.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Icon buttons with names where the column is narrow, labelled where it's wide
-    expect(within(upload).getByText("Upload").className).toMatch(/sr-only @2xl:not-sr-only/);
+    // Related verbs share one capsule of named icon buttons (toolbar-group.tsx)
+    const capsule = within(toolbar).getByRole("group", { name: "Folder actions" });
+    expect(capsule).toHaveAttribute("data-slot", "toolbar-group");
+    expect(capsule).toContainElement(upload);
+    expect(capsule).toContainElement(newFolder);
+    expect(capsule).not.toContainElement(search);
+    for (const verb of [upload, newFolder]) {
+      expect(verb).toHaveAttribute("title");
+      expect(verb.textContent).toBe("");
+      expect(verb).toHaveClass("h-8", "pointer-coarse:h-11", "pointer-coarse:min-w-11");
+    }
     // Classic's header action stays empty in a window
     expect(store.get(pageActionAtom)).toBeNull();
   });

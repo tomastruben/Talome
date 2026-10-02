@@ -95,8 +95,8 @@ function layout(model: GridModel, column: number, pad = windowPad(column)) {
   return { columns, poster: (width - gap * (columns - 1)) / columns, min };
 }
 
-/** The window sidebar (SourceList w-56) and its hairline. */
-const SIDEBAR = 224 + 1;
+/** The window sidebar panel: its 8px inset from the window's edge, the SourceList (w-56) and the panel's hairline on each side. */
+const SIDEBAR = 8 + 1 + 224 + 1;
 
 /**
  * What the classic page loses beside the app sidebar: the inset sidebar's gap
@@ -416,21 +416,28 @@ describe("Media library toolbar fits one row", () => {
   }
 
   // ── Window: the column beside the sidebar is the container ───────────────
-  /** .tm-window-toolbar pads by --window-pad: 1rem, 1.5rem from a 30rem column. */
-  const windowToolbarWidth = (column: number) => column - 2 * windowPad(column);
+  // The app's controls share the window's unified toolbar row
+  // (window-toolbar.tsx, .tm-window-unified-toolbar) with the title: the row
+  // pads by --window-pad (1rem, 1.5rem from a 30rem column) at its trailing
+  // end, and at its leading end by the gutter beside the sidebar, or, with no
+  // sidebar, by the room it leaves for the window controls laid over it.
+  const CONTROLS_INSET = Number(css.match(/--window-controls-inset:\s*([\d.]+)rem/)?.[1]) * REM;
+  /** The row's gap-2 after the title */
+  const ROW_GAP = 8;
+  /** Room for a short title such as "Media" (Geist Medium at 13px, about 40px) */
+  const TITLE_ROOM = 48;
+  /**
+   * What's left for the app's controls. The title gives way first (it
+   * truncates, to nothing in a narrow window), so the narrow row keeps only
+   * its gap; beside the sidebar the title keeps its room.
+   */
+  const windowToolbarWidth = (column: number, sidebar = true) => sidebar
+    ? column - 2 * windowPad(column) - TITLE_ROOM - ROW_GAP
+    : column - CONTROLS_INSET - windowPad(column) - ROW_GAP;
 
   // ── Window verbs (components/media/media-library-actions.tsx) ────────────
-  // Geist Medium at text-sm (13px), measured the same way as the table above.
-  const MEDIUM_SM: Record<string, number> = { Cinema: 47, Select: 40, Cancel: 43 };
-  const actionsSource = read("components/media/media-library-actions.tsx");
-  const verbLabelSize = actionsSource.match(/const labelClass = "sr-only @([\w-]+):not-sr-only"/)?.[1];
-  /** <Button size="sm"> with an icon: px-2.5, a 14px icon, gap-1.5 before the label (a hidden label takes no room) */
-  const verb = (label: string, labelled: boolean) => 10 + 14 + (labelled ? 6 + measured(MEDIUM_SM, label) : 0) + 10;
-  /** Cinema, then Select (Cancel while selecting, the wider of the two), gap-1 apart */
-  function windowVerbs(column: number): number {
-    const labelled = column >= containerPx(verbLabelSize!);
-    return verb("Cinema", labelled) + 4 + Math.max(verb("Select", labelled), verb("Cancel", labelled));
-  }
+  /** Cinema and Select (Cancel while selecting) share one capsule of 32px icon buttons (toolbar-group.tsx) */
+  const windowVerbs = () => 32 + 32;
 
   /**
    * With the sidebar showing the row is the view controls, then Cinema and
@@ -440,7 +447,7 @@ describe("Media library toolbar fits one row", () => {
   function windowControls(lib: Library, column: number): number {
     const inline = column >= containerPx(windowInlineSize!);
     const views = inline ? select(lib.sort, 112) + GAP + select(lib.rating, 96) : MENU_BUTTON;
-    return views + GAP + windowVerbs(column) + GAP + searchWidth("window", column);
+    return views + GAP + windowVerbs() + GAP + searchWidth("window", column);
   }
 
   /**
@@ -455,13 +462,16 @@ describe("Media library toolbar fits one row", () => {
       tab(null, null),
       tab(null, lib.requests === null ? null : countBadge(lib.requests)),
     ]);
-    return tabs + GAP + MENU_BUTTON + GAP + windowVerbs(0) + GAP + searchWidth("window", 0);
+    return tabs + GAP + MENU_BUTTON + GAP + windowVerbs() + GAP + searchWidth("window", 0);
   }
 
-  it("keeps a narrow window's toolbar to one row: tabs, view menu, Cinema, Select and search", () => {
-    // From a ~600px window (the owner's case) up to where the sidebar takes over
-    for (let column = 560; column < containerPx("2xl"); column += 4) {
-      expect(narrowWindowRow(QUIET), `quiet library, ${column}px column`).toBeLessThanOrEqual(windowToolbarWidth(column));
+  it("keeps a narrow window's toolbar to one row from 37rem: tabs, view menu, Cinema, Select and search", () => {
+    expect(CONTROLS_INSET).toBe(96);
+    // From a ~600px window (the owner's case) up to where the sidebar takes
+    // over, beside the window controls' inset, with the title giving way and
+    // the search shrinking to 6rem; narrower, the search takes a second line.
+    for (let column = 37 * REM; column < containerPx("2xl"); column += 4) {
+      expect(narrowWindowRow(QUIET), `quiet library, ${column}px column`).toBeLessThanOrEqual(windowToolbarWidth(column, false));
     }
   });
 
@@ -469,7 +479,7 @@ describe("Media library toolbar fits one row", () => {
     expect(classicInlineSize).toBeDefined();
     expect(windowInlineSize).toBeDefined();
     expect(labelSize).toBeDefined();
-    expect(searchClasses).toContain("min-w-32");
+    expect(searchClasses).toContain("min-w-24");
     expect(searchClasses).toContain("flex-1");
     // The menu hides exactly where the selects show
     expect(MEDIA_VIEW_MENU.split(" ").sort()).toEqual(
@@ -508,16 +518,16 @@ describe("Media library toolbar fits one row", () => {
     expect(classicRow(QUIET, inlineFrom, "max")).toBeGreaterThan(classicContent(containerPx("6xl")));
   });
 
-  it("keeps the window toolbar to one row beside the sidebar, with Cinema and Select in it", () => {
-    expect(verbLabelSize).toBeDefined();
+  it("keeps the window toolbar to one row beside the sidebar and the title, with Cinema and Select in it", () => {
     // The sidebar shows from a 42rem window; the column is what's left of it
     const narrowest = containerPx("2xl") - SIDEBAR;
     for (let column = narrowest; column <= 1600; column += 4) {
       const spare = windowToolbarWidth(column) - windowControls(BUSY, column);
       expect(spare, `${column}px column`).toBeGreaterThanOrEqual(24);
     }
-    // The verbs are icon buttons in the narrowest column and labelled from the step the model checks
-    expect(windowVerbs(narrowest)).toBe(34 + 4 + 34);
-    expect(containerPx(verbLabelSize!)).toBeGreaterThan(narrowest);
+    // The verbs are one capsule of icon buttons, named for assistive tech
+    const actionsSource = read("components/media/media-library-actions.tsx");
+    expect(actionsSource).toMatch(/<ToolbarGroup aria-label="Library actions">/);
+    expect(windowVerbs()).toBe(64);
   });
 });
