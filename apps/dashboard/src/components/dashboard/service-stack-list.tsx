@@ -283,11 +283,11 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
   return (
     <>
       <div className="rounded-lg border overflow-hidden">
-        <Table className="table-fixed">
+        <Table>
           <TableHeader>
             <TableRow>
               <TableHead scope="col" className="w-11 pl-3 pr-0"><span className="sr-only">Icon</span></TableHead>
-              <TableHead scope="col">Name</TableHead>
+              <TableHead scope="col" className="w-full max-w-0">Name</TableHead>
               <TableHead scope="col" className="hidden @xl:table-cell w-24">Status</TableHead>
               <TableHead scope="col" className="hidden @xl:table-cell text-right w-16">CPU</TableHead>
               <TableHead scope="col" className="hidden @md:table-cell text-right w-16 @xl:w-20">Memory</TableHead>
@@ -330,7 +330,7 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                     <TableCell className="py-2.5 pl-3 pr-0">
                       <StackIcon stack={stack} />
                     </TableCell>
-                    <TableCell className="py-2.5 overflow-hidden">
+                    <TableCell className="w-full max-w-0 py-2.5 overflow-hidden">
                       <div className="min-w-0">
                         <button type="button"
                           className="block w-full min-w-0 truncate text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
