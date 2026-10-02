@@ -91,7 +91,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { DesktopWindow } from "@/components/desktop/desktop-window";
+import { DesktopWindow, desktopWindowChrome } from "@/components/desktop/desktop-window";
 import { DesktopLaunchpad } from "@/components/desktop/desktop-launchpad";
 import { DesktopDriveIcons } from "@/components/desktop/desktop-drive-icons";
 import {
@@ -214,7 +214,7 @@ import {
   type AudioPlayerBook,
   type AudioPlayerState,
 } from "@/atoms/audio-player";
-import { DESKTOP_WALLPAPER_STORAGE_KEY } from "@/lib/wallpaper";
+import { DESKTOP_WALLPAPER_STORAGE_KEY, readStoredWallpaper } from "@/lib/wallpaper";
 
 interface DesktopAppDefinition {
   id: string;
@@ -845,7 +845,12 @@ export function DesktopExperience() {
   }, [wallpaperDialogOpen]);
   const [wallpaperAccountSave, setWallpaperAccountSave] = useState<WallpaperAccountSave>({ status: "idle" });
   const launchpadButtonRef = useRef<HTMLButtonElement | null>(null);
-  const [wallpaperUrl, setWallpaperUrl] = useState<string>();
+  // Read on the first render, not in an effect: after the sign-in unlock the
+  // desktop's first frame already shows this device's wallpaper (the image
+  // the sign-in screen just showed), never a plain background
+  const [wallpaperUrl, setWallpaperUrl] = useState<string | undefined>(
+    () => normalizeDesktopWallpaperUrl(readStoredWallpaper()),
+  );
   const [wallpaperAttribution, setWallpaperAttribution] = useState<
     DesktopWallpaperAttribution
   >();
@@ -2041,6 +2046,9 @@ export function DesktopExperience() {
             alt=""
             fill
             unoptimized
+            // The desktop's first paint: fetched eagerly, ahead of everything else
+            preload
+            fetchPriority="high"
             sizes="100vw"
             className="object-cover"
           />
@@ -2223,8 +2231,11 @@ export function DesktopExperience() {
             <DesktopWindow
               key={windowModel.id}
               id={windowModel.id}
-              // The title bar shows the app's current place; the window's
+              // A Talome page draws the unified toolbar itself (its title is
+              // the page's place); a service's own page, or the "unavailable"
+              // state, gets the window's title bar instead. The window's
               // accessible names (Close, Minimize, Arrange) stay the app's.
+              chrome={desktopWindowChrome(windowModel.url, unavailable)}
               title={appChrome?.title ?? windowModel.title}
               appTitle={windowModel.title}
               bounds={windowModel.bounds}
@@ -2730,7 +2741,7 @@ function DesktopAppFrame({
       // Transparent: the window's glass shows through wherever the app doesn't
       // paint (its sidebar); the app's content column paints the background.
       className="size-full border-0 bg-transparent"
-      allow="autoplay; fullscreen; picture-in-picture"
+      allow="autoplay; fullscreen; picture-in-picture; microphone"
       allowFullScreen
       onLoad={onLoad}
     />

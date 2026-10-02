@@ -24,13 +24,16 @@ import {
 import { cn } from "@/lib/utils";
 
 /**
- * Talome's window controls: quiet monochrome buttons at the leading edge of
- * the title bar (Close, Minimize, Arrange, where people look for them)
- * instead of macOS traffic lights.
+ * Talome's window controls: quiet monochrome buttons at the window's top-left
+ * corner (Close, Minimize, Arrange, where people look for them) instead of
+ * macOS traffic lights. They sit 12px in, centred in the top 52px band: over
+ * the unified toolbar's leading inset or the sidebar panel's top, or at the
+ * start of a window's own title bar.
  *
  * - Red, amber and green already mean critical, warning and healthy across
- *   Talome, so coloured dots in every title bar would read as status.
- * - 14px dots are hard to hit on an iPad; these are 24px (32px on touch).
+ *   Talome, so coloured dots in every window would read as status.
+ * - 14px dots are hard to hit on an iPad; these are 24px (32px on touch, with
+ *   a 44px hit area: globals.css).
  * - The green button's meaning (full screen or zoom?) is a guess; Arrange
  *   says exactly what will happen and shows where the window is now.
  */
@@ -53,7 +56,7 @@ const LAYOUT_ICON: Record<DesktopWindowLayout, IconSvgElement> = {
 const CONTROL_CLASS =
   "flex size-6 shrink-0 items-center justify-center rounded-md transition-[background-color,color,transform] duration-150 ease-out hover:bg-foreground/[0.08] hover:text-foreground active:scale-95 disabled:pointer-events-none disabled:opacity-40";
 
-/** Keep presses on a control from starting a title bar drag or a double-click fill. */
+/** Keep presses on a control from starting a window drag or a double-click fill. */
 const stopTitlebarGesture = {
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => event.stopPropagation(),
   onDoubleClick: (event: React.MouseEvent<HTMLElement>) => event.stopPropagation(),

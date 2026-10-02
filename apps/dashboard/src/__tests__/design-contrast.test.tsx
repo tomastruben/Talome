@@ -15,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import { InputGroup } from "@/components/ui/input-group";
 import { Select, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SourceListItem, WindowSidebarSlot } from "@/components/ui/source-list";
+import { ToolbarGroup, ToolbarGroupButton } from "@/components/desktop/toolbar-group";
+import { FolderAddIcon } from "@/components/icons";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -828,5 +830,76 @@ describe("primitives on window glass", () => {
     expect(ui("card.tsx")).toMatch(/\bbg-card py-6 text-card-foreground\b/);
     expect(ui("tabs.tsx")).toMatch(/rounded-lg bg-muted p-0\.5 text-muted-foreground/);
     expect(ui("tabs.tsx")).toMatch(/bg-background shadow-sm\/5 dark:bg-input"/);
+  });
+
+  it("lifts the sidebar panel off the glass with the window's card, and keeps its labels and counts at AA", () => {
+    const { container } = render(
+      <>
+        <WindowSidebarSlot />
+        <SourceListItem label="Selected" active trailing={12} onSelect={() => {}} />
+        <SourceListItem label="Rest" trailing={12} onSelect={() => {}} />
+      </>,
+    );
+    const panel = container.querySelector<HTMLElement>("[data-window-sidebar]")!;
+    // The remapped (relative) card, a hairline, and no blur of its own
+    expect(panel).toHaveClass("bg-card", "border-window-separator");
+    expect(panel.className).not.toMatch(/backdrop-blur|bg-background|bg-foreground/);
+    const [selectedRow, restRow] = Array.from(container.querySelectorAll("button"));
+    const alpha = (className: string, pattern: RegExp) => Number(pattern.exec(className)?.[1]) / 100;
+    const hover = alpha(restRow.className, /(?:^|\s)hover:bg-foreground\/(\d+)(?:\s|$)/);
+    const selected = alpha(selectedRow.className, /(?:^|\s)bg-foreground\/(\d+)(?:\s|$)/);
+    const label = alpha(restRow.className, /(?:^|\s)text-foreground\/(\d+)(?:\s|$)/);
+    const count = alpha(selectedRow.querySelector("[data-slot='source-list-trailing']")!.className, /(?:^|\s)text-foreground\/(\d+)(?:\s|$)/);
+
+    for (const theme of THEMES) {
+      const tokens = themes[theme];
+      const fg = color(tokens, "--foreground");
+      const muted = color(tokens, "--muted-foreground");
+      const glassBase = glassOver(theme, worstBackdrop[theme]);
+      const base = paint(token(theme, "--card"), glassBase);
+      // A lift: lighter than the glass around it in both themes
+      expect(luminance(base), `${theme} panel lifts`).toBeGreaterThan(luminance(glassBase));
+      const hovered = over(fg, base, hover);
+      const chosen = over(fg, base, selected);
+      const cases: Record<string, number> = {
+        "section title / count at rest": contrast(muted, base),
+        "label at rest": contrast(over(fg, base, label), base),
+        "label on hover": contrast(fg, hovered),
+        "label on selected": contrast(fg, chosen),
+        "count on selected": contrast(over(fg, chosen, count), chosen),
+      };
+      for (const [name, ratio] of Object.entries(cases)) {
+        expect(ratio, `${theme} ${name} on the sidebar panel`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it("keeps toolbar capsule icons legible at rest, on hover and when on", () => {
+    const { container } = render(
+      <ToolbarGroup aria-label="Library actions">
+        <ToolbarGroupButton icon={FolderAddIcon} label="Cinema" />
+      </ToolbarGroup>,
+    );
+    const group = container.querySelector<HTMLElement>("[data-slot='toolbar-group']")!;
+    const button = container.querySelector<HTMLElement>("button")!;
+    const alpha = (className: string, pattern: RegExp) => {
+      const match = pattern.exec(className);
+      expect(match, `${pattern} in "${className}"`).not.toBeNull();
+      return Number(match![1]) / 100;
+    };
+    const capsule = alpha(group.className, /(?:^|\s)bg-foreground\/(\d+)(?:\s|$)/);
+    const hover = alpha(button.className, /(?:^|\s)hover:bg-foreground\/(\d+)(?:\s|$)/);
+    const on = alpha(button.className, /(?:^|\s)data-\[active\]:bg-foreground\/(\d+)(?:\s|$)/);
+    expect(button).toHaveClass("text-muted-foreground", "hover:text-foreground", "data-[active]:text-foreground");
+
+    for (const theme of THEMES) {
+      const tokens = themes[theme];
+      const fg = color(tokens, "--foreground");
+      // The capsule sits in the unified toolbar, on the content column's tint
+      const fill = over(fg, contentOver(theme, worstBackdrop[theme]), capsule);
+      expect(contrast(color(tokens, "--muted-foreground"), fill), `${theme} icon at rest`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(fg, over(fg, fill, hover)), `${theme} icon on hover`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(fg, over(fg, fill, on)), `${theme} icon when on`).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });

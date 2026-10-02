@@ -4,7 +4,9 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAtomValue } from "jotai";
 import { WindowSidebarSlot } from "@/components/ui/source-list";
-import { WindowStatusBarSlot, WindowToolbarSlot } from "@/components/desktop/window-content";
+import { WindowStatusBarSlot } from "@/components/desktop/window-content";
+import { WindowToolbar } from "@/components/desktop/window-toolbar";
+import { WindowDragBridge } from "@/components/desktop/window-drag";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { SiteHeader } from "@/components/layout/site-header";
@@ -125,9 +127,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </main>
             ) : embeddedFrame ? (
               // A desktop window: the window's glass (parent document) shows
-              // through wherever the app doesn't paint. The sidebar sits on the
-              // glass; the content column paints a thin tint and holds the
-              // toolbar, the scroller and the status bar (window-content.tsx).
+              // through wherever the app doesn't paint. The window draws no
+              // title bar: the sidebar is a panel inset on the glass, and the
+              // content column paints a thin tint and holds the unified
+              // toolbar (Back, the title, the app's controls), the scroller
+              // and the status bar (window-toolbar.tsx, window-content.tsx).
+              // The window's controls float over the top-left corner. Empty
+              // toolbar space and the sidebar's top drag the window, forwarded
+              // to it by the drag bridge (window-drag.ts).
               <main id="main-content" className="@container/window relative flex h-dvh min-h-0 flex-1 flex-col overflow-hidden">
                 {embeddedAudiobookRoute ? (
                   <>
@@ -137,13 +144,15 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 ) : null}
                 <DesktopShellHeaderActions />
                 <DesktopAppActionBridge />
-                <div className="flex min-h-0 flex-1">
+                <WindowDragBridge />
+                {/* The glass around the sidebar panel drags the window too */}
+                <div data-window-drag-region="surface" className="flex min-h-0 flex-1">
                   <WindowSidebarSlot />
                   <div
                     data-window-content=""
                     className="tm-window-content @container/content relative flex min-h-0 min-w-0 flex-1 flex-col"
                   >
-                    <WindowToolbarSlot />
+                    <WindowToolbar />
                     <div
                       ref={contentScrollRef}
                       data-content-scroll=""

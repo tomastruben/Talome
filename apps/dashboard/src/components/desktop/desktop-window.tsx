@@ -14,21 +14,18 @@ import {
 import { motion, useReducedMotion } from "motion/react";
 import {
   HugeiconsIcon,
-  Add01Icon,
-  ArrowLeft01Icon,
-  CloudUploadIcon,
-  FolderAddIcon,
-  Projector01Icon,
   ArrowDown01Icon,
   Tick01Icon,
-  RemoteControlIcon,
-  SourceCodeCircleIcon,
 } from "@/components/icons";
-import type { IconSvgElement } from "@/components/icons";
-import type {
-  DesktopAppActionDescriptor,
-  DesktopAppActionIcon,
-} from "@/atoms/desktop-app-actions";
+import type { DesktopAppActionDescriptor } from "@/atoms/desktop-app-actions";
+import {
+  DESKTOP_WINDOW_CHROME_REQUEST_MESSAGE,
+  DESKTOP_WINDOW_STATE_MESSAGE,
+  isDesktopWindowZoomMessage,
+  parseDesktopWindowChromeMessage,
+  parseDesktopWindowDragMessage,
+  type DesktopWindowDragMessage,
+} from "@/atoms/desktop-window-chrome";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,6 +35,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { dashboardRouteFromHref } from "@/lib/desktop-navigation";
 import { CSS_EASE_ENTER, DURATION, DURATION_MS, EASE_ENTER } from "@/lib/motion";
 import {
   clampDesktopBounds,
@@ -52,16 +50,44 @@ import {
   type DesktopSnapZone,
 } from "@/lib/desktop-window-state";
 import { WindowControls, type DesktopWindowLayout } from "@/components/desktop/window-controls";
+import { desktopActionIcons } from "@/components/desktop/desktop-action-icons";
+
+/**
+ * Who draws the top of the window:
+ *
+ * - "unified": the window's frame runs the Talome shell, which draws one
+ *   unified toolbar (Back, the title, the app's controls) and the sidebar
+ *   (window-toolbar.tsx, source-list.tsx). The window keeps only its glass, its
+ *   edges and the window controls, laid over the frame's top-left corner; the
+ *   frame forwards presses on its empty toolbar and sidebar space, which drag
+ *   the window (atoms/desktop-window-chrome.ts).
+ * - "titlebar": the window draws a title bar of its own, the same 52px band
+ *   with the controls in the same place, for pages that can't draw one (a
+ *   service's own web page, Talome's "service unavailable" state).
+ */
+export type DesktopWindowChrome = "unified" | "titlebar";
+
+/**
+ * A Talome page (any dashboard route, native apps included) draws the unified
+ * toolbar; a service's own page, or Talome's "unavailable" state in its
+ * place, gets the window's title bar.
+ */
+export function desktopWindowChrome(url: string, unavailable = false): DesktopWindowChrome {
+  return !unavailable && dashboardRouteFromHref(url) !== null ? "unified" : "titlebar";
+}
 
 interface DesktopWindowProps {
   id: string;
-  /** The window's current place (a folder, a chat, a settings section), shown in the title bar */
+  /** The window's current place (a folder, a chat, a settings section), shown in its own title bar */
   title: string;
   /**
    * The app's name, for the window's accessible names ("Files window",
    * "Close Files"), which follow the app, not the page. Defaults to `title`.
+   * A unified window's frame gets it too, as the title of a page without one.
    */
   appTitle?: string;
+  /** Defaults to "titlebar", which works for any page */
+  chrome?: DesktopWindowChrome;
   bounds: DesktopBounds;
   restoreBounds?: DesktopBounds;
   area: DesktopArea;
@@ -72,6 +98,7 @@ interface DesktopWindowProps {
   minimized?: boolean;
   disabled?: boolean;
   zIndex: number;
+  /** Actions a page publishes, for the window's own title bar (a unified frame draws its own) */
   actions?: DesktopAppActionDescriptor[];
   children: ReactNode;
   onFocus: () => void;
@@ -104,6 +131,14 @@ interface DragState extends PointerOrigin {
   pendingUnsnap?: DesktopBounds;
 }
 
+/**
+ * Where a drag or resize comes from: this document's own pointer (an edge,
+ * the window's title bar) or the frame, which forwards a press on its unified
+ * toolbar or sidebar (the pointer is captured in the frame then, so its moves
+ * arrive as messages, not as pointer events here).
+ */
+type GestureSource = "window" | "frame";
+
 /** Zoom, snap and restore geometry: a 180ms tween on the enter curve (spec §7.4), no spring. */
 export const WINDOW_GEOMETRY_TRANSITION = { duration: DURATION.base, ease: EASE_ENTER } as const;
 
@@ -125,21 +160,11 @@ const RESIZE_HANDLES: { edge: Exclude<DesktopResizeEdge, "se">; className: strin
 /** Pointer travel before a press on the title bar counts as a drag. */
 const DRAG_START_DISTANCE = 4;
 
-const desktopActionIcons: Record<DesktopAppActionIcon, IconSvgElement> = {
-  add: Add01Icon,
-  back: ArrowLeft01Icon,
-  // A remote-control session, not Wi-Fi (CLAUDE.md Icons rule).
-  remote: RemoteControlIcon,
-  "source-code": SourceCodeCircleIcon,
-  projector: Projector01Icon,
-  upload: CloudUploadIcon,
-  "new-folder": FolderAddIcon,
-};
-
 export const DesktopWindow = memo(function DesktopWindow({
   id,
   title,
   appTitle = title,
+  chrome = "titlebar",
   bounds,
   restoreBounds,
   area,
@@ -166,9 +191,15 @@ export const DesktopWindow = memo(function DesktopWindow({
   const resizeOrigin = useRef<(PointerOrigin & { edge: DesktopResizeEdge }) | null>(null);
   const captureTarget = useRef<HTMLElement | null>(null);
   const snapZoneRef = useRef<DesktopSnapZone | null>(null);
-  const [isManipulating, setIsManipulating] = useState(false);
+  /** The live gesture's source, for message handlers that run between renders */
+  const gestureSourceRef = useRef<GestureSource | null>(null);
+  const [manipulating, setManipulating] = useState<GestureSource | null>(null);
   const [snapZone, setSnapZone] = useState<DesktopSnapZone | null>(null);
+  /** A unified window's frame said it draws the unified toolbar (and forwards drags) */
+  const [frameChromeReady, setFrameChromeReady] = useState(false);
   const reduceMotion = useReducedMotion();
+  const unified = chrome === "unified";
+  const isManipulating = manipulating !== null;
 
   // Opening: a quick scale-and-fade in, skipped for reduced motion
   useLayoutEffect(() => {
@@ -186,7 +217,7 @@ export const DesktopWindow = memo(function DesktopWindow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Ends a drag or resize and releases pointer capture. Pointer-up commits a snap first. */
+  /** Ends a drag or resize and releases pointer capture. */
   const finishPointerGesture = () => {
     const origin = dragOrigin.current ?? resizeOrigin.current;
     const target = captureTarget.current;
@@ -194,8 +225,9 @@ export const DesktopWindow = memo(function DesktopWindow({
     resizeOrigin.current = null;
     captureTarget.current = null;
     snapZoneRef.current = null;
+    gestureSourceRef.current = null;
     setSnapZone(null);
-    setIsManipulating(false);
+    setManipulating(null);
 
     if (!origin || !target?.hasPointerCapture?.(origin.pointerId)) return;
     try {
@@ -205,75 +237,60 @@ export const DesktopWindow = memo(function DesktopWindow({
     }
   };
 
-  useEffect(() => {
-    if (!isManipulating) return;
+  /** The pointer moved to (clientX, clientY) in this document: move or resize the window. */
+  const moveGesture = (clientX: number, clientY: number) => {
+    const drag = dragOrigin.current;
+    if (drag) {
+      const dx = clientX - drag.pointerX;
+      const dy = clientY - drag.pointerY;
+      const pointer = { x: clientX - drag.areaLeft, y: clientY - drag.areaTop };
 
-    const handlePointerMove = (event: globalThis.PointerEvent) => {
-      const drag = dragOrigin.current;
-      if (drag) {
-        const dx = event.clientX - drag.pointerX;
-        const dy = event.clientY - drag.pointerY;
-        const pointer = { x: event.clientX - drag.areaLeft, y: event.clientY - drag.areaTop };
-
-        if (drag.pendingUnsnap) {
-          if (Math.hypot(dx, dy) < DRAG_START_DISTANCE) return;
-          const restored = unsnapDesktopBounds(drag.startBounds, drag.pendingUnsnap, pointer, area, minimum);
-          onTile?.(restored, undefined);
-          dragOrigin.current = { ...drag, pointerX: event.clientX, pointerY: event.clientY, bounds: restored, pendingUnsnap: undefined };
-          return;
-        }
-
-        onBoundsChange(clampDesktopBounds(
-          { ...drag.bounds, x: drag.bounds.x + dx, y: drag.bounds.y + dy },
-          area,
-          minimum,
-        ));
-        const zone = onTile ? desktopSnapZoneAt(pointer, area) : null;
-        if (zone !== snapZoneRef.current) {
-          snapZoneRef.current = zone;
-          setSnapZone(zone);
-        }
+      if (drag.pendingUnsnap) {
+        if (Math.hypot(dx, dy) < DRAG_START_DISTANCE) return;
+        const restored = unsnapDesktopBounds(drag.startBounds, drag.pendingUnsnap, pointer, area, minimum);
+        onTile?.(restored, undefined);
+        dragOrigin.current = { ...drag, pointerX: clientX, pointerY: clientY, bounds: restored, pendingUnsnap: undefined };
+        return;
       }
 
-      const resize = resizeOrigin.current;
-      if (resize) {
-        onBoundsChange(resizeDesktopBounds(
-          resize.bounds,
-          resize.edge,
-          { x: event.clientX - resize.pointerX, y: event.clientY - resize.pointerY },
-          area,
-          minimum,
-        ));
+      onBoundsChange(clampDesktopBounds(
+        { ...drag.bounds, x: drag.bounds.x + dx, y: drag.bounds.y + dy },
+        area,
+        minimum,
+      ));
+      const zone = onTile ? desktopSnapZoneAt(pointer, area) : null;
+      if (zone !== snapZoneRef.current) {
+        snapZoneRef.current = zone;
+        setSnapZone(zone);
       }
-    };
+    }
 
-    const handlePointerUp = () => {
-      const drag = dragOrigin.current;
-      const zone = snapZoneRef.current;
-      if (drag && zone) {
-        if (zone === "maximize") {
-          onMaximizeChange(true, drag.startBounds);
-          onBoundsChange(maximizedDesktopBounds(area));
-        } else {
-          onTile?.(snappedDesktopBounds(zone, area), drag.startBounds);
-        }
+    const resize = resizeOrigin.current;
+    if (resize) {
+      onBoundsChange(resizeDesktopBounds(
+        resize.bounds,
+        resize.edge,
+        { x: clientX - resize.pointerX, y: clientY - resize.pointerY },
+        area,
+        minimum,
+      ));
+    }
+  };
+
+  /** The pointer was released: a drag over a snap zone snaps there, then the gesture ends. */
+  const commitGesture = () => {
+    const drag = dragOrigin.current;
+    const zone = snapZoneRef.current;
+    if (drag && zone) {
+      if (zone === "maximize") {
+        onMaximizeChange(true, drag.startBounds);
+        onBoundsChange(maximizedDesktopBounds(area));
+      } else {
+        onTile?.(snappedDesktopBounds(zone, area), drag.startBounds);
       }
-      finishPointerGesture();
-    };
-    // Losing the window (switching apps mid-drag) cancels any pending snap.
-    const handleCancel = () => finishPointerGesture();
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handleCancel);
-    window.addEventListener("blur", handleCancel);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handleCancel);
-      window.removeEventListener("blur", handleCancel);
-    };
-  }, [area, isManipulating, minimum, onBoundsChange, onMaximizeChange, onTile]);
+    }
+    finishPointerGesture();
+  };
 
   const captureGesture = (
     target: HTMLElement,
@@ -285,27 +302,38 @@ export const DesktopWindow = memo(function DesktopWindow({
     } catch {
       // The global listeners remain as a fallback for older WebKit.
     }
-    setIsManipulating(true);
+    gestureSourceRef.current = "window";
+    setManipulating("window");
   };
 
-  const startDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
+  /**
+   * Starts moving the window from a press at (clientX, clientY). Returns false
+   * when the window can't move (it fills the desktop with no size to go back to).
+   */
+  const beginDrag = (pointerId: number, clientX: number, clientY: number) => {
     onFocus();
     // Maximized or snapped windows return to their previous size when dragged away
     const canUnsnap = Boolean(onTile && restoreBounds);
-    if (maximized && !canUnsnap) return;
-    event.preventDefault();
+    if (maximized && !canUnsnap) return false;
     const areaRect = (sectionRef.current?.offsetParent as HTMLElement | null)?.getBoundingClientRect();
+    resizeOrigin.current = null;
     dragOrigin.current = {
-      pointerId: event.pointerId,
-      pointerX: event.clientX,
-      pointerY: event.clientY,
+      pointerId,
+      pointerX: clientX,
+      pointerY: clientY,
       bounds,
       startBounds: bounds,
       areaLeft: areaRect?.left ?? 0,
       areaTop: areaRect?.top ?? 0,
       pendingUnsnap: canUnsnap ? restoreBounds : undefined,
     };
+    return true;
+  };
+
+  const startDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if (!beginDrag(event.pointerId, event.clientX, event.clientY)) return;
+    event.preventDefault();
     captureGesture(event.currentTarget, event);
   };
 
@@ -314,6 +342,7 @@ export const DesktopWindow = memo(function DesktopWindow({
     event.preventDefault();
     event.stopPropagation();
     onFocus();
+    dragOrigin.current = null;
     resizeOrigin.current = {
       pointerId: event.pointerId,
       pointerX: event.clientX,
@@ -354,6 +383,137 @@ export const DesktopWindow = memo(function DesktopWindow({
     onBoundsChange(maximizedDesktopBounds(area));
   };
 
+  // ── The frame's side of the chrome (unified windows) ──────────────────────
+  const windowFrame = () => sectionRef.current?.querySelector<HTMLIFrameElement>("iframe") ?? null;
+  const postToFrame = (frame: HTMLIFrameElement | null, message: Record<string, unknown>) => {
+    frame?.contentWindow?.postMessage(message, window.location.origin);
+  };
+  const postWindowState = (frame: HTMLIFrameElement | null) => {
+    postToFrame(frame, { type: DESKTOP_WINDOW_STATE_MESSAGE, active, title: appTitle });
+  };
+
+  /** A drag the frame forwarded: the same move, snap and fill as a press on the window itself. */
+  const handleFrameDrag = (message: DesktopWindowDragMessage, frame: HTMLIFrameElement) => {
+    let x = message.x;
+    let y = message.y;
+    if (message.space === "frame") {
+      const rect = frame.getBoundingClientRect();
+      x += rect.left + frame.clientLeft;
+      y += rect.top + frame.clientTop;
+    }
+    const ours = gestureSourceRef.current === "frame" && dragOrigin.current?.pointerId === message.pointerId;
+    switch (message.phase) {
+      case "start":
+        if (gestureSourceRef.current) finishPointerGesture();
+        if (!beginDrag(message.pointerId, x, y)) return;
+        gestureSourceRef.current = "frame";
+        setManipulating("frame");
+        return;
+      case "move":
+        if (ours) moveGesture(x, y);
+        return;
+      case "end":
+        if (ours) commitGesture();
+        return;
+      case "cancel":
+        if (ours) finishPointerGesture();
+        return;
+    }
+  };
+
+  const handleFrameMessage = (event: MessageEvent) => {
+    if (!unified || event.origin !== window.location.origin) return;
+    const frame = windowFrame();
+    if (!frame || event.source !== frame.contentWindow) return;
+
+    const chromeMessage = parseDesktopWindowChromeMessage(event.data);
+    if (chromeMessage) {
+      setFrameChromeReady(chromeMessage.unified);
+      if (chromeMessage.unified) postWindowState(frame);
+      return;
+    }
+    if (disabled || minimized) return;
+    const drag = parseDesktopWindowDragMessage(event.data);
+    if (drag) {
+      handleFrameDrag(drag, frame);
+      return;
+    }
+    if (isDesktopWindowZoomMessage(event.data)) {
+      onFocus();
+      toggleMaximize();
+    }
+  };
+
+  /** A new page in the frame: it says again whether it draws the unified toolbar. */
+  const handleFrameLoad = (event: Event) => {
+    if (!unified || !(event.target instanceof HTMLIFrameElement)) return;
+    if (event.target !== windowFrame()) return;
+    setFrameChromeReady(false);
+    if (gestureSourceRef.current === "frame") finishPointerGesture();
+    postToFrame(event.target, { type: DESKTOP_WINDOW_CHROME_REQUEST_MESSAGE });
+  };
+
+  // Window and frame listeners live for the window's lifetime and call the
+  // latest handlers (props change with every move). Not useEffectEvent: React
+  // 19.2 never refreshes an effect event inside a memo component like this one.
+  const handlersRef = useRef({ moveGesture, commitGesture, finishPointerGesture, handleFrameMessage, handleFrameLoad });
+  useLayoutEffect(() => {
+    handlersRef.current = { moveGesture, commitGesture, finishPointerGesture, handleFrameMessage, handleFrameLoad };
+  });
+
+  useEffect(() => {
+    const section = sectionRef.current;
+    const handleMessage = (event: MessageEvent) => handlersRef.current.handleFrameMessage(event);
+    const handleLoad = (event: Event) => handlersRef.current.handleFrameLoad(event);
+    window.addEventListener("message", handleMessage);
+    // load doesn't bubble; a capturing listener still sees the frame's
+    section?.addEventListener("load", handleLoad, true);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      section?.removeEventListener("load", handleLoad, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    // Through the ref: listeners see the latest props without resubscribing
+    const handle = () => handlersRef.current;
+    if (manipulating === "window") {
+      const handlePointerMove = (event: globalThis.PointerEvent) => handle().moveGesture(event.clientX, event.clientY);
+      const handlePointerUp = () => handle().commitGesture();
+      // Losing the window (switching apps mid-drag) cancels any pending snap.
+      const handleCancel = () => handle().finishPointerGesture();
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handleCancel);
+      window.addEventListener("blur", handleCancel);
+      return () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handleCancel);
+        window.removeEventListener("blur", handleCancel);
+      };
+    }
+    if (manipulating === "frame") {
+      // The frame holds the pointer and reports the drag's end. Should that
+      // report never come (the frame lost the pointer), a release or a new
+      // press in this document ends the drag rather than leave it stuck.
+      const handlePointerUp = () => handle().commitGesture();
+      const handlePointerDown = () => handle().finishPointerGesture();
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointerdown", handlePointerDown, true);
+      return () => {
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointerdown", handlePointerDown, true);
+      };
+    }
+  }, [manipulating]);
+
+  // The frame's title reads quieter when the window isn't the one you're in
+  useEffect(() => {
+    if (!unified || !frameChromeReady) return;
+    postToFrame(windowFrame(), { type: DESKTOP_WINDOW_STATE_MESSAGE, active, title: appTitle });
+  }, [active, appTitle, frameChromeReady, unified]);
+
   const sameBounds = (a: DesktopBounds, b: DesktopBounds) =>
     Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1
     && Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1;
@@ -388,10 +548,29 @@ export const DesktopWindow = memo(function DesktopWindow({
     if (restoreBounds) onTile?.(clampDesktopBounds(restoreBounds, area, minimum), undefined);
   };
 
-  // The title bar holds the window controls, a leading Back and the title.
-  // Talome's own apps keep every verb in their toolbar row (DesktopAppToolbar);
-  // the trailing group stays for pages that still publish one (an AppSpec
-  // native app's "Ask about…"), so no published action is ever dropped.
+  const controls = (
+    <WindowControls
+      title={appTitle}
+      active={active}
+      layout={layout}
+      canRestore={canRestore}
+      onLayoutChange={arrange}
+      onRestore={restore}
+      onMinimize={onMinimize}
+      onClose={onClose}
+      className={unified
+        // Laid over the frame's top-left corner, 12px in, centred in the
+        // 52px toolbar band; the gaps between the buttons let presses through
+        // to the toolbar beneath, which drags the window.
+        ? "pointer-events-none absolute top-0 left-3 z-30 h-13 *:pointer-events-auto"
+        : "mr-1"}
+    />
+  );
+
+  // A window's own title bar holds the window controls, a leading Back and the
+  // title. Talome's own apps keep every verb in their unified toolbar; the
+  // trailing group stays for pages that still publish one, so no published
+  // action is ever dropped.
   const leadingActions = actions.filter((action) => action.placement === "leading");
   const trailingActions = actions.filter((action) => action.placement !== "leading");
 
@@ -499,6 +678,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         windowRef?.(element);
       }}
       data-desktop-window={id}
+      data-window-chrome={chrome}
       data-window-manipulating={isManipulating || undefined}
       data-window-minimized={minimized || undefined}
       data-active={active || undefined}
@@ -529,62 +709,68 @@ export const DesktopWindow = memo(function DesktopWindow({
       onPointerDown={onFocus}
       onFocusCapture={onFocus}
     >
-      <div
-        className="group/titlebar tm-window-titlebar grid h-10 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b px-2"
-        onPointerDown={startDrag}
-        onLostPointerCapture={finishPointerGesture}
-        onDoubleClick={toggleMaximize}
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          <WindowControls
-            className="mr-1"
-            title={appTitle}
-            active={active}
-            layout={layout}
-            canRestore={canRestore}
-            onLayoutChange={arrange}
-            onRestore={restore}
-            onMinimize={onMinimize}
-            onClose={onClose}
-          />
-          {leadingActions.length > 0 && (
-            <div
-              data-window-actions="leading"
-              className="flex min-w-0 items-center gap-0.5"
-              role="group"
-              aria-label={`${appTitle} navigation`}
+      {unified ? controls : (
+        <div
+          className="group/titlebar tm-window-titlebar grid h-13 shrink-0 touch-none select-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b pr-3 pl-3"
+          onPointerDown={startDrag}
+          onLostPointerCapture={finishPointerGesture}
+          onDoubleClick={toggleMaximize}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            {controls}
+            {leadingActions.length > 0 && (
+              <div
+                data-window-actions="leading"
+                className="flex min-w-0 items-center gap-0.5"
+                role="group"
+                aria-label={`${appTitle} navigation`}
+              >
+                {leadingActions.map(renderAction)}
+              </div>
+            )}
+            <span
+              data-title-placement="leading"
+              className={cn(
+                "tm-cap-trim pointer-events-none min-w-0 truncate text-sm font-medium leading-5 transition-colors duration-150",
+                !active && "text-muted-foreground",
+              )}
             >
-              {leadingActions.map(renderAction)}
+              {title}
+            </span>
+          </div>
+
+          {trailingActions.length > 0 && (
+            <div
+              data-window-actions="trailing"
+              className="flex min-w-0 items-center justify-self-end gap-0.5"
+              role="group"
+              aria-label={`${appTitle} actions`}
+            >
+              {trailingActions.map(renderAction)}
             </div>
           )}
-          <span
-            data-title-placement="leading"
-            className={cn(
-              "tm-cap-trim pointer-events-none min-w-0 truncate text-sm font-medium leading-5 transition-colors duration-150",
-              !active && "text-muted-foreground",
-            )}
-          >
-            {title}
-          </span>
         </div>
-
-        {trailingActions.length > 0 && (
-          <div
-            data-window-actions="trailing"
-            className="flex min-w-0 items-center justify-self-end gap-0.5"
-            role="group"
-            aria-label={`${appTitle} actions`}
-          >
-            {trailingActions.map(renderAction)}
-          </div>
-        )}
-      </div>
+      )}
 
       <div className="tm-window-body relative flex-1 min-h-0 overflow-hidden">
-        <div className={cn("size-full", isManipulating && "pointer-events-none")}>
+        {/* A press on the window's own edges takes the pointer from the
+            frames; a drag the frame forwards keeps it there */}
+        <div className={cn("size-full", manipulating === "window" && "pointer-events-none")}>
           {children}
         </div>
       </div>
+      {unified && !frameChromeReady && (
+        // Until the page in the frame draws its toolbar (it is loading, or it
+        // is a page without the shell), the top band still drags the window.
+        <div
+          aria-hidden
+          data-window-drag-fallback=""
+          className="absolute inset-x-0 top-0 z-10 h-13 touch-none select-none"
+          onPointerDown={startDrag}
+          onLostPointerCapture={finishPointerGesture}
+          onDoubleClick={toggleMaximize}
+        />
+      )}
       {!maximized && RESIZE_HANDLES.map(({ edge, className }) => (
         <div
           key={edge}

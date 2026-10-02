@@ -83,12 +83,31 @@ describe("dashboard shell in a desktop window", () => {
     expect(scroll).toHaveClass("tm-window-scroll", "overflow-y-auto");
     expect(scroll.className).not.toMatch(/\bp-\d/);
     expect(scroll).toHaveTextContent("Page");
-    // Toolbar slot, scroller, status-bar slot, in that order, inside the column
+    // The unified toolbar, the scroller and the status-bar slot, in that order, inside the column
     expect(scroll.parentElement).toBe(content);
-    expect(content.firstElementChild).toHaveClass("contents");
+    const toolbar = content.firstElementChild!;
+    expect(toolbar).toHaveAttribute("data-window-toolbar");
+    expect(toolbar).toHaveClass("tm-window-unified-toolbar");
+    expect(toolbar.nextElementSibling).toBe(scroll);
     expect(content.lastElementChild).toHaveClass("contents");
-    // The sidebar slot sits beside the column, on the glass
+    // The sidebar panel sits beside the column, on the glass
+    expect(content.previousElementSibling).toHaveAttribute("data-window-sidebar");
     expect(content.previousElementSibling).toHaveClass("@2xl/window:flex");
+  });
+
+  it("has no title bar of its own: the toolbar row and the glass around the sidebar drag the window", () => {
+    renderShell();
+
+    const content = document.querySelector<HTMLElement>("[data-window-content]")!;
+    const toolbar = content.querySelector<HTMLElement>("[data-window-toolbar]")!;
+    // Empty toolbar space drags; only the sidebar panel's own top and the
+    // margin around it do (what the sidebar holds belongs to the app)
+    expect(toolbar).toHaveAttribute("data-window-drag-region", "toolbar");
+    expect(content.previousElementSibling).toHaveAttribute("data-window-drag-region", "surface");
+    expect(content.parentElement).toHaveAttribute("data-window-drag-region", "surface");
+    // The title row is the only top band: nothing else above the column
+    expect(document.querySelector(".tm-window-titlebar")).toBeNull();
+    expect(content.querySelectorAll("[data-window-toolbar]")).toHaveLength(1);
   });
 
   it("lets Files own its panes and its scroller", () => {

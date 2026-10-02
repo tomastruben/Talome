@@ -8,15 +8,17 @@ import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { cn } from "@/lib/utils";
 
 /**
- * An app's toolbar (heading, search, view switches, primary action).
+ * An app's toolbar (view switches, verbs, search).
  *
- * In a desktop window it renders into the window's toolbar slot above the
- * scroller (see components/desktop/window-content.tsx), so it never scrolls
- * away and needs no sticky positioning, backdrop or negative margins. The
- * shell's `.tm-window-toolbar` sets its height, padding and hairline (it is
- * unlayered, so it wins over the page's padding utilities); the page's
- * className keeps the row layout. In classic mode it renders in place with
- * only the page's own classes.
+ * In a desktop window it renders into the unified toolbar's slot, after Back
+ * and the title (see components/desktop/window-toolbar.tsx), so it shares the
+ * window's top row, never scrolls away and needs no sticky positioning,
+ * backdrop or negative margins. The shell's `.tm-window-toolbar` makes it the
+ * row's flexible part and sets its block padding (it is unlayered, so it wins
+ * over the page's padding, margin and border utilities); the row owns the
+ * inline padding and the hairline, and the page's className keeps the
+ * controls' layout. In classic mode it renders in place with only the page's
+ * own classes.
  */
 export function DesktopAppToolbar({ className, ...props }: ComponentProps<"div">) {
   const embedded = useIsEmbeddedFrame();

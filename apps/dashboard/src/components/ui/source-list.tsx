@@ -19,8 +19,9 @@ import { cn } from "@/lib/utils";
  * through <WindowSidebarLayout>, which shows it only when the app is windowed
  * and the window is wide enough; elsewhere the app keeps its own tabs.
  *
- * The list paints nothing: it sits on the window's glass, and its rows use
- * foreground tints for hover and selection.
+ * The list paints nothing: it sits on the window's sidebar panel (a card lift
+ * on the glass, see WindowSidebarSlot), and its rows use foreground tints for
+ * hover and selection.
  */
 
 export interface SourceListItemAction {
@@ -215,7 +216,7 @@ export function SourceList({ label, children, className }: { label: string; chil
     <nav
       aria-label={label}
       className={cn(
-        "flex h-full w-56 shrink-0 flex-col gap-5 overflow-y-auto border-r border-window-separator px-3 pt-3 pb-4 scrollbar-none",
+        "flex h-full w-56 shrink-0 flex-col gap-5 overflow-y-auto px-3 pt-3 pb-4 scrollbar-none",
         className,
       )}
     >
@@ -251,13 +252,29 @@ export function SourceListSkeleton({ rows = 3 }: { rows?: number }) {
  * In a desktop window an app's sidebar renders into this slot, which the
  * window shell places beside the app outside its padded scroll area. It shows
  * only when the window is at least 42rem wide (a container query on the
- * window's `main`, so resizing the window decides, not the screen).
+ * window's `main`, so resizing the window decides, not the screen) and an app
+ * put a sidebar in it (an empty slot is hidden in globals.css).
+ *
+ * The slot is the sidebar panel: inset 8px from the window's top, left and
+ * bottom edges, full height, rounded, with a card lift and a hairline on the
+ * glass (no blur of its own: inside the frame it can't see the wallpaper).
+ * Its top 44px, down to the toolbar's bottom edge, stay empty for the window
+ * controls the window lays over them; that band drags the window
+ * (window-drag.ts: a "surface" region drags only where nothing sits on it).
  */
 export function WindowSidebarSlot() {
   const setSlot = useSetAtom(windowSidebarSlotAtom);
-  // data-window-sidebar: the sidebar sits on the window's glass, so the glass
+  // data-window-sidebar: the panel sits on the window's glass, so the glass
   // token remap in globals.css (Primitives on window glass) applies here too
-  return <div ref={setSlot} data-window-sidebar="" className="hidden min-h-0 shrink-0 @2xl/window:flex" />;
+  // and bg-card is the remapped lift, not the opaque card
+  return (
+    <div
+      ref={setSlot}
+      data-window-sidebar=""
+      data-window-drag-region="surface"
+      className="tm-window-sidebar m-2 mr-0 hidden min-h-0 shrink-0 rounded-xl border border-window-separator bg-card pt-11 @2xl/window:flex"
+    />
+  );
 }
 
 /**
@@ -289,10 +306,10 @@ const subscribeNothing = () => () => {};
 const notShown = () => false;
 
 /**
- * Whether the window's sidebar is on screen right now (embedded and the window
- * is wide enough), for logic that must agree with WINDOW_SIDEBAR_REPLACES,
- * such as moving focus. False on the server, during hydration and outside a
- * window.
+ * Whether the window's sidebar is on screen right now (embedded, the window
+ * is wide enough and an app put a sidebar in the slot), for logic that must
+ * agree with WINDOW_SIDEBAR_REPLACES, such as moving focus. False on the
+ * server, during hydration and outside a window.
  */
 export function useWindowSidebarShown(): boolean {
   const embedded = useIsEmbeddedFrame();
@@ -300,9 +317,12 @@ export function useWindowSidebarShown(): boolean {
   const subscribe = useCallback(
     (onChange: () => void) => {
       const target = slot?.parentElement;
-      if (!target || typeof ResizeObserver === "undefined") return () => {};
+      if (!slot || !target || typeof ResizeObserver === "undefined") return () => {};
       const observer = new ResizeObserver(onChange);
+      // The window resizing (the container query) and the slot itself (it
+      // shows once a sidebar renders into it, and hides when that goes)
       observer.observe(target);
+      observer.observe(slot);
       return () => observer.disconnect();
     },
     [slot],

@@ -2430,7 +2430,7 @@ html[data-status-bar="ios"] {
 
                  dark                       light
      thin        85%  blur 40  ×0.75        88%  blur 40  ×1.15   Dock, desktop icons (.tm-glass)
-     regular     88%  blur 48  ×0.75        92%  blur 48  ×1.2    Desktop widgets, sign-in card (.tm-glass-dense)
+     regular     88%  blur 48  ×0.75        92%  blur 48  ×1.2    Desktop widgets, sign-in pills, setup panel (.tm-glass-dense)
      thick       92%  blur 56  ×0.7         94%  blur 56  ×1.2    Windows (.tm-window, plus the content tint)
 
    Denser as the content gets denser: the Dock holds icons, widgets hold short
@@ -2478,8 +2478,13 @@ html[data-status-bar="ios"] {
   box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), 0 12px 32px -12px oklch(0 0 0 / 20%), 0 2px 8px -2px oklch(0 0 0 / 12%);
 }
 :root:not(.dark) .tm-window[data-active] { border-color: oklch(0 0 0 / 14%); box-shadow: 0 0 0 1px oklch(1 0 0 / 60%), 0 28px 64px -16px oklch(0 0 0 / 28%), 0 10px 24px -8px oklch(0 0 0 / 16%); }
-/* The title bar and the body (.tm-window-body) paint nothing: they are the
-   window's glass. Only the title bar's hairline is drawn. */
+/* The body (.tm-window-body) paints nothing: it is the window's glass. A
+   window has no title bar of its own when its frame runs the Talome shell:
+   the frame draws the unified toolbar (below) and the window lays its
+   controls over the frame's top-left corner. Only a page that can't draw one
+   (a service's own web page) gets a title bar from the window, the same 52px
+   band with the controls in the same place; it too paints nothing but its
+   hairline. */
 .tm-window-titlebar {
   border-color: var(--window-separator);
 }
@@ -2497,6 +2502,10 @@ html[data-embedded-frame] body {
    pane on it. Apps inside never paint an opaque background or their own blur. */
 .tm-window-content {
   --window-pad: 1rem;
+  /* Room the unified toolbar leaves for the window controls (laid over its
+     leading end, 12px in) where no sidebar takes them: 12px, three 24px
+     controls 2px apart, 8px clear. Touch sizes them up below. */
+  --window-controls-inset: 6rem;
   /* Lists (Files rows and their header) run closer to the edge than page
      content, like a Finder list: an 8px inset instead of the window pad. */
   --list-gutter: 0.5rem;
@@ -2515,16 +2524,68 @@ html[data-embedded-frame] body {
 .tm-window-scroll {
   padding: var(--window-pad);
 }
-/* An app's toolbar in the toolbar slot (<DesktopAppToolbar>), above the
-   scroller. Unlayered, so the window's height, padding and hairline win over
-   the page's padding and margin utilities; the page's classes keep its row. */
-.tm-window-toolbar {
+/* The unified toolbar (window-toolbar.tsx): the content column's top row and
+   the window's only title bar, one 52px band. Back, the title, the app's
+   controls (its <DesktopAppToolbar>, in the slot) and a page's own verbs.
+   Each of the shell's items is a 52px box that centres its content, and the
+   row aligns them to the top, so Back and the title stay level with the
+   window controls when the app's controls wrap to a second line. Empty space
+   drags the window (window-drag.ts), so the row neither scrolls nor selects
+   on touch; fields inside it stay editable. */
+.tm-window-unified-toolbar {
+  display: flex;
   flex-shrink: 0;
-  min-height: 3rem;
-  margin: 0;
-  padding: 0.375rem var(--window-pad);
-  align-content: center;
+  align-items: flex-start;
+  gap: 0.5rem;
+  min-height: 3.25rem;
+  padding-inline: var(--window-controls-inset) var(--window-pad);
   border-bottom: 1px solid var(--window-separator);
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* Beside the sidebar the controls sit on the sidebar panel's top, so the row
+   starts at the gutter. Exactly when the panel shows: a wide window (the
+   panel's @2xl/window) and a sidebar in it (an empty panel is hidden). */
+.tm-window-sidebar:empty {
+  display: none;
+}
+@container window (width >= 42rem) {
+  .tm-window-sidebar:not(:empty) + .tm-window-content > .tm-window-unified-toolbar {
+    padding-inline-start: var(--window-pad);
+  }
+}
+.tm-window-toolbar-item {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
+  height: 3.25rem;
+}
+/* The title gives way first: it truncates (to nothing, in a narrow window)
+   before the app's controls wrap */
+.tm-window-title {
+  flex: 0 1000 auto;
+  min-width: 0;
+}
+/* An app's toolbar (<DesktopAppToolbar>) in the row's slot: the row's
+   flexible part, its controls centred in the 52px band (44px controls on
+   touch). Unlayered, so the row's padding and hairline win over the page's
+   padding, margin and border utilities; the page's classes keep the
+   controls' own layout. */
+.tm-window-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 3.25rem;
+  margin: 0;
+  padding: 0.625rem 0;
+  align-content: center;
+  border: 0;
+}
+@media (pointer: coarse) {
+  .tm-window-toolbar {
+    padding-block: 0.25rem;
+  }
 }
 /* An app's status bar in the status-bar slot (<WindowStatusBar>), on the
    window's bottom edge. The inline padding is the gutter less a ghost button's
@@ -2671,10 +2732,11 @@ html[data-embedded-frame] body {
   box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%);
 }
 
-/* Frosted glass for surfaces you read and type on (the sign-in card): the
-   wallpaper's colour comes through, its detail doesn't. The backdrop is dimmed
-   (lifted in light) rather than the tint thickened, which keeps muted text at
-   4.5:1 or better over the brightest (darkest, in light) blurred patch of every
+/* Frosted glass for surfaces you read and type on (the sign-in pills and
+   avatar, the setup and reset panel, Launchpad): the wallpaper's colour
+   comes through, its detail doesn't. The backdrop is dimmed (lifted in
+   light) rather than the tint thickened, which keeps muted text at 4.5:1 or
+   better over the brightest (darkest, in light) blurred patch of every
    bundled wallpaper. */
 .tm-glass-dense {
   background: color-mix(in oklch, var(--card) 88%, transparent);
@@ -2701,6 +2763,19 @@ html[data-embedded-frame] body {
 }
 :root:not(.dark) .tm-on-scrim {
   text-shadow: 0 0 2px oklch(1 0 0 / 80%), 0 0 16px oklch(1 0 0 / 70%);
+}
+
+/* A sign-in pill (LockField, auth-shell.tsx) that the browser or a password
+   manager filled keeps its glass and its text, in both themes. Autofill paints
+   its own fill (pale yellow or blue, !important in the browser's sheet, so it
+   can only be held back, not overridden) and its own text colour over the
+   field, which hid the glass and, in dark, put light text on a pale fill.
+   Firefox tints with a filter instead. */
+[data-lock-field] input:is(:autofill, :-webkit-autofill) {
+  -webkit-text-fill-color: var(--foreground);
+  caret-color: var(--foreground);
+  filter: none;
+  transition: background-color 600000s 0s, color 600000s 0s;
 }
 
 /* Names under desktop icons sit on a small pill of the thin material, so they
@@ -2764,18 +2839,25 @@ html[data-embedded-frame] body {
 @media (hover: none) and (pointer: coarse) {
   [class*="group-hover"][class*="opacity-0"] { opacity: 1 !important; }
 
-  /* Window controls and edges sized for a finger */
-  [data-window-controls] > button { width: 2rem; height: 2rem; }
-  /* The title bar's app actions (a leading Back, a native app's verb) grow
-     with them: 32px to see, 44px to hit (the window's top edge clips it to
-     the 40px bar). The icon-only Back's hit area grows on every side; text
-     actions sit 2px apart, so theirs grows only up and down. */
+  /* Window controls and edges sized for a finger: 32px to see, 44px to hit,
+     12px apart so the hit areas meet without overlapping. The unified
+     toolbar leaves them their wider room (12px in, 120px of controls, 12px
+     clear). */
+  [data-window-controls] { gap: 0.75rem; }
+  [data-window-controls] > button { position: relative; width: 2rem; height: 2rem; }
+  [data-window-controls] > button::after { content: ""; position: absolute; inset: -0.375rem; }
+  .tm-window-content { --window-controls-inset: 9rem; }
+  /* A window title bar's app actions (a leading Back, a native app's verb)
+     grow with them: 32px to see, 44px to hit (the 52px bar holds it). The
+     icon-only Back's hit area grows on every side; text actions sit 2px
+     apart, so theirs grows only up and down. */
   [data-window-actions] button { position: relative; min-width: 2rem; min-height: 2rem; }
   [data-window-actions] button::after { content: ""; position: absolute; inset: -0.375rem 0; }
   [data-window-actions="leading"] button::after { inset: -0.375rem; }
   /* A press on a visible control wins over the grown top and corner resize
-     strips under it (28px corners would otherwise take Close and Back). */
-  [data-desktop-window] :is([data-window-controls], [data-window-actions]) { position: relative; z-index: 30; }
+     strips under it (28px corners would otherwise take Close and Back). The
+     unified window's controls are already an overlay above them (z-30). */
+  [data-desktop-window] :is(.tm-window-titlebar [data-window-controls], [data-window-actions]) { position: relative; z-index: 30; }
   [data-resize-edge="n"], [data-resize-edge="s"] { height: 0.875rem; }
   [data-resize-edge="e"], [data-resize-edge="w"] { width: 0.875rem; }
   [data-resize-edge="nw"], [data-resize-edge="ne"], [data-resize-edge="sw"], [data-resize-edge="se"] { width: 1.75rem; height: 1.75rem; }

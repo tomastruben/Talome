@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -63,17 +65,36 @@ describe("window sidebar", () => {
     // Rendered into the window's slot beside the app, not inside the app's own
     // tree; the slot queries the window's named container, so it never shows
     // in classic mode (regression: an unnamed @2xl hid classic tab strips)
-    expect(nav.parentElement).toHaveClass("hidden", "@2xl/window:flex");
-    expect(nav.parentElement?.className).not.toMatch(/(^|\s)@2xl:/);
-    // It sits on the window's glass: a hairline, no fill of its own
-    expect(nav).toHaveClass("border-window-separator");
-    expect(nav.className).not.toMatch(/\bbg-/);
+    const panel = nav.parentElement!;
+    expect(panel).toHaveAttribute("data-window-sidebar");
+    expect(panel).toHaveClass("hidden", "@2xl/window:flex");
+    expect(panel.className).not.toMatch(/(^|\s)@2xl:/);
+    // The slot is a panel inset on the window's glass: 8px from the top, left
+    // and bottom edges, rounded, a card lift (the remapped, relative card)
+    // and a hairline, with its top left to the window controls
+    expect(panel).toHaveClass("m-2", "mr-0", "rounded-xl", "border", "border-window-separator", "bg-card", "pt-11");
+    expect(panel.className).not.toMatch(/backdrop-blur|bg-background/);
+    // The list itself paints nothing: no fill and no edge of its own
+    expect(nav.className).not.toMatch(/\bbg-|\bborder-/);
     expect(nav).toHaveTextContent("Library");
     const movies = screen.getByRole("button", { name: /Movies/ });
     expect(movies).toHaveAttribute("aria-current", "page");
     expect(movies).toHaveTextContent(new Intl.NumberFormat().format(1200));
     screen.getByRole("button", { name: "TV shows" }).click();
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides an empty panel, and its top drags the window while what it holds doesn't", () => {
+    embedded.value = true;
+    render(<WindowSidebarSlot />);
+    const panel = document.querySelector<HTMLElement>("[data-window-sidebar]")!;
+    // An app without a sidebar leaves the slot empty: no panel (globals.css)
+    expect(panel).toBeEmptyDOMElement();
+    expect(panel).toHaveClass("tm-window-sidebar");
+    const css = readFileSync(join(__dirname, "../app/globals.css"), "utf8");
+    expect(css).toMatch(/\.tm-window-sidebar:empty \{\s*display: none;\s*\}/);
+    // A "surface" drag region: only the panel's own area (its top band) drags
+    expect(panel).toHaveAttribute("data-window-drag-region", "surface");
   });
 
   it("names the classes that swap app controls for the sidebar", () => {

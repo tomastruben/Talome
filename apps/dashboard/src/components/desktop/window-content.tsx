@@ -10,12 +10,14 @@ import { cn } from "@/lib/utils";
 /**
  * The window shell's content column (dashboard-shell.tsx, embedded branch):
  *
- *   [sidebar slot][.tm-window-content > toolbar slot, scroller, status-bar slot]
+ *   [sidebar panel][.tm-window-content > unified toolbar, scroller, status-bar slot]
  *
- * An app's <DesktopAppToolbar> renders into the toolbar slot and its
- * <WindowStatusBar> into the status-bar slot, so both stay fixed at the edges
- * of the content column while the scroller between them moves. The slots are
- * `display: contents`: what renders into them is laid out by the column.
+ * The unified toolbar (window-toolbar.tsx) is the window's top row: Back, the
+ * title, then the toolbar slot, where an app's <DesktopAppToolbar> renders its
+ * controls. An app's <WindowStatusBar> renders into the status-bar slot. Both
+ * stay fixed at the edges of the content column while the scroller between
+ * them moves. The slots are `display: contents`: what renders into them is
+ * laid out by the row (the toolbar) or the column (the status bar).
  */
 
 export function WindowToolbarSlot() {
