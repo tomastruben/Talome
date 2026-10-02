@@ -1,11 +1,14 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import useSWR from "swr";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { HugeiconsIcon, Delete01Icon, ArrowDown01Icon, ArrowRight01Icon } from "@/components/icons";
+import { HugeiconsIcon, Delete01Icon, ArrowRight01Icon } from "@/components/icons";
+import { DURATION, EASE_ENTER, EASE_EXIT, enter, exit } from "@/lib/motion";
+import { cn } from "@/lib/utils";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
 import { SettingsGroup, SettingsRow, relativeTime, settingsRequest } from "@/components/settings/settings-primitives";
@@ -30,6 +33,7 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 export function AiMemorySection() {
+  const reduceMotion = useReducedMotion();
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const confirm = useConfirm();
   const [openTypes, setOpenTypes] = useState<Set<string>>(new Set());
@@ -128,26 +132,48 @@ export function AiMemorySection() {
             const group = grouped[type];
             if (!group || group.length === 0) return null;
             const isOpen = openTypes.has(type);
+            const panelId = `memory-group-${type}`;
 
             return (
               <section key={type} className="space-y-1">
-                {/* Section header — full-width tap target */}
+                {/* Section header — a disclosure: full-width tap target, the
+                    chevron turns as the rows open */}
                 <button
                   type="button"
                   onClick={() => toggleType(type)}
-                  className="flex items-center gap-2 w-full py-1.5 text-xs font-medium text-muted-foreground active:text-foreground transition-colors"
+                  aria-expanded={isOpen}
+                  aria-controls={panelId}
+                  className="flex w-full items-center gap-2 rounded-md py-1.5 text-xs font-medium text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:text-foreground pointer-coarse:min-h-11"
                 >
                   <HugeiconsIcon
-                    icon={isOpen ? ArrowDown01Icon : ArrowRight01Icon}
+                    icon={ArrowRight01Icon}
                     size={14}
-                    className="shrink-0"
+                    aria-hidden="true"
+                    className={cn(
+                      "shrink-0 transition-transform duration-150 ease-enter motion-reduce:transition-none",
+                      isOpen && "rotate-90",
+                    )}
                   />
                   <span>{TYPE_LABELS[type]}</span>
                   <span className="font-normal tabular-nums">{group.length}</span>
                 </button>
 
-                {/* Memory rows — lightweight, no card wrapper */}
+                {/* Memory rows — lightweight, no card wrapper. They open by
+                    height (180ms in, 140ms out); under reduced motion they fade. */}
+                <AnimatePresence initial={false}>
                 {isOpen && (
+                  <motion.div
+                    key="rows"
+                    id={panelId}
+                    className="overflow-hidden"
+                    initial={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+                    animate={reduceMotion
+                      ? { opacity: 1, transition: { duration: DURATION.exitFast, ease: EASE_ENTER } }
+                      : { height: "auto", opacity: 1, transition: enter() }}
+                    exit={reduceMotion
+                      ? { opacity: 0, transition: { duration: DURATION.exitFast, ease: EASE_EXIT } }
+                      : { height: 0, opacity: 0, transition: exit() }}
+                  >
                   <div className="divide-y divide-border/50">
                     {group.map((memory) => (
                       <div
@@ -183,7 +209,9 @@ export function AiMemorySection() {
                       </div>
                     ))}
                   </div>
+                  </motion.div>
                 )}
+                </AnimatePresence>
               </section>
             );
           })}
