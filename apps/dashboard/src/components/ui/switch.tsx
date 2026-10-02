@@ -20,7 +20,8 @@ function Switch({
         // Checked is bg-primary: a switch is never the loudest thing on the page.
         // Where "on" means risk the person chose (Auto), pass
         // className="data-[state=checked]:bg-status-warning".
-        "peer group/switch inline-flex shrink-0 items-center rounded-full border border-transparent shadow-xs transition-[background-color] duration-150 ease-out outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-[1.15rem] data-[size=default]:w-8 data-[size=sm]:h-3.5 data-[size=sm]:w-6 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input dark:data-[state=unchecked]:bg-input/80",
+        // On touch an invisible after: area makes the target 44px tall.
+        "peer group/switch relative inline-flex shrink-0 items-center rounded-full pointer-coarse:after:absolute pointer-coarse:after:-inset-3 pointer-coarse:after:content-[''] border border-transparent shadow-xs transition-[background-color] duration-150 ease-out outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-[1.15rem] data-[size=default]:w-8 data-[size=sm]:h-3.5 data-[size=sm]:w-6 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input dark:data-[state=unchecked]:bg-input/80",
         className
       )}
       {...props}

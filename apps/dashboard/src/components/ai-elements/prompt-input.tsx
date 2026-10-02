@@ -1002,6 +1002,14 @@ export type PromptInputButtonTooltip =
       side?: ComponentProps<typeof TooltipContent>["side"];
     };
 
+/** Composer controls are 44px on touch screens (WCAG target size, pointer-coarse). */
+const coarseTarget = (size: unknown) =>
+  typeof size === "string" && size.startsWith("icon") ? "pointer-coarse:size-11" : "pointer-coarse:h-11";
+
+/** An icon-only control takes its accessible name from a text tooltip when it has none. */
+const tooltipName = (tooltip: PromptInputButtonTooltip | undefined, props: { "aria-label"?: string; children?: ReactNode }) =>
+  props["aria-label"] ?? (typeof tooltip === "string" ? tooltip : typeof tooltip?.content === "string" ? tooltip.content : undefined);
+
 export type PromptInputButtonProps = ComponentProps<typeof InputGroupButton> & {
   tooltip?: PromptInputButtonTooltip;
 };
@@ -1018,11 +1026,12 @@ export const PromptInputButton = ({
 
   const button = (
     <InputGroupButton
-      className={cn(className)}
+      className={cn(coarseTarget(newSize), className)}
       size={newSize}
       type="button"
       variant={variant}
       {...props}
+      aria-label={tooltipName(tooltip, props)}
     />
   );
 
@@ -1067,11 +1076,12 @@ export const PromptInputActionMenuTrigger = ({
 
   const trigger = (
     <InputGroupButton
-      className={cn(className)}
+      className={cn(coarseTarget(newSize), className)}
       size={newSize}
       type="button"
       variant={variant}
       {...props}
+      aria-label={tooltipName(tooltip, props)}
     >
       {children ?? <HugeiconsIcon icon={Add01Icon} size={16} />}
     </InputGroupButton>
@@ -1167,7 +1177,7 @@ export const PromptInputSubmit = ({
   return (
     <InputGroupButton
       aria-label={isGenerating ? "Stop" : "Submit"}
-      className={cn("size-9 rounded-full", className)}
+      className={cn("size-9 rounded-full pointer-coarse:size-11", className)}
       onClick={handleClick}
       size={size}
       type={isGenerating && onStop ? "button" : "submit"}

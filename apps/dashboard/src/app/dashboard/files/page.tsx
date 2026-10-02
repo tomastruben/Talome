@@ -1717,7 +1717,7 @@ function FilesPageInner({
             title="This folder is empty"
             description="Drop files here, or upload them."
             action={
-              <Button variant="outline" size="sm" onClick={uploadFiles}>
+              <Button variant="outline" size="sm" className="pointer-coarse:h-11" onClick={uploadFiles}>
                 <HugeiconsIcon icon={CloudUploadIcon} size={14} />
                 Upload files
               </Button>
