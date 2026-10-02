@@ -3087,5 +3087,9 @@ function DockAppIcon({
     );
   }
 
-  return <HugeiconsIcon icon={resolvedIcon} size={24} strokeWidth={1.4} />;
+  return (
+    <span className="desktop-app-icon flex size-9 items-center justify-center bg-muted/30">
+      <HugeiconsIcon icon={resolvedIcon} size={24} strokeWidth={1.4} />
+    </span>
+  );
 }

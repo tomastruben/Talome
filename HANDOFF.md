@@ -69,3 +69,7 @@ Validation: affected dashboard TypeScript check, focused regression suites, full
 ## 3 October UI engineering review
 
 Responsive/accessibility fixes are saved through `248c893a`; see `docs/ui-review-2026-10-03.md` for coverage and limitations. 116 targeted component tests passed, plus 53 tests in five navigation/window suites (one overlaps), dashboard TypeScript, and production build. Browser DOM reads/navigation work; clicks and screenshots remain blocked. Do not claim dark/light visual sign-off. Local deployment only; apps/web/.source edits remain untouched. Fresh DB/server backups are in `Talome-Data/backups/codex-ui-review-20261003` and `codex-ui-review-20261003-iteration`.
+
+## Installed dock artwork follow-up
+
+The installed-app dock uses the same 36px frame, continuous mask, and object-contain rendering as native artwork. Existing Sonarr artwork previews favor no extra inset (padding exposes a second rectangular edge). This is an artwork/source assessment, not a fresh live dock screenshot. The dock glyph fallback now retains the same 36px masked tile instead of shrinking to a bare 24px glyph. Dashboard TypeScript and 37 icon/launcher tests pass. Live Radarr/Sonarr comparison is pending: browser currently reports 390px and Desktop redirects to Home; screenshot capture still fails. Do not claim a completed side-by-side visual check. Backup: Talome-Data/backups/codex-dock-fallback-20261003.
