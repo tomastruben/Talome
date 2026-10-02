@@ -422,6 +422,7 @@ function AppsPageContent() {
 
           {embeddedFrame && (
             <Button
+              data-toolbar-secondary=""
               variant="ghost"
               size="sm"
               className="ml-auto shrink-0 text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:min-w-11"

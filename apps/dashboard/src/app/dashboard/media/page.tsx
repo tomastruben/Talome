@@ -1485,7 +1485,7 @@ function MediaPageInner() {
       return;
     }
     setPageAction(
-      <div data-media-actions="" className="ml-auto flex items-center gap-1.5 shrink-0">
+      <div data-toolbar-secondary="" data-media-actions="" className="ml-auto flex items-center gap-1.5 shrink-0">
         <MediaLibraryActions
           placement="header"
           selecting={selectionMode}
