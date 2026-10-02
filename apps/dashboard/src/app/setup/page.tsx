@@ -1,13 +1,17 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useReducedMotion } from "motion/react";
+import { useSWRConfig } from "swr";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AuthError, AuthField, SignInFrame } from "@/components/trust/auth-shell";
 import { RecoveryCodeReveal } from "@/components/trust/recovery-code";
 import { useAuthStatus } from "@/hooks/use-setup-status";
+import { DURATION_MS } from "@/lib/motion";
 import { safeRedirectPath } from "@/lib/safe-redirect";
+import { primeSignedInUser, rememberUser, resolveSignInDestination } from "@/lib/sign-in";
 
 export default function SetupPage() {
   return (
@@ -41,6 +45,11 @@ function SetupContent() {
   const [fieldError, setFieldError] = useState<{ field: string; message: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [created, setCreated] = useState<{ username: string; recoveryCode: string } | null>(null);
+  // Account created and code saved: the panel lifts away and the wallpaper sharpens, as after signing in.
+  const [unlocking, setUnlocking] = useState(false);
+  const unlockingRef = useRef(false);
+  const reduceMotion = useReducedMotion();
+  const { cache } = useSWRConfig();
 
   const returnTo = safeRedirectPath(searchParams.get("from"));
   const accountExists = status.state === "ready" && status.accountExists && !created;
@@ -53,6 +62,22 @@ function SetupContent() {
   function clearErrors() {
     if (error) setError(null);
     if (fieldError) setFieldError(null);
+  }
+
+  /** Signed in as the new owner: the same hand-over as a sign-in (lib/sign-in.ts). */
+  async function goOn(name: string) {
+    if (unlockingRef.current) return;
+    unlockingRef.current = true;
+    setUnlocking(true);
+    const [{ path, user }] = await Promise.all([
+      resolveSignInDestination(returnTo),
+      new Promise<void>((resolve) => window.setTimeout(resolve, reduceMotion ? DURATION_MS.exitFast : DURATION_MS.sheet)),
+    ]);
+    // The sign-in screen greets the owner by name next time (only the username is kept).
+    rememberUser(user?.username ?? name);
+    if (user) primeSignedInUser(cache, user);
+    router.replace(path);
+    router.refresh();
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -105,16 +130,14 @@ function SetupContent() {
   if (created) {
     return (
       <SignInFrame
+        unlocking={unlocking}
         title="Save your recovery code"
         subtitle="If you forget your password, this code lets you set a new one. Nobody else can reset it for you."
       >
         <RecoveryCodeReveal
           code={created.recoveryCode}
           username={created.username}
-          onContinue={() => {
-            router.replace(returnTo);
-            router.refresh();
-          }}
+          onContinue={() => void goOn(created.username)}
         />
       </SignInFrame>
     );
@@ -132,7 +155,7 @@ function SetupContent() {
 
   if (status.state === "loading" || accountExists) {
     return (
-      <SignInFrame title="Set up Talome" subtitle="Checking your server…" footer={null}>
+      <SignInFrame title="Set up Talome" subtitle="Checking your server…">
         <div className="flex flex-col gap-4" aria-hidden="true">
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
@@ -148,6 +171,8 @@ function SetupContent() {
     <SignInFrame
       title="Set up Talome"
       subtitle="Create the owner account. You'll use it to sign in and to approve what agents do on this server."
+      // The one place the promise is said out loud: the first time a password is chosen.
+      footer="Your data stays on your server."
     >
       <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
         <AuthField
@@ -156,7 +181,11 @@ function SetupContent() {
           error={errorFor("username")}
           onChange={(e) => { setUsername(e.target.value); clearErrors(); }}
           autoFocus
+          name="username"
           autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           required
         />
         <AuthField
