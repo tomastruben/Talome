@@ -591,7 +591,7 @@ export const DesktopWindow = memo(function DesktopWindow({
             <button
               type="button"
               className={cn(
-                "flex h-6 min-w-0 max-w-44 shrink items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+                "flex h-6 min-w-0 max-w-44 shrink items-center gap-1.5 rounded-full px-2.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
                 action.active && "bg-muted/60 text-foreground",
               )}
               disabled={action.disabled}
@@ -637,7 +637,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         key={action.id}
         type="button"
         className={cn(
-          "flex h-6 items-center justify-center gap-1.5 rounded-md text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+          "flex h-6 items-center justify-center gap-1.5 rounded-full text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
           iconOnly ? "size-6 shrink-0 p-0" : "min-w-0 max-w-44 shrink px-2",
           action.active && "bg-muted/60 text-foreground",
         )}
@@ -662,7 +662,7 @@ export const DesktopWindow = memo(function DesktopWindow({
       <div
         aria-hidden
         data-window-snap-preview=""
-        className="pointer-events-none absolute rounded-xl border border-foreground/20 bg-foreground/[0.08] backdrop-blur-sm transition-[left,top,width,height] duration-150 ease-out motion-reduce:transition-none solid-materials:bg-muted solid-materials:backdrop-blur-none"
+        className="pointer-events-none absolute rounded-2xl border border-foreground/20 bg-foreground/[0.08] backdrop-blur-sm transition-[left,top,width,height] duration-150 ease-out motion-reduce:transition-none solid-materials:bg-muted solid-materials:backdrop-blur-none"
         style={{
           left: snapPreview.x + 6,
           top: snapPreview.y + 6,
@@ -691,7 +691,9 @@ export const DesktopWindow = memo(function DesktopWindow({
         // Focus is shown by edge, shadow and title colour (tm-window[data-active]), never by dimming content.
         "tm-window absolute flex min-h-0 flex-col overflow-hidden outline-none",
         "transition-[border-color,box-shadow] duration-150 ease-out",
-        maximized ? "rounded-t-none rounded-b-xl border-x-0 border-t-0 border-b" : "rounded-xl border",
+        // rounded-2xl: the inset sidebar panel (8px in) is rounded-lg, so the
+        // two corners stay concentric (18px - 8px = 10px).
+        maximized ? "rounded-t-none rounded-b-2xl border-x-0 border-t-0 border-b" : "rounded-2xl border",
         disabled && "pointer-events-none",
         minimized && "invisible pointer-events-none opacity-0",
       )}

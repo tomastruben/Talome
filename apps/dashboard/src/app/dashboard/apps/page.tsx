@@ -384,12 +384,15 @@ function AppsPageContent() {
     <div className="flex min-w-0 flex-1 flex-col gap-5">
       <DesktopAppToolbar className="grid min-w-0 gap-3">
         {/* ── Source tabs, Create, search (Finder order: view, verbs, search).
-            One row that wraps only when the search can't keep 10rem beside
-            the tabs; in a wide window the sidebar holds the sources, so the
-            row names the view instead. A window's title bar holds no verbs,
-            so in a window Create sits here; in classic mode it stays in the
-            page header (as Files' verbs do). ── */}
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+            In a window it is one row whatever the width: the tabs scroll
+            sideways and the search gives way to 6rem before anything wraps
+            (a wrapped toolbar stacked three rows with the category pills). In
+            classic mode it wraps once the search can't keep 10rem beside the
+            tabs. In a wide window the sidebar holds the sources, so the row
+            names the view instead. A window's title bar holds no verbs, so in
+            a window Create sits here; in classic mode it stays in the page
+            header (as Files' verbs do). ── */}
+        <div className={cn("flex min-w-0 items-center gap-2", embeddedFrame ? "flex-nowrap" : "flex-wrap")}>
           <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 items-baseline gap-1.5 text-sm font-medium text-foreground")}>
             <span className="truncate">{appStoreViewTitle(tab)}</span>
             {showCategories && category !== "all" && (
@@ -436,7 +439,7 @@ function AppsPageContent() {
           )}
 
           <SearchField
-            containerClassName={cn("min-w-40 flex-1 @xl:max-w-64", !embeddedFrame && "ml-auto")}
+            containerClassName={cn("flex-1 @xl:max-w-64", embeddedFrame ? "min-w-24" : "ml-auto min-w-40")}
             className="pointer-coarse:h-11"
             aria-label="Search apps"
             placeholder="Search apps…"

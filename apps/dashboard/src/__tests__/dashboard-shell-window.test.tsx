@@ -92,7 +92,7 @@ describe("dashboard shell in a desktop window", () => {
     expect(content.lastElementChild).toHaveClass("contents");
     // The sidebar panel sits beside the column, on the glass
     expect(content.previousElementSibling).toHaveAttribute("data-window-sidebar");
-    expect(content.previousElementSibling).toHaveClass("@2xl/window:flex");
+    expect(content.previousElementSibling).toHaveClass("@3xl/window:flex");
   });
 
   it("has no title bar of its own: the toolbar row and the glass around the sidebar drag the window", () => {

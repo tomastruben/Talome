@@ -146,7 +146,7 @@ describe("Audiobooks window sidebar", () => {
     renderPage();
     await sidebar();
     const tablist = screen.getByRole("tablist");
-    expect(tablist.closest('[class*="@2xl/window:hidden"]')).not.toBeNull();
+    expect(tablist.closest('[class*="@3xl/window:hidden"]')).not.toBeNull();
     expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute("title", "Library");
     expect(screen.getByRole("tab", { name: "Search" })).toBeInTheDocument();
     expect(await screen.findByRole("tab", { name: "Downloads, 2 in progress" })).toBeInTheDocument();
@@ -154,13 +154,13 @@ describe("Audiobooks window sidebar", () => {
     // On the library tab the sidebar lists the libraries, so the pickers step aside
     const pickers = await screen.findAllByRole("combobox", { name: "Library" });
     for (const picker of pickers) {
-      expect(picker.closest('[class*="@2xl/window:hidden"]')).not.toBeNull();
+      expect(picker.closest('[class*="@3xl/window:hidden"]')).not.toBeNull();
     }
 
     // On Search the picker says where downloads go, so it stays
     fireEvent.click(screen.getByRole("tab", { name: "Search" }));
     const searchPicker = await screen.findByRole("combobox", { name: "Library" });
-    expect(searchPicker.closest('[class*="@2xl/window:hidden"]')).toBeNull();
+    expect(searchPicker.closest('[class*="@3xl/window:hidden"]')).toBeNull();
   });
 
   it("says when libraries can't be loaded, and Retry asks again", async () => {

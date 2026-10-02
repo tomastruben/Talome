@@ -259,7 +259,7 @@ describe("DesktopWindow", () => {
     );
   });
 
-  it("is a rounded-xl window, and its snap preview turns solid under reduced transparency", () => {
+  it("is a rounded-2xl window, and its snap preview turns solid under reduced transparency", () => {
     render(
       <DesktopWindow {...defaultProps} onTile={vi.fn()}>
         <div>Files content</div>
@@ -267,8 +267,8 @@ describe("DesktopWindow", () => {
     );
 
     const windowRegion = screen.getByRole("region", { name: "Files window" });
-    expect(windowRegion).toHaveClass("tm-window", "rounded-xl", "border");
-    expect(windowRegion.className).not.toMatch(/rounded-(?:b-)?2xl/);
+    expect(windowRegion).toHaveClass("tm-window", "rounded-2xl", "border");
+    expect(windowRegion.className).not.toMatch(/rounded-(?:b-)?xl\b/);
 
     fireEvent.pointerDown(screen.getByText("Files").parentElement!.parentElement!, { button: 0, clientX: 300, clientY: 120 });
     fireEvent.pointerMove(window, { clientX: 2, clientY: 300 });
@@ -419,9 +419,9 @@ describe("DesktopWindow", () => {
     );
 
     const windowRegion = screen.getByRole("region", { name: "Files window" });
-    expect(windowRegion).toHaveClass("rounded-t-none", "rounded-b-xl", "border-x-0", "border-t-0");
-    expect(windowRegion).not.toHaveClass("rounded-xl");
-    expect(windowRegion.className).not.toMatch(/rounded-(?:b-)?2xl/);
+    expect(windowRegion).toHaveClass("rounded-t-none", "rounded-b-2xl", "border-x-0", "border-t-0");
+    expect(windowRegion).not.toHaveClass("rounded-2xl");
+    expect(windowRegion.className).not.toMatch(/rounded-(?:b-)?xl\b/);
     expect(document.querySelector("[data-resize-edge]")).toBeNull();
   });
 

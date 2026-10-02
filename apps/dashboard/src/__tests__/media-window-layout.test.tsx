@@ -95,8 +95,8 @@ function layout(model: GridModel, column: number, pad = windowPad(column)) {
   return { columns, poster: (width - gap * (columns - 1)) / columns, min };
 }
 
-/** The window sidebar panel: its 8px inset from the window's edge, the SourceList (w-56) and the panel's hairline on each side. */
-const SIDEBAR = 8 + 1 + 224 + 1;
+/** The window sidebar panel: its 8px inset from the window's edge, the SourceList (w-52) and the panel's hairline on each side. */
+const SIDEBAR = 8 + 1 + 208 + 1;
 
 /**
  * What the classic page loses beside the app sidebar: the inset sidebar's gap
@@ -431,9 +431,11 @@ describe("Media library toolbar fits one row", () => {
    * truncates, to nothing in a narrow window), so the narrow row keeps only
    * its gap; beside the sidebar the title keeps its room.
    */
+  /** The row's trailing inset (10px, so the last capsule nests in the window's corner) */
+  const TRAILING = Number(css.match(/padding-inline: var\(--window-controls-inset\) ([\d.]+)rem/)?.[1]) * REM;
   const windowToolbarWidth = (column: number, sidebar = true) => sidebar
-    ? column - 2 * windowPad(column) - TITLE_ROOM - ROW_GAP
-    : column - CONTROLS_INSET - windowPad(column) - ROW_GAP;
+    ? column - windowPad(column) - TRAILING - TITLE_ROOM - ROW_GAP
+    : column - CONTROLS_INSET - TRAILING - ROW_GAP;
 
   // ── Window verbs (components/media/media-library-actions.tsx) ────────────
   /** Cinema and Select (Cancel while selecting) share one capsule of 32px icon buttons (toolbar-group.tsx) */
@@ -451,7 +453,7 @@ describe("Media library toolbar fits one row", () => {
   }
 
   /**
-   * A narrow window (no sidebar below the @2xl/window breakpoint, 42rem): the
+   * A narrow window (no sidebar below the @3xl/window breakpoint, 48rem): the
    * tabs stay in the toolbar, and everything shares one row with them.
    */
   function narrowWindowRow(lib: Library): number {
@@ -470,7 +472,7 @@ describe("Media library toolbar fits one row", () => {
     // From a ~600px window (the owner's case) up to where the sidebar takes
     // over, beside the window controls' inset, with the title giving way and
     // the search shrinking to 6rem; narrower, the search takes a second line.
-    for (let column = 37 * REM; column < containerPx("2xl"); column += 4) {
+    for (let column = 37 * REM; column < containerPx("3xl"); column += 4) {
       expect(narrowWindowRow(QUIET), `quiet library, ${column}px column`).toBeLessThanOrEqual(windowToolbarWidth(column, false));
     }
   });
@@ -519,8 +521,8 @@ describe("Media library toolbar fits one row", () => {
   });
 
   it("keeps the window toolbar to one row beside the sidebar and the title, with Cinema and Select in it", () => {
-    // The sidebar shows from a 42rem window; the column is what's left of it
-    const narrowest = containerPx("2xl") - SIDEBAR;
+    // The sidebar shows from a 48rem window; the column is what's left of it
+    const narrowest = containerPx("3xl") - SIDEBAR;
     for (let column = narrowest; column <= 1600; column += 4) {
       const spare = windowToolbarWidth(column) - windowControls(BUSY, column);
       expect(spare, `${column}px column`).toBeGreaterThanOrEqual(24);

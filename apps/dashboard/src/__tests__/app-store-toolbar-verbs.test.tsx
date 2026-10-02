@@ -105,6 +105,17 @@ describe("App Store in a desktop window", () => {
     expect(await within(tablist).findByRole("tab", { name: "My Apps" })).toBeInTheDocument();
     expect(within(tablist).getByRole("tab", { name: "Installed" })).toBeInTheDocument();
   });
+
+  it("keeps tabs, Create and the search on one toolbar row: the tabs scroll and the search gives way to 6rem", async () => {
+    renderPage();
+    const toolbar = await screen.findByTestId("toolbar-slot");
+    const search = within(toolbar).getByRole("textbox", { name: "Search apps" });
+    const field = search.closest(".search-field");
+    expect(field).toHaveClass("min-w-24", "flex-1");
+    expect(field).not.toHaveClass("min-w-40");
+    expect(field?.parentElement).toHaveClass("flex", "flex-nowrap");
+    expect(within(toolbar).getByRole("tablist").closest('[class*="overflow-x-auto"]')).not.toBeNull();
+  });
 });
 
 describe("App Store in classic mode", () => {

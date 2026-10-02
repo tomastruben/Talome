@@ -42,7 +42,7 @@ function material(selector: string) {
   };
 }
 
-const regular = { dark: material(".tm-glass-dense"), light: material(":root:not(.dark) .tm-glass-dense") };
+const regular = { dark: material(".tm-glass-dense"), light: material(":root:not(.dark) .tm-glass-dense:not(.dark *)") };
 /** The worst backdrop for each theme's text: pure white behind dark glass, pure black behind light. */
 const worstBackdrop = { dark: 1, light: 0 } as const;
 const gray = (v: number) => ({ r: v, g: v, b: v, a: 1 });

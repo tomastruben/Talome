@@ -2538,7 +2538,9 @@ html[data-embedded-frame] body {
   align-items: flex-start;
   gap: 0.5rem;
   min-height: 3.25rem;
-  padding-inline: var(--window-controls-inset) var(--window-pad);
+  /* The trailing end sits as far from the window's edge as a 32px capsule
+     sits from its top (10px), so the last capsule nests in the corner */
+  padding-inline: var(--window-controls-inset) 0.625rem;
   border-bottom: 1px solid var(--window-separator);
   touch-action: none;
   -webkit-user-select: none;
@@ -2546,11 +2548,11 @@ html[data-embedded-frame] body {
 }
 /* Beside the sidebar the controls sit on the sidebar panel's top, so the row
    starts at the gutter. Exactly when the panel shows: a wide window (the
-   panel's @2xl/window) and a sidebar in it (an empty panel is hidden). */
+   panel's @3xl/window) and a sidebar in it (an empty panel is hidden). */
 .tm-window-sidebar:empty {
   display: none;
 }
-@container window (width >= 42rem) {
+@container window (width >= 48rem) {
   .tm-window-sidebar:not(:empty) + .tm-window-content > .tm-window-unified-toolbar {
     padding-inline-start: var(--window-pad);
   }
@@ -2567,6 +2569,33 @@ html[data-embedded-frame] body {
 .tm-window-title {
   flex: 0 1000 auto;
   min-width: 0;
+}
+/* One control height in the toolbar: 32px capsules (44px on touch), whatever
+   size an app's select, button or field defaults to. A 36px select stretched
+   the 52px band and stood out from the capsules beside it. Unlayered, so it
+   wins over a primitive's own data-size height. */
+.tm-window-unified-toolbar :is([data-slot="button"], [data-slot="select-trigger"], [data-slot="input"], [data-slot="toggle"], [data-slot="toggle-group-item"], [data-slot="tabs-list"]) {
+  height: 2rem;
+}
+.tm-window-unified-toolbar [data-slot="button"]:is([data-size="icon"], [data-size="icon-sm"], [data-size="icon-lg"]) {
+  width: 2rem;
+}
+.tm-window-unified-toolbar [data-slot="tabs-list"] > [data-slot="tabs-tab"] {
+  height: 1.75rem;
+}
+@media (pointer: coarse) {
+  .tm-window-unified-toolbar :is([data-slot="button"], [data-slot="select-trigger"], [data-slot="input"], [data-slot="toggle"], [data-slot="toggle-group-item"]) {
+    height: 2.75rem;
+  }
+  .tm-window-unified-toolbar [data-slot="button"]:is([data-size="icon"], [data-size="icon-sm"], [data-size="icon-lg"]) {
+    width: 2.75rem;
+  }
+  .tm-window-unified-toolbar [data-slot="tabs-list"] {
+    height: 3rem;
+  }
+  .tm-window-unified-toolbar [data-slot="tabs-list"] > [data-slot="tabs-tab"] {
+    height: 2.75rem;
+  }
 }
 /* An app's toolbar (<DesktopAppToolbar>) in the row's slot: the row's
    flexible part, its controls centred in the 52px band (44px controls on
@@ -2710,6 +2739,51 @@ html[data-embedded-frame] body {
       --card: var(--surface-popover);
     }
   }
+}
+
+/* ── Control shapes in windows ───────────────────────────────────────────────
+   macOS's grammar: containers are rounded rectangles concentric with the
+   window (the window rounded-2xl, the inset sidebar rounded-lg, cards
+   rounded-xl), and controls are capsules. One radius, the window's, for every
+   single-line control in a window (buttons, fields, search, selects, toggles,
+   segmented tabs): CSS clamps a radius to half the box, so 32-40px controls
+   come out as exact capsules, matching the toolbar's, while a tall card-like
+   button keeps a soft corner instead of turning into a stadium. Joined
+   segments keep their outer ends round; a multi-line field (a textarea, or an
+   input group holding one) stays a rounded rectangle. Classic mode keeps its
+   rounded-md controls. */
+:is(.tm-window-content, [data-window-sidebar]) :is(
+  [data-slot="button"]:not([data-variant="link"]),
+  [data-slot="input"],
+  [data-slot="select-trigger"],
+  [data-slot="input-group"]:not(:has(textarea)),
+  [data-slot="toggle"],
+  [data-slot="toggle-group"],
+  [data-slot="toggle-group-item"]:not([data-spacing="0"]),
+  [data-slot="tabs-list"][data-orientation="horizontal"],
+  [data-slot="tabs-list"][data-orientation="horizontal"] > :is([data-slot="tabs-tab"], [data-slot="tab-indicator"])
+) {
+  border-radius: var(--radius-2xl);
+}
+:is(.tm-window-content, [data-window-sidebar]) [data-slot="button-group"] > [data-slot="button"] {
+  border-radius: 0;
+}
+:is(.tm-window-content, [data-window-sidebar]) :is(
+  [data-slot="button-group"] > [data-slot="button"]:first-child,
+  [data-slot="toggle-group-item"][data-spacing="0"]:first-child
+) {
+  border-start-start-radius: var(--radius-2xl);
+  border-end-start-radius: var(--radius-2xl);
+}
+:is(.tm-window-content, [data-window-sidebar]) :is(
+  [data-slot="button-group"] > [data-slot="button"]:last-child,
+  [data-slot="toggle-group-item"][data-spacing="0"]:last-child
+) {
+  border-start-end-radius: var(--radius-2xl);
+  border-end-end-radius: var(--radius-2xl);
+}
+:is(.tm-window-content, [data-window-sidebar]) [data-slot="textarea"] {
+  border-radius: var(--radius-lg);
 }
 
 /* Widgets on the desktop are glass too, so the wallpaper stays part of the

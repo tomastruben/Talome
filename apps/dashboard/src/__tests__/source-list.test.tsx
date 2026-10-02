@@ -67,12 +67,13 @@ describe("window sidebar", () => {
     // in classic mode (regression: an unnamed @2xl hid classic tab strips)
     const panel = nav.parentElement!;
     expect(panel).toHaveAttribute("data-window-sidebar");
-    expect(panel).toHaveClass("hidden", "@2xl/window:flex");
+    expect(panel).toHaveClass("hidden", "@3xl/window:flex");
     expect(panel.className).not.toMatch(/(^|\s)@2xl:/);
     // The slot is a panel inset on the window's glass: 8px from the top, left
     // and bottom edges, rounded, a card lift (the remapped, relative card)
     // and a hairline, with its top left to the window controls
-    expect(panel).toHaveClass("m-2", "mr-0", "rounded-xl", "border", "border-window-separator", "bg-card", "pt-11");
+    // Concentric with the window: 8px in from a rounded-2xl (18px) window, so 10px
+    expect(panel).toHaveClass("m-2", "mr-0", "rounded-lg", "border", "border-window-separator", "bg-card", "pt-11");
     expect(panel.className).not.toMatch(/backdrop-blur|bg-background/);
     // The list itself paints nothing: no fill and no edge of its own
     expect(nav.className).not.toMatch(/\bbg-|\bborder-/);
@@ -98,8 +99,8 @@ describe("window sidebar", () => {
   });
 
   it("names the classes that swap app controls for the sidebar", () => {
-    expect(WINDOW_SIDEBAR_REPLACES).toBe("@2xl/window:hidden");
-    expect(WINDOW_SIDEBAR_SHOWS).toBe("hidden @2xl/window:flex");
+    expect(WINDOW_SIDEBAR_REPLACES).toBe("@3xl/window:hidden");
+    expect(WINDOW_SIDEBAR_SHOWS).toBe("hidden @3xl/window:flex");
   });
 
   it("gives well-known folders their own icons", () => {

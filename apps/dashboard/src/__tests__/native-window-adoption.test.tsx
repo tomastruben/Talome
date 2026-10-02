@@ -59,7 +59,7 @@ describe("windowed apps adopt the window shell", () => {
     expect(source).not.toMatch(/\bfrom-background\b/);
     expect(source).not.toMatch(/\bto-background\b/);
     expect(source).not.toContain("@2xl:");
-    expect(source).not.toContain("@2xl/window:");
+    expect(source).not.toContain("@3xl/window:");
     expect(source).not.toMatch(/\bbg-(white|black)\/\d+/);
     expect(source).not.toMatch(/backdrop-blur/);
   });
@@ -122,9 +122,9 @@ describe("Services in a desktop window", () => {
     // The heading shows only when the sidebar replaces the tabs; the search always
     const heading = within(toolbar!).getByRole("heading", { name: "All services" });
     expect(heading.className).toContain("hidden");
-    expect(heading.className).toContain("@2xl/window:flex");
+    expect(heading.className).toContain("@3xl/window:flex");
     expect(within(toolbar!).getByRole("textbox", { name: "Search services" })).toBeInTheDocument();
-    expect(within(toolbar!).getByRole("tablist").closest('[class*="@2xl/window:hidden"]')).not.toBeNull();
+    expect(within(toolbar!).getByRole("tablist").closest('[class*="@3xl/window:hidden"]')).not.toBeNull();
   });
 
   it("renders the toolbar in place in classic mode", () => {

@@ -407,7 +407,7 @@ describe("Media page view state", () => {
 
   it("keeps the tab strip in classic mode, with no heading in the toolbar", () => {
     render(<MediaPage />);
-    expect(screen.getByTestId("media-tabs").className).toContain("@2xl/window:hidden");
+    expect(screen.getByTestId("media-tabs").className).toContain("@3xl/window:hidden");
     // Where you are is the window's title (and the tab strip here), never a toolbar heading
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
     // Labels are sentence case
@@ -539,11 +539,11 @@ describe("Media's verbs, title and count in a desktop window", () => {
   it("hides the toolbar beside the sidebar where it would be empty", () => {
     renderWindow();
     const bar = () => toolbar().querySelector<HTMLElement>("[data-desktop-app-toolbar]")!;
-    expect(bar().className).not.toContain("@2xl/window:hidden");
+    expect(bar().className).not.toContain("@3xl/window:hidden");
     navigate("tab=calendar");
     // Only the tab strip is left, and the sidebar replaces it
-    expect(bar().className).toContain("@2xl/window:hidden");
-    expect(within(bar()).getByTestId("media-tabs").className).toContain("@2xl/window:hidden");
+    expect(bar().className).toContain("@3xl/window:hidden");
+    expect(within(bar()).getByTestId("media-tabs").className).toContain("@3xl/window:hidden");
   });
 
   it("floats the selection bar above the status bar and hands focus back to Select when it closes", async () => {

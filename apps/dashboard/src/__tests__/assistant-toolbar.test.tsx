@@ -198,7 +198,7 @@ describe("the Assistant in a window", () => {
     expect(row!.className).toContain(WINDOW_SIDEBAR_REPLACES);
     const sidebarSlot = container.querySelector<HTMLElement>("[data-window-sidebar]")!;
     expect(sidebarSlot.className).toMatch(/(^|\s)hidden(\s|$)/);
-    expect(sidebarSlot.className).toContain("@2xl/window:flex");
+    expect(sidebarSlot.className).toContain("@3xl/window:flex");
     expect(within(sidebarSlot).getByRole("button", { name: "New chat" })).toBeInTheDocument();
 
     const newChat = within(row!).getByRole("button", { name: "New chat" });

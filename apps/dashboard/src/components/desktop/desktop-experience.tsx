@@ -608,28 +608,19 @@ function resolveAppDefinition(appId: string, url: string, title?: string) {
   return undefined;
 }
 
+/**
+ * The size an app's window opens at: roomy enough that apps with a sidebar
+ * open with it showing (from a 48rem window) and a library shows a few rows,
+ * like a Mac app's default window, then fitted to the screen.
+ */
+const DEFAULT_WINDOW_SIZE: Record<string, { width: number; height: number }> = {
+  files: { width: 880, height: 580 },
+  media: { width: 1000, height: 660 },
+  terminal: { width: 900, height: 560 },
+};
+const DEFAULT_APP_WINDOW = { width: 880, height: 600 };
+
 function defaultBounds(appId: string, area: DesktopArea): DesktopBounds {
-  if (appId === "files") {
-    return clampDesktopBounds(
-      { x: 72, y: 144, width: 760, height: 560 },
-      area,
-      { width: 420, height: 320 },
-    );
-  }
-
-  if (appId === "media") {
-    return clampDesktopBounds(
-      {
-        x: Math.max(360, area.width - 620),
-        y: 200,
-        width: 560,
-        height: 430,
-      },
-      area,
-      { width: 420, height: 320 },
-    );
-  }
-
   if (appId === PLAYER_APP_ID) {
     const width = Math.min(880, Math.max(480, area.width - 160));
     const height = Math.min(560, Math.max(320, area.height - 140));
@@ -645,10 +636,19 @@ function defaultBounds(appId: string, area: DesktopArea): DesktopBounds {
     );
   }
 
-  const offset = (appId.length % 5) * 24;
+  const size = DEFAULT_WINDOW_SIZE[appId] ?? DEFAULT_APP_WINDOW;
+  const width = Math.min(size.width, area.width - 48);
+  const height = Math.min(size.height, area.height - 48);
+  // Near the centre of the work area, stepped per app so windows opened
+  // together cascade instead of stacking exactly
+  const step = (appId.length % 5) * 24;
   return clampDesktopBounds(
-    // Terminal opens wide enough to show its sidebar beside the session
-    { x: 160 + offset, y: 120 + offset, width: appId === "terminal" ? 860 : 720, height: 520 },
+    {
+      x: Math.max(24, Math.round((area.width - width) / 2) - 48 + step),
+      y: Math.max(24, Math.round((area.height - height) / 2) - 48 + step),
+      width,
+      height,
+    },
     area,
     { width: 440, height: 340 },
   );
