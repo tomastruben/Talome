@@ -1726,7 +1726,7 @@ function MediaPageInner() {
     onChange: (value: string) => selectTab(value as MediaTab),
   };
   const toolbar = (
-    <DesktopAppToolbar className={cn("flex min-w-0 flex-wrap items-center gap-2", !isLibrary && WINDOW_SIDEBAR_REPLACES)}>
+    <DesktopAppToolbar data-compact-toolbar="" className={cn("flex min-w-0 flex-wrap items-center gap-2", !isLibrary && WINDOW_SIDEBAR_REPLACES)}>
       {!embedded && <Tabs
         className={cn(WINDOW_SIDEBAR_REPLACES, "min-w-0 max-w-full overflow-x-auto scrollbar-none")}
         value={tab}

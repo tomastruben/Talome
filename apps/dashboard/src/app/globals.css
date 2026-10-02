@@ -2676,6 +2676,33 @@ html[data-embedded-frame] body {
     }
   }
 }
+/* Compact view menus make one row possible. Opening search restores the
+   roomier layout; collapsed search and ordinary controls stay beside the title. */
+@container content (width < 48rem) {
+  .tm-window-unified-toolbar:has([data-compact-toolbar]):not(:has(.search-field[data-search-expanded])) {
+    flex-wrap: nowrap;
+    padding-inline: var(--window-controls-inset) var(--window-pad);
+  }
+  .tm-window-unified-toolbar:has([data-compact-toolbar]):not(:has(.search-field[data-search-expanded])) .tm-window-toolbar-heading {
+    flex: 0 1 auto;
+    min-width: 4rem;
+    max-width: 40%;
+    padding-inline-start: 0;
+  }
+  .tm-window-unified-toolbar:has([data-compact-toolbar]):not(:has(.search-field[data-search-expanded])) .tm-window-toolbar {
+    order: 0;
+    flex: 1 1 0;
+    width: auto;
+    padding: 0;
+  }
+}
+@container window (width >= 48rem) {
+  @container content (width < 48rem) {
+    .tm-window-sidebar:not(:empty) + .tm-window-content > .tm-window-unified-toolbar:has([data-compact-toolbar]):not(:has(.search-field[data-search-expanded])) {
+      padding-inline: var(--window-pad);
+    }
+  }
+}
 .search-field-toggle, .search-field-close {
   display: none;
 }

@@ -382,7 +382,7 @@ function AppsPageContent() {
   return (
     <WindowSidebarLayout sidebar={sidebar}>
     <div className="flex min-w-0 flex-1 flex-col gap-5">
-      <DesktopAppToolbar windowTitle={`${appStoreViewTitle(tab)}${showCategories && category !== "all" ? ` · ${categoryLabel(category)}` : ""}`} className="grid min-w-0 gap-3">
+      <DesktopAppToolbar data-compact-toolbar="" windowTitle={`${appStoreViewTitle(tab)}${showCategories && category !== "all" ? ` · ${categoryLabel(category)}` : ""}`} className="grid min-w-0 gap-3">
         {/* Windows use sidebar navigation or a compact Source/Category menu.
             Classic mode keeps its scrollable tabs and category rail. */}
         <div className="flex min-w-0 flex-wrap items-center gap-2">
