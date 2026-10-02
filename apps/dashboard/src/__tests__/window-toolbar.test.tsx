@@ -64,6 +64,22 @@ function renderToolbar(store = createStore(), app?: React.ReactNode) {
 }
 
 describe("WindowToolbar", () => {
+  it("uses the selected view as its only title and releases it when the app unmounts", () => {
+    const view = renderToolbar(createStore(), <DesktopAppToolbar windowTitle="All apps" />);
+    expect(view.store.get(pageTitleAtom)).toBe("All apps");
+    expect(within(view.row).getAllByText("All apps")).toHaveLength(1);
+    view.rerender(
+      <Provider store={view.store}>
+        <WindowToolbar />
+        <DesktopAppToolbar windowTitle="CasaOS · Media" />
+      </Provider>,
+    );
+    expect(view.store.get(pageTitleAtom)).toBe("CasaOS · Media");
+    expect(screen.queryByText("All apps")).toBeNull();
+    view.unmount();
+    expect(view.store.get(pageTitleAtom)).toBeNull();
+  });
+
   it("tells the window it draws the unified toolbar, on mount, on request and when it goes", () => {
     const view = renderToolbar();
     expect(posted).toContainEqual({ type: DESKTOP_WINDOW_CHROME_MESSAGE, unified: true });

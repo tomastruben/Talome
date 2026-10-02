@@ -679,6 +679,9 @@
   .search-field.flex-1 {
     max-width: none;
   }
+  .search-field-toggle, .search-field-close {
+    display: none;
+  }
   .search-field-icon {
     position: absolute;
     left: 0.75rem;
@@ -2595,20 +2598,20 @@ html[data-embedded-frame] body {
    size an app's select, button or field defaults to. A 36px select stretched
    the 52px band and stood out from the capsules beside it. Unlayered, so it
    wins over a primitive's own data-size height. */
-.tm-window-unified-toolbar :is([data-slot="button"], [data-slot="select-trigger"], [data-slot="input"], [data-slot="toggle"], [data-slot="toggle-group-item"], [data-slot="tabs-list"]) {
+.tm-window-unified-toolbar :is([data-slot="button"], button[data-slot="dropdown-menu-trigger"], button[data-slot="popover-trigger"], button[data-slot="tooltip-trigger"], [data-slot="select-trigger"], [data-slot="input"], [data-slot="toggle"], [data-slot="toggle-group-item"], [data-slot="tabs-list"]) {
   height: 2rem;
 }
-.tm-window-unified-toolbar [data-slot="button"]:is([data-size="icon"], [data-size="icon-sm"], [data-size="icon-lg"]) {
+.tm-window-unified-toolbar button:is([data-size="icon"], [data-size="icon-sm"], [data-size="icon-lg"]) {
   width: 2rem;
 }
 .tm-window-unified-toolbar [data-slot="tabs-list"] > [data-slot="tabs-tab"] {
   height: 1.75rem;
 }
 @media (pointer: coarse) {
-  .tm-window-unified-toolbar :is([data-slot="button"], [data-slot="select-trigger"], [data-slot="input"], [data-slot="toggle"], [data-slot="toggle-group-item"]) {
+  .tm-window-unified-toolbar :is([data-slot="button"], button[data-slot="dropdown-menu-trigger"], button[data-slot="popover-trigger"], button[data-slot="tooltip-trigger"], [data-slot="select-trigger"], [data-slot="input"], [data-slot="toggle"], [data-slot="toggle-group-item"]) {
     height: 2.75rem;
   }
-  .tm-window-unified-toolbar [data-slot="button"]:is([data-size="icon"], [data-size="icon-sm"], [data-size="icon-lg"]) {
+  .tm-window-unified-toolbar button:is([data-size="icon"], [data-size="icon-sm"], [data-size="icon-lg"]) {
     width: 2.75rem;
   }
   .tm-window-unified-toolbar [data-slot="tabs-list"] {
@@ -2674,6 +2677,35 @@ html[data-embedded-frame] body {
     .tm-window-sidebar:not(:empty) + .tm-window-content .tm-window-toolbar-heading {
       padding-inline-start: var(--window-pad);
     }
+  }
+}
+/* Compact desktop search expands in place. The query survives collapse and
+   remains visible in the capsule's accessible name and tooltip. */
+@container content (width < 32rem) {
+  .tm-window-toolbar .search-field {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+  .tm-window-toolbar .search-field:not([data-search-expanded]) > :is(input, .search-field-icon) {
+    display: none;
+  }
+  .tm-window-toolbar .search-field:not([data-search-expanded]) > .search-field-toggle {
+    display: inline-flex;
+  }
+  .tm-window-toolbar .search-field[data-search-expanded] {
+    flex: 1 1 10rem;
+  }
+  .tm-window-toolbar .search-field[data-search-expanded] > input {
+    padding-inline-end: 2.25rem;
+  }
+  .tm-window-toolbar .search-field[data-search-expanded] > .search-field-close {
+    display: inline-flex;
+    position: absolute;
+    inset-inline-end: 0;
+    top: 50%;
+    transform: translateY(-50%);
   }
 }
 /* An app's status bar in the status-bar slot (<WindowStatusBar>), on the
@@ -2814,6 +2846,9 @@ html[data-embedded-frame] body {
    rounded-md controls. */
 :is(.tm-window-content, [data-window-sidebar]) :is(
   [data-slot="button"]:not([data-variant="link"]),
+  button[data-slot="dropdown-menu-trigger"],
+  button[data-slot="popover-trigger"],
+  button[data-slot="tooltip-trigger"],
   [data-slot="input"],
   [data-slot="select-trigger"],
   [data-slot="input-group"]:not(:has(textarea)),

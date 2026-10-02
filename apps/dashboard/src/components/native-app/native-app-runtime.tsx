@@ -279,7 +279,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
 
   return (
     <div data-native-app={spec.appId} className="mx-auto flex w-full max-w-screen-2xl flex-col gap-6 pb-8 @container/native">
-      <header className={cn(embedded && "hidden", "flex flex-col gap-4 @3xl/native:flex-row @3xl/native:items-start @3xl/native:justify-between")}>
+      <header className={cn("flex flex-col gap-4 @3xl/native:flex-row @3xl/native:items-start @3xl/native:justify-between", embedded && "hidden")}>
         <div className="flex min-w-0 items-start gap-3">
           <div className="flex size-12 shrink-0 items-center justify-center rounded-xl border bg-card shadow-sm">
             <HugeiconsIcon icon={appIcon} size={30} className="text-foreground" aria-hidden />

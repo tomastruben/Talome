@@ -34,9 +34,9 @@ describe("shapes in a desktop window", () => {
   });
 
   it("gives every toolbar control one 32px height, 44px on touch", () => {
-    const height = ruleAfter('.tm-window-unified-toolbar :is([data-slot="button"], [data-slot="select-trigger"]');
+    const height = ruleAfter('.tm-window-unified-toolbar :is([data-slot="button"]');
     expect(height.body).toMatch(/height: 2rem/);
-    expect(css).toMatch(/@media \(pointer: coarse\) \{\s*\.tm-window-unified-toolbar :is\([^)]*\) \{\s*height: 2\.75rem/);
+    expect(css).toMatch(/@media \(pointer: coarse\) \{\s*\.tm-window-unified-toolbar :is[\s\S]*?height: 2\.75rem/);
   });
 
   it("ends the toolbar 10px from the edge, as far as its capsules sit from the top", () => {

@@ -1735,7 +1735,8 @@ function MediaPageInner() {
         value={tab}
         onValueChange={(v) => selectTab(v as MediaTab)}
       >
-        {/* On touch each tab is a 44px target; below @4xl they are icon-only */}
+        {/* Window navigation keeps its labels and scrolls at small widths;
+            classic mode folds labels until the whole toolbar fits. */}
         <TabsList className="pointer-coarse:h-12">
           {tabs.map((t) => (
             <TabsTrigger
@@ -1747,7 +1748,7 @@ function MediaPageInner() {
               className="text-xs gap-1.5 pointer-coarse:h-11 pointer-coarse:min-w-11"
             >
               <HugeiconsIcon icon={t.icon} size={14} />
-              <span className={embedded ? "hidden @lg/content:inline" : "hidden @4xl:inline"}>{t.label}</span>
+              <span className={embedded ? "inline" : "hidden @4xl:inline"}>{t.label}</span>
               {t.badge}
             </TabsTrigger>
           ))}
