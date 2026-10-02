@@ -1,27 +1,21 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/ui/empty-state";
 
 export default function AudiobookDetailError({
-  error,
   reset,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center h-[60vh]">
-      <div className="flex flex-col items-center gap-6">
-        <p className="text-[8rem] leading-none font-normal tracking-tight text-dim-foreground select-none">
-          Error
-        </p>
-        <p className="text-base text-muted-foreground max-w-xs text-center">
-          {error.message || "Something went wrong."}
-        </p>
-        <Button variant="secondary" size="sm" onClick={reset}>
-          Try again
-        </Button>
-      </div>
+    <div className="flex min-w-0 flex-1 flex-col">
+      <ErrorState
+        fill
+        title="Couldn't open this audiobook"
+        description="Something went wrong while showing this audiobook. Retry, and if it keeps happening check that Audiobookshelf and the Talome server are running."
+        onRetry={reset}
+      />
     </div>
   );
 }

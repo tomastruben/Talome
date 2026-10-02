@@ -2,7 +2,7 @@
 
 import { ErrorState } from "@/components/ui/empty-state";
 
-export default function AssistantError({
+export default function ShareError({
   reset,
 }: {
   error: Error & { digest?: string };
@@ -12,8 +12,8 @@ export default function AssistantError({
     <div className="flex min-w-0 flex-1 flex-col">
       <ErrorState
         fill
-        title="Couldn't open the Assistant"
-        description="Something went wrong while showing the Assistant. Retry, and if it keeps happening check that the Talome server is running."
+        title="Couldn't open Share"
+        description="Something went wrong while showing Share. Retry, and if it keeps happening check that the Talome server is running."
         onRetry={reset}
       />
     </div>
