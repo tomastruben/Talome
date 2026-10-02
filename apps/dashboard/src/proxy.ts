@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const CORE_BACKEND = process.env.CORE_BACKEND_URL || "http://127.0.0.1:4000";
 // /wallpapers/ is public so the sign-in screen can show the desktop wallpaper
-const PUBLIC_PATHS = ["/login", "/setup", "/import", "/invite/", "/s/", "/api/", "/_next", "/favicon.ico", "/manifest.json", "/wallpapers/"];
+const PUBLIC_PATHS = ["/login", "/setup", "/import", "/invite/", "/s/", "/api/", "/_next", "/favicon.ico", "/manifest.json", "/wallpapers/", "/app-icons/"];
 // The app's icons and service worker are fetched before anyone signs in: by
 // "Add to Home Screen" (redirected, the Home Screen gets a letter tile) and by
 // the service worker registration on the sign-in screen (a redirect fails it).
