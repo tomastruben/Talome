@@ -36,13 +36,35 @@ describe("microphone error messages", () => {
     expect(await microphoneErrorMessage(err("NotAllowedError"))).toMatch(/blocked for this site/);
   });
 
-  it("points at system privacy settings when it was blocked without asking", async () => {
+  it("does not claim a system denial when permission cannot be determined", async () => {
     mockPermission("prompt");
-    expect(await microphoneErrorMessage(err("NotAllowedError"))).toMatch(/without asking/);
+    expect(await microphoneErrorMessage(err("NotAllowedError"))).toMatch(/couldn't access the microphone/);
     mockPermission("throw");
-    expect(await microphoneErrorMessage(err("NotAllowedError"))).toMatch(/without asking/);
+    expect(await microphoneErrorMessage(err("NotAllowedError"))).toMatch(/couldn't access the microphone/);
     mockPermission("missing");
-    expect(await microphoneErrorMessage(err("SecurityError"))).toMatch(/without asking/);
+    expect(await microphoneErrorMessage(err("SecurityError"))).toMatch(/couldn't access the microphone/);
+  });
+
+  it("explains capture failure without claiming permission is missing when it is granted", async () => {
+    mockPermission("granted");
+    const message = await microphoneErrorMessage(err("NotAllowedError"));
+    expect(message).toMatch(/permission is granted/);
+    expect(message).toMatch(/in-app browser/);
+    expect(message).not.toMatch(/blocked for this site/);
+  });
+
+  it("identifies a document policy block before interpreting denied permission", async () => {
+    mockPermission("denied");
+    vi.stubGlobal("document", { permissionsPolicy: { allowsFeature: () => false } });
+    expect(await microphoneErrorMessage(err("NotAllowedError"))).toMatch(/page's permissions policy/);
+  });
+
+  it("explains an insecure origin or missing capture API", async () => {
+    vi.stubGlobal("isSecureContext", false);
+    expect(await microphoneErrorMessage(new TypeError("missing API"))).toMatch(/HTTPS or on localhost/);
+    vi.stubGlobal("isSecureContext", true);
+    mockPermission("missing");
+    expect(await microphoneErrorMessage(new TypeError("missing API"))).toMatch(/doesn't support microphone capture/);
   });
 
   it("never claims access was denied for an unknown failure", async () => {

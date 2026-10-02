@@ -12,6 +12,8 @@ import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useSpeechOutput } from "@/hooks/use-speech-output";
 import { useLiveVoice, type LiveHistoryItem } from "@/hooks/use-live-voice";
 import { CORE_URL } from "@/lib/constants";
+import { unlockAudio } from "@/lib/audio-session";
+import { Button } from "@/components/ui/button";
 import { DURATION, TRAVEL, enter, exit } from "@/lib/motion";
 
 export interface LastAssistant {
@@ -90,13 +92,14 @@ interface StageProps {
   footnote: string | null;
   orbLabel: string;
   onOrbTap?: () => void;
+  onRetry?: () => void;
   onClose: () => void;
 }
 
 /** Share of the gap to the live voice level the orb closes each frame: smoothing, not a spring. */
 const LEVEL_SMOOTHING = 0.25;
 
-function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onClose }: StageProps) {
+function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onRetry, onClose }: StageProps) {
   const reduceMotion = useReducedMotion();
   const { resolvedTheme } = useTheme();
   // The orb swells with the voice level, eased toward it frame by frame. It
@@ -154,7 +157,8 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
             {label}
           </motion.p>
         </AnimatePresence>
-        <p className="line-clamp-3 text-sm text-muted-foreground">{caption}</p>
+        <p className="text-sm text-muted-foreground">{caption}</p>
+        {onRetry && <Button variant="outline" onClick={onRetry}>Try microphone again</Button>}
       </div>
 
       <div className="relative flex flex-col items-center gap-3">
@@ -243,8 +247,9 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceM
       caption={caption}
       // Where the voice goes, in plain words (no protocol or model id)
       footnote="Voice by OpenAI"
-      orbLabel="End voice conversation"
-      onOrbTap={onClose}
+      orbLabel={live.error ? "Try microphone again" : "End voice conversation"}
+      onOrbTap={live.error ? () => { unlockAudio(); stop(); void start(); } : onClose}
+      onRetry={live.error ? () => { unlockAudio(); stop(); void start(); } : undefined}
       onClose={onClose}
     />
   );
@@ -284,6 +289,8 @@ function ClassicSession({ onClose, onSend, status, lastAssistant }: VoiceModePro
     speechPulse.set(0.6);
     window.setTimeout(() => speechPulse.set(0.15), 120);
   });
+  const { engine, start, cancel } = voice;
+  const cancelSpeech = speech.cancel;
 
   const listen = useCallback(async () => {
     setTranscript("");
@@ -312,15 +319,16 @@ function ClassicSession({ onClose, onSend, status, lastAssistant }: VoiceModePro
 
   // Start listening when shown; stop everything when closed
   useEffect(() => {
-    void listen();
+    if (!engine) return;
+    setTranscript("");
+    setPhase("listening");
+    void start();
     return () => {
-      voice.cancel();
-      speech.cancel();
+      cancel();
+      cancelSpeech();
       awaitingReplyAfter.current = undefined;
     };
-    // Only on mount/unmount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [engine, start, cancel, cancelSpeech]);
 
   // When the reply is complete, read it aloud, then listen again
   useEffect(() => {
@@ -341,7 +349,8 @@ function ClassicSession({ onClose, onSend, status, lastAssistant }: VoiceModePro
   }, [phase, status, lastAssistant, speech, listen]);
 
   const tapOrb = () => {
-    if (phase === "listening") void finishListening();
+    if (voice.error) { unlockAudio(); void listen(); }
+    else if (phase === "listening") void finishListening();
     else if (phase === "speaking") {
       speech.cancel();
       void listen();
@@ -356,8 +365,8 @@ function ClassicSession({ onClose, onSend, status, lastAssistant }: VoiceModePro
       level={level}
       processing={phase === "transcribing" || phase === "thinking"}
       orb={PHASE_ORB[phase]}
-      label={PHASE_LABEL[phase]}
-      caption={transcript || (phase === "listening" ? "Say something — I'll answer when you pause." : "")}
+      label={voice.error ? "Microphone unavailable" : !engine ? "Voice unavailable" : voice.status === "starting" ? "Starting microphone…" : PHASE_LABEL[phase]}
+      caption={voice.error || transcript || (engine && phase === "listening" ? "Say something — I'll answer when you pause." : "")}
       footnote={
         voice.engine === "browser"
           ? "Using this browser's speech recognition"
@@ -365,8 +374,9 @@ function ClassicSession({ onClose, onSend, status, lastAssistant }: VoiceModePro
             ? "Transcribed by your Talome server"
             : voice.unavailableReason
       }
-      orbLabel={phase === "speaking" ? "Stop speaking" : phase === "listening" ? "Send now" : PHASE_LABEL[phase]}
+      orbLabel={voice.error ? "Try microphone again" : phase === "speaking" ? "Stop speaking" : phase === "listening" ? "Send now" : PHASE_LABEL[phase]}
       onOrbTap={tapOrb}
+      onRetry={voice.error ? () => { unlockAudio(); void listen(); } : undefined}
       onClose={onClose}
     />
   );
