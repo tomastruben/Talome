@@ -1,14 +1,17 @@
 /**
- * Media's classic-mode controls on phones and tablets: the genre rail that
- * stands in for the window sidebar, and the floating selection bar.
+ * Media's controls on phones and tablets: the genre rail that stands in for
+ * the window sidebar, Cinema and Select, and the floating selection bar.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("@/components/media/cinema-browser-launcher", () => ({ preloadCinemaBrowser: vi.fn() }));
+
 import { MediaFiltersRow } from "@/components/media/media-filters-row";
-import { MediaSelectionBar } from "@/components/media/media-selection-bar";
+import { MediaLibraryActions } from "@/components/media/media-library-actions";
+import { MediaSelectionBar, type MediaSelectionBarAnchor } from "@/components/media/media-selection-bar";
 import { WINDOW_SIDEBAR_REPLACES } from "@/components/ui/source-list";
 import { contrast, over, parseColor, readTokens } from "./helpers/contrast";
 
@@ -68,11 +71,22 @@ describe("Media genre rail on touch", () => {
     expect(page).toContain("<MediaSelectionBar");
   });
 
-  it("grows every 24px and 28px control on the page for a finger (Select, Cinema, Scan, Retry download)", () => {
+  it("grows every 24px and 28px control on the page for a finger (Scan, Retry download)", () => {
     const page = read("app/dashboard/media/page.tsx");
     const small = page.split("\n").filter((line) => /className=.*\bh-[67]\b/.test(line));
-    expect(small.length).toBeGreaterThanOrEqual(4);
+    expect(small.length).toBeGreaterThanOrEqual(2);
     for (const line of small) expect(line.trim()).toMatch(/pointer-coarse:(h|size)-11\b/);
+  });
+
+  it.each(["header", "toolbar"] as const)("grows Cinema and Select for a finger in the %s", (placement) => {
+    render(<MediaLibraryActions placement={placement} selecting={false} onCinema={vi.fn()} onToggleSelect={vi.fn()} />);
+    for (const name of ["Cinema", "Select"]) {
+      const button = classes(screen.getByRole("button", { name }));
+      expect(button).toContain(placement === "header" ? "h-7" : "h-8");
+      expect(button).toContain("pointer-coarse:h-11");
+      // Icon-only in a narrow window column: 44px wide as well
+      if (placement === "toolbar") expect(button).toContain("pointer-coarse:min-w-11");
+    }
   });
 
   it("grows the toolbar's 32px search, selects and tabs, and the source-status Retry, for a finger", () => {
@@ -93,27 +107,35 @@ describe("Media genre rail on touch", () => {
 });
 
 describe("Media selection bar", () => {
-  function renderBar(count = 3) {
+  function renderBar(count = 3, anchor: MediaSelectionBarAnchor = "viewport") {
     const onRemove = vi.fn();
     const onCancel = vi.fn();
-    const view = render(<MediaSelectionBar count={count} onRemove={onRemove} onCancel={onCancel} />);
+    const view = render(<MediaSelectionBar count={count} anchor={anchor} onRemove={onRemove} onCancel={onCancel} />);
     return { ...view, onRemove, onCancel };
   }
 
+  it("is the Files selection bar, not a copy of it", () => {
+    const source = read("components/media/media-selection-bar.tsx");
+    expect(source).toContain('from "@/components/files/selection-bar"');
+    expect(source).toContain("<SelectionBar ");
+    expect(source).not.toContain("<Button");
+  });
+
   it("names Remove and Cancel when a phone shows only their icons", () => {
     const { onRemove, onCancel } = renderBar();
-    const remove = screen.getByRole("button", { name: "Remove" });
-    const cancel = screen.getByRole("button", { name: "Cancel" });
+    // The pill is a group named by its count
+    const bar = screen.getByRole("group", { name: "3 selected" });
+    const remove = within(bar).getByRole("button", { name: "Remove" });
+    const cancel = within(bar).getByRole("button", { name: "Cancel" });
     for (const button of [remove, cancel]) {
-      // Visually hidden below sm, never display:none
+      // Visually hidden where the column is narrow (a container query, not the viewport), never display:none
       const label = within(button).getByText(button.textContent ?? "");
-      expect(classes(label)).toEqual(["sr-only", "sm:not-sr-only"]);
+      expect(classes(label)).toEqual(["sr-only", "@md:not-sr-only"]);
     }
     fireEvent.click(remove);
     fireEvent.click(cancel);
     expect(onRemove).toHaveBeenCalledTimes(1);
     expect(onCancel).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("3 selected")).toBeInTheDocument();
   });
 
   it("gives both buttons a 44px target on a coarse pointer", () => {
@@ -125,23 +147,37 @@ describe("Media selection bar", () => {
     }
   });
 
-  it("paints Remove with the inverse critical token and keeps hovers on the pill", () => {
+  it("paints Remove with the inverse critical token and keeps hovers and focus on the pill", () => {
     renderBar();
     const remove = classes(screen.getByRole("button", { name: "Remove" }));
     expect(remove).toContain("text-status-critical-inverse");
-    expect(remove).toContain("hover:text-status-critical-inverse");
     expect(remove).not.toContain("text-status-critical");
+    expect(classes(screen.getByRole("button", { name: "Cancel" }))).toContain("text-background/70");
     for (const name of ["Remove", "Cancel"]) {
       const button = classes(screen.getByRole("button", { name }));
-      expect(button).toEqual(expect.arrayContaining(["hover:bg-background/10", "dark:hover:bg-background/10"]));
-      // The ghost button's page-grey hovers would paint over the inverted pill
+      expect(button).toContain("hover:bg-background/10");
+      // A page-grey hover would paint over the inverted pill, and a page-coloured ring would vanish on it
       expect(button.filter((c) => /hover:(bg|text)-accent/.test(c))).toEqual([]);
+      expect(button).toContain("focus-visible:ring-background");
     }
+  });
+
+  it("floats over the screen on the classic page, and above the status bar in a window", () => {
+    const { unmount } = renderBar(3, "viewport");
+    const floating = (bar: HTMLElement) => classes(bar.closest("[data-selection-bar]")!.parentElement!);
+    expect(floating(screen.getByRole("group"))).toEqual(
+      expect.arrayContaining(["fixed", "inset-x-0", "bottom-6", "z-50", "pb-[env(safe-area-inset-bottom)]"]),
+    );
+    unmount();
+    renderBar(3, "status-bar");
+    const anchored = floating(screen.getByRole("group"));
+    expect(anchored).toEqual(expect.arrayContaining(["absolute", "inset-x-0", "bottom-full", "mb-3"]));
+    expect(anchored).not.toContain("fixed");
   });
 
   it("renders nothing without a selection", () => {
     const { container } = renderBar(0);
-    expect(container.querySelector("[data-media-selection-bar]")).toBeNull();
+    expect(container.querySelector("[data-selection-bar]")).toBeNull();
   });
 
   describe("contrast on the inverted pill", () => {

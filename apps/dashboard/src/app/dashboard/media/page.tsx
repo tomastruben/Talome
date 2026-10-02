@@ -81,18 +81,18 @@ import { MediaSelectionBar } from "@/components/media/media-selection-bar";
 import { RequestsTab } from "@/components/media/requests-tab";
 import { WatchlistSection } from "@/components/media/watching-tab";
 import { useCinemaBrowser } from "@/components/media/cinema-browser-context";
-import { preloadCinemaBrowser } from "@/components/media/cinema-browser-launcher";
-import { Projector01Icon } from "@/components/icons";
+import { MediaLibraryActions } from "@/components/media/media-library-actions";
 import { useSetAtom } from "jotai";
 import { pageActionAtom } from "@/atoms/page-action";
-import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
+import { pageTitleAtom } from "@/atoms/page-title";
 import {
   WINDOW_SIDEBAR_REPLACES,
-  WINDOW_SIDEBAR_SHOWS,
   WindowSidebarLayout,
   useWindowSidebarShown,
 } from "@/components/ui/source-list";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
+import { WindowStatusBar } from "@/components/desktop/window-content";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { useFeatureStack } from "@/hooks/use-feature-stacks";
 import { StackSetup } from "@/components/ui/stack-setup";
 import {
@@ -1016,6 +1016,8 @@ function MediaPageInner() {
 
   // Cinema browser
   const cinemaBrowser = useCinemaBrowser();
+  /** In a desktop window: the verbs sit in the toolbar and the title bar names the view. */
+  const embedded = useIsEmbeddedFrame();
   /** In a window with its sidebar on screen, collections live in the sidebar. */
   const windowSidebarShown = useWindowSidebarShown();
 
@@ -1453,72 +1455,71 @@ function MediaPageInner() {
     setSelectedIds(new Set());
   }, []);
 
-  // Header actions — Cinema + Select in the shell header
+  /** The Select toggle (window toolbar or classic header): focus returns here when the selection bar closes. */
+  const selectToggleRef = useRef<HTMLButtonElement | null>(null);
+  const toggleSelectionMode = useCallback(() => {
+    if (selectionMode) exitSelectionMode();
+    else setSelectionMode(true);
+  }, [selectionMode, exitSelectionMode]);
+  /**
+   * Ends the selection from the bar or with Escape. The bar closes with it,
+   * so keyboard focus on one of its buttons moves to the Select toggle
+   * instead of dropping to the page.
+   */
+  const endSelection = useCallback(() => {
+    const active = document.activeElement;
+    const fromBar = active instanceof Element && active.closest("[data-selection-bar]") !== null;
+    exitSelectionMode();
+    if (fromBar) requestAnimationFrame(() => selectToggleRef.current?.focus());
+  }, [exitSelectionMode]);
+  const openCinema = useCallback(() => cinemaBrowser.open(libraryTab), [cinemaBrowser, libraryTab]);
+
+  // The library's verbs (Cinema, Select). In a window they sit in the toolbar,
+  // so Media publishes nothing to the title bar (it keeps only the window
+  // controls, Back and the title); in classic mode they sit in the page header.
   const setPageAction = useSetAtom(pageActionAtom);
-  const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
   useEffect(() => {
-    if (tab !== "movies" && tab !== "tv") {
+    if (embedded || !isLibraryTab(tab)) {
       setPageAction(null);
-      setDesktopAppActions([]);
       return;
     }
     setPageAction(
-      <div className="ml-auto flex items-center gap-1.5 shrink-0">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="hidden md:inline-flex h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11"
-          onClick={() => cinemaBrowser.open(tab)}
-          onPointerEnter={preloadCinemaBrowser}
-          onFocus={preloadCinemaBrowser}
-        >
-          <HugeiconsIcon icon={Projector01Icon} size={14} />
-          Cinema
-        </Button>
-        <Button
-          variant={selectionMode ? "secondary" : "ghost"}
-          size="sm"
-          className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11"
-          onClick={() => selectionMode ? exitSelectionMode() : setSelectionMode(true)}
-        >
-          {selectionMode ? "Cancel" : "Select"}
-        </Button>
+      <div data-media-actions="" className="ml-auto flex items-center gap-1.5 shrink-0">
+        <MediaLibraryActions
+          placement="header"
+          selecting={selectionMode}
+          onCinema={openCinema}
+          onToggleSelect={toggleSelectionMode}
+          selectRef={selectToggleRef}
+        />
       </div>,
     );
-    setDesktopAppActions([
-      {
-        id: "cinema",
-        label: "Cinema",
-        icon: "projector",
-        onSelect: () => cinemaBrowser.open(tab),
-      },
-      {
-        id: "select",
-        label: selectionMode ? "Cancel" : "Select",
-        active: selectionMode,
-        onSelect: () => selectionMode ? exitSelectionMode() : setSelectionMode(true),
-      },
-    ]);
-    return () => {
-      setPageAction(null);
-      setDesktopAppActions([]);
-    };
-  }, [
-    tab,
-    selectionMode,
-    setPageAction,
-    setDesktopAppActions,
-    cinemaBrowser,
-    exitSelectionMode,
-  ]);
+    return () => setPageAction(null);
+  }, [embedded, tab, selectionMode, setPageAction, openCinema, toggleSelectionMode]);
 
-  // Escape to exit selection
+  // A selection belongs to the library grid: leaving Movies and TV shows ends it
+  useEffect(() => {
+    if (selectionMode && !isLibraryTab(tab)) exitSelectionMode();
+  }, [tab, selectionMode, exitSelectionMode]);
+
+  // Escape to exit selection (unless it closed a dialog or menu first)
   useEffect(() => {
     if (!selectionMode) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") exitSelectionMode(); };
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) endSelection(); };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectionMode, exitSelectionMode]);
+  }, [selectionMode, endSelection]);
+
+  // Where you are, in a window's title bar: "Movies", "Recently added",
+  // "Downloads", the place the sidebar marks. Classic mode keeps "Media" in
+  // its header, with the tab strip below it.
+  const setPageTitle = useSetAtom(pageTitleAtom);
+  const showStackSetup = !stackLoading && !!mediaStack && mediaStack.readiness === 0;
+  const windowTitle = embedded && !showStackSetup ? viewTitle(view) : null;
+  useEffect(() => {
+    setPageTitle(windowTitle);
+    return () => setPageTitle(null);
+  }, [windowTitle, setPageTitle]);
 
   const handleBulkDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -1647,7 +1648,7 @@ function MediaPageInner() {
   }, []);
 
   // Show stack setup when no media apps are installed or configured
-  if (!stackLoading && mediaStack && mediaStack.readiness === 0) {
+  if (showStackSetup) {
     return (
       <StackSetup
         stackId="media"
@@ -1716,16 +1717,19 @@ function MediaPageInner() {
   const setSort = (next: MediaSortKey) => patchView({ sort: next });
   const setMinRating = (next: number | null) => patchView({ minRating: next });
 
-  // One row: where you are on the left (the tab strip, or in a window with a
-  // sidebar the heading), search and the view controls on the right. The
-  // selects fold into one menu where the content column is narrow; only when
-  // the tab strip and the search can't share a row does search drop to a
-  // second line (narrow windows without a sidebar, phones). The search widens
-  // only in a window's column: on the classic page the labelled tab strip
-  // shares the row, and it fits with every count and badge showing only at
-  // w-48 (the toolbar-fit model in media-window-layout.test.tsx).
+  // One row, in Finder order: the tab strip (where the window sidebar doesn't
+  // replace it) and the view controls lead; the verbs (in a window) and the
+  // search trail. Where you are is the window's title, and the count is in
+  // its status bar. The selects fold into one menu where the content column
+  // is narrow; only when the tab strip and the controls can't share a row do
+  // the controls drop to a second line (narrow windows without a sidebar,
+  // phones). The search widens only in a window's column: on the classic page
+  // the labelled tab strip shares the row, and it fits with every count and
+  // badge showing only at w-48 (the toolbar-fit model in
+  // media-window-layout.test.tsx). With the sidebar showing, Downloads,
+  // Calendar and Activity have nothing for the toolbar, so it hides there.
   const toolbar = (
-    <DesktopAppToolbar className="flex min-w-0 flex-wrap items-center gap-2">
+    <DesktopAppToolbar className={cn("flex min-w-0 flex-wrap items-center gap-2", !isLibrary && WINDOW_SIDEBAR_REPLACES)}>
       <Tabs
         className={cn(WINDOW_SIDEBAR_REPLACES, "shrink-0")}
         value={tab}
@@ -1750,22 +1754,8 @@ function MediaPageInner() {
         </TabsList>
       </Tabs>
 
-      {/* In a window the sidebar names the place; the heading says where you are. */}
-      <div className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 flex-col")}>
-        <h1 className="truncate text-sm font-medium leading-5">{heading}</h1>
-        {summary && <p className="truncate text-xs leading-4 tabular-nums text-muted-foreground">{summary}</p>}
-      </div>
-
       {isLibrary && (
-        <div data-media-view-controls="" className="ml-auto flex min-w-0 items-center justify-end gap-2 @max-md:w-full">
-          <SearchField
-            containerClassName="min-w-0 w-48 @3xl/content:w-56 @max-md:w-auto @max-md:max-w-none @max-md:flex-1"
-            className="h-8 pointer-coarse:h-11"
-            placeholder={tab === "movies" ? "Search movies…" : "Search shows…"}
-            aria-label={tab === "movies" ? "Search movies" : "Search shows"}
-            value={search}
-            onChange={(e) => patchView({ search: e.target.value })}
-          />
+        <div data-media-view-controls="" className="flex min-w-0 grow items-center gap-2 @max-md:w-full">
           <div className={cn(MEDIA_VIEW_INLINE, "shrink-0 items-center gap-2")}>
             {showCollections.length > 1 && (
               <Select value={collection} onValueChange={(v) => setCollection(v as MediaCollection)}>
@@ -1820,6 +1810,27 @@ function MediaPageInner() {
             onSortChange={setSort}
             onMinRatingChange={setMinRating}
           />
+          <div className="ml-auto flex min-w-0 items-center justify-end gap-2 @max-md:flex-1">
+            {embedded && (
+              <div data-media-actions="" className="flex shrink-0 items-center gap-1">
+                <MediaLibraryActions
+                  placement="toolbar"
+                  selecting={selectionMode}
+                  onCinema={openCinema}
+                  onToggleSelect={toggleSelectionMode}
+                  selectRef={selectToggleRef}
+                />
+              </div>
+            )}
+            <SearchField
+              containerClassName="min-w-0 w-48 @3xl/content:w-56 @max-md:w-auto @max-md:max-w-none @max-md:flex-1"
+              className="h-8 pointer-coarse:h-11 pointer-coarse:text-base"
+              placeholder={tab === "movies" ? "Search movies…" : "Search shows…"}
+              aria-label={tab === "movies" ? "Search movies" : "Search shows"}
+              value={search}
+              onChange={(e) => patchView({ search: e.target.value })}
+            />
+          </div>
         </div>
       )}
     </DesktopAppToolbar>
@@ -2183,9 +2194,22 @@ function MediaPageInner() {
     />
   );
 
+  const selectionBar = (anchor: "status-bar" | "viewport") => (
+    <MediaSelectionBar
+      anchor={anchor}
+      count={selectionMode ? selectedIds.size : 0}
+      onRemove={() => setShowBulkDeleteDialog(true)}
+      onCancel={endSelection}
+    />
+  );
+  const selectionOpen = selectionMode && selectedIds.size > 0;
+
   return (
     <WindowSidebarLayout sidebar={sidebar}>
     <div ref={rootRef} className="flex min-w-0 flex-1 flex-col gap-6">
+      {/* The title bar shows where you are; the window's document still
+          names the view for screen readers. */}
+      {embedded && <h1 className="sr-only">{heading}</h1>}
       {toolbar}
 
       {isLibrary && libraryError && library && (
@@ -2417,12 +2441,20 @@ function MediaPageInner() {
         onAdded={handleSheetAdded}
       />
 
-      {/* Floating selection bar */}
-      <MediaSelectionBar
-        count={selectionMode ? selectedIds.size : 0}
-        onRemove={() => setShowBulkDeleteDialog(true)}
-        onCancel={exitSelectionMode}
-      />
+      {/* In a window: the count on the window's bottom edge, with the
+          selection bar floating above it over the content column. On the
+          classic page the tab strip carries the counts and the selection bar
+          floats over the bottom of the screen. */}
+      {embedded ? (
+        (summary !== null || selectionOpen) && (
+          <WindowStatusBar data-media-status-bar="" className="relative">
+            {summary !== null && <span className="min-w-0 truncate px-1.5 tabular-nums">{summary}</span>}
+            {selectionBar("status-bar")}
+          </WindowStatusBar>
+        )
+      ) : (
+        selectionBar("viewport")
+      )}
 
       {/* Bulk delete confirmation dialog */}
       <Dialog
@@ -2434,7 +2466,16 @@ function MediaPageInner() {
           }
         }}
       >
-        <DialogContent showCloseButton={false}>
+        <DialogContent
+          showCloseButton={false}
+          onCloseAutoFocus={(event) => {
+            // After a removal the selection bar (and its Remove) is gone:
+            // return focus to the Select toggle rather than the page.
+            if (selectionMode) return;
+            event.preventDefault();
+            selectToggleRef.current?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Remove {selectedIds.size} item{selectedIds.size === 1 ? "" : "s"} from library</DialogTitle>
             <DialogDescription>

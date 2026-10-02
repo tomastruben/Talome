@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type { MediaItem } from "@/components/media/media-detail-sheet";
@@ -156,9 +156,15 @@ vi.mock("@base-ui/react/tabs", async () => {
   };
 });
 
+import { getDefaultStore, useAtomValue } from "jotai";
 import MediaPage from "@/app/dashboard/media/page";
 import MediaDetailPage from "@/app/dashboard/media/[type]/[id]/page";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { WindowSidebarSlot } from "@/components/ui/source-list";
+import { WindowStatusBarSlot, WindowToolbarSlot } from "@/components/desktop/window-content";
+import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
+import { pageActionAtom } from "@/atoms/page-action";
+import { pageTitleAtom } from "@/atoms/page-title";
 
 function movie(id: number, overrides: Partial<MediaItem> = {}): MediaItem {
   return {
@@ -399,25 +405,28 @@ describe("Media page view state", () => {
     expect(screen.getByRole("textbox", { name: "Search movies" })).toHaveAttribute("placeholder", "Search movies…");
   });
 
-  it("keeps the tab strip in classic mode and the heading for windows only", () => {
+  it("keeps the tab strip in classic mode, with no heading in the toolbar", () => {
     render(<MediaPage />);
     expect(screen.getByTestId("media-tabs").className).toContain("@2xl/window:hidden");
-    const heading = screen.getByRole("heading", { level: 1, name: "Movies" });
-    expect(heading.parentElement?.className).toContain("hidden");
-    expect(heading.parentElement?.className).toContain("@2xl/window:flex");
-    expect(heading.parentElement?.nextElementSibling?.textContent ?? "").not.toContain("Movies");
+    // Where you are is the window's title (and the tab strip here), never a toolbar heading
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
     // Labels are sentence case
     expect(tab("TV shows")).toBeInTheDocument();
   });
 
-  it("keeps the library toolbar to one row: search, then selects or one menu by column width", () => {
+  it("keeps the library toolbar to one row: selects or one menu by column width, then search", () => {
     render(<MediaPage />);
     const controls = document.querySelector<HTMLElement>("[data-media-view-controls]");
     expect(controls).not.toBeNull();
     // Never a stacked column of controls, and no viewport breakpoints
     expect(controls!.className).not.toMatch(/(?:^|\s)flex-col\b/);
     expect(controls!.className).not.toMatch(/(?:^|\s)(?:sm|md|lg):/);
-    expect(controls!).toContainElement(screen.getByRole("textbox", { name: "Search movies" }));
+    const field = screen.getByRole("textbox", { name: "Search movies" });
+    expect(controls!).toContainElement(field);
+    // Finder order: the view controls lead, the search ends the row
+    const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(follows(screen.getByRole("button", { name: "Sort and filter" }), field)).toBe(true);
+    expect(follows(screen.getByRole("combobox", { name: "Sort" }), field)).toBe(true);
 
     // Wide columns: the selects, inline
     const sort = screen.getByRole("combobox", { name: "Sort" });
@@ -457,6 +466,151 @@ describe("Media page view state", () => {
     expect(h.search).toBe("q=arr");
     // The echo leaves the field alone
     expect(field).toHaveValue("arr");
+  });
+});
+
+/**
+ * The title bar vs toolbar rule: a window's title bar holds only the window
+ * controls, Back and the title (the place); verbs live in the toolbar; counts
+ * live in the status bar. Classic mode reaches the same verbs from its header.
+ */
+describe("Media's verbs, title and count in a desktop window", () => {
+  const store = getDefaultStore();
+  const toolbar = () => screen.getByTestId("toolbar-slot");
+  const statusBar = () => screen.getByTestId("statusbar-slot");
+  const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  /** The embedded shell's slots (dashboard-shell.tsx), with the page in its scroller. */
+  function renderWindow() {
+    h.embedded = true;
+    return render(
+      <main className="@container/window flex">
+        <WindowSidebarSlot />
+        <div data-window-content="" className="tm-window-content @container/content flex flex-col">
+          <div data-testid="toolbar-slot"><WindowToolbarSlot /></div>
+          <div data-content-scroll="" data-window-layout="page"><MediaPage /></div>
+          <div data-testid="statusbar-slot"><WindowStatusBarSlot /></div>
+        </div>
+      </main>,
+    );
+  }
+
+  function selectArrival() {
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Select" }));
+    fireEvent.click(screen.getByRole("button", { name: "Arrival (2016)" }));
+    return screen.getByRole("group", { name: "1 selected" });
+  }
+
+  it("publishes nothing to the title bar: Cinema and Select sit in the toolbar, after the view controls and before the search", () => {
+    renderWindow();
+    expect(store.get(desktopAppActionsAtom)).toEqual([]);
+    expect(store.get(pageActionAtom)).toBeNull();
+
+    const cinema = within(toolbar()).getByRole("button", { name: "Cinema" });
+    const select = within(toolbar()).getByRole("button", { name: "Select" });
+    expect(cinema.closest("[data-media-actions]")).toBe(select.closest("[data-media-actions]"));
+    expect(follows(within(toolbar()).getByRole("button", { name: "Sort and filter" }), cinema)).toBe(true);
+    expect(follows(select, within(toolbar()).getByRole("textbox", { name: "Search movies" }))).toBe(true);
+
+    fireEvent.click(cinema);
+    expect(h.cinemaOpen).toHaveBeenCalledWith("movies");
+    fireEvent.click(select);
+    expect(within(toolbar()).getByRole("button", { name: "Cancel" })).toBe(select);
+    expect(screen.getByRole("button", { name: "Arrival (2016)" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("names the place in the title bar and counts it in the status bar", () => {
+    renderWindow();
+    expect(store.get(pageTitleAtom)).toBe("Movies");
+    expect(within(statusBar()).getByText("2 movies")).toBeInTheDocument();
+    // No visible heading in the toolbar; the window's document still names the view for screen readers
+    expect(within(toolbar()).queryByRole("heading")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "Movies" })).toHaveClass("sr-only");
+
+    fireEvent.click(tab("TV shows"));
+    expect(store.get(pageTitleAtom)).toBe("TV shows");
+    expect(within(statusBar()).getByText("1 show")).toBeInTheDocument();
+
+    navigate("tab=downloads");
+    expect(store.get(pageTitleAtom)).toBe("Downloads");
+    expect(within(statusBar()).getByText("Nothing in the queue")).toBeInTheDocument();
+  });
+
+  it("hides the toolbar beside the sidebar where it would be empty", () => {
+    renderWindow();
+    const bar = () => toolbar().querySelector<HTMLElement>("[data-desktop-app-toolbar]")!;
+    expect(bar().className).not.toContain("@2xl/window:hidden");
+    navigate("tab=calendar");
+    // Only the tab strip is left, and the sidebar replaces it
+    expect(bar().className).toContain("@2xl/window:hidden");
+    expect(within(bar()).getByTestId("media-tabs").className).toContain("@2xl/window:hidden");
+  });
+
+  it("floats the selection bar above the status bar and hands focus back to Select when it closes", async () => {
+    renderWindow();
+    const bar = selectArrival();
+    expect(bar.closest("[data-media-status-bar]")).not.toBeNull();
+    expect(within(statusBar()).getByText("2 movies")).toBeInTheDocument();
+
+    const toggle = within(toolbar()).getByRole("button", { name: "Cancel" });
+    const cancel = within(bar).getByRole("button", { name: "Cancel" });
+    cancel.focus();
+    fireEvent.click(cancel);
+    await waitFor(() => expect(document.activeElement).toBe(toggle));
+    expect(toggle).toHaveAccessibleName("Select");
+  });
+
+  it("keeps the selection when Escape only closes the Remove dialog", async () => {
+    renderWindow();
+    const bar = selectArrival();
+    fireEvent.click(within(bar).getByRole("button", { name: "Remove" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("group", { name: "1 selected" })).toBeInTheDocument();
+
+    // With nothing else open, Escape ends the selection
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("group", { name: "1 selected" })).toBeNull());
+    expect(within(toolbar()).getByRole("button", { name: "Select" })).toBeInTheDocument();
+  });
+
+  it("ends the selection when you leave the library", async () => {
+    renderWindow();
+    selectArrival();
+    fireEvent.click(tab("Downloads"));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "1 selected" })).toBeNull());
+    fireEvent.click(tab("Movies"));
+    expect(screen.getByRole("button", { name: "Arrival (2016)" })).not.toHaveAttribute("aria-pressed");
+  });
+});
+
+describe("Media's verbs on the classic page", () => {
+  function Header() {
+    return <header data-testid="site-header">{useAtomValue(pageActionAtom)}</header>;
+  }
+
+  it("keeps Cinema and Select in the page header, the header title as Media, and no status bar", () => {
+    render(<><Header /><MediaPage /></>);
+    const store = getDefaultStore();
+    expect(store.get(pageTitleAtom)).toBeNull();
+    expect(store.get(desktopAppActionsAtom)).toEqual([]);
+    expect(document.querySelector("[data-media-view-controls] [data-media-actions]")).toBeNull();
+    expect(document.querySelector("[data-media-status-bar]")).toBeNull();
+
+    const header = screen.getByTestId("site-header");
+    // Phones browse the grid; Cinema shows from md up
+    expect(within(header).getByRole("button", { name: "Cinema" })).toHaveClass("hidden", "md:inline-flex");
+    fireEvent.click(within(header).getByRole("button", { name: "Select" }));
+    fireEvent.click(screen.getByRole("button", { name: "Arrival (2016)" }));
+    const bar = screen.getByRole("group", { name: "1 selected" });
+    // Over the bottom of the screen, clear of the home indicator
+    expect(bar.closest("[data-selection-bar]")!.parentElement).toHaveClass("fixed", "bottom-6");
+    expect(within(header).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+
+    // Moving to a tab with no library clears the header's verbs
+    fireEvent.click(tab("Calendar"));
+    expect(within(header).queryByRole("button", { name: "Select" })).toBeNull();
   });
 });
 

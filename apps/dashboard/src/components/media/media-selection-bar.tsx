@@ -1,72 +1,45 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
-import { Cancel01Icon, Delete01Icon, HugeiconsIcon } from "@/components/icons";
-import { Button } from "@/components/ui/button";
-import { enter } from "@/lib/motion";
-
-const numberFormat = new Intl.NumberFormat();
+import { Cancel01Icon, Delete01Icon } from "@/components/icons";
+import { SelectionBar, SelectionBarButton } from "@/components/files/selection-bar";
 
 /**
- * Remove and Cancel on the inverted pill. The ghost button's own hover fills
- * (accent, and accent/50 in dark) are replaced: they would paint a page grey
- * over the pill. On a phone the labels are visually hidden but still name the
- * buttons, and on touch each button is a 44px target.
+ * Where the bar floats:
+ * - "status-bar": in a desktop window it renders inside Media's status bar
+ *   (which is `relative`) and floats 12px above it, centred on the content
+ *   column, so it never covers the count or reaches over the sidebar.
+ * - "viewport": on the classic page it floats over the bottom of the screen,
+ *   clear of the home indicator.
  */
-const BAR_BUTTON = "h-7 gap-1.5 px-2.5 text-xs hover:bg-background/10 dark:hover:bg-background/10 pointer-coarse:h-11 pointer-coarse:min-w-11";
-const BAR_LABEL = "sr-only sm:not-sr-only";
+export type MediaSelectionBarAnchor = "status-bar" | "viewport";
+
+const ANCHOR_CLASS: Record<MediaSelectionBarAnchor, string> = {
+  "status-bar": "absolute inset-x-0 bottom-full mb-3",
+  viewport: "fixed inset-x-0 bottom-6 z-50 pb-[env(safe-area-inset-bottom)]",
+};
 
 /**
- * The floating bar for a multi-selection of library titles. Shows while
- * `count` is above zero; it keeps the last count while it fades out.
+ * The floating bar for a multi-selection of library titles, built from the
+ * same parts as the Files selection bar: an inverted pill whose Remove uses
+ * the inverse critical token (4.5:1 on the pill in both themes), labels that
+ * become the buttons' names where the column is narrow (never display:none),
+ * and 44px targets on touch. Shows while `count` is above zero.
  */
 export function MediaSelectionBar({
   count,
+  anchor,
   onRemove,
   onCancel,
 }: {
   count: number;
+  anchor: MediaSelectionBarAnchor;
   onRemove: () => void;
   onCancel: () => void;
 }) {
   return (
-    <AnimatePresence>
-      {count > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 8 }}
-          transition={enter()}
-          className="fixed bottom-6 inset-x-0 z-50 flex justify-center pointer-events-none pb-[env(safe-area-inset-bottom)]"
-        >
-          <div
-            data-media-selection-bar
-            className="flex items-center gap-1 rounded-full bg-foreground text-background px-4 py-2 shadow-lg pointer-events-auto"
-          >
-            <span className="text-sm font-medium tabular-nums whitespace-nowrap">{numberFormat.format(count)} selected</span>
-            <div aria-hidden="true" className="w-px h-4 bg-background/15 mx-1" />
-            <Button
-              variant="ghost"
-              size="sm"
-              // The inverse critical token reads at 4.5:1 on bg-foreground in both themes
-              className={`${BAR_BUTTON} text-status-critical-inverse hover:text-status-critical-inverse`}
-              onClick={onRemove}
-            >
-              <HugeiconsIcon icon={Delete01Icon} size={14} />
-              <span className={BAR_LABEL}>Remove</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`${BAR_BUTTON} text-background/70 hover:text-background`}
-              onClick={onCancel}
-            >
-              <HugeiconsIcon icon={Cancel01Icon} size={14} />
-              <span className={BAR_LABEL}>Cancel</span>
-            </Button>
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    <SelectionBar count={count} className={ANCHOR_CLASS[anchor]}>
+      <SelectionBarButton icon={Delete01Icon} label="Remove" tone="critical" onClick={onRemove} />
+      <SelectionBarButton icon={Cancel01Icon} label="Cancel" onClick={onCancel} />
+    </SelectionBar>
   );
 }
