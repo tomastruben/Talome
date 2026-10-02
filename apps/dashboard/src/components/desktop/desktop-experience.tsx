@@ -3079,6 +3079,7 @@ function DockAppIcon({
           alt={`${label} icon`}
           fill
           sizes="36px"
+          loading="eager"
           className="object-contain"
           onError={() => setFailedUrl(realIconUrl)}
         />

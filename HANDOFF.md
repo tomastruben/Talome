@@ -61,3 +61,7 @@ Validation: affected dashboard TypeScript check, focused regression suites, full
 - Dashboard TypeScript and 34 application-icon/Launchpad tests pass. Dark/light artwork previews inspected at 36px.
 - Live browser verification remains incomplete: all click requests time out and screenshots now return “Unable to capture screenshot”, including existing tabs 2 and 3. Do not describe artwork previews as screenshots of the actual UI. Live light-mode, classic-mode, and Launchpad verification need a restored browser connection.
 - Pre-deploy backup: `/Volumes/Media Hub/Talome-Data/backups/codex-dock-icons-20261002` (VACUUM DB and server archive).
+
+- Follow-up mask adjustment: dock and Launchpad share `public/app-icons/mask.svg`, a continuous rounded square. Built-in SVG backgrounds fill their bounds; only the outer container masks them. Installed artwork uses `object-contain` with no inset (Sonarr preview showed inset creates a second square edge). Launcher widget styling outside desktop is unchanged.
+- Dock and built-in Launchpad images load eagerly; these small visible launch controls should not wait for lazy-image intersection detection.
+- In live dark-mode DOM inspection the shared mask is applied, and Sonarr loads. Browser screenshots and theme clicks remain blocked. A browser instrumentation MutationObserver error was also captured without a source URL; its origin has not been established.

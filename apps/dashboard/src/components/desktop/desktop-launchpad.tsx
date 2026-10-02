@@ -374,7 +374,7 @@ export function DesktopLaunchpad({
     icon: (
       <span className="desktop-app-icon relative flex size-14 items-center justify-center bg-background/70">
         {desktopAppArtwork(item.url) ? (
-          <Image src={desktopAppArtwork(item.url)!} alt="" fill sizes="56px" className="object-contain" />
+          <Image src={desktopAppArtwork(item.url)!} alt="" fill sizes="56px" loading="eager" className="object-contain" />
         ) : (
           <HugeiconsIcon icon={item.icon} className="size-7" strokeWidth={1.5} />
         )}
