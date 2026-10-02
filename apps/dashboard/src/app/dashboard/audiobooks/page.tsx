@@ -1106,7 +1106,7 @@ export default function AudiobooksPage() {
           width and the search takes what's left, down to 10rem, before it
           moves to a row of its own. Sized by the content column (container
           queries), not the screen, which in a window includes the sidebar. */}
-      <DesktopAppToolbar windowTitle={viewHeading} className="flex min-w-0 flex-wrap items-center gap-2">
+      <DesktopAppToolbar data-compact-toolbar={windowSidebarShown ? "" : undefined} windowTitle={viewHeading} className="flex min-w-0 flex-wrap items-center gap-2">
         <Tabs
           className={WINDOW_SIDEBAR_REPLACES}
           value={tab}
