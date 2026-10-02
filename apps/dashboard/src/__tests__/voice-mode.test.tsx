@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   voice: vi.fn(), live: vi.fn(), start: vi.fn(async () => undefined),
-  cancel: vi.fn(), stop: vi.fn(), cancelSpeech: vi.fn(), unlock: vi.fn(), liveEnabled: false,
+  cancel: vi.fn(), stop: vi.fn(), cancelSpeech: vi.fn(), unlock: vi.fn(), liveEnabled: false, embedded: false,
 }));
 vi.mock("swr", () => ({ default: () => ({ data: { live: mocks.liveEnabled ? { model: "live" } : null } }) }));
 vi.mock("next-themes", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
@@ -12,9 +12,12 @@ vi.mock("voice-glow", () => ({ VoiceBeam: () => null }));
 vi.mock("@/hooks/use-voice-input", () => ({ useVoiceInput: mocks.voice }));
 vi.mock("@/hooks/use-live-voice", () => ({ useLiveVoice: mocks.live }));
 vi.mock("@/lib/audio-session", () => ({ unlockAudio: mocks.unlock }));
+vi.mock("@/hooks/use-desktop-mode", () => ({ useIsEmbeddedFrame: () => mocks.embedded }));
 vi.mock("@/hooks/use-speech-output", () => ({ useSpeechOutput: () => ({ cancel: mocks.cancelSpeech }) }));
 
 import { VoiceMode } from "@/components/assistant/voice-mode";
+import { WindowDragBridge } from "@/components/desktop/window-drag";
+import { parseDesktopWindowDragMessage } from "@/atoms/desktop-window-chrome";
 
 const level = { get: () => 0 };
 const props = { open: true, onClose: vi.fn(), onSend: vi.fn(), status: "ready" as const, lastAssistant: null };
@@ -26,6 +29,30 @@ describe("voice conversation startup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.liveEnabled = false;
+    mocks.embedded = false;
+  });
+
+  it("forwards drags from empty voice space in a desktop window, excluding controls", () => {
+    mocks.embedded = true;
+    mocks.voice.mockReturnValue(voiceState("server", "Capture failed."));
+    const post = vi.spyOn(window, "postMessage").mockImplementation(() => undefined);
+    render(<><WindowDragBridge /><VoiceMode {...props} /></>);
+    const dialog = screen.getByRole("dialog", { name: "Voice conversation" });
+    const pointer = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0, buttons: 1, clientX: 80, clientY: 80 };
+    fireEvent.pointerDown(screen.getByText("Try microphone again"), pointer);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "End voice conversation" }), pointer);
+    expect(post).not.toHaveBeenCalled();
+    fireEvent.pointerDown(dialog, pointer);
+    fireEvent.pointerMove(dialog, { ...pointer, clientX: 120 });
+    fireEvent.pointerUp(dialog, { ...pointer, clientX: 120 });
+    expect(post.mock.calls.map(([message]) => parseDesktopWindowDragMessage(message)?.phase)).toEqual(["start", "move", "end"]);
+    post.mockRestore();
+  });
+
+  it("keeps ordinary browser voice mode out of desktop drag forwarding", () => {
+    mocks.voice.mockReturnValue(voiceState("server"));
+    render(<VoiceMode {...props} />);
+    expect(screen.getByRole("dialog", { name: "Voice conversation" })).not.toHaveAttribute("data-window-drag-region");
   });
 
   it("starts when the speech engine becomes ready after the dialog mounts", async () => {

@@ -14,6 +14,8 @@ import { useLiveVoice, type LiveHistoryItem } from "@/hooks/use-live-voice";
 import { CORE_URL } from "@/lib/constants";
 import { unlockAudio } from "@/lib/audio-session";
 import { Button } from "@/components/ui/button";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { cn } from "@/lib/utils";
 import { DURATION, TRAVEL, enter, exit } from "@/lib/motion";
 
 export interface LastAssistant {
@@ -45,6 +47,7 @@ interface VoiceStatus {
  * one it falls back to listen → send after a pause → read the reply aloud.
  */
 export function VoiceMode(props: VoiceModeProps) {
+  const embedded = useIsEmbeddedFrame();
   const { data } = useSWR<VoiceStatus>(
     props.open ? `${CORE_URL}/api/voice/status` : null,
     (url: string) => fetch(url).then((r) => (r.ok ? r.json() : { live: null })),
@@ -68,10 +71,11 @@ export function VoiceMode(props: VoiceModeProps) {
           role="dialog"
           aria-modal="true"
           aria-label="Voice conversation"
+          data-window-drag-region={embedded ? "surface" : undefined}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1, transition: enter(DURATION.base) }}
           exit={{ opacity: 0, transition: exit() }}
-          className="fixed inset-0 z-[1300] flex flex-col items-center justify-center gap-8 bg-background/85 p-6 backdrop-blur-xl"
+          className={cn("fixed inset-0 z-[1300] flex flex-col items-center justify-center gap-8 p-6 backdrop-blur-xl", embedded ? "tm-window-voice bg-card/85" : "bg-background/85")}
         >
           {data.live ? <LiveSession {...props} /> : <ClassicSession {...props} />}
         </motion.div>

@@ -2536,6 +2536,13 @@ html[data-embedded-frame] body {
 .tm-window-scroll {
   padding: var(--window-pad);
 }
+/* Voice covers the conversation content, leaving the unified title bar
+   available for dragging and navigation. Its blank space is also a drag
+   surface; buttons and transcript content keep their normal gestures. */
+.tm-window-voice {
+  top: calc(3.25rem + 1px);
+  touch-action: none;
+}
 /* The unified toolbar (window-toolbar.tsx): the content column's top row and
    the window's only title bar, one 52px band. Back, the title, the app's
    controls (its <DesktopAppToolbar>, in the slot) and a page's own verbs.
