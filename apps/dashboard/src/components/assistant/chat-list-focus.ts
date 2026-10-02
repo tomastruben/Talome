@@ -73,6 +73,21 @@ export function chatFocusTarget(
 }
 
 /**
+ * Moves focus to the home view once New chat in the classic header or a
+ * narrow window's toolbar has started a new chat: the button leaves the page
+ * with the chat it belonged to, and would take focus with it. It lands in
+ * the composer, or on a touch screen (where a focused field raises the
+ * on-screen keyboard) on the "How can I help?" heading.
+ */
+export function focusHomeAfterNewChat(doc: Document = document): HTMLElement | null {
+  if (!focusLost(doc)) return null;
+  const home = doc.querySelector<HTMLElement>(`[${CHAT_LIST_LANDING.history}]`);
+  const target = touchScreen() ? home : doc.querySelector<HTMLElement>(COMPOSER) ?? home;
+  target?.focus();
+  return target;
+}
+
+/**
  * Moves focus once chat `id` has left `list`, if the deleted row took focus
  * with it. Focus that is somewhere else (Safari doesn't focus a clicked
  * button, so it can still be in the composer) stays where it is. Run after

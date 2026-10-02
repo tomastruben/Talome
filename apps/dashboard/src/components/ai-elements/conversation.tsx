@@ -96,6 +96,11 @@ export type ConversationScrollButtonProps = ComponentProps<typeof Button>;
  * is there (`data-conversation-scroll-button`, read by `bottomFade` in
  * app/dashboard/assistant/page.tsx), so it never covers text you can read.
  * On touch the target grows to 44px around it.
+ *
+ * It floats over the conversation, so it stays opaque at rest and on hover:
+ * in a window --muted and --accent are see-through fills for the glass, so
+ * the dark hover is the opaque popover surface (light's outline hover is
+ * already opaque), and data-floating keeps any card fill inside it opaque.
  */
 export const ConversationScrollButton = ({
   className,
@@ -111,7 +116,7 @@ export const ConversationScrollButton = ({
     !isAtBottom && (
       <Button
         className={cn(
-          "absolute bottom-1 left-1/2 -translate-x-1/2 rounded-full dark:bg-background dark:hover:bg-muted animate-in fade-in-0 duration-150 ease-enter pointer-coarse:after:absolute pointer-coarse:after:-inset-1.5",
+          "absolute bottom-1 left-1/2 -translate-x-1/2 rounded-full dark:bg-background dark:hover:bg-surface-popover animate-in fade-in-0 duration-150 ease-enter pointer-coarse:after:absolute pointer-coarse:after:-inset-1.5",
           className
         )}
         onClick={handleScrollToBottom}
@@ -120,6 +125,7 @@ export const ConversationScrollButton = ({
         variant="outline"
         aria-label="Scroll to bottom"
         data-conversation-scroll-button=""
+        data-floating=""
         {...props}
       >
         <HugeiconsIcon icon={ArrowDown01Icon} size={16} />
@@ -177,12 +183,14 @@ export const ConversationDownload = ({
     URL.revokeObjectURL(url);
   }, [messages, filename, formatMessage]);
 
+  // Floats over the conversation: opaque at rest and on hover (see ConversationScrollButton)
   return (
     <Button
       className={cn(
-        "absolute top-4 right-4 rounded-full dark:bg-background dark:hover:bg-muted",
+        "absolute top-4 right-4 rounded-full dark:bg-background dark:hover:bg-surface-popover",
         className
       )}
+      data-floating=""
       onClick={handleDownload}
       size="icon"
       type="button"

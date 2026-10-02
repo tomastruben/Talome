@@ -7,7 +7,6 @@ import { useAtom, useSetAtom } from "jotai";
 import {
   HugeiconsIcon,
   Delete01Icon,
-  KeyboardIcon,
   LayoutAlignLeftIcon,
   DashboardCircleIcon,
   ArrowLeft01Icon,
@@ -44,7 +43,8 @@ import { useAssistant } from "@/components/assistant/assistant-context";
 import { AssistantModelSelector } from "@/components/assistant/assistant-model-selector";
 import { AssistantChatError } from "@/components/assistant/chat-error";
 import { ChatSourceItem, chatTitle } from "@/components/assistant/chat-source-item";
-import { restoreFocusAfterChatLeft, type ChatList } from "@/components/assistant/chat-list-focus";
+import { focusHomeAfterNewChat, restoreFocusAfterChatLeft, type ChatList } from "@/components/assistant/chat-list-focus";
+import { AssistantToolbar, ComposerKeyboardToggle, NewChatButton } from "@/components/assistant/assistant-toolbar";
 import { useKeyboardMode } from "@/hooks/use-keyboard-mode";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -52,7 +52,6 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useBlueprintBuild } from "@/hooks/use-blueprint-build";
 import { blueprintAtom } from "@/atoms/artifact";
-import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { pageBackAtom } from "@/atoms/page-back";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { hideShellHeaderAtom } from "@/atoms/shell";
@@ -177,10 +176,13 @@ const originRef = { current: null as string | null };
 /** Inline header for the assistant page (replaces the shell header). */
 function AssistantHeader({
   showingChat,
+  backToOrigin,
   onBack,
   onNew,
 }: {
   showingChat: boolean;
+  /** Back returns to the page that opened the Assistant, not to the chat list */
+  backToOrigin: boolean;
   onBack: () => void;
   onNew: () => void;
 }) {
@@ -206,7 +208,7 @@ function AssistantHeader({
         <Button
           variant="ghost"
           size="icon"
-          className="size-8 shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+          className="size-8 shrink-0 text-muted-foreground hover:text-foreground transition-colors pointer-coarse:size-11"
           onClick={() => setMobileNavOpen(true)}
           aria-label="Open navigation"
         >
@@ -215,14 +217,15 @@ function AssistantHeader({
         <MobileNav open={mobileNavOpen} onClose={closeMobileNav} />
       </div>
 
-      {/* Back button */}
+      {/* Back to the chat list, leaving a reply that is being written running
+          (New chat stops it), or to the page that opened the Assistant */}
       {showingChat && (
         <Button
           variant="ghost"
           size="icon"
-          className="size-7 shrink-0 text-muted-foreground hover:text-foreground transition-colors -ml-1"
+          className="size-7 shrink-0 text-muted-foreground hover:text-foreground transition-colors -ml-1 pointer-coarse:size-11"
           onClick={onBack}
-          aria-label="Back to conversations"
+          aria-label={backToOrigin ? "Back" : "Back to conversations"}
         >
           <HugeiconsIcon icon={ArrowLeft01Icon} size={14} />
         </Button>
@@ -232,18 +235,9 @@ function AssistantHeader({
         {showingChat && title ? title : "Assistant"}
       </span>
 
+      {/* The verb at the trailing end, as in a window's toolbar row */}
       <div className="ml-auto shrink-0 flex items-center gap-2">
-        {showingChat && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-            onClick={onNew}
-          >
-            <HugeiconsIcon icon={Add01Icon} size={14} />
-            New
-          </Button>
-        )}
+        {showingChat && <NewChatButton onSelect={onNew} />}
       </div>
     </header>
   );
@@ -326,7 +320,6 @@ export default function AssistantPage() {
   const suggestions = useSuggestions();
 
   const [blueprint, setBlueprint] = useAtom(blueprintAtom);
-  const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
   const setPageBack = useSetAtom(pageBackAtom);
   const setPageTitle = useSetAtom(pageTitleAtom);
   const setHideShellHeader = useSetAtom(hideShellHeaderAtom);
@@ -429,10 +422,18 @@ export default function AssistantPage() {
     ? conversations.find((conversation) => conversation.id === activeId)?.title
     : undefined;
 
+  // The page that opened the Assistant (?from=), mirrored from originRef so
+  // the chrome can follow it. Back returns there; in a window, the desktop
+  // itself is no destination (Back would only show the home view, which is
+  // New chat's job), so a window's Back shows only for another page.
+  const [origin, setOrigin] = useState<string | null>(() => originRef.current);
+  const windowBackLeaves = origin !== null && origin !== "/dashboard/desktop";
+
   const handleBack = useCallback(() => {
     if (originRef.current) {
       const dest = originRef.current;
       originRef.current = null;
+      setOrigin(null);
       if (embeddedFrame && dest === "/dashboard/desktop") {
         setDismissed(true);
       } else if (!requestDesktopNavigation(dest)) {
@@ -448,6 +449,7 @@ export default function AssistantPage() {
     setBuildResult(null);
   }, [embeddedFrame, router, setBlueprint]);
 
+  /** Starts a new chat; false when you chose to keep the reply being written */
   const handleNew = useCallback(async () => {
     // If streaming, confirm before discarding the active conversation
     if (status === "streaming" || status === "submitted") {
@@ -458,31 +460,42 @@ export default function AssistantPage() {
         recovery: "This conversation is saved, so you can open it again from the list.",
         confirmLabel: "Start new conversation",
       });
-      if (!confirmed) return;
+      if (!confirmed) return false;
     }
     startNew();
     setDismissed(false);
+    return true;
   }, [startNew, status, confirm]);
 
+  // New chat in the classic header or a window's toolbar row belongs to the
+  // chat view, so it leaves the page with the chat: focus moves on to the
+  // home view (see focusHomeAfterNewChat) once the chat has gone. The
+  // sidebar's row stays, and keeps focus.
+  const focusHomeRef = useRef(false);
+  const handleNewFromChat = useCallback(async () => {
+    focusHomeRef.current = true;
+    if (!(await handleNew())) focusHomeRef.current = false;
+  }, [handleNew]);
+  useEffect(() => {
+    if (showingChat || !focusHomeRef.current) return;
+    focusHomeRef.current = false;
+    focusHomeAfterNewChat();
+  }, [showingChat]);
+
+  // A window's title bar holds the window controls, the title (the open
+  // chat) and a leading Back only where Back goes somewhere New chat doesn't:
+  // the page that opened the Assistant. Going home is New chat, in the
+  // sidebar or (narrow window) the toolbar row, so the title bar publishes
+  // no verbs.
   useEffect(() => {
     if (!embeddedFrame) return;
 
     setPageTitle(showingChat && activeConversationTitle
       ? activeConversationTitle
       : "Assistant");
-    if (showingChat) setPageBack(() => handleBack);
-    else setPageBack(null);
-    setDesktopAppActions([
-      ...(showingChat ? [{
-        id: "new-conversation",
-        label: "New",
-        icon: "add" as const,
-        onSelect: () => void handleNew(),
-      }] : []),
-    ]);
+    setPageBack(showingChat && windowBackLeaves ? () => handleBack : null);
 
     return () => {
-      setDesktopAppActions([]);
       setPageBack(null);
       setPageTitle(null);
     };
@@ -490,11 +503,10 @@ export default function AssistantPage() {
     activeConversationTitle,
     embeddedFrame,
     handleBack,
-    handleNew,
-    setDesktopAppActions,
     setPageBack,
     setPageTitle,
     showingChat,
+    windowBackLeaves,
   ]);
 
   // Hide the shell header — this page renders its own
@@ -516,6 +528,7 @@ export default function AssistantPage() {
     const safeOrigin = from ? safeRedirectPath(from, "", { within: "/dashboard" }) : "";
     if (safeOrigin) {
       originRef.current = safeOrigin;
+      setOrigin(safeOrigin);
     }
 
     // Restore active conversation from URL (only if provider state is empty)
@@ -892,6 +905,9 @@ export default function AssistantPage() {
       onStop={stop}
       onVoiceMode={() => setVoiceOpen(true)}
       placeholder="Ask Talome anything…"
+      // The keyboard toggle decides only where it shows (touch screens);
+      // elsewhere the browser keeps its own choice
+      inputMode={keyboard.showToggle ? keyboard.inputMode : undefined}
       extraTools={
         <>
           <AssistantModelSelector
@@ -900,24 +916,7 @@ export default function AssistantPage() {
             modelReady={modelReady}
             onModelChange={setModel}
           />
-          {/* Always render Tooltip components to keep the React tree shape stable
-              between server and client — conditional mounting shifts Radix's useId()
-              counter and causes hydration ID mismatches. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={keyboard.toggle}
-                className={`inline-flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent ${keyboard.mode === "virtual" ? "text-foreground" : "text-muted-foreground"}`}
-                hidden={!keyboard.showToggle}
-              >
-                <HugeiconsIcon icon={KeyboardIcon} size={16} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="text-xs">
-              {keyboard.mode === "virtual" ? "Virtual keyboard on" : "Virtual keyboard off"}
-            </TooltipContent>
-          </Tooltip>
+          <ComposerKeyboardToggle mode={keyboard.mode} shown={keyboard.showToggle} onToggle={keyboard.toggle} />
         </>
       }
     />
@@ -977,8 +976,16 @@ export default function AssistantPage() {
     {/* A named container: gutters and the suggestion grid follow this column's
         width, which in a window is narrower than the screen */}
     <div className="@container/assistant flex-1 min-h-0 flex flex-col overflow-hidden overscroll-none">
-      {!embeddedFrame && (
-        <AssistantHeader showingChat={showingChat} onBack={handleBack} onNew={handleNew} />
+      {embeddedFrame ? (
+        // The window's toolbar row (it hides while the sidebar shows)
+        showingChat && <AssistantToolbar onNew={() => void handleNewFromChat()} />
+      ) : (
+        <AssistantHeader
+          showingChat={showingChat}
+          backToOrigin={origin !== null}
+          onBack={handleBack}
+          onNew={() => void handleNewFromChat()}
+        />
       )}
       {chatContent}
       {/* Inline Claude Code terminal — replaces chat when building */}

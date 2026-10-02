@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChatStatus, FileUIPart } from "ai";
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { useCallback, useState } from "react";
 import type { MotionValue } from "motion/react";
 import { useTheme } from "next-themes";
@@ -105,6 +105,12 @@ export interface ChatInputBarProps {
   maxWidth?: string;
   /** Show the voice-conversation button; called when it's pressed */
   onVoiceMode?: () => void;
+  /**
+   * The text field's inputmode: "none" holds back the on-screen keyboard (a
+   * touch screen with a hardware keyboard), as the composer's Virtual
+   * keyboard toggle chooses. Left out, the browser decides.
+   */
+  inputMode?: HTMLAttributes<HTMLTextAreaElement>["inputMode"];
 }
 
 export function ChatInputBar({
@@ -115,6 +121,7 @@ export function ChatInputBar({
   extraTools,
   maxWidth = "max-w-2xl",
   onVoiceMode,
+  inputMode,
 }: ChatInputBarProps) {
   const isActive = status === "streaming" || status === "submitted";
   const { resolvedTheme } = useTheme();
@@ -190,7 +197,7 @@ export function ChatInputBar({
           onSubmit={handleSubmit}
         >
           <AttachmentPreviewList />
-          <PromptInputTextarea placeholder={placeholder} />
+          <PromptInputTextarea placeholder={placeholder} inputMode={inputMode} />
           <PromptInputFooter>
             <PromptInputTools>
               <PromptInputActionMenu>

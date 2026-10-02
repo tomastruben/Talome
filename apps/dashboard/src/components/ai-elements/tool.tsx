@@ -433,7 +433,7 @@ export const ToolHeader = ({
   return (
     <CollapsibleTrigger
       className={cn(
-        "group/tool-row flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors duration-150 ease-out hover:bg-muted/40 group-data-[state=open]/tool:rounded-b-none group-data-[state=open]/tool:hover:bg-transparent",
+        "group/tool-row flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors duration-150 ease-out hover:bg-muted/40 group-data-[state=open]/tool:rounded-b-none group-data-[state=open]/tool:hover:bg-transparent pointer-coarse:min-h-11",
         className
       )}
       {...props}
@@ -474,7 +474,9 @@ export const ToolHeader = ({
       <HugeiconsIcon
         icon={ArrowDown01Icon}
         size={14}
-        className="ml-auto shrink-0 text-dim-foreground opacity-0 transition-[opacity,transform] duration-150 group-hover/tool-row:opacity-100 group-focus-visible/tool-row:opacity-100 group-data-[state=open]/tool:rotate-180 group-data-[state=open]/tool:opacity-100"
+        // Shown on hover and focus with a mouse; always on a touch screen,
+        // where nothing hovers and it is the only sign the row opens
+        className="ml-auto shrink-0 text-dim-foreground opacity-0 transition-[opacity,transform] duration-150 group-hover/tool-row:opacity-100 group-focus-visible/tool-row:opacity-100 group-data-[state=open]/tool:rotate-180 group-data-[state=open]/tool:opacity-100 pointer-coarse:opacity-100"
       />
     </CollapsibleTrigger>
   );
