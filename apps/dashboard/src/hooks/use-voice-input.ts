@@ -1,5 +1,6 @@
 "use client";
 
+import { microphoneErrorMessage } from "@/lib/microphone-error";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import { useMotionValue, type MotionValue } from "motion/react";
@@ -171,8 +172,8 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): VoiceInput {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-    } catch {
-      setError("Microphone access was denied.");
+    } catch (err) {
+      setError(await microphoneErrorMessage(err));
       setVoiceStatus("idle");
       return;
     }

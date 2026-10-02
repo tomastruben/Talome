@@ -1,5 +1,6 @@
 "use client";
 
+import { microphoneErrorMessage } from "@/lib/microphone-error";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMotionValue, type MotionValue } from "motion/react";
 import { getWsUrl } from "@/lib/constants";
@@ -206,8 +207,8 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
-    } catch {
-      setError("Microphone access was denied.");
+    } catch (err) {
+      setError(await microphoneErrorMessage(err));
       setState("ended");
       return;
     }
