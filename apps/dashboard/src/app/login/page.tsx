@@ -24,6 +24,7 @@ import { useAuthStatus } from "@/hooks/use-setup-status";
 import { DURATION_MS } from "@/lib/motion";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 import {
+  openSignedIn,
   readRememberedUser,
   primeSignedInUser,
   rememberUser,
@@ -161,8 +162,7 @@ function LoginContent() {
     rememberUser(user?.username ?? name);
     // Hand the fresh user to useUser, so the dashboard opens without a loading step.
     if (user) primeSignedInUser(cache, user);
-    router.replace(path);
-    router.refresh();
+    openSignedIn(path, router);
   }
 
   /** A refused attempt: say why, shake, and select the password to retype. */

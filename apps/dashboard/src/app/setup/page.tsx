@@ -11,7 +11,7 @@ import { RecoveryCodeReveal } from "@/components/trust/recovery-code";
 import { useAuthStatus } from "@/hooks/use-setup-status";
 import { DURATION_MS } from "@/lib/motion";
 import { safeRedirectPath } from "@/lib/safe-redirect";
-import { primeSignedInUser, rememberUser, resolveSignInDestination } from "@/lib/sign-in";
+import { openSignedIn, primeSignedInUser, rememberUser, resolveSignInDestination } from "@/lib/sign-in";
 
 export default function SetupPage() {
   return (
@@ -76,8 +76,7 @@ function SetupContent() {
     // The sign-in screen greets the owner by name next time (only the username is kept).
     rememberUser(user?.username ?? name);
     if (user) primeSignedInUser(cache, user);
-    router.replace(path);
-    router.refresh();
+    openSignedIn(path, router);
   }
 
   async function handleSubmit(event: React.FormEvent) {

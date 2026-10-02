@@ -2748,7 +2748,9 @@ html[data-embedded-frame] body {
     inset 0 1px 0 oklch(1 0 0 / 10%),
     0 24px 60px -20px oklch(0 0 0 / 60%);
 }
-:root:not(.dark) .tm-glass-dense {
+/* The sign-in screen is a dark scope in both themes (auth-shell.tsx), so the
+   light recipe stops at a .dark ancestor. */
+:root:not(.dark) .tm-glass-dense:not(.dark *) {
   background: color-mix(in oklch, var(--card) 92%, transparent);
   border-color: oklch(0 0 0 / 8%);
   -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
@@ -2756,13 +2758,11 @@ html[data-embedded-frame] body {
   box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%), 0 24px 60px -20px oklch(0 0 0 / 25%);
 }
 
-/* Text set on the sign-in wallpaper (lock clock, date, footer): a halo in the
-   scrim's colour, so it stays legible on a bright (or, in light, dark) photo */
+/* Text set on the sign-in wallpaper (lock clock, date, links): a soft shadow
+   in the scrim's colour, so white type stays legible on a bright photo. The
+   sign-in screen is dark in both themes, so there is no light variant. */
 .tm-on-scrim {
-  text-shadow: 0 1px 2px oklch(0 0 0 / 60%), 0 0 16px oklch(0 0 0 / 50%);
-}
-:root:not(.dark) .tm-on-scrim {
-  text-shadow: 0 0 2px oklch(1 0 0 / 80%), 0 0 16px oklch(1 0 0 / 70%);
+  text-shadow: 0 1px 2px oklch(0 0 0 / 50%), 0 0 12px oklch(0 0 0 / 35%);
 }
 
 /* A sign-in pill (LockField, auth-shell.tsx) that the browser or a password
@@ -2819,7 +2819,7 @@ html[data-embedded-frame] body {
   .tm-window,
   [data-desktop-widget-canvas] [data-widget],
   :root:not(.dark) .tm-glass,
-  :root:not(.dark) .tm-glass-dense,
+  :root:not(.dark) .tm-glass-dense:not(.dark *),
   :root:not(.dark) .tm-window,
   :root:not(.dark) [data-desktop-widget-canvas] [data-widget] {
     background: var(--surface-island-solid);

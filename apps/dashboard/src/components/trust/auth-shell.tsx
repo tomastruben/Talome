@@ -29,6 +29,7 @@ import {
 } from "@/lib/motion";
 import { userInitial } from "@/lib/sign-in";
 import { cn } from "@/lib/utils";
+import { overrideThemeColor } from "@/lib/theme-color";
 import { useKeyboardInset } from "@/hooks/use-keyboard-inset";
 import { DEFAULT_SIGN_IN_WALLPAPER, readStoredWallpaper } from "@/lib/wallpaper";
 
@@ -220,7 +221,9 @@ export const LockField = forwardRef<
   return (
     <div
       data-lock-field=""
-      className="relative flex h-11 w-full items-center rounded-full has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring has-[input:focus-visible]:ring-offset-2 has-[input:focus-visible]:ring-offset-background"
+      // The focus ring hugs the pill: an offset would draw a band of page
+      // colour between the glass and the ring over the photo.
+      className="relative flex h-11 w-full items-center rounded-full has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring"
     >
       <span aria-hidden="true" className="tm-glass-dense pointer-events-none absolute inset-0 rounded-full border" />
       <label htmlFor={id} className="sr-only">
@@ -415,12 +418,21 @@ export function SignInFrame({
       field.scrollIntoView({ block: "nearest" });
     }
   }, [keyboardInset]);
+  // The status bar of a Home Screen web app matches the lock screen while it
+  // shows, and the chosen theme again once the dashboard takes over.
+  useEffect(() => {
+    overrideThemeColor("dark");
+    return () => overrideThemeColor(null);
+  }, []);
   return (
     // The body is fixed and never scrolls (globals.css), so the frame is its
     // own scroller: a tall panel under the clock stays reachable on a phone.
+    // Like the macOS and iOS lock screens it belongs to the wallpaper, not the
+    // theme: white type and smoky glass on a dimmed photo in light and dark
+    // alike (a white veil turned a dark wallpaper grey and haloed black type).
     <main
       ref={frameRef}
-      className="relative h-dvh overflow-y-auto overscroll-contain bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      className="dark relative h-dvh overflow-y-auto overscroll-contain bg-background text-foreground [color-scheme:dark] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
       style={keyboardInset ? { paddingBottom: `${keyboardInset}px` } : undefined}
     >
       <SignInBackdrop unlocking={unlocking} />

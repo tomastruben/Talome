@@ -246,7 +246,7 @@ describe("desktop window glass", () => {
         dark: material("[data-desktop-widget-canvas] [data-widget]"),
         light: material(":root:not(.dark) [data-desktop-widget-canvas] [data-widget]"),
       },
-      signIn: { dark: material(".tm-glass-dense"), light: material(":root:not(.dark) .tm-glass-dense") },
+      signIn: { dark: material(".tm-glass-dense"), light: material(":root:not(.dark) .tm-glass-dense:not(.dark *)") },
       thick: glass,
     };
     // The owner's scale: windows and widgets read as frosted but never see-through

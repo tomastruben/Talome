@@ -186,3 +186,24 @@ export async function resolveSignInDestination(
 export function primeSignedInUser(cache: Cache, user: SignedInUser) {
   cache.set(ME_KEY, { ...cache.get(ME_KEY), data: user, error: undefined, isValidating: false, isLoading: false });
 }
+
+/**
+ * Opens where someone lands after signing in. iOS paints a Home Screen web
+ * app's status bar from theme-color only when a document loads, and the
+ * sign-in screen holds it dark (auth-shell.tsx). When the chosen theme is
+ * light, a full load lets the bar turn light with the dashboard; everywhere
+ * else the hand-over stays in the app (no reload, primed cache).
+ */
+export function openSignedIn(
+  path: string,
+  router: { replace(href: string): void; refresh(): void },
+  win: Window = window,
+): void {
+  const homeScreenApp = (win.navigator as Navigator & { standalone?: boolean }).standalone === true;
+  if (homeScreenApp && !win.document.documentElement.classList.contains("dark")) {
+    win.location.replace(path);
+    return;
+  }
+  router.replace(path);
+  router.refresh();
+}

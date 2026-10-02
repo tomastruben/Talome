@@ -3,6 +3,7 @@ import {
   DESKTOP_PATH,
   LAST_USER_STORAGE_KEY,
   isDashboardHome,
+  openSignedIn,
   preferredDashboardMode,
   readRememberedUser,
   rememberUser,
@@ -167,5 +168,39 @@ describe("the lock clock", () => {
     expect(short).not.toMatch(/AM|PM/i);
     expect(spoken).toContain(short);
     expect(date.length).toBeGreaterThan(0);
+  });
+});
+
+describe("opening the dashboard after signing in", () => {
+  const fakeWindow = ({ standalone, dark }: { standalone?: boolean; dark: boolean }) => {
+    const replace = vi.fn();
+    const root = document.createElement("html");
+    if (dark) root.classList.add("dark");
+    const win = {
+      navigator: { standalone },
+      document: { documentElement: root },
+      location: { replace },
+    } as unknown as Window;
+    return { win, replace };
+  };
+  const fakeRouter = () => ({ replace: vi.fn(), refresh: vi.fn() });
+
+  it("stays in the app everywhere but a light-themed Home Screen app on iOS", () => {
+    for (const [standalone, dark] of [[undefined, false], [false, false], [true, true], [undefined, true]] as const) {
+      const { win, replace } = fakeWindow({ standalone, dark });
+      const router = fakeRouter();
+      openSignedIn("/dashboard", router, win);
+      expect(router.replace).toHaveBeenCalledWith("/dashboard");
+      expect(router.refresh).toHaveBeenCalled();
+      expect(replace).not.toHaveBeenCalled();
+    }
+  });
+
+  it("loads the page afresh in a light-themed Home Screen app, so iOS repaints the status bar", () => {
+    const { win, replace } = fakeWindow({ standalone: true, dark: false });
+    const router = fakeRouter();
+    openSignedIn("/dashboard/desktop", router, win);
+    expect(replace).toHaveBeenCalledWith("/dashboard/desktop");
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });
