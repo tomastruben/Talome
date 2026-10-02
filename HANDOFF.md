@@ -52,3 +52,12 @@ Validation: affected dashboard TypeScript check, focused regression suites, full
 - Anthropic API key was reported out of credit; not revalidated or changed.
 - Decide how to handle generated `apps/web/.source` changes.
 - Further review of Media layout and native apps can continue with real data.
+
+## Desktop app artwork (2026-10-02)
+
+- Generated 13 solid SVG tiles from the existing Hugeicons glyphs using `apps/dashboard/scripts/generate-desktop-icons.mjs`.
+- Desktop dock and Launchpad use the same artwork; classic sidebar and status controls keep monochrome navigation glyphs. Installed app branding is preserved.
+- Commits `e85a730c` and `0d521932`; local :3000 deployment. Static `/app-icons/` assets are public like wallpaper/PWA assets.
+- Dashboard TypeScript and 34 application-icon/Launchpad tests pass. Dark/light artwork previews inspected at 36px.
+- Live browser verification remains incomplete: all click requests time out and screenshots now return “Unable to capture screenshot”, including existing tabs 2 and 3. Do not describe artwork previews as screenshots of the actual UI. Live light-mode, classic-mode, and Launchpad verification need a restored browser connection.
+- Pre-deploy backup: `/Volumes/Media Hub/Talome-Data/backups/codex-dock-icons-20261002` (VACUUM DB and server archive).
