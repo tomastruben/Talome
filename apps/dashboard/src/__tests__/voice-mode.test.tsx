@@ -48,6 +48,8 @@ describe("voice conversation startup", () => {
     mocks.start.mockClear();
     fireEvent.click(screen.getByText("Try microphone again"));
     expect(mocks.unlock).toHaveBeenCalledTimes(1);
+    expect(mocks.cancel).toHaveBeenCalledTimes(1);
+    expect(mocks.cancelSpeech).toHaveBeenCalledTimes(1);
     expect(mocks.start).toHaveBeenCalledTimes(1);
   });
 

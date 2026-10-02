@@ -237,6 +237,11 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceM
   const caption = live.error
     ?? live.caption?.text
     ?? (live.state === "live" ? "Just talk — interrupt any time." : "");
+  const retry = () => {
+    unlockAudio();
+    stop();
+    void start();
+  };
 
   return (
     <VoiceStage
@@ -248,8 +253,8 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceM
       // Where the voice goes, in plain words (no protocol or model id)
       footnote="Voice by OpenAI"
       orbLabel={live.error ? "Try microphone again" : "End voice conversation"}
-      onOrbTap={live.error ? () => { unlockAudio(); stop(); void start(); } : onClose}
-      onRetry={live.error ? () => { unlockAudio(); stop(); void start(); } : undefined}
+      onOrbTap={live.error ? retry : onClose}
+      onRetry={live.error ? retry : undefined}
       onClose={onClose}
     />
   );
@@ -348,8 +353,14 @@ function ClassicSession({ onClose, onSend, status, lastAssistant }: VoiceModePro
     }
   }, [phase, status, lastAssistant, speech, listen]);
 
+  const retry = () => {
+    unlockAudio();
+    cancel();
+    cancelSpeech();
+    void listen();
+  };
   const tapOrb = () => {
-    if (voice.error) { unlockAudio(); void listen(); }
+    if (voice.error) retry();
     else if (phase === "listening") void finishListening();
     else if (phase === "speaking") {
       speech.cancel();
@@ -376,7 +387,7 @@ function ClassicSession({ onClose, onSend, status, lastAssistant }: VoiceModePro
       }
       orbLabel={voice.error ? "Try microphone again" : phase === "speaking" ? "Stop speaking" : phase === "listening" ? "Send now" : PHASE_LABEL[phase]}
       onOrbTap={tapOrb}
-      onRetry={voice.error ? () => { unlockAudio(); void listen(); } : undefined}
+      onRetry={voice.error ? retry : undefined}
       onClose={onClose}
     />
   );
