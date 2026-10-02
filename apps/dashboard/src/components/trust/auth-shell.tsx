@@ -29,6 +29,7 @@ import {
 } from "@/lib/motion";
 import { userInitial } from "@/lib/sign-in";
 import { cn } from "@/lib/utils";
+import { useKeyboardInset } from "@/hooks/use-keyboard-inset";
 import { DEFAULT_SIGN_IN_WALLPAPER, readStoredWallpaper } from "@/lib/wallpaper";
 
 /** Talome's mark at full contrast (sign-in and setup). */
@@ -156,13 +157,11 @@ export function AuthError({
         className,
       )}
     >
-      <HugeiconsIcon
-        icon={AlertCircleIcon}
-        size={14}
-        strokeWidth={1.5}
-        aria-hidden="true"
-        className={cn("mt-0.5 shrink-0", onScrim && "text-status-critical")}
-      />
+      {/* On the lock screen the words and the shake carry the error; an icon
+          beside centred text only pulled the line off-centre */}
+      {onScrim ? null : (
+        <HugeiconsIcon icon={AlertCircleIcon} size={14} strokeWidth={1.5} aria-hidden="true" className="mt-0.5 shrink-0" />
+      )}
       <span>{message}</span>
     </p>
   );
@@ -405,10 +404,25 @@ export function SignInFrame({
   layout?: "lock" | "panel";
 }) {
   const reduceMotion = useReducedMotion();
+  // On a phone the keyboard covers the low identity area; the frame makes room
+  // for it and keeps the focused field in view (iOS won't scroll it there).
+  const keyboardInset = useKeyboardInset();
+  const frameRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!keyboardInset) return;
+    const field = document.activeElement;
+    if (field instanceof HTMLElement && frameRef.current?.contains(field)) {
+      field.scrollIntoView({ block: "nearest" });
+    }
+  }, [keyboardInset]);
   return (
     // The body is fixed and never scrolls (globals.css), so the frame is its
     // own scroller: a tall panel under the clock stays reachable on a phone.
-    <main className="relative h-dvh overflow-y-auto overscroll-contain bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+    <main
+      ref={frameRef}
+      className="relative h-dvh overflow-y-auto overscroll-contain bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      style={keyboardInset ? { paddingBottom: `${keyboardInset}px` } : undefined}
+    >
       <SignInBackdrop unlocking={unlocking} />
 
       <motion.div

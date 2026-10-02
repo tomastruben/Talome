@@ -2361,6 +2361,17 @@
 }
 
 
+/* iOS Safari zooms the whole page into any focused field whose text is
+   smaller than 16px, which shifts the layout sideways (the sign-in pills ran
+   off the screen). On touch screens form fields keep at least 16px text. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    iPad and other touch screens
 ───────────────────────────────────────────────────────────────────────────── */
