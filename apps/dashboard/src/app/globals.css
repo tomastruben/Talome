@@ -679,9 +679,6 @@
   .search-field.flex-1 {
     max-width: none;
   }
-  .search-field-toggle, .search-field-close {
-    display: none;
-  }
   .search-field-icon {
     position: absolute;
     left: 0.75rem;
@@ -2679,6 +2676,10 @@ html[data-embedded-frame] body {
     }
   }
 }
+.search-field-toggle, .search-field-close {
+  display: none;
+}
+
 /* Compact desktop search expands in place. The query survives collapse and
    remains visible in the capsule's accessible name and tooltip. */
 @container content (width < 32rem) {
