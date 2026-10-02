@@ -78,7 +78,7 @@ export function ComparisonBarsBlock({
   ] as const;
 
   return (
-    <Card className="h-full min-w-0 overflow-hidden rounded-lg @container/comparison">
+    <Card className="h-full min-w-0 overflow-hidden rounded-xl @container/comparison">
       <CardHeader>
         <CardTitle>{block.title}</CardTitle>
         {block.description ? <CardDescription>{block.description}</CardDescription> : null}
@@ -133,7 +133,7 @@ export function ComparisonBarsBlock({
               <div key={`${label}-${index}`} className="flex flex-col gap-2 border-b py-3 last:border-b-0">
                 <div className="flex items-center justify-between gap-4 text-sm">
                   <span className="flex min-w-0 items-center gap-3 font-medium">
-                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border bg-background/60">
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border bg-muted/60">
                       <HugeiconsIcon icon={categoryIcon} size={23} className="text-muted-foreground" />
                     </span>
                     <span className="truncate">{label}</span>
@@ -157,7 +157,7 @@ export function ComparisonBarsBlock({
               className="grid grid-cols-1 gap-2 border-b py-4 last:border-b-0 @2xl/comparison:grid-cols-[minmax(7rem,1fr)_minmax(7rem,.7fr)_minmax(13rem,2fr)_minmax(8rem,.8fr)] @2xl/comparison:items-center @2xl/comparison:gap-5"
             >
               <span className="flex min-w-0 items-center gap-3 text-sm font-medium">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border bg-background/60">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border bg-muted/60">
                   <HugeiconsIcon icon={categoryIcon} size={23} className="text-muted-foreground" />
                 </span>
                 <span className="truncate">{label}</span>
@@ -213,7 +213,7 @@ export function ActivityListBlock({
     : false;
 
   return (
-    <Card className="h-full min-w-0 overflow-hidden rounded-lg @container/activity">
+    <Card className="h-full min-w-0 overflow-hidden rounded-xl @container/activity">
       <CardHeader className={cn(!block.compact && "gap-4 @4xl/activity:grid-cols-[minmax(0,1fr)_auto]")}>
         <div className="min-w-0">
           <CardTitle>{block.title}</CardTitle>
@@ -272,7 +272,7 @@ export function ActivityListBlock({
               )}>
                 {!block.compact ? <span className="hidden text-sm text-muted-foreground @3xl/activity:block">{date}</span> : null}
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border bg-background/60">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border bg-muted/60">
                     <HugeiconsIcon
                       icon={categoryIcon}
                       size={23}

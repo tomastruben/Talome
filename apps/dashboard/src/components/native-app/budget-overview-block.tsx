@@ -189,7 +189,7 @@ function LeftInPlanCard({
       <CardContent className="grid min-w-0 items-center gap-4 @md/budget-card:grid-cols-[minmax(0,1fr)_10rem]">
         <div className="min-w-0 text-center @md/budget-card:text-left">
           <p className="text-xs font-medium text-muted-foreground">Available to spend</p>
-          <p className="mt-1 text-3xl font-semibold tabular-nums tracking-tight">
+          <p className="mt-1 text-2xl font-medium tabular-nums tracking-tight">
             {money(remaining, currency)}
           </p>
           <p className="mt-3 text-sm">
@@ -221,7 +221,7 @@ function LeftInPlanCard({
             <RadialBar dataKey="value" barSize={18} cornerRadius={12} showBackground />
           </EvilRadialChart>
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-2xl font-semibold tabular-nums tracking-tight">{used.toFixed(1)}%</span>
+            <span className="text-2xl font-medium tabular-nums tracking-tight">{used.toFixed(1)}%</span>
             <span className="mt-1 text-xs text-muted-foreground">plan used</span>
           </div>
         </div>
@@ -296,7 +296,7 @@ function MoneyFlowCard({
               </EvilSankeyChart>
             </div>
             <div className="flex flex-col gap-4 @lg/budget-card:hidden">
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 rounded-lg border bg-background/50 p-4">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 rounded-lg border bg-muted/50 p-4">
                 <div>
                   <p className="text-xs text-muted-foreground">Income</p>
                   <p className="mt-1 font-medium tabular-nums">{money(income, currency)}</p>
@@ -456,7 +456,7 @@ function CategoriesCard({ categories, currency }: { categories: BudgetCategory[]
               {index ? <Separator /> : null}
               <div className="flex items-center gap-3 py-2">
                 <div className={cn(
-                  "flex size-11 shrink-0 items-center justify-center rounded-xl border bg-background/60",
+                  "flex size-11 shrink-0 items-center justify-center rounded-xl border bg-muted/60",
                   category.usage >= 100 && "border-status-warning/30 bg-status-warning/10",
                 )}>
                   <HugeiconsIcon icon={icon} size={25} className={tone} />
@@ -503,7 +503,7 @@ function RecentTransactionsCard({
             <div key={transaction.id || `${transaction.description}-${index}`}>
               {index ? <Separator /> : null}
               <div className="flex items-center gap-3 py-2">
-                <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border bg-background/60">
+                <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border bg-muted/60">
                   <HugeiconsIcon icon={icon} size={24} className={transaction.kind === "income" ? "text-status-healthy" : "text-muted-foreground"} />
                 </div>
                 <div className="min-w-0 flex-1">

@@ -35,7 +35,7 @@ vi.mock("@/components/icons", async (importOriginal) => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import SharePage from "@/app/dashboard/share/page";
-import { WindowToolbarSlot } from "@/components/desktop/window-content";
+import { WindowToolbarSlot, WindowStatusBarSlot } from "@/components/desktop/window-content";
 import { Provider, createStore } from "jotai";
 
 const SRC = join(__dirname, "..");
@@ -150,18 +150,20 @@ describe("Share", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
-  it("puts the count, Select all and Prepare in a window's toolbar row", () => {
+  it("keeps actions in the toolbar and the count in the status bar", () => {
     mode.embedded = true;
     render(
       <Provider store={createStore()}>
         <div data-testid="toolbar-slot">
           <WindowToolbarSlot />
         </div>
+        <div data-testid="status-slot"><WindowStatusBarSlot /></div>
         <SharePage />
       </Provider>,
     );
     const toolbar = within(screen.getByTestId("toolbar-slot"));
-    expect(toolbar.getByText("2 of 2 apps")).toBeInTheDocument();
+    expect(toolbar.queryByText("2 of 2 apps")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("status-slot")).getByText("2 of 2 apps")).toBeInTheDocument();
     expect(toolbar.getByRole("button", { name: "Deselect all" })).toBeInTheDocument();
     expect(toolbar.getByRole("button", { name: "Prepare share package" })).toBeInTheDocument();
   });

@@ -23,6 +23,7 @@ import {
   StopIcon,
   HugeiconsIcon,
   Refresh01Icon,
+  SlidersHorizontalIcon,
 } from "@/components/icons";
 import {
   SourceList,
@@ -31,6 +32,7 @@ import {
   WINDOW_SIDEBAR_REPLACES,
   WindowSidebarLayout,
 } from "@/components/ui/source-list";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { Button } from "@/components/ui/button";
@@ -150,9 +152,35 @@ export default function ContainersPage() {
     <div className="flex min-w-0 flex-1 flex-col gap-5">
       {/* Controls. In a wide window the sidebar holds the filters, so the
           toolbar names the view and keeps the search. */}
-      <DesktopAppToolbar windowTitle={`${STATUS_HEADING[statusFilter]}${sourceFilter !== "all" ? ` · ${SOURCE_HEADING[sourceFilter]}` : ""}`} className="flex min-w-0 flex-wrap items-center gap-2">
+      <DesktopAppToolbar data-compact-toolbar="" windowTitle={`${STATUS_HEADING[statusFilter]}${sourceFilter !== "all" ? ` · ${SOURCE_HEADING[sourceFilter]}` : ""}`} className="flex min-w-0 flex-wrap items-center gap-2">
+        {embedded && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon-sm" className={WINDOW_SIDEBAR_REPLACES} aria-label="Filter services" title="Filter services">
+                <HugeiconsIcon icon={SlidersHorizontalIcon} size={16} aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuLabel>Status</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={statusFilter} onValueChange={(value) => setStatusFilter(value as StatusFilter)}>
+                <DropdownMenuRadioItem value="all">All services</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="running">Running</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="stopped">Stopped</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              {hasExternal && <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Source</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={sourceFilter} onValueChange={(value) => setSourceFilter(value as SourceFilter)}>
+                  <DropdownMenuRadioItem value="all">All sources</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="managed">Managed by Talome</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="external">External</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </>}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <Tabs
-          className={WINDOW_SIDEBAR_REPLACES}
+          className={embedded ? "hidden" : WINDOW_SIDEBAR_REPLACES}
           value={statusFilter}
           onValueChange={(v) => setStatusFilter(v as StatusFilter)}
         >
@@ -185,7 +213,7 @@ export default function ContainersPage() {
         {/* Source filter — only visible when external containers exist */}
         {!isLoading && hasExternal && (
           <Tabs
-            className={WINDOW_SIDEBAR_REPLACES}
+            className={embedded ? "hidden" : WINDOW_SIDEBAR_REPLACES}
             value={sourceFilter}
             onValueChange={(v) => setSourceFilter(v as SourceFilter)}
           >
@@ -206,9 +234,8 @@ export default function ContainersPage() {
         )}
 
         {embedded && (
-          <Button variant="outline" size="sm" onClick={checkAllUpdates}>
+          <Button data-toolbar-secondary="" variant="outline" size="icon-sm" onClick={checkAllUpdates} aria-label="Check updates" title="Check updates">
             <HugeiconsIcon icon={Refresh01Icon} size={15} aria-hidden="true" />
-            Check updates
           </Button>
         )}
 

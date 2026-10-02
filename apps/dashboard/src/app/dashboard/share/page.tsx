@@ -19,6 +19,8 @@ import {
   Share04Icon,
   Shield01Icon,
 } from "@/components/icons";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { WindowStatusBar } from "@/components/desktop/window-content";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { StaleRow } from "@/components/data-state/data-state";
 import { Button } from "@/components/ui/button";
@@ -45,6 +47,7 @@ const INSTALLED_APPS_KEY = `${CORE_URL}/api/apps/installed`;
 const countFormat = new Intl.NumberFormat();
 
 export default function SharePage() {
+  const embedded = useIsEmbeddedFrame();
   const { apps, isLoading, error } = useInstalledApps();
   const { mutate } = useSWRConfig();
   const [retrying, setRetrying] = useState(false);
@@ -287,16 +290,18 @@ export default function SharePage() {
 
       {/* The selection and the primary action: in a window, the toolbar row;
           in classic mode, the row right above the apps it acts on. */}
-      <DesktopAppToolbar className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
-        <span className="text-sm tabular-nums text-muted-foreground">{countLabel}</span>
+      <DesktopAppToolbar data-compact-toolbar="" className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
+        {!embedded && <span className="text-sm tabular-nums text-muted-foreground">{countLabel}</span>}
         <Button
           type="button"
           variant="ghost"
-          size="sm"
+          size={embedded ? "icon-sm" : "sm"}
+          aria-label={allSelected ? "Deselect all" : "Select all"}
+          title={allSelected ? "Deselect all" : "Select all"}
           onClick={allSelected ? selectNone : selectAll}
           className="h-8 px-2 text-muted-foreground hover:text-foreground pointer-coarse:h-11"
         >
-          {allSelected ? "Deselect all" : "Select all"}
+          {embedded ? <HugeiconsIcon icon={CheckmarkCircle01Icon} size={16} aria-hidden /> : allSelected ? "Deselect all" : "Select all"}
         </Button>
         <Button
           type="button"
@@ -305,14 +310,16 @@ export default function SharePage() {
           variant={shareCode ? "outline" : "default"}
           onClick={() => void generateShareCode()}
           busy={generating}
-          busyLabel="Preparing the share package…"
+          busyLabel={embedded ? "Preparing…" : "Preparing the share package…"}
           disabled={effectiveSelection.size === 0}
           // On a phone it wraps under the count and spans the row
-          className="ml-auto px-4 pointer-coarse:h-11 @max-sm:w-full"
+          className={cn("ml-auto min-w-0 px-4 pointer-coarse:h-11", !embedded && "@max-sm:w-full")}
+          aria-label={shareCode ? "Prepare again" : "Prepare share package"}
         >
-          {shareCode ? "Prepare again" : "Prepare share package"}
+          {embedded ? "Prepare" : shareCode ? "Prepare again" : "Prepare share package"}
         </Button>
       </DesktopAppToolbar>
+      {embedded && <WindowStatusBar>{countLabel}</WindowStatusBar>}
 
       {/* App selector: each tile is a toggle */}
       <div role="group" aria-label="Apps to include" className="mb-8 grid grid-cols-2 gap-2 @lg:grid-cols-3">

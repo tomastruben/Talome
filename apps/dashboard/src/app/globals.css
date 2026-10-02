@@ -2713,6 +2713,9 @@ html[data-embedded-frame] body {
   [data-compact-toolbar]:has(.search-field[data-search-expanded]) :is([data-toolbar-secondary], button[data-slot="dropdown-menu-trigger"], [data-slot="select-trigger"]) {
     display: none;
   }
+  .tm-window-toolbar [data-files-search]:has(.search-field:not([data-search-expanded])) > :is(button, kbd) {
+    display: none;
+  }
   .tm-window-toolbar .search-field {
     flex: 0 0 auto;
     width: auto;

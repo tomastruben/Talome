@@ -6,6 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import useSWR from "swr";
 import { useSetAtom } from "jotai";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -57,6 +58,7 @@ export default function StackDetailPage() {
   const params = useParams();
   const stackId = params.stackId as string;
   const setPageTitle = useSetAtom(pageTitleAtom);
+  const embedded = useIsEmbeddedFrame();
 
   const stackKey = `${CORE_URL}/api/stacks/${encodeURIComponent(stackId)}`;
   const { loadedAt, markLoaded } = useLoadedAt();
@@ -68,13 +70,12 @@ export default function StackDetailPage() {
   const loadingPhase = useLoadingPhase(isLoading && !stack);
 
   // Set title synchronously from URL slug, update when SWR data arrives.
-  // No cleanup — stale pageTitleAtom is harmless (header ignores it when not in drilldown).
-  // This avoids the AnimatePresence race where cleanup fires before new data loads.
   useEffect(() => {
     setPageTitle(
       stack?.name ??
         stackId.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" "),
     );
+    return () => setPageTitle(null);
   }, [stack?.name, stackId, setPageTitle]);
 
   // Once shown, the skeleton stays its minimum time even if the stack arrived.
@@ -139,7 +140,7 @@ export default function StackDetailPage() {
       {error && <StaleRow loadedAt={loadedAt} subject="details" onRetry={() => void mutate()} retrying={isValidating} />}
       {/* ── Hero ── */}
       <div className="grid gap-2">
-        <h1 className="text-2xl font-medium">{stack.name}</h1>
+        <h1 className={embedded ? "sr-only" : "text-2xl font-medium"}>{stack.name}</h1>
         <p className="text-sm text-muted-foreground leading-relaxed">{stack.tagline}</p>
         <div className="flex flex-wrap gap-1.5 mt-1">
           {stack.tags.map((tag) => (

@@ -79,7 +79,7 @@ export function FilesToolbar({
 }: FilesToolbarProps) {
   const label = `Search ${locationLabel}`;
   return (
-    <DesktopAppToolbar className="flex shrink-0 flex-wrap items-center gap-2 px-[var(--window-pad,0.75rem)] pb-3">
+    <DesktopAppToolbar data-compact-toolbar={showScope ? undefined : ""} className="flex shrink-0 flex-wrap items-center gap-2 px-[var(--window-pad,0.75rem)] pb-3">
       {showScope && (
         <ToggleGroup
           type="single"
@@ -102,11 +102,11 @@ export function FilesToolbar({
         </ToggleGroup>
       )}
       {actions ? (
-        <div data-files-actions="" className="ml-auto flex shrink-0 items-center gap-1">
+        <div data-files-actions="" data-toolbar-secondary="" className="ml-auto flex shrink-0 items-center gap-1">
           {actions}
         </div>
       ) : null}
-      <div className={cn("relative min-w-0 flex-1 @md:max-w-xs", !actions && "ml-auto")}>
+      <div data-files-search="" className={cn("relative min-w-0 flex-1 @md:max-w-xs", !actions && "ml-auto")}>
         <SearchField
           ref={inputRef}
           type="search"

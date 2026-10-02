@@ -76,7 +76,7 @@ function StatBlock({ block, data }: { block: TalomeStatBlock; data: Record<strin
   const isHero = block.emphasis === "hero";
   const icon = resolveNativeAppIcon(block.icon);
   return (
-    <Card className={cn("relative h-full overflow-hidden rounded-lg", isHero && "min-h-52")}>
+    <Card className={cn("relative h-full overflow-hidden rounded-xl", isHero && "min-h-52")}>
       <CardHeader>
         <div className="flex items-center gap-2">
           {block.icon ? <HugeiconsIcon icon={icon} size={16} className="text-muted-foreground" /> : null}
@@ -113,7 +113,7 @@ function ListBlock({ block, data }: { block: TalomeListBlock; data: Record<strin
   const rows = asRows(block.itemsPath ? getValueAtPath(source, block.itemsPath) : source)
     .slice(0, block.limit ?? 20);
   return (
-    <Card className="h-full rounded-lg">
+    <Card className="h-full rounded-xl">
       <CardHeader>
         <CardTitle>{block.title}</CardTitle>
         {block.description ? <CardDescription>{block.description}</CardDescription> : null}
@@ -152,7 +152,7 @@ function TableBlock({ block, data }: { block: TalomeTableBlock; data: Record<str
   const rows = asRows(block.rowsPath ? getValueAtPath(source, block.rowsPath) : source)
     .slice(0, block.limit ?? 50);
   return (
-    <Card className="h-full rounded-lg">
+    <Card className="h-full rounded-xl">
       <CardHeader>
         <CardTitle>{block.title}</CardTitle>
         {block.description ? <CardDescription>{block.description}</CardDescription> : null}
@@ -195,7 +195,7 @@ function ProgressBlock({ block, data }: { block: TalomeProgressBlock; data: Reco
   const max = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : 100;
   const percentage = Math.max(0, Math.min(100, value / max * 100));
   return (
-    <Card className="h-full rounded-lg">
+    <Card className="h-full rounded-xl">
       <CardHeader>
         <CardTitle>{block.title}</CardTitle>
         {block.description ? <CardDescription>{block.description}</CardDescription> : null}
@@ -216,7 +216,7 @@ function TimeSeriesBlock({ block, data }: { block: TalomeTimeSeriesBlock; data: 
   const allRows = asRows(block.rowsPath ? getValueAtPath(source, block.rowsPath) : source);
   const rows = allRows.slice(-(block.limit ?? 100));
   return (
-    <Card className="h-full min-w-0 rounded-lg">
+    <Card className="h-full min-w-0 rounded-xl">
       <CardHeader>
         <CardTitle>{block.title}</CardTitle>
         {block.description ? <CardDescription>{block.description}</CardDescription> : null}
@@ -235,7 +235,7 @@ function MarkdownBlock({ block, data }: { block: TalomeMarkdownBlock; data: Reco
   const source = block.dataSource ? data[block.dataSource] : undefined;
   const content = block.content ?? (block.contentPath ? getValueAtPath(source, block.contentPath) : "");
   return (
-    <Card className="h-full rounded-lg">
+    <Card className="h-full rounded-xl">
       <CardHeader>
         <CardTitle>{block.title}</CardTitle>
         {block.description ? <CardDescription>{block.description}</CardDescription> : null}
@@ -265,7 +265,7 @@ function ActionsBlock({
     return action ? [action] : [];
   });
   return (
-    <Card className="h-full rounded-lg">
+    <Card className="h-full rounded-xl">
       <CardHeader>
         <CardTitle>{block.title}</CardTitle>
         {block.description ? <CardDescription>{block.description}</CardDescription> : null}

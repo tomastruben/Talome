@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSetAtom } from "jotai";
+import { pageTitleAtom } from "@/atoms/page-title";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { useParams } from "next/navigation";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
@@ -134,6 +137,12 @@ function PortEditor({ appId, serviceName, ports, onSaved }: { appId: string; ser
 export default function ConfigurePage() {
   const params = useParams<{ storeId: string; appId: string }>();
   const appId = params.appId;
+  const embedded = useIsEmbeddedFrame();
+  const setPageTitle = useSetAtom(pageTitleAtom);
+  useEffect(() => {
+    setPageTitle(`${appId} · Configure`);
+    return () => setPageTitle(null);
+  }, [appId, setPageTitle]);
 
   const { data, error, mutate } = useSWR<ConfigResponse>(
     `/api/user-apps/${appId}/config`,
@@ -194,7 +203,7 @@ export default function ConfigurePage() {
     // The shell pads the page (classic and window alike); this adds none of its own
     <div className="@container max-w-3xl min-w-0 flex flex-col gap-8">
       <div>
-        <h1 className="text-2xl font-medium break-words">{appId} — Configure</h1>
+        <h1 className={embedded ? "sr-only" : "text-2xl font-medium break-words"}>{appId} — Configure</h1>
         <p className="text-muted-foreground text-sm mt-1 break-all">{data.composePath}</p>
       </div>
 

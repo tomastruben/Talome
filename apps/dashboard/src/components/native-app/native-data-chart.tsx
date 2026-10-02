@@ -41,7 +41,7 @@ export function NativeDataChart({ data, series, label, variant = "line", valueFo
         {valueLabel ?? "Value"}{unit ? ` (${unit})` : ""}{xLabel ? ` by ${xLabel}` : ""}
         {missingCount ? ` · ${missingCount} missing ${missingCount === 1 ? "value" : "values"}; gaps indicate no data.` : ""}
       </p>
-      {values.length ? <ChartContainer config={config} className="h-64 w-full min-w-0 aspect-auto sm:h-72">
+      {values.length ? <ChartContainer config={config} className="h-64 w-full min-w-0 aspect-auto @lg/block:h-72">
         <ComposedChart accessibilityLayer aria-label={`${label} chart`} aria-describedby={descriptionId} data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid vertical={false} strokeDasharray="3 5" />
           <XAxis dataKey="category" tickLine={false} axisLine={false} minTickGap={24} tickMargin={10} tickFormatter={(value: string) => value.length > 18 ? `${value.slice(0, 16)}…` : value} />

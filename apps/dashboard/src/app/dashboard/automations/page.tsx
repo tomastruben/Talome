@@ -214,10 +214,10 @@ export default function AutomationsPage() {
     // and error states centre in the space left
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-1 flex-col gap-6">
       {embedded && (
-        <DesktopAppToolbar className="flex items-center justify-end gap-2">
-          <Button size="sm" onClick={openCreate}>
+        <DesktopAppToolbar data-compact-toolbar="" className="flex min-w-0 items-center justify-end gap-2">
+          <Button size="sm" onClick={openCreate} aria-label="New automation">
             <HugeiconsIcon icon={Add01Icon} size={15} aria-hidden="true" />
-            New automation
+            New
           </Button>
         </DesktopAppToolbar>
       )}

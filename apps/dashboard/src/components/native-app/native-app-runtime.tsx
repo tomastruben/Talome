@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSetAtom } from "jotai";
 import useSWR from "swr";
 import { toast } from "sonner";
 import type { TalomeAppAction, TalomeAppSpec, TalomeDataSource } from "@talome/types";
-import { AiMagicIcon, HugeiconsIcon } from "@/components/icons";
+import { Menu01Icon, AiMagicIcon, HugeiconsIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -22,6 +22,8 @@ import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { useConfirmAction } from "@/hooks/use-confirm-action";
 import { NativeAppBlockRenderer } from "./native-app-blocks";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { SourceList, SourceListItem, SourceListSection, WindowSidebarLayout, WINDOW_SIDEBAR_REPLACES } from "@/components/ui/source-list";
 import { resolveApplicationIcon } from "./native-app-icons";
 
 interface StoredAppSpecResponse {
@@ -93,11 +95,24 @@ function refreshInterval(sources: TalomeDataSource[]) {
 
 export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const surfaceFromUrl = searchParams.get("view");
+  const viewQuery = searchParams.toString();
   const embedded = useIsEmbeddedFrame();
   const setPageTitle = useSetAtom(pageTitleAtom);
   const setDesktopActions = useSetAtom(desktopAppActionsAtom);
   const [pendingActionId, setPendingActionId] = useState<string>();
-  const [selectedSurfaceId, setSelectedSurfaceId] = useState<string>();
+  const [selectedSurfaceId, setSelectedSurfaceId] = useState<string | undefined>(surfaceFromUrl ?? undefined);
+  useEffect(() => {
+    setSelectedSurfaceId(surfaceFromUrl ?? undefined);
+  }, [surfaceFromUrl, storeId, appId]);
+
+  const selectSurface = (surfaceId: string) => {
+    setSelectedSurfaceId(surfaceId);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("view", surfaceId);
+    router.push(`/dashboard/native-apps/${encodeURIComponent(storeId)}/${encodeURIComponent(appId)}?${params.toString()}`, { scroll: false });
+  };
   const { confirmAction, ConfirmDialog } = useConfirmAction(false);
   const specUrl = `${CORE_URL}/api/app-specs/${encodeURIComponent(storeId)}/${encodeURIComponent(appId)}`;
   const { data: stored, error: specError, isLoading: specLoading, mutate: refreshSpec } = useSWR(
@@ -123,16 +138,20 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
   );
 
   const openAssistant = useCallback((prompt: string) => {
+    const returnParams = new URLSearchParams(viewQuery);
+    if (selectedSurfaceId) returnParams.set("view", selectedSurfaceId);
+    const returnQuery = returnParams.toString();
     const params = new URLSearchParams({
       prompt,
-      from: `/dashboard/native-apps/${storeId}/${appId}`,
+      from: `/dashboard/native-apps/${storeId}/${appId}${returnQuery ? `?${returnQuery}` : ""}`,
     });
     const href = `/dashboard/assistant?${params.toString()}`;
     if (!requestDesktopNavigation(href)) router.push(href);
-  }, [appId, router, storeId]);
+  }, [appId, router, storeId, selectedSurfaceId, viewQuery]);
 
   useEffect(() => {
-    setPageTitle(spec?.name ?? null);
+    const selected = spec?.surfaces.find((surface) => surface.id === selectedSurfaceId) ?? spec?.surfaces[0];
+    setPageTitle(embedded && spec && spec.surfaces.length > 1 ? selected?.title ?? spec.name : spec?.name ?? null);
     if (!spec) return () => setPageTitle(null);
     setDesktopActions([
       {
@@ -147,7 +166,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
       setPageTitle(null);
       setDesktopActions([]);
     };
-  }, [openAssistant, setDesktopActions, setPageTitle, spec]);
+  }, [embedded, openAssistant, selectedSurfaceId, setDesktopActions, setPageTitle, spec]);
 
   const runAction = useCallback(async (
     action: TalomeAppAction,
@@ -256,13 +275,13 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
   const appIcon = resolveApplicationIcon(spec.icon, spec.name);
 
   const renderSurface = (surface: TalomeAppSpec["surfaces"][number]) => (
-    <div data-native-surface={surface.id} className="flex flex-col gap-6 pt-1">
-      <div className="grid grid-cols-1 gap-6 @lg/native:grid-cols-2 @3xl/native:grid-cols-4">
+    <div role="region" aria-label={surface.title} data-native-surface={surface.id} data-native-layout={surface.layout} className={cn("flex w-full min-w-0 flex-col gap-6 pt-1", surface.layout === "detail" && "max-w-3xl")}>
+      <div className={cn("grid grid-cols-1 gap-6", surface.layout === "dashboard" && "@lg/native:grid-cols-2 @3xl/native:grid-cols-4")}>
         {surface.blocks.map((block) => (
           <div
             key={block.id}
             data-native-block={block.id}
-            className={cn("min-w-0 @container/block @lg/native:col-span-2", SPAN_CLASSES[block.span ?? 2])}
+            className={cn("min-w-0 @container/block", surface.layout === "dashboard" && ["@lg/native:col-span-2", SPAN_CLASSES[block.span ?? 2]])}
           >
             <NativeAppBlockRenderer
               block={block}
@@ -278,6 +297,15 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
   );
 
   return (
+    <WindowSidebarLayout sidebar={spec.surfaces.length > 1 ? (
+      <SourceList label={`${spec.name} views`}>
+        <SourceListSection title={spec.name}>
+          {spec.surfaces.map((surface) => (
+            <SourceListItem key={surface.id} label={surface.title} active={surface.id === activeSurface.id} onSelect={() => selectSurface(surface.id)} />
+          ))}
+        </SourceListSection>
+      </SourceList>
+    ) : null}>
     <div data-native-app={spec.appId} className="mx-auto flex w-full max-w-screen-2xl flex-col gap-6 pb-8 @container/native">
       <header className={cn("flex flex-col gap-4 @3xl/native:flex-row @3xl/native:items-start @3xl/native:justify-between", embedded && "hidden")}>
         <div className="flex min-w-0 items-start gap-3">
@@ -306,12 +334,28 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
         </div>
       </header>
 
-      {embedded && spec.surfaces.length === 1 && primaryAction && (
-        <DesktopAppToolbar className="flex items-center justify-end gap-2">
-          <Button size="sm" disabled={Boolean(pendingActionId)} onClick={() => runAction(primaryAction)}>
-            {pendingActionId === primaryAction.id ? <Spinner data-icon="inline-start" /> : null}
-            {pendingActionId === primaryAction.id ? "Working…" : primaryAction.label}
-          </Button>
+      {embedded && (
+        <DesktopAppToolbar data-compact-toolbar="" className="flex min-w-0 items-center justify-end gap-2">
+          {spec.surfaces.length > 1 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon-sm" className={WINDOW_SIDEBAR_REPLACES} aria-label={`Change view: ${activeSurface.title}`} title={`Change view: ${activeSurface.title}`}>
+                  <HugeiconsIcon icon={Menu01Icon} size={16} aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuRadioGroup value={activeSurface.id} onValueChange={selectSurface}>
+                  {spec.surfaces.map((surface) => <DropdownMenuRadioItem key={surface.id} value={surface.id}>{surface.title}</DropdownMenuRadioItem>)}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {primaryAction && (
+            <Button className="min-w-0 shrink" size="sm" disabled={Boolean(pendingActionId)} onClick={() => runAction(primaryAction)}>
+              {pendingActionId === primaryAction.id ? <Spinner data-icon="inline-start" /> : null}
+              <span className="truncate">{pendingActionId === primaryAction.id ? "Working…" : primaryAction.label}</span>
+            </Button>
+          )}
         </DesktopAppToolbar>
       )}
 
@@ -332,23 +376,15 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
         <div className="grid grid-cols-1 gap-6 @lg/native:grid-cols-2 @3xl/native:grid-cols-4">
           {Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-48 w-full" />)}
         </div>
-      ) : spec.surfaces.length === 1 ? renderSurface(spec.surfaces[0]) : (
-        <Tabs value={activeSurface.id} onValueChange={setSelectedSurfaceId}>
-          <DesktopAppToolbar className="flex min-w-0 flex-wrap items-center gap-2">
-          <div className="min-w-0 max-w-full overflow-x-auto">
-          <TabsList variant={embedded ? "default" : "underline"} aria-label={`${spec.name} views`}>
-            {spec.surfaces.map((surface) => (
-              <TabsTab key={surface.id} value={surface.id}>{surface.title}</TabsTab>
-            ))}
-          </TabsList>
-          </div>
-          {embedded && primaryAction && (
-            <Button className="ml-auto" size="sm" disabled={Boolean(pendingActionId)} onClick={() => runAction(primaryAction)}>
-              {pendingActionId === primaryAction.id ? <Spinner data-icon="inline-start" /> : null}
-              {pendingActionId === primaryAction.id ? "Working…" : primaryAction.label}
-            </Button>
+      ) : spec.surfaces.length === 1 ? renderSurface(spec.surfaces[0]) : embedded ? renderSurface(activeSurface) : (
+        <Tabs value={activeSurface.id} onValueChange={selectSurface}>
+          {!embedded && (
+            <div className="min-w-0 max-w-full overflow-x-auto">
+              <TabsList variant="underline" aria-label={`${spec.name} views`}>
+                {spec.surfaces.map((surface) => <TabsTab key={surface.id} value={surface.id}>{surface.title}</TabsTab>)}
+              </TabsList>
+            </div>
           )}
-          </DesktopAppToolbar>
           {spec.surfaces.map((surface) => (
             <TabsPanel key={surface.id} value={surface.id}>{renderSurface(surface)}</TabsPanel>
           ))}
@@ -357,5 +393,6 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
 
       <ConfirmDialog />
     </div>
+    </WindowSidebarLayout>
   );
 }

@@ -2,13 +2,17 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TalomeAppSpec } from "@talome/types";
 
+const mode = vi.hoisted(() => ({ embedded: false }));
+vi.mock("@/hooks/use-desktop-mode", () => ({ useIsEmbeddedFrame: () => mode.embedded }));
+
 const { push, requestDesktopNavigation } = vi.hoisted(() => ({
   push: vi.fn(),
-  requestDesktopNavigation: vi.fn(() => true),
+  requestDesktopNavigation: vi.fn((_href: string) => true),
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
+  useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
 vi.mock("@/lib/desktop-navigation", () => ({
@@ -19,6 +23,9 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+import { Provider } from "jotai";
+import { WindowSidebarSlot } from "@/components/ui/source-list";
+import { WindowToolbarSlot } from "@/components/desktop/window-content";
 import { NativeAppRuntime } from "@/components/native-app/native-app-runtime";
 import { TalomeAreaTrend } from "@/components/native-app/talome-area-trend";
 
@@ -88,6 +95,8 @@ function specResponse(spec: TalomeAppSpec) {
 }
 
 afterEach(() => {
+  mode.embedded = false;
+  window.history.replaceState(null, "", "/");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   push.mockReset();
@@ -95,6 +104,39 @@ afterEach(() => {
 });
 
 describe("NativeAppRuntime", () => {
+  it("restores the URL view, preserves query context, and follows history changes", async () => {
+    const spec = appSpec("budget-navigation", [{ id: "snapshot", kind: "static", value: { remaining: 5, spent: 2, budget: 7 } }]);
+    spec.surfaces.push({ ...spec.surfaces[0], id: "activity", title: "Activity" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(specResponse(spec)))));
+    window.history.replaceState(null, "", "/dashboard/native-apps/user-apps/budget-navigation?view=activity&filter=mine");
+    const page = render(<NativeAppRuntime storeId="user-apps" appId="budget-navigation" />);
+    expect(await screen.findByRole("tab", { name: "Activity" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    expect(push).toHaveBeenCalledWith("/dashboard/native-apps/user-apps/budget-navigation?view=overview&filter=mine", { scroll: false });
+    fireEvent.click(screen.getByRole("button", { name: "Ask Talome" }));
+    const assistantUrl = new URL(requestDesktopNavigation.mock.calls.at(-1)![0], "http://localhost");
+    expect(assistantUrl.searchParams.get("from")).toBe("/dashboard/native-apps/user-apps/budget-navigation?view=overview&filter=mine");
+    window.history.replaceState(null, "", "/dashboard/native-apps/user-apps/budget-navigation?view=overview");
+    page.rerender(<NativeAppRuntime storeId="user-apps" appId="budget-navigation" />);
+    window.history.replaceState(null, "", "/dashboard/native-apps/user-apps/budget-navigation?view=activity");
+    page.rerender(<NativeAppRuntime storeId="user-apps" appId="budget-navigation" />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Activity" })).toHaveAttribute("aria-selected", "true"));
+  });
+
+  it("uses a window sidebar and compact view menu instead of a second tab row", async () => {
+    mode.embedded = true;
+    const spec = appSpec("budget-window-navigation", [{ id: "snapshot", kind: "static", value: {} }]);
+    spec.surfaces.push({ ...spec.surfaces[0], id: "activity", title: "Activity" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(specResponse(spec)))));
+    render(<Provider><WindowSidebarSlot /><WindowToolbarSlot /><NativeAppRuntime storeId="user-apps" appId="budget-window-navigation" /></Provider>);
+    const nav = await screen.findByRole("navigation", { name: "Budget Compass views" });
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change view: Overview" })).toBeInTheDocument();
+    fireEvent.click(within(nav).getByRole("button", { name: "Activity" }));
+    expect(screen.getByRole("button", { name: "Change view: Activity" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Activity" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("asks before a destructive action even without declared confirmation text, then sends confirmed", async () => {
     const spec = appSpec("budget-wipe", [{ id: "snapshot", kind: "static", value: { remaining: 1, spent: 1, budget: 2 } }]);
     spec.actions.push({
@@ -174,7 +216,7 @@ describe("NativeAppRuntime", () => {
 
     expect(await screen.findByRole("heading", { name: "Budget Compass" })).toBeInTheDocument();
     expect(screen.getAllByText("$1,250.00").length).toBeGreaterThan(0);
-    expect(screen.getByText("Remaining").closest('[data-slot="card"]')).toHaveClass("rounded-lg");
+    expect(screen.getByText("Remaining").closest('[data-slot="card"]')).toHaveClass("rounded-xl");
     expect(screen.getByRole("progressbar", { name: "Budget used: 38%" })).toBeInTheDocument();
     expect(screen.getByText("CHF 750.00 of CHF 2,000.00")).toBeInTheDocument();
 
