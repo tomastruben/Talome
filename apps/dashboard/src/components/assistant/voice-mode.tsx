@@ -71,7 +71,7 @@ export function VoiceMode(props: VoiceModeProps) {
           exit={{ opacity: 0, transition: exit() }}
           className="fixed inset-0 z-[1300] flex flex-col items-center justify-center gap-8 bg-background/85 p-6 backdrop-blur-xl"
         >
-          {data.live ? <LiveSession {...props} model={data.live.model} /> : <ClassicSession {...props} />}
+          {data.live ? <LiveSession {...props} /> : <ClassicSession {...props} />}
         </motion.div>
       )}
     </AnimatePresence>
@@ -166,7 +166,8 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
         >
           <HugeiconsIcon icon={Cancel01Icon} size={18} />
         </button>
-        {footnote && <p className="text-xs text-muted-foreground">{footnote}</p>}
+        {/* A quiet hint: where the voice goes, or why voice is unavailable */}
+        {footnote && <p className="text-xs text-dim-foreground">{footnote}</p>}
       </div>
     </>
   );
@@ -215,7 +216,7 @@ function useChatReply({ onSend, status, lastAssistant }: Pick<VoiceModeProps, "o
 const LIVE_ORB: Record<string, OrbState> = { listening: "listening", speaking: "composing", working: "working" };
 const LIVE_LABEL: Record<string, string> = { listening: "Listening", speaking: "Talome", working: "Working on it" };
 
-function LiveSession({ onClose, onSend, status, lastAssistant, history, model }: VoiceModeProps & { model: string }) {
+function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceModeProps) {
   const ask = useChatReply({ onSend, status, lastAssistant });
   const live = useLiveVoice({ onDelegate: ask, history });
   const { start, stop } = live;
@@ -240,7 +241,8 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history, model }:
       orb={live.state === "connecting" ? "connecting" : LIVE_ORB[live.activity]}
       label={label}
       caption={caption}
-      footnote={`Full-duplex with ${model}`}
+      // Where the voice goes, in plain words (no protocol or model id)
+      footnote="Voice by OpenAI"
       orbLabel="End voice conversation"
       onOrbTap={onClose}
       onClose={onClose}
