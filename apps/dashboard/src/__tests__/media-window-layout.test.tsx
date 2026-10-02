@@ -347,12 +347,17 @@ describe("Media library toolbar fits one row", () => {
   const labelSize = page.match(/<span className="hidden @([\w-]+):inline">\{t\.label\}<\/span>/)?.[1];
   const searchClasses = page.match(/<SearchField\s+containerClassName="([^"]+)"/)?.[1].split(/\s+/) ?? [];
 
-  /** The search field's width at a container width: classic resolves only unnamed queries, a window also /content ones. */
-  function searchWidth(context: "classic" | "window", container: number): number {
+  /**
+   * The search field's narrowest width at a container width: it is flexible
+   * (flex-1 between min-w and max-w) and shrinks before the row wraps, so the
+   * fit checks use its min-w. Classic resolves only unnamed queries, a window
+   * also /content ones.
+   */
+  function searchWidth(context: "classic" | "window", container: number, end: "min" | "max" = "min"): number {
     let width = 0;
     let from = -1;
     for (const token of searchClasses) {
-      const match = token.match(/^(?:@([\w-]+?)(\/content)?:)?w-(\d+)$/);
+      const match = token.match(new RegExp(`^(?:@([\\w-]+?)(\\/content)?:)?${end}-w-(\\d+)$`));
       if (!match) continue;
       const [, size, named] = match;
       if (named && context === "classic") continue;
@@ -392,7 +397,7 @@ describe("Media library toolbar fits one row", () => {
   /** The page pads p-6; a classic (non-overlay) scrollbar takes 15px from the scroller. */
   const classicContent = (main: number, scrollbar = 15) => main - 48 - scrollbar;
 
-  function classicRow(lib: Library, main: number): number {
+  function classicRow(lib: Library, main: number, search: "min" | "max" = "min"): number {
     const labels = main >= containerPx(labelSize!);
     const inline = main >= containerPx(classicInlineSize!);
     const label = (text: string) => (labels ? text : null);
@@ -407,7 +412,7 @@ describe("Media library toolbar fits one row", () => {
     const views = inline
       ? select(lib.show, 112) + GAP + select(lib.sort, 112) + GAP + select(lib.rating, 96)
       : MENU_BUTTON;
-    return tabs + GAP + searchWidth("classic", main) + GAP + views;
+    return tabs + GAP + searchWidth("classic", main, search) + GAP + views;
   }
 
   // ── Window: the column beside the sidebar is the container ───────────────
@@ -438,11 +443,34 @@ describe("Media library toolbar fits one row", () => {
     return views + GAP + windowVerbs(column) + GAP + searchWidth("window", column);
   }
 
+  /**
+   * A narrow window (no sidebar below the @2xl/window breakpoint, 42rem): the
+   * tabs stay in the toolbar, and everything shares one row with them.
+   */
+  function narrowWindowRow(lib: Library): number {
+    const tabs = tabList([
+      tab(null, tabsBadge(lib.movies)),
+      tab(null, tabsBadge(lib.tv)),
+      tab(null, lib.downloads === null ? null : tabsBadge(lib.downloads)),
+      tab(null, null),
+      tab(null, lib.requests === null ? null : countBadge(lib.requests)),
+    ]);
+    return tabs + GAP + MENU_BUTTON + GAP + windowVerbs(0) + GAP + searchWidth("window", 0);
+  }
+
+  it("keeps a narrow window's toolbar to one row: tabs, view menu, Cinema, Select and search", () => {
+    // From a ~600px window (the owner's case) up to where the sidebar takes over
+    for (let column = 560; column < containerPx("2xl"); column += 4) {
+      expect(narrowWindowRow(QUIET), `quiet library, ${column}px column`).toBeLessThanOrEqual(windowToolbarWidth(column));
+    }
+  });
+
   it("reads its thresholds from the page and the menu", () => {
     expect(classicInlineSize).toBeDefined();
     expect(windowInlineSize).toBeDefined();
     expect(labelSize).toBeDefined();
-    expect(searchClasses).toContain("w-48");
+    expect(searchClasses).toContain("min-w-32");
+    expect(searchClasses).toContain("flex-1");
     // The menu hides exactly where the selects show
     expect(MEDIA_VIEW_MENU.split(" ").sort()).toEqual(
       inlineTokens.filter((t) => t !== "hidden").map((t) => t.replace(/:flex$/, ":hidden")).sort(),
@@ -475,8 +503,9 @@ describe("Media library toolbar fits one row", () => {
     for (const at of [labelsFrom, inlineFrom]) {
       expect(classicContent(at) - classicRow(QUIET, at), `${at}px page`).toBeGreaterThanOrEqual(64);
     }
-    // One step lower (72rem) even a typical library's row with the selects would wrap
-    expect(classicRow(QUIET, inlineFrom)).toBeGreaterThan(classicContent(containerPx("6xl")));
+    // One step lower (72rem) a typical library's row with the selects and a
+    // comfortable search (its max width) would not fit, so the threshold is tight
+    expect(classicRow(QUIET, inlineFrom, "max")).toBeGreaterThan(classicContent(containerPx("6xl")));
   });
 
   it("keeps the window toolbar to one row beside the sidebar, with Cinema and Select in it", () => {
