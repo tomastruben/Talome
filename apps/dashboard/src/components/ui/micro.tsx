@@ -90,7 +90,9 @@ export function IconSwap({ active, a, b, className }: { active: "a" | "b"; a: Re
           key={active}
           className="col-start-1 row-start-1 inline-flex"
           initial={{ opacity: 0, scale: 0.25, filter: "blur(2px)" }}
-          animate={{ opacity: 1, scale: 1, filter: "blur(0px)", transition: enter(DURATION.base) }}
+          // At rest the filter is dropped, not left at blur(0), so the icon
+          // doesn't stay promoted to a layer of its own.
+          animate={{ opacity: 1, scale: 1, filter: "blur(0px)", transitionEnd: { filter: "none" }, transition: enter(DURATION.base) }}
           exit={{ opacity: 0, scale: 0.25, filter: "blur(2px)", transition: exit(DURATION.exitFast) }}
         >
           {icon}

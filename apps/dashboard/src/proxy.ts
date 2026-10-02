@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 const CORE_BACKEND = process.env.CORE_BACKEND_URL || "http://127.0.0.1:4000";
 // /wallpapers/ is public so the sign-in screen can show the desktop wallpaper
 const PUBLIC_PATHS = ["/login", "/setup", "/import", "/invite/", "/s/", "/api/", "/_next", "/favicon.ico", "/manifest.json", "/wallpapers/"];
+// The app's icons and service worker are fetched before anyone signs in: by
+// "Add to Home Screen" (redirected, the Home Screen gets a letter tile) and by
+// the service worker registration on the sign-in screen (a redirect fails it).
+const PUBLIC_FILES = new Set(["/apple-icon.png", "/icon.svg", "/icon-192.png", "/icon-512.png", "/favicon.png", "/sw.js"]);
 
 /** Decode a JWT payload without verification (just base64url → JSON). */
 function decodeJwtPayload(token: string): { exp?: number } | null {
@@ -33,7 +37,7 @@ export function proxy(request: NextRequest) {
   }
 
   // Allow other public paths through unconditionally
-  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+  if (PUBLIC_FILES.has(pathname) || PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
 

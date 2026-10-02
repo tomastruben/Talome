@@ -2376,8 +2376,9 @@
    iPad and other touch screens
 ───────────────────────────────────────────────────────────────────────────── */
 
-/* Full screen from the Home Screen: the status bar and home indicator sit over
-   the page, so the sidebar and the content card keep clear of them. */
+/* Full screen from the Home Screen: the home indicator sits over the page (the
+   status bar is solid, lib/device.ts), so the sidebar and the content card keep
+   clear of it. env() is 0 wherever nothing overlays. */
 @media (display-mode: standalone) and (min-width: 768px) {
   [data-slot="sidebar-container"] {
     padding-top: calc(env(safe-area-inset-top, 0px) + 0.5rem);
@@ -2398,29 +2399,17 @@
   }
 }
 
-/* Only iPadOS draws its status bar over a full-screen web app (the <head>
-   script marks it). There, windows, widgets and the desktop icons start below
-   the status bar and the Dock clears the home indicator; everywhere else the
-   desktop uses the whole screen. */
-html[data-status-bar="ios"] [data-desktop-root] {
-  padding-top: max(env(safe-area-inset-top, 0px), 1.5rem);
-  padding-left: env(safe-area-inset-left, 0px);
-  padding-right: env(safe-area-inset-right, 0px);
-}
-html[data-status-bar="ios"] [data-desktop-dock-band] {
-  padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
-}
-
 /* The Dock's band at the bottom of the desktop: the Dock sits 4px off the
-   edge, as on macOS. Windows may slide under it (it floats over the
+   edge, as on macOS, and clears the home indicator where there is one (env()
+   is 0 everywhere else). Windows may slide under it (it floats over the
    workspace), but placement, Fill and snapping stop above it, so a filled
    window's status bar is never hidden. Defined on :root so overlays portalled
    to <body> (Launchpad) can sit above the Dock too. */
 :root {
-  --desktop-dock-reserve: 4.75rem;
-}
-html[data-status-bar="ios"] {
   --desktop-dock-reserve: calc(4.75rem + env(safe-area-inset-bottom, 0px));
+}
+[data-desktop-dock-band] {
+  padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
 }
 
 /* Optical centring for a line of text next to icons: trim the text box to the

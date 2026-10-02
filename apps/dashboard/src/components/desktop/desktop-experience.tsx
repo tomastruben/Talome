@@ -2323,7 +2323,7 @@ export function DesktopExperience() {
         data-desktop-dock-band=""
         // Floats over the bottom of the workspace, so windows slide under the
         // Dock; only the Dock itself takes the pointer.
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] flex h-[var(--desktop-dock-reserve)] items-end justify-center px-4 pb-1"
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] flex h-[var(--desktop-dock-reserve)] items-end justify-center px-4"
       >
         {!desktopWidgetsEditing ? (
           <nav

@@ -149,6 +149,9 @@ function LoginContent() {
     if (unlockingRef.current) return;
     unlockingRef.current = true;
     setUnlocking(true);
+    // Let go of the field, so a phone's keyboard slides away with the lock
+    // screen instead of hanging over the wallpaper until the next page loads.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     const [{ path, user }] = await Promise.all([
       resolveSignInDestination(returnTo),
       wait(reduceMotion ? DURATION_MS.exitFast : DURATION_MS.sheet),

@@ -178,9 +178,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 Skip to main content
               </a>
               <AppSidebar />
-              {/* On a phone the shell keeps clear of the status bar and the
-                  home indicator once, for every page (a Home Screen web app
-                  draws under both); md+ gets an inset margin in globals.css. */}
+              {/* On a phone the shell keeps clear of whatever the system draws
+                  over the page (the home indicator; a notch in landscape),
+                  once, for every page; md+ gets an inset margin in globals.css. */}
               <SidebarInset className="overflow-hidden flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] md:pt-0 md:pb-0">
                 {!hideHeader && <SiteHeader />}
                 <SystemHealthBanner />

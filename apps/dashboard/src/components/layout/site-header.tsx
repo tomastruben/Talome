@@ -297,7 +297,8 @@ export function SiteHeader() {
   const atomDrilldownDir = atomNav.dir;
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-1.5 bg-background/75 px-4 backdrop-blur-sm">
+    // Nothing scrolls under the header, so it has no backdrop blur to pay for.
+    <header className="flex h-12 shrink-0 items-center gap-1.5 bg-background px-4">
       {/* Desktop: standard sidebar toggle */}
       <div className="hidden md:flex">
         <SidebarTrigger className="size-8 shrink-0 text-muted-foreground hover:text-foreground transition-colors pointer-coarse:size-11">

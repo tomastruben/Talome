@@ -8,7 +8,7 @@ import { ConfirmDialogHost } from "@/components/ui/confirm-dialog";
 import { LiveAnnouncer } from "@/components/ui/live-announcer";
 import { ThemeColorSync } from "@/components/theme-color-sync";
 import { THEME_COLOR } from "@/lib/theme-color";
-import { STATUS_BAR_SCRIPT } from "@/lib/device";
+import { APPLE_STATUS_BAR_STYLE, FRAME_SCRIPT } from "@/lib/device";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -34,7 +34,8 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    // Solid, not translucent: see lib/device.ts.
+    statusBarStyle: APPLE_STATUS_BAR_STYLE,
     title: "Talome",
   },
 };
@@ -59,9 +60,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/* Before first paint: leave room for the iPad status bar only where it
-            overlaps. theme-color comes from `viewport` and ThemeColorSync. */}
-        <script dangerouslySetInnerHTML={{ __html: STATUS_BAR_SCRIPT }} />
+        {/* Before first paint: a desktop window's page turns transparent.
+            theme-color comes from `viewport` and ThemeColorSync. */}
+        <script dangerouslySetInnerHTML={{ __html: FRAME_SCRIPT }} />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
