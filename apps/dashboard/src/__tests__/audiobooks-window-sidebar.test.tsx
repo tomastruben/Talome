@@ -6,12 +6,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Provider, createStore } from "jotai";
 import { SWRConfig } from "swr";
 import type { ReactNode } from "react";
 
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: navigate, replace: vi.fn() }),
   usePathname: () => "/dashboard/audiobooks",
   useSearchParams: () => new URLSearchParams(""),
 }));
@@ -68,6 +71,7 @@ function renderPage() {
 const sidebar = () => screen.findByRole("navigation", { name: "Audiobooks" });
 
 beforeEach(() => {
+  navigate.mockClear();
   embedded.value = true;
   books.readiness = 1;
   requested.length = 0;
@@ -96,6 +100,19 @@ afterEach(() => {
 });
 
 describe("Audiobooks window sidebar", () => {
+  it("opens an audiobook with the keyboard", async () => {
+    embedded.value = false;
+    routes["/api/audiobooks/library/lib1"] = {
+      status: 200,
+      body: { results: [{ id: "book-1", media: { metadata: { title: "Test Book", authorName: "Author" } } }], total: 1, limit: 500, page: 0 },
+    };
+    renderPage();
+    const book = await screen.findByRole("button", { name: "Open Test Book" });
+    book.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(navigate).toHaveBeenCalledWith("/dashboard/audiobooks/book-1");
+  });
+
   it("lists the libraries, Audible, Search and Downloads", async () => {
     renderPage();
     const nav = await sidebar();

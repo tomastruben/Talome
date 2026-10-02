@@ -24,10 +24,10 @@ import {
   ArchiveIcon,
   DatabaseRestoreIcon,
   MoreHorizontalIcon,
-  Package01Icon,
   SecurityCheckIcon,
   Settings01Icon,
 } from "@/components/icons";
+import { resolveApplicationIcon, resolveApplicationIconUrl } from "@/components/native-app/native-app-icons";
 import { relativeTime } from "@/lib/format";
 import { fetchJson } from "@/lib/fetch-json";
 import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
@@ -82,15 +82,15 @@ async function fetchOperation(operationId: string) {
 // ── Row pieces ────────────────────────────────────────────────────────────────
 
 function AppIcon({ app }: { app: AppBackupOverview }) {
-  const hasImage = app.iconUrl && !app.iconUrl.startsWith("file://");
+  const iconUrl = resolveApplicationIconUrl(app.iconUrl);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const hasImage = iconUrl && failedUrl !== iconUrl;
   return (
     <div className="relative size-9 shrink-0 rounded-lg bg-muted/60 border border-border/40 flex items-center justify-center overflow-hidden text-lg">
       {hasImage ? (
-        <Image src={app.iconUrl!} alt="" role="presentation" className="object-cover" fill />
-      ) : app.icon && app.icon !== "📦" ? (
-        <span>{app.icon}</span>
+        <Image src={iconUrl!} alt="" role="presentation" className="object-contain" fill onError={() => setFailedUrl(iconUrl!)} />
       ) : (
-        <HugeiconsIcon icon={Package01Icon} size={18} className="text-dim-foreground" />
+        <HugeiconsIcon icon={resolveApplicationIcon(app.icon, app.name)} size={18} className="text-dim-foreground" />
       )}
     </div>
   );

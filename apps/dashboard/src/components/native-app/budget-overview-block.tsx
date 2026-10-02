@@ -173,7 +173,7 @@ function LeftInPlanCard({
   } satisfies EvilChartConfig;
 
   return (
-    <Card className="min-h-[15rem] gap-3 overflow-hidden bg-card/80 py-4">
+    <Card className="min-h-[15rem] gap-3 @container/budget-card overflow-hidden bg-card/80 py-4">
       <CardHeader>
         <div className="flex items-center gap-2 text-muted-foreground">
           <HugeiconsIcon icon={Target01Icon} size={18} />
@@ -186,8 +186,8 @@ function LeftInPlanCard({
           </Badge>
         </CardAction>
       </CardHeader>
-      <CardContent className="grid min-w-0 items-center gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
-        <div className="min-w-0 text-center sm:text-left">
+      <CardContent className="grid min-w-0 items-center gap-4 @md/budget-card:grid-cols-[minmax(0,1fr)_10rem]">
+        <div className="min-w-0 text-center @md/budget-card:text-left">
           <p className="text-xs font-medium text-muted-foreground">Available to spend</p>
           <p className="mt-1 text-3xl font-semibold tabular-nums tracking-tight">
             {money(remaining, currency)}
@@ -267,7 +267,7 @@ function MoneyFlowCard({
   ])) as EvilChartConfig;
 
   return (
-    <Card className="min-h-[15rem] gap-3 overflow-hidden bg-card/80 py-4">
+    <Card className="min-h-[15rem] gap-3 @container/budget-card overflow-hidden bg-card/80 py-4">
       <CardHeader>
         <CardTitle>Money flow</CardTitle>
         <CardDescription>Where recorded income moved this month</CardDescription>
@@ -278,7 +278,7 @@ function MoneyFlowCard({
       <CardContent>
         {links.length ? (
           <>
-            <div className="hidden h-44 lg:block" role="application" aria-label="Monthly money flow chart">
+            <div className="hidden h-44 @lg/budget-card:block" role="application" aria-label="Monthly money flow chart">
               <EvilSankeyChart
                 data={{ nodes, links }}
                 config={config}
@@ -295,7 +295,7 @@ function MoneyFlowCard({
                 <SankeyTooltip variant="frosted-glass" roundness="lg" />
               </EvilSankeyChart>
             </div>
-            <div className="flex flex-col gap-4 lg:hidden">
+            <div className="flex flex-col gap-4 @lg/budget-card:hidden">
               <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 rounded-lg border bg-background/50 p-4">
                 <div>
                   <p className="text-xs text-muted-foreground">Income</p>
@@ -337,7 +337,7 @@ function SpendingPaceCard({
   const paceDelta = numberValue(source, "paceDelta");
 
   return (
-    <Card className="gap-4 overflow-hidden bg-card/80 py-4">
+    <Card className="gap-4 @container/budget-card overflow-hidden bg-card/80 py-4">
       <CardHeader>
         <div className="flex items-center gap-2">
           <HugeiconsIcon icon={ChartLineData01Icon} size={18} className="text-muted-foreground" />
@@ -417,7 +417,7 @@ function SpendingPaceCard({
           </AreaChart>
         </ChartContainer>
         <Separator className="my-3" />
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 @lg/budget-card:grid-cols-3">
           <div>
             <p className="text-xs text-muted-foreground">Actual</p>
             <p className="mt-1 font-medium tabular-nums">{money(numberValue(source, "spent"), currency)}</p>
@@ -545,10 +545,10 @@ function InsightCard({
 
   return (
     <Card className={cn(
-      "gap-3 overflow-hidden border-status-healthy/25 bg-status-healthy/5 py-4",
+      "@container/budget-card gap-3 overflow-hidden border-status-healthy/25 bg-status-healthy/5 py-4",
       tone === "watch" && "border-status-warning/30 bg-status-warning/5",
     )}>
-      <CardContent className="flex flex-col gap-3 pt-0 sm:flex-row sm:items-center sm:justify-between">
+      <CardContent className="flex flex-col gap-3 pt-0 @2xl/budget-card:flex-row @2xl/budget-card:items-center @2xl/budget-card:justify-between">
         <div className="flex min-w-0 items-start gap-4">
           <div className={cn(
             "flex size-12 shrink-0 items-center justify-center rounded-xl border border-status-healthy/25 bg-status-healthy/10",
@@ -594,9 +594,9 @@ export function BudgetOverviewBlock({
   const reviewAction = findAction(actions, block.reviewActionId);
 
   return (
-    <section aria-label={block.title} className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.38fr)]">
-      <div className="flex min-w-0 flex-col gap-4">
-        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(20rem,0.85fr)_minmax(27rem,1.15fr)]">
+    <section aria-label={block.title} className="grid min-w-0 gap-4 @5xl/block:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="@container/budget-main flex min-w-0 flex-col gap-4">
+        <div className="grid min-w-0 gap-4 @3xl/budget-main:grid-cols-[minmax(20rem,0.85fr)_minmax(27rem,1.15fr)]">
           <LeftInPlanCard source={source} currency={currency} />
           <MoneyFlowCard categories={categories} source={source} currency={currency} />
         </div>
@@ -608,7 +608,7 @@ export function BudgetOverviewBlock({
           onAction={onAction}
         />
       </div>
-      <aside className="flex min-w-0 flex-col gap-4">
+      <aside className=" flex min-w-0 flex-col gap-4">
         <CategoriesCard categories={categories} currency={currency} />
         <RecentTransactionsCard transactions={transactions} currency={currency} />
       </aside>

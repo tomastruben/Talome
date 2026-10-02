@@ -230,12 +230,12 @@ function AudiobookCard({
   const duration = item.media?.duration;
 
   return (
-    <div className="media-card" onClick={() => onClick(item)}>
+    <button type="button" aria-label={`Open ${meta?.title ?? "audiobook"}`} className="media-card rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background" onClick={() => onClick(item)}>
       <div className="audiobook-card-cover tm-tilt" {...tiltHandlers}>
         {!imgFailed ? (
           <Image
             src={coverUrl(item.id, 400)}
-            alt={meta?.title ?? ""}
+            alt=""
             className="object-cover"
             fill
             decoding="async"
@@ -270,7 +270,7 @@ function AudiobookCard({
           )}
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 

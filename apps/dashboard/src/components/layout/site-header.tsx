@@ -31,6 +31,7 @@ import { MobileNav } from "@/components/layout/mobile-nav";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { useContainerLookup } from "@/hooks/use-containers";
 import { DURATION, EASE_ENTER, EASE_EXIT, enter } from "@/lib/motion";
+import { cn } from "@/lib/utils";
 import { humanizeSlug, navTitleForPath } from "./nav-config";
 
 interface DrilldownRoute {
@@ -345,7 +346,7 @@ export function SiteHeader() {
               marginRight: isDrilldownSub ? 6 : 0,
             }}
             transition={BACK_BUTTON_TRANSITION}
-            className="overflow-hidden shrink-0"
+            className={cn("overflow-hidden shrink-0", isDrilldownSub && "pointer-coarse:min-w-11")}
           >
             {activeDrilldown.useHistoryBack ? (
               <Button
@@ -384,8 +385,8 @@ export function SiteHeader() {
                 className={`text-sm font-medium truncate ${isDrilldownSub ? "text-muted-foreground" : ""}`}
               >
                 {isDrilldownSub
-                  ? (activeDrilldown.titles?.[drilldownSlug!]
-                      ?? dynamicTitle
+                  ? (dynamicTitle
+                      ?? activeDrilldown.titles?.[drilldownSlug!]
                       ?? humanizeSlug(drilldownSlug!))
                   : activeDrilldown.rootTitle}
               </motion.span>
@@ -403,7 +404,7 @@ export function SiteHeader() {
               marginRight: 6,
             }}
             transition={BACK_BUTTON_TRANSITION}
-            className="overflow-hidden shrink-0"
+            className="overflow-hidden shrink-0 pointer-coarse:min-w-11"
           >
             <Button
               variant="ghost"

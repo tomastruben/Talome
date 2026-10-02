@@ -78,7 +78,7 @@ export function ComparisonBarsBlock({
   ] as const;
 
   return (
-    <Card className="h-full overflow-hidden rounded-lg">
+    <Card className="h-full min-w-0 overflow-hidden rounded-lg @container/comparison">
       <CardHeader>
         <CardTitle>{block.title}</CardTitle>
         {block.description ? <CardDescription>{block.description}</CardDescription> : null}
@@ -98,9 +98,9 @@ export function ComparisonBarsBlock({
       </CardHeader>
 
       {!block.compact && totals.some(([, path]) => path) ? (
-        <div className="grid grid-cols-1 border-y sm:grid-cols-3">
+        <div className="grid grid-cols-1 border-y @lg/comparison:grid-cols-3">
           {totals.map(([label, path], index) => path ? (
-            <div key={label} className={cn("px-6 py-4", index && "border-t sm:border-l sm:border-t-0")}>
+            <div key={label} className={cn("px-6 py-4", index && "border-t @lg/comparison:border-l @lg/comparison:border-t-0")}>
               <p className="text-lg font-medium tabular-nums">{money(getValueAtPath(source, path), block.currency)}</p>
               <p className="text-sm text-muted-foreground">{label.toLowerCase()}</p>
             </div>
@@ -110,7 +110,7 @@ export function ComparisonBarsBlock({
 
       <CardContent className={cn("flex flex-col", !block.compact && "pt-2")}>
         {!block.compact ? (
-          <div className="hidden grid-cols-[minmax(7rem,1fr)_minmax(7rem,.7fr)_minmax(13rem,2fr)_minmax(8rem,.8fr)] gap-5 border-b py-3 text-sm font-medium text-muted-foreground md:grid">
+          <div className="hidden grid-cols-[minmax(7rem,1fr)_minmax(7rem,.7fr)_minmax(13rem,2fr)_minmax(8rem,.8fr)] gap-5 border-b py-3 text-sm font-medium text-muted-foreground @2xl/comparison:grid">
             <span>Category</span>
             <span>Planned</span>
             <span>Spent</span>
@@ -154,7 +154,7 @@ export function ComparisonBarsBlock({
           return (
             <div
               key={`${label}-${index}`}
-              className="grid grid-cols-1 gap-2 border-b py-4 last:border-b-0 md:grid-cols-[minmax(7rem,1fr)_minmax(7rem,.7fr)_minmax(13rem,2fr)_minmax(8rem,.8fr)] md:items-center md:gap-5"
+              className="grid grid-cols-1 gap-2 border-b py-4 last:border-b-0 @2xl/comparison:grid-cols-[minmax(7rem,1fr)_minmax(7rem,.7fr)_minmax(13rem,2fr)_minmax(8rem,.8fr)] @2xl/comparison:items-center @2xl/comparison:gap-5"
             >
               <span className="flex min-w-0 items-center gap-3 text-sm font-medium">
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border bg-background/60">
@@ -171,7 +171,7 @@ export function ComparisonBarsBlock({
                 />
                 <span className="w-24 text-right text-sm tabular-nums">{money(actual, block.currency)}</span>
               </div>
-              <span className={cn("text-sm tabular-nums md:text-right", isCritical && "text-status-critical")}>
+              <span className={cn("text-sm tabular-nums @2xl/comparison:text-right", isCritical && "text-status-critical")}>
                 {money(remaining, block.currency)}
               </span>
             </div>

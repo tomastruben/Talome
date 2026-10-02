@@ -283,15 +283,15 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
   return (
     <>
       <div className="rounded-lg border overflow-hidden">
-        <Table>
+        <Table className="table-fixed">
           <TableHeader>
             <TableRow>
               <TableHead scope="col" className="w-11 pl-3 pr-0"><span className="sr-only">Icon</span></TableHead>
               <TableHead scope="col">Name</TableHead>
               <TableHead scope="col" className="hidden @xl:table-cell w-24">Status</TableHead>
               <TableHead scope="col" className="hidden @xl:table-cell text-right w-16">CPU</TableHead>
-              <TableHead scope="col" className="text-right w-16 @xl:w-20">Memory</TableHead>
-              <TableHead scope="col" className="w-14 @xl:w-20"><span className="sr-only">Actions</span></TableHead>
+              <TableHead scope="col" className="hidden @md:table-cell text-right w-16 @xl:w-20">Memory</TableHead>
+              <TableHead scope="col" className="w-20 pointer-coarse:w-28"><span className="sr-only">Actions</span></TableHead>
             </TableRow>
           </TableHeader>
           {stacks.length === 0 ? (
@@ -332,7 +332,15 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                     </TableCell>
                     <TableCell className="py-2.5 overflow-hidden">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{stack.name}</p>
+                        <button type="button"
+                          className="block w-full min-w-0 truncate text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                          aria-expanded={isMulti ? isExpanded : undefined}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (isMulti) toggleExpand(stack.id);
+                            else openDetail(primary);
+                          }}
+                        >{stack.name}</button>
                         <p className="text-xs text-muted-foreground truncate mt-0.5">
                           {isMulti ? `${stack.totalCount} containers` : shortImage(primary.image)}
                           {stack.category && stack.category !== "other" ? ` · ${stack.category}` : ""}
@@ -371,7 +379,7 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                     <TableCell className="hidden @xl:table-cell py-2.5 text-right text-sm tabular-nums font-mono text-muted-foreground">
                       {stack.cpuPercent > 0 ? `${stack.cpuPercent.toFixed(1)}%` : "—"}
                     </TableCell>
-                    <TableCell className="py-2.5 text-right text-sm tabular-nums font-mono text-muted-foreground">
+                    <TableCell className="hidden @md:table-cell py-2.5 text-right text-sm tabular-nums font-mono text-muted-foreground">
                       {stack.memoryUsageMb > 0 ? formatMb(stack.memoryUsageMb) : "—"}
                     </TableCell>
                     <TableCell className="py-2.5">
@@ -383,7 +391,7 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 sm:opacity-0 sm:group-hover/stack:opacity-100 transition-opacity"
+                                className="h-7 w-7 pointer-coarse:size-11 sm:opacity-0 pointer-coarse:opacity-100 focus-visible:opacity-100 sm:group-hover/stack:opacity-100 transition-opacity"
                                 onClick={(e) => { e.stopPropagation(); quickLook.open(primary); }}
                                 aria-label="Quick Look"
                               >
@@ -399,7 +407,7 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7"
+                            className="h-7 w-7 pointer-coarse:size-11"
                             onClick={(e) => { e.stopPropagation(); toggleExpand(stack.id); }}
                             aria-label={isExpanded ? "Collapse containers" : "Expand containers"}
                           >
@@ -419,7 +427,7 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-7 w-7 text-muted-foreground"
+                              className="h-7 w-7 pointer-coarse:size-11 text-muted-foreground"
                               onClick={(e) => e.stopPropagation()}
                               aria-label="More actions"
                             >
@@ -561,10 +569,10 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                                     <span className="hidden @xl:block w-16 text-right text-sm tabular-nums font-mono text-muted-foreground shrink-0">
                                       {container.stats ? `${container.stats.cpuPercent.toFixed(1)}%` : "—"}
                                     </span>
-                                    <span className="w-16 @xl:w-20 text-right text-sm tabular-nums font-mono text-muted-foreground shrink-0">
+                                    <span className="hidden @md:block w-16 @xl:w-20 text-right text-sm tabular-nums font-mono text-muted-foreground shrink-0">
                                       {container.stats ? formatMb(container.stats.memoryUsageMb) : "—"}
                                     </span>
-                                    <div className="flex items-center justify-end gap-0.5 w-14 @xl:w-20 shrink-0">
+                                    <div className="flex items-center justify-end gap-0.5 w-20 pointer-coarse:w-28 shrink-0">
                                       {(busyActionId === container.id || removingId === container.id) ? (
                                         <Spinner className="size-3.5" />
                                       ) : (
@@ -575,7 +583,7 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                                                 <Button
                                                   variant="ghost"
                                                   size="icon"
-                                                  className="h-7 w-7 sm:opacity-0 sm:group-hover/sub:opacity-100 transition-opacity"
+                                                  className="h-7 w-7 pointer-coarse:size-11 sm:opacity-0 pointer-coarse:opacity-100 focus-visible:opacity-100 sm:group-hover/sub:opacity-100 transition-opacity"
                                                   onClick={() => quickLook.open(container)}
                                                   aria-label="Quick Look"
                                                 >
@@ -590,7 +598,7 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                                               <Button
                                                 variant="ghost"
                                                 size="icon"
-                                                className="h-7 w-7 text-muted-foreground sm:opacity-0 sm:group-hover/sub:opacity-100 transition-opacity"
+                                                className="h-7 w-7 pointer-coarse:size-11 text-muted-foreground sm:opacity-0 pointer-coarse:opacity-100 focus-visible:opacity-100 sm:group-hover/sub:opacity-100 transition-opacity"
                                                 aria-label="More actions"
                                               >
                                                 <HugeiconsIcon icon={MoreHorizontalIcon} size={15} />

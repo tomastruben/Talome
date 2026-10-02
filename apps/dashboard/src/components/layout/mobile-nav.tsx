@@ -165,7 +165,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
               : { opacity: 0, scale: 0.98, transition: PANEL_EXIT }}
           >
             <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
-            <div className="rounded-2xl border border-border bg-surface-modal shadow-lg overflow-hidden">
+            <div className="rounded-2xl border border-border bg-surface-modal shadow-lg max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain">
               <div className="flex items-center justify-center px-4 pt-4 pb-2.5 gap-2.5">
                 <TalomeMark size={16} className="text-muted-foreground" />
                 <span className="text-sm font-medium tracking-tight">Talome</span>

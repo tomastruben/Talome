@@ -262,7 +262,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
           <div
             key={block.id}
             data-native-block={block.id}
-            className={cn("min-w-0 @lg/native:col-span-2", SPAN_CLASSES[block.span ?? 2])}
+            className={cn("min-w-0 @container/block @lg/native:col-span-2", SPAN_CLASSES[block.span ?? 2])}
           >
             <NativeAppBlockRenderer
               block={block}

@@ -100,6 +100,16 @@ afterEach(() => {
 });
 
 describe("Backups page access", () => {
+  it("renders a native icon key as a glyph rather than clipped text", async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify([
+      { ...APP, name: "Budget Compass", icon: "money-saving-jar" },
+    ]), { status: 200 }));
+    renderPage();
+    const name = await screen.findByText("Budget Compass");
+    expect(screen.queryByText("money-saving-jar")).not.toBeInTheDocument();
+    expect(name.closest("tr")?.querySelector("svg")).toBeInTheDocument();
+  });
+
   it("gives members a read-only status view without admin-only actions", async () => {
     renderPage();
     expect(await screen.findByText("Sonarr")).toBeInTheDocument();
