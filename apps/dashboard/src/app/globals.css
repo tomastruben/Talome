@@ -309,13 +309,10 @@
     overflow: hidden;
     overscroll-behavior: none;
   }
-
-  /* Extend past safe area for standalone PWA (iOS home screen) */
-  @media (display-mode: standalone) {
-    body {
-      bottom: -env(safe-area-inset-bottom, 0px);
-    }
-  }
+  /* The body covers the whole screen (inset 0, viewport-fit=cover), home
+     indicator included; the classic shell pads its bottom on phones
+     (dashboard-shell.tsx) and the md+ Home Screen layout keeps an inset margin
+     (below), so nothing extends the body past the screen. */
 }
 
 @layer components {
@@ -2749,6 +2746,16 @@ html[data-embedded-frame] body {
 
   /* Window controls and edges sized for a finger */
   [data-window-controls] > button { width: 2rem; height: 2rem; }
+  /* The title bar's app actions (a leading Back, a native app's verb) grow
+     with them: 32px to see, 44px to hit (the window's top edge clips it to
+     the 40px bar). The icon-only Back's hit area grows on every side; text
+     actions sit 2px apart, so theirs grows only up and down. */
+  [data-window-actions] button { position: relative; min-width: 2rem; min-height: 2rem; }
+  [data-window-actions] button::after { content: ""; position: absolute; inset: -0.375rem 0; }
+  [data-window-actions="leading"] button::after { inset: -0.375rem; }
+  /* A press on a visible control wins over the grown top and corner resize
+     strips under it (28px corners would otherwise take Close and Back). */
+  [data-desktop-window] :is([data-window-controls], [data-window-actions]) { position: relative; z-index: 30; }
   [data-resize-edge="n"], [data-resize-edge="s"] { height: 0.875rem; }
   [data-resize-edge="e"], [data-resize-edge="w"] { width: 0.875rem; }
   [data-resize-edge="nw"], [data-resize-edge="ne"], [data-resize-edge="sw"], [data-resize-edge="se"] { width: 1.75rem; height: 1.75rem; }

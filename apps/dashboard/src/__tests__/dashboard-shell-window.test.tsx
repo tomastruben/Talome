@@ -22,7 +22,9 @@ const { Pass, Nothing } = vi.hoisted(() => ({
 }));
 vi.mock("@/components/ui/sidebar", () => ({
   SidebarProvider: Pass,
-  SidebarInset: ({ children }: { children?: React.ReactNode }) => <div data-testid="sidebar-inset">{children}</div>,
+  SidebarInset: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+    <div data-testid="sidebar-inset" className={className}>{children}</div>
+  ),
 }));
 vi.mock("@/components/layout/app-sidebar", () => ({ AppSidebar: Nothing }));
 vi.mock("@/components/layout/site-header", () => ({ SiteHeader: Nothing }));
@@ -123,5 +125,18 @@ describe("dashboard shell in classic mode", () => {
     expect(document.querySelector("[data-window-content]")).toBeNull();
     expect(scroller()).toHaveTextContent("Page");
     expect(scroller()).not.toHaveAttribute("data-window-layout");
+  });
+
+  it("keeps every page clear of a phone's status bar and home indicator, once, in the shell", () => {
+    renderShell();
+
+    const inset = document.querySelector<HTMLElement>('[data-testid="sidebar-inset"]')!;
+    // Phones only: md+ Home Screen apps get an inset margin in globals.css
+    expect(inset).toHaveClass(
+      "pt-[env(safe-area-inset-top)]",
+      "pb-[env(safe-area-inset-bottom)]",
+      "md:pt-0",
+      "md:pb-0",
+    );
   });
 });

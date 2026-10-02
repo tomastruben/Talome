@@ -29,7 +29,6 @@ import type {
   DesktopAppActionDescriptor,
   DesktopAppActionIcon,
 } from "@/atoms/desktop-app-actions";
-import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,7 +55,13 @@ import { WindowControls, type DesktopWindowLayout } from "@/components/desktop/w
 
 interface DesktopWindowProps {
   id: string;
+  /** The window's current place (a folder, a chat, a settings section), shown in the title bar */
   title: string;
+  /**
+   * The app's name, for the window's accessible names ("Files window",
+   * "Close Files"), which follow the app, not the page. Defaults to `title`.
+   */
+  appTitle?: string;
   bounds: DesktopBounds;
   restoreBounds?: DesktopBounds;
   area: DesktopArea;
@@ -134,6 +139,7 @@ const desktopActionIcons: Record<DesktopAppActionIcon, IconSvgElement> = {
 export const DesktopWindow = memo(function DesktopWindow({
   id,
   title,
+  appTitle = title,
   bounds,
   restoreBounds,
   area,
@@ -382,14 +388,18 @@ export const DesktopWindow = memo(function DesktopWindow({
     if (restoreBounds) onTile?.(clampDesktopBounds(restoreBounds, area, minimum), undefined);
   };
 
-  // Apps keep their controls in their own toolbar row (DesktopAppToolbar);
-  // the title bar carries only a back button and the odd primary action.
+  // The title bar holds the window controls, a leading Back and the title.
+  // Talome's own apps keep every verb in their toolbar row (DesktopAppToolbar);
+  // the trailing group stays for pages that still publish one (an AppSpec
+  // native app's "Ask about…"), so no published action is ever dropped.
   const leadingActions = actions.filter((action) => action.placement === "leading");
   const trailingActions = actions.filter((action) => action.placement !== "leading");
 
   const renderAction = (action: DesktopAppActionDescriptor) => {
     const icon = action.icon ? desktopActionIcons[action.icon] : undefined;
     const isLeading = action.placement === "leading";
+    // A leading action (Back) is an icon; anything without an icon keeps its label.
+    const iconOnly = isLeading && Boolean(icon);
     const stopTitlebarGesture = (event: ReactPointerEvent<HTMLElement>) => {
       onFocus();
       event.stopPropagation();
@@ -441,46 +451,27 @@ export const DesktopWindow = memo(function DesktopWindow({
       );
     }
 
-    if (action.kind === "toggle") {
-      return (
-        <div
-          key={action.id}
-          className={cn(
-            "flex h-6 shrink-0 select-none items-center gap-1.5 rounded-md px-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground",
-            action.disabled && "opacity-40",
-          )}
-          onPointerDown={stopTitlebarGesture}
-          onDoubleClick={(event) => event.stopPropagation()}
-        >
-          <span className="tm-cap-trim">{action.label}</span>
-          <Switch
-            size="sm"
-            checked={action.active === true}
-            disabled={action.disabled}
-            aria-label={action.label}
-            onCheckedChange={() => onAction?.(action.id)}
-          />
-        </div>
-      );
-    }
-
+    // Buttons, and toggles as pressed buttons (no Talome app publishes a
+    // title-bar switch any more; the Terminal's Auto lives in its toolbar).
     return (
       <button
         key={action.id}
         type="button"
         className={cn(
-          "flex h-6 shrink-0 items-center justify-center gap-1.5 rounded-md text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
-          isLeading ? "size-6 p-0" : "px-2",
+          "flex h-6 items-center justify-center gap-1.5 rounded-md text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+          iconOnly ? "size-6 shrink-0 p-0" : "min-w-0 max-w-44 shrink px-2",
           action.active && "bg-muted/60 text-foreground",
         )}
         disabled={action.disabled}
-        aria-label={isLeading ? action.label : undefined}
+        aria-label={iconOnly ? action.label : undefined}
+        aria-pressed={action.kind === "toggle" ? action.active === true : undefined}
+        title={iconOnly ? undefined : action.label}
         onPointerDown={stopTitlebarGesture}
         onDoubleClick={(event) => event.stopPropagation()}
         onClick={() => onAction?.(action.id)}
       >
-        {icon && <HugeiconsIcon icon={icon} size={14} />}
-        {!isLeading && <span className="tm-cap-trim">{action.label}</span>}
+        {icon && <HugeiconsIcon icon={icon} size={14} className="shrink-0" />}
+        {!iconOnly && <span className="tm-cap-trim truncate">{action.label}</span>}
       </button>
     );
   };
@@ -511,7 +502,8 @@ export const DesktopWindow = memo(function DesktopWindow({
       data-window-manipulating={isManipulating || undefined}
       data-window-minimized={minimized || undefined}
       data-active={active || undefined}
-      aria-label={`${title} window`}
+      // Named after the app, not the page: "Files window", not "Photos window"
+      aria-label={`${appTitle} window`}
       aria-hidden={disabled || minimized || undefined}
       inert={disabled || minimized}
       tabIndex={-1}
@@ -546,7 +538,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         <div className="flex min-w-0 items-center gap-2">
           <WindowControls
             className="mr-1"
-            title={title}
+            title={appTitle}
             active={active}
             layout={layout}
             canRestore={canRestore}
@@ -556,7 +548,12 @@ export const DesktopWindow = memo(function DesktopWindow({
             onClose={onClose}
           />
           {leadingActions.length > 0 && (
-            <div className="flex min-w-0 items-center gap-0.5" role="group" aria-label={`${title} navigation`}>
+            <div
+              data-window-actions="leading"
+              className="flex min-w-0 items-center gap-0.5"
+              role="group"
+              aria-label={`${appTitle} navigation`}
+            >
               {leadingActions.map(renderAction)}
             </div>
           )}
@@ -571,13 +568,16 @@ export const DesktopWindow = memo(function DesktopWindow({
           </span>
         </div>
 
-        <div
-          className="flex min-w-0 items-center justify-self-end gap-0.5"
-          role="group"
-          aria-label={`${title} actions`}
-        >
-          {trailingActions.map(renderAction)}
-        </div>
+        {trailingActions.length > 0 && (
+          <div
+            data-window-actions="trailing"
+            className="flex min-w-0 items-center justify-self-end gap-0.5"
+            role="group"
+            aria-label={`${appTitle} actions`}
+          >
+            {trailingActions.map(renderAction)}
+          </div>
+        )}
       </div>
 
       <div className="tm-window-body relative flex-1 min-h-0 overflow-hidden">
@@ -599,7 +599,7 @@ export const DesktopWindow = memo(function DesktopWindow({
         <button
           type="button"
           data-resize-edge="se"
-          aria-label={`Resize ${title}`}
+          aria-label={`Resize ${appTitle}`}
           title="Resize with arrow keys; hold Shift for larger steps"
           aria-describedby={`desktop-resize-help-${id}`}
           className="absolute right-0 bottom-0 z-20 size-3 cursor-nwse-resize touch-none rounded-tl-md outline-none focus-visible:size-5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"

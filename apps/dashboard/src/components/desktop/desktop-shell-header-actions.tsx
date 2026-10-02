@@ -13,6 +13,7 @@ import { useWidgetEdit } from "@/components/widgets/widget-edit-context";
 import { useWidgetLayout } from "@/hooks/use-widget-layout";
 import { useCheckServiceUpdates } from "@/hooks/use-check-service-updates";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { useWindowSidebarShown } from "@/components/ui/source-list";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { toast } from "sonner";
 
@@ -86,26 +87,19 @@ function AutomationsShellActions() {
   return null;
 }
 
+/**
+ * The App Store keeps Create in its own toolbar row (apps/page.tsx), like every
+ * other verb, so the title bar gets no actions. Coming back from a detail
+ * route, it clears the detail's title so the window reads "App Store" again.
+ */
 function AppStoreShellActions() {
-  const router = useRouter();
   const setPageTitle = useSetAtom(pageTitleAtom);
-  const handleCreate = useCallback(() => {
-    const href = "/dashboard/assistant?prompt=I+want+to+create+a+new+app";
-    if (!requestDesktopNavigation(href)) router.push(href);
-  }, [router]);
-  const actions = useMemo<DesktopAppAction[]>(() => [{
-    id: "app-store-create",
-    label: "Create",
-    icon: "add",
-    onSelect: handleCreate,
-  }], [handleCreate]);
 
   useEffect(() => {
     setPageTitle(null);
   }, [setPageTitle]);
 
-  usePublishShellActions(actions);
-  return null;
+  return <EmptyShellActions />;
 }
 
 function ServicesShellActions() {
@@ -124,6 +118,11 @@ function RouteBackShellAction({ home = false }: { home?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const embeddedFrame = useIsEmbeddedFrame();
+  // A wide Settings window lists every section in its sidebar, so a Back that
+  // always lands on General would only repeat the sidebar's first row. Back
+  // stays for the narrow, stacked layout, where it is the way out.
+  const sidebarShown = useWindowSidebarShown();
+  const sidebarReplacesBack = embeddedFrame && sidebarShown && pathname.startsWith("/dashboard/settings/");
   const handleBack = useCallback(() => {
     if (!home) {
       // An app can open directly on a detail page. Browser history belongs to
@@ -143,13 +142,13 @@ function RouteBackShellAction({ home = false }: { home?: boolean }) {
     if (!requestDesktopNavigation("/dashboard")) router.push("/dashboard");
   }, [embeddedFrame, home, pathname, router]);
   // A root desktop window has no dashboard parent; Close returns to the desktop.
-  const actions = useMemo<DesktopAppAction[]>(() => home && embeddedFrame ? [] : [{
+  const actions = useMemo<DesktopAppAction[]>(() => (home && embeddedFrame) || sidebarReplacesBack ? [] : [{
     id: "shell-route-back",
     label: "Back",
     icon: "back",
     placement: "leading",
     onSelect: handleBack,
-  }], [embeddedFrame, handleBack, home]);
+  }], [embeddedFrame, handleBack, home, sidebarReplacesBack]);
 
   usePublishShellActions(actions);
   return null;

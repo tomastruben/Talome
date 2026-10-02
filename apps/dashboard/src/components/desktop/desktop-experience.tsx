@@ -2223,7 +2223,10 @@ export function DesktopExperience() {
             <DesktopWindow
               key={windowModel.id}
               id={windowModel.id}
+              // The title bar shows the app's current place; the window's
+              // accessible names (Close, Minimize, Arrange) stay the app's.
               title={appChrome?.title ?? windowModel.title}
+              appTitle={windowModel.title}
               bounds={windowModel.bounds}
               restoreBounds={windowModel.restoreBounds}
               area={area}

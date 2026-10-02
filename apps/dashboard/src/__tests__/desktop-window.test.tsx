@@ -309,30 +309,38 @@ describe("DesktopWindow", () => {
     expect(restore).toBeUndefined();
   });
 
-  it("renders leading, trailing, and toggle actions in the titlebar", () => {
+  it("renders a leading Back and keeps a trailing slot for a page that still publishes a verb", () => {
     const onAction = vi.fn();
 
     render(
       <DesktopWindow
         {...defaultProps}
-        title="Assistant"
+        title="Grocy"
+        appTitle="Grocy"
         actions={[
           { id: "back", label: "Back", icon: "back", placement: "leading" },
-          { id: "auto", label: "Auto", kind: "toggle", active: false },
-          { id: "new", label: "New", icon: "add" },
+          // An AppSpec native app (native-app-runtime.tsx) may still publish one
+          { id: "native-app-assistant", label: "Ask about Grocy" },
+          { id: "auto", label: "Auto", kind: "toggle", active: true },
         ]}
         onAction={onAction}
       >
-        <div>Assistant content</div>
+        <div>Grocy content</div>
       </DesktopWindow>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    fireEvent.click(screen.getByRole("switch", { name: "Auto" }));
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask about Grocy" }));
+    // A toggle is a pressed button now: no app publishes a title-bar switch
+    const toggle = screen.getByRole("button", { name: "Auto" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("switch")).toBeNull();
+    fireEvent.click(toggle);
 
-    expect(onAction.mock.calls).toEqual([["back"], ["auto"], ["new"]]);
-    expect(screen.getByText("Assistant")).toHaveAttribute("data-title-placement", "leading");
+    expect(onAction.mock.calls).toEqual([["back"], ["native-app-assistant"], ["auto"]]);
+    expect(screen.getByText("Grocy")).toHaveAttribute("data-title-placement", "leading");
+    expect(screen.getByRole("group", { name: "Grocy navigation" })).toHaveAttribute("data-window-actions", "leading");
+    expect(screen.getByRole("group", { name: "Grocy actions" })).toHaveAttribute("data-window-actions", "trailing");
   });
 
   it("keeps the title beside the window controls when there are no actions", () => {
@@ -343,6 +351,46 @@ describe("DesktopWindow", () => {
     );
 
     expect(screen.getByText("Files")).toHaveAttribute("data-title-placement", "leading");
+    // No empty action groups for assistive tech to stop on
+    expect(document.querySelector("[data-window-actions]")).toBeNull();
+  });
+
+  it("names the window and its controls after the app, not the page it shows", () => {
+    render(
+      <DesktopWindow {...defaultProps} title="Photos" appTitle="Files">
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    expect(screen.getByText("Photos")).toHaveAttribute("data-title-placement", "leading");
+    expect(screen.getByRole("region", { name: "Files window" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close Files" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Minimize Files" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Arrange Files" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resize Files" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Photos/ })).toBeNull();
+  });
+
+  it("gives a leading action without an icon its label instead of an empty button", () => {
+    render(
+      <DesktopWindow
+        {...defaultProps}
+        actions={[{ id: "up", label: "Enclosing folder", placement: "leading" }]}
+      >
+        <div>Files content</div>
+      </DesktopWindow>,
+    );
+
+    expect(screen.getByRole("button", { name: "Enclosing folder" })).toHaveTextContent("Enclosing folder");
+  });
+
+  it("grows title-bar actions with the window controls on touch, above the resize strips", () => {
+    const css = readFileSync(join(__dirname, "../app/globals.css"), "utf8");
+    const touch = css.slice(css.indexOf("@media (hover: none) and (pointer: coarse)"));
+    expect(touch).toMatch(/\[data-window-actions\] button \{[^}]*min-width: 2rem;[^}]*min-height: 2rem;/);
+    expect(touch).toMatch(/\[data-window-actions\] button::after \{[^}]*inset: -0\.375rem 0;/);
+    expect(touch).toMatch(/\[data-window-actions="leading"\] button::after \{ inset: -0\.375rem; \}/);
+    expect(touch).toMatch(/\[data-desktop-window\] :is\(\[data-window-controls\], \[data-window-actions\]\) \{ position: relative; z-index: 30; \}/);
   });
 
   it("fills the area edge to edge when maximized, rounding only the corners above the Dock", () => {

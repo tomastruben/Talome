@@ -2,6 +2,7 @@ import { act, render } from "@testing-library/react";
 import { createStore, Provider } from "jotai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { desktopShellActionsAtom } from "@/atoms/desktop-app-actions";
+import { pageTitleAtom } from "@/atoms/page-title";
 import { DesktopShellHeaderActions } from "@/components/desktop/desktop-shell-header-actions";
 
 const navigation = vi.hoisted(() => ({
@@ -25,6 +26,10 @@ vi.mock("@/components/automations/automation-context", () => ({ useAutomation: v
 vi.mock("@/components/widgets/widget-edit-context", () => ({ useWidgetEdit: vi.fn() }));
 vi.mock("@/hooks/use-widget-layout", () => ({ useWidgetLayout: vi.fn() }));
 vi.mock("@/hooks/use-check-service-updates", () => ({ useCheckServiceUpdates: vi.fn() }));
+const windowSidebar = vi.hoisted(() => ({ shown: false }));
+vi.mock("@/components/ui/source-list", () => ({
+  useWindowSidebarShown: () => navigation.embedded && windowSidebar.shown,
+}));
 
 function invokeBack() {
   const store = createStore();
@@ -37,6 +42,7 @@ function invokeBack() {
 describe("desktop shell Back", () => {
   beforeEach(() => {
     navigation.embedded = true;
+    windowSidebar.shown = false;
     navigation.push.mockReset();
     navigation.back.mockReset();
     navigation.requestDesktopNavigation.mockReset();
@@ -88,5 +94,55 @@ describe("desktop shell Back", () => {
     navigation.embedded = true;
     view.rerender(<Provider store={store}><DesktopShellHeaderActions /></Provider>);
     expect(store.get(desktopShellActionsAtom)).toEqual([]);
+  });
+
+  it("publishes no Back in a wide Settings window, where the sidebar lists every section", () => {
+    navigation.pathname = "/dashboard/settings/security";
+    windowSidebar.shown = true;
+    const store = createStore();
+    render(<Provider store={store}><DesktopShellHeaderActions /></Provider>);
+    expect(store.get(desktopShellActionsAtom)).toEqual([]);
+  });
+
+  it("brings Back when the Settings window narrows to the stacked layout", () => {
+    navigation.pathname = "/dashboard/settings/security";
+    windowSidebar.shown = true;
+    const store = createStore();
+    const view = render(<Provider store={store}><DesktopShellHeaderActions /></Provider>);
+    expect(store.get(desktopShellActionsAtom)).toEqual([]);
+    windowSidebar.shown = false;
+    view.rerender(<Provider store={store}><DesktopShellHeaderActions /></Provider>);
+    expect(store.get(desktopShellActionsAtom).map((action) => action.id)).toEqual(["shell-route-back"]);
+  });
+
+  it("keeps Back on an App Store detail window even when a sidebar shows", () => {
+    navigation.pathname = "/dashboard/apps/community/photos";
+    windowSidebar.shown = true;
+    invokeBack();
+    expect(navigation.push).toHaveBeenCalledWith("/dashboard/apps");
+  });
+});
+
+describe("App Store title bar", () => {
+  beforeEach(() => {
+    navigation.embedded = true;
+    windowSidebar.shown = false;
+  });
+
+  it("publishes no title-bar verbs: Create lives in the App Store's toolbar row", () => {
+    navigation.pathname = "/dashboard/apps";
+    const store = createStore();
+    // What the previous route left behind is replaced, not kept
+    store.set(desktopShellActionsAtom, [{ id: "app-store-create", label: "Create", icon: "add" }]);
+    render(<Provider store={store}><DesktopShellHeaderActions /></Provider>);
+    expect(store.get(desktopShellActionsAtom)).toEqual([]);
+  });
+
+  it("clears a detail page's title when the window comes back to the store", () => {
+    navigation.pathname = "/dashboard/apps";
+    const store = createStore();
+    store.set(pageTitleAtom, "Photos");
+    render(<Provider store={store}><DesktopShellHeaderActions /></Provider>);
+    expect(store.get(pageTitleAtom)).toBeNull();
   });
 });

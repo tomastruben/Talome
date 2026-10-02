@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -8,29 +8,20 @@ import { Button } from "@/components/ui/button";
 import {
   HugeiconsIcon,
   LayoutAlignLeftIcon,
-  LayoutGridIcon,
   DashboardCircleIcon,
   ArrowLeft01Icon,
-  ArrowDown01Icon,
   Add01Icon,
   Tick01Icon,
   DashboardSquare02Icon,
-  SourceCodeCircleIcon,
   BubbleChatDownload02Icon,
   Share04Icon,
-  RemoteControlIcon,
 } from "@/components/icons";
 import { IconSwap } from "@/components/ui/micro";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtomValue } from "jotai";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { useWidgetEdit } from "@/components/widgets/widget-edit-context";
 import { useWidgetLayout } from "@/hooks/use-widget-layout";
 import { useAutomation } from "@/components/automations/automation-context";
-import { terminalAutoAtom, terminalRemoteAtom, terminalRemoteActiveAtom } from "@/atoms/terminal";
-import { cn } from "@/lib/utils";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { useTerminalHeaderAction } from "@/components/terminal/use-terminal-header-action";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { pageActionAtom } from "@/atoms/page-action";
 import { pageBackAtom } from "@/atoms/page-back";
@@ -39,7 +30,6 @@ import { toast } from "sonner";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { useContainerLookup } from "@/hooks/use-containers";
-import { Switch } from "@/components/ui/switch";
 import { DURATION, EASE_ENTER, EASE_EXIT, enter } from "@/lib/motion";
 import { humanizeSlug, navTitleForPath } from "./nav-config";
 
@@ -202,127 +192,6 @@ function HomeEditControls() {
   );
 }
 
-function TerminalHeaderAction() {
-  const headerAction = useTerminalHeaderAction();
-  const [autoMode, setAutoMode] = useAtom(terminalAutoAtom);
-  const [remote, setRemote] = useAtom(terminalRemoteAtom);
-  const remoteActive = useAtomValue(terminalRemoteActiveAtom);
-
-  // Sync from localStorage after hydration
-  useEffect(() => {
-    setAutoMode(localStorage.getItem("talome-auto-mode") === "true");
-    setRemote(localStorage.getItem("talome-remote-mode") === "true");
-  }, [setAutoMode, setRemote]);
-
-  return (
-    <div className="ml-auto flex shrink-0 items-center gap-2">
-      <div className={cn(
-        "flex items-center h-7 rounded-md transition-colors",
-        autoMode ? "bg-status-warning/10 ring-1 ring-status-warning/20" : "bg-muted/30 ring-1 ring-border/50"
-      )}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <label className="flex items-center gap-1.5 h-7 px-2 rounded-l-md cursor-pointer">
-              <Switch
-                size="sm"
-                checked={autoMode}
-                aria-label="Auto: skip permission prompts in the terminal"
-                className="data-[state=checked]:bg-status-warning"
-                onCheckedChange={(next) => {
-                  setAutoMode(next);
-                  localStorage.setItem("talome-auto-mode", String(next));
-                }}
-              />
-              <span className={cn(
-                "text-xs font-medium transition-colors",
-                autoMode ? "text-status-warning" : "text-muted-foreground"
-              )}>
-                Auto
-              </span>
-            </label>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-xs">
-            {autoMode ? "Skip permission prompts" : "Require permission prompts"}
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                "relative flex items-center justify-center size-7 transition-colors hover:bg-muted/40",
-                remote
-                  ? autoMode ? "text-status-warning" : "text-foreground"
-                  : "text-muted-foreground/50"
-              )}
-              aria-label={remoteActive ? "Remote session active" : remote ? "Remote control on for the next launch" : "Enable remote control"}
-              aria-pressed={remote}
-              onClick={() => {
-                const next = !remote;
-                setRemote(next);
-                localStorage.setItem("talome-remote-mode", String(next));
-              }}
-            >
-              <HugeiconsIcon icon={RemoteControlIcon} size={13} />
-              {remoteActive && (
-                <span className="absolute top-1 right-1 size-1.5 rounded-full bg-status-healthy" />
-              )}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-xs">
-            {remoteActive ? "Remote session active" : remote ? "Remote — next launch includes --remote-control" : "Enable remote access"}
-          </TooltipContent>
-        </Tooltip>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
-                "h-7 gap-1.5 px-2.5 text-xs rounded-l-none",
-                autoMode
-                  ? "text-status-warning/80 hover:text-status-warning hover:bg-status-warning/10"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <HugeiconsIcon icon={SourceCodeCircleIcon} size={14} />
-              {headerAction.label}
-              <HugeiconsIcon icon={ArrowDown01Icon} size={11} />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={6} className="min-w-40">
-            {headerAction.agentItems.map((item) => (
-              <DropdownMenuItem key={item.id} onSelect={item.onSelect}>
-                <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                {item.active && <HugeiconsIcon icon={Tick01Icon} size={13} className="ml-auto" />}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2.5 text-xs shadow-none" disabled={headerAction.disabled}>
-            Session
-            <HugeiconsIcon icon={ArrowDown01Icon} size={11} />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" sideOffset={6} className="min-w-40">
-            {headerAction.commandItems.map((item) => (
-              <DropdownMenuItem
-                key={item.id}
-                disabled={item.disabled}
-                onSelect={item.onSelect}
-              >
-                {item.label}
-              </DropdownMenuItem>
-            ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
-}
-
 function ServicesHeaderAction() {
   const { handleSubmit } = useAssistant();
   const router = useRouter();
@@ -385,7 +254,6 @@ export function SiteHeader() {
   const isAutomations = currentPage === "automations";
   const isApps = currentPage === "apps";
   const isContainers = currentPage === "containers";
-  const isTerminal = currentPage === "terminal";
 
   // Generic drilldown detection
   const activeDrilldown = DRILLDOWN_ROUTES.find(
@@ -601,7 +469,6 @@ export function SiteHeader() {
         </div>
       )}
       {isContainers && <ServicesHeaderAction />}
-      {isTerminal && <TerminalHeaderAction />}
     </header>
   );
 }

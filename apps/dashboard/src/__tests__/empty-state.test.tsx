@@ -86,6 +86,11 @@ describe("ErrorState", () => {
     expect(spy).toHaveBeenCalledOnce();
   });
 
+  it("gives Retry, the only action on an error screen, a 44px target on touch", () => {
+    render(<ErrorState onRetry={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Retry" })).toHaveClass("h-7", "pointer-coarse:h-11");
+  });
+
   it("does not render retry button when onRetry omitted", () => {
     render(<ErrorState />);
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
