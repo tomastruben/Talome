@@ -2483,6 +2483,9 @@ html[data-embedded-frame] body {
    pane on it. Apps inside never paint an opaque background or their own blur. */
 .tm-window-content {
   --window-pad: 1rem;
+  /* Lists (Files rows and their header) run closer to the edge than page
+     content, like a Finder list: an 8px inset instead of the window pad. */
+  --list-gutter: 0.5rem;
   background: color-mix(in oklch, var(--background) 15%, transparent);
 }
 :root:not(.dark) .tm-window-content {

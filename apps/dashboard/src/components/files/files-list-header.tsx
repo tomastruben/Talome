@@ -8,24 +8,24 @@ import { cn } from "@/lib/utils";
  * The file list's columns. The header and the body are two tables (the header
  * stays put while the body scrolls under it, with no sticky backdrop), so both
  * take this same colgroup and their columns line up. The first and last
- * columns hold the gutter (`--window-pad`, the classic 0.75rem outside a
- * window) plus the select mark or the row menu.
+ * columns hold the list gutter (`--list-gutter`, 0.5rem in a window, the
+ * classic 0.75rem outside one) plus the select mark or the row menu.
  */
 export function FilesColGroup() {
   return (
     <colgroup>
-      <col className="w-[calc(var(--window-pad,0.75rem)+1.5rem)]" />
+      <col className="w-[calc(var(--list-gutter,0.75rem)+1.5rem)]" />
       <col />
       <col className="hidden w-[25%] @md:table-column" />
       <col className="hidden w-[15%] @md:table-column" />
-      <col className="w-[calc(var(--window-pad,0.75rem)+2rem)]" />
+      <col className="w-[calc(var(--list-gutter,0.75rem)+2rem)]" />
     </colgroup>
   );
 }
 
 /** Gutter cells: the first and last cells of every row and the header */
-export const FILES_FIRST_CELL = "pl-[var(--window-pad,0.75rem)] pr-0";
-export const FILES_LAST_CELL = "pl-2 pr-[var(--window-pad,0.75rem)]";
+export const FILES_FIRST_CELL = "pl-[var(--list-gutter,0.75rem)] pr-0";
+export const FILES_LAST_CELL = "pl-2 pr-[var(--list-gutter,0.75rem)]";
 
 interface FilesListHeaderProps {
   allSelected: boolean;

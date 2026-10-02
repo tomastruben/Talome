@@ -1867,7 +1867,7 @@ function FilesPageInner({
               <button
                 type="button"
                 onClick={searchSubfolders}
-                className="flex min-h-10 w-full items-center gap-2.5 px-[var(--window-pad,0.75rem)] text-left text-sm text-muted-foreground transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+                className="flex min-h-10 w-full items-center gap-2.5 px-[var(--list-gutter,0.75rem)] text-left text-sm text-muted-foreground transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
               >
                 <HugeiconsIcon icon={Search01Icon} size={16} aria-hidden="true" className="shrink-0" />
                 <span className="truncate">
