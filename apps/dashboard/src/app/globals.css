@@ -673,6 +673,7 @@
   .search-field {
     position: relative;
     width: 100%;
+    min-width: 0;
     max-width: 20rem;
   }
   .search-field.flex-1 {
@@ -689,6 +690,17 @@
   .search-field input {
     padding-left: 2.25rem;
     width: 100%;
+    background: var(--muted);
+    box-shadow: none;
+  }
+  .search-field input:focus-visible {
+    border-color: var(--ring);
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+  .search-field:focus-within .search-field-icon {
+    color: var(--foreground);
   }
 
   /* ── Status filter pills (All / Running / Stopped) ── */
@@ -2557,6 +2569,16 @@ html[data-embedded-frame] body {
     padding-inline-start: var(--window-pad);
   }
 }
+/* Keep a readable title beside Back; controls use their own row when the
+   content column is compact, including wide windows with a sidebar. */
+.tm-window-toolbar-heading {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 6rem;
+  max-width: 40%;
+}
 .tm-window-toolbar-item {
   display: flex;
   flex-shrink: 0;
@@ -2564,10 +2586,9 @@ html[data-embedded-frame] body {
   gap: 0.25rem;
   height: 3.25rem;
 }
-/* The title gives way first: it truncates (to nothing, in a narrow window)
-   before the app's controls wrap */
+/* The selected view stays readable; the compact layout gives it its own row. */
 .tm-window-title {
-  flex: 0 1000 auto;
+  flex: 1 1 auto;
   min-width: 0;
 }
 /* One control height in the toolbar: 32px capsules (44px on touch), whatever
@@ -2614,6 +2635,45 @@ html[data-embedded-frame] body {
 @media (pointer: coarse) {
   .tm-window-toolbar {
     padding-block: 0.25rem;
+  }
+}
+@container content (width < 48rem) {
+  .tm-window-unified-toolbar {
+    flex-wrap: wrap;
+    column-gap: 0.5rem;
+    row-gap: 0;
+    padding-inline: 0;
+  }
+  .tm-window-toolbar-heading {
+    flex: 1 1 auto;
+    max-width: none;
+    padding-inline-start: var(--window-controls-inset);
+  }
+  .tm-window-toolbar-trailing {
+    padding-inline-end: var(--window-pad);
+  }
+  .tm-window-toolbar {
+    order: 1;
+    flex-basis: 100%;
+    width: 100%;
+    padding-inline: var(--window-pad);
+    padding-top: 0;
+  }
+  .tm-window-toolbar [data-media-view-controls] {
+    flex-basis: 100%;
+  }
+}
+@container window (width >= 48rem) {
+  .tm-window-sidebar:not(:empty) + .tm-window-content .tm-window-toolbar-heading {
+    padding-inline-start: 0;
+  }
+  @container content (width < 48rem) {
+    .tm-window-sidebar:not(:empty) + .tm-window-content > .tm-window-unified-toolbar {
+      padding-inline: 0;
+    }
+    .tm-window-sidebar:not(:empty) + .tm-window-content .tm-window-toolbar-heading {
+      padding-inline-start: var(--window-pad);
+    }
   }
 }
 /* An app's status bar in the status-bar slot (<WindowStatusBar>), on the

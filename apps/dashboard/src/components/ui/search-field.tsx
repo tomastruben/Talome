@@ -14,6 +14,7 @@ function SearchField({ containerClassName, className, ...props }: SearchFieldPro
         icon={Search01Icon}
         size={15}
         className="search-field-icon"
+        aria-hidden="true"
       />
       <Input className={cn("pl-9", className)} {...props} />
     </div>

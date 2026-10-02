@@ -106,14 +106,13 @@ describe("App Store in a desktop window", () => {
     expect(within(tablist).getByRole("tab", { name: "Installed" })).toBeInTheDocument();
   });
 
-  it("keeps tabs, Create and the search on one toolbar row: the tabs scroll and the search gives way to 6rem", async () => {
+  it("keeps search usable and allows controls to wrap in compact windows", async () => {
     renderPage();
     const toolbar = await screen.findByTestId("toolbar-slot");
     const search = within(toolbar).getByRole("textbox", { name: "Search apps" });
     const field = search.closest(".search-field");
-    expect(field).toHaveClass("min-w-24", "flex-1");
-    expect(field).not.toHaveClass("min-w-40");
-    expect(field?.parentElement).toHaveClass("flex", "flex-nowrap");
+    expect(field).toHaveClass("min-w-40", "flex-1");
+    expect(field?.parentElement).toHaveClass("flex", "flex-wrap");
     expect(within(toolbar).getByRole("tablist").closest('[class*="overflow-x-auto"]')).not.toBeNull();
   });
 });

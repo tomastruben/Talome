@@ -47,7 +47,6 @@ import {
   SourceListSection,
   SourceListSkeleton,
   WINDOW_SIDEBAR_REPLACES,
-  WINDOW_SIDEBAR_SHOWS,
   WindowSidebarLayout,
   useWindowSidebarShown,
 } from "@/components/ui/source-list";
@@ -1107,10 +1106,7 @@ export default function AudiobooksPage() {
           width and the search takes what's left, down to 10rem, before it
           moves to a row of its own. Sized by the content column (container
           queries), not the screen, which in a window includes the sidebar. */}
-      <DesktopAppToolbar className="flex min-w-0 flex-wrap items-center gap-2">
-        <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 text-sm font-medium text-foreground")}>
-          <span className="truncate">{viewHeading}</span>
-        </h2>
+      <DesktopAppToolbar windowTitle={viewHeading} className="flex min-w-0 flex-wrap items-center gap-2">
         <Tabs
           className={WINDOW_SIDEBAR_REPLACES}
           value={tab}

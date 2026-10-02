@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
+import { pageTitleAtom } from "@/atoms/page-title";
 import type { ReactNode } from "react";
 
 vi.mock("next/navigation", () => ({
@@ -115,14 +116,14 @@ describe("Services in a desktop window", () => {
     vi.clearAllMocks();
   });
 
-  it("puts its controls in the window toolbar, with a heading and the search that never hide", () => {
+  it("puts its controls in the window toolbar, with one window title and an always reachable search", () => {
     const { container } = renderServices();
     const toolbar = container.querySelector<HTMLElement>('[data-desktop-app-toolbar="true"]');
     expect(toolbar).not.toBeNull();
-    // The heading shows only when the sidebar replaces the tabs; the search always
-    const heading = within(toolbar!).getByRole("heading", { name: "All services" });
-    expect(heading.className).toContain("hidden");
-    expect(heading.className).toContain("@3xl/window:flex");
+    expect(store.get(pageTitleAtom)).toBe("All services");
+    expect(within(toolbar!).queryByRole("heading")).toBeNull();
+    fireEvent.click(within(toolbar!).getByRole("tab", { name: "Running" }));
+    expect(store.get(pageTitleAtom)).toBe("Running");
     expect(within(toolbar!).getByRole("textbox", { name: "Search services" })).toBeInTheDocument();
     expect(within(toolbar!).getByRole("tablist").closest('[class*="@3xl/window:hidden"]')).not.toBeNull();
   });

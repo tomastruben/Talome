@@ -344,7 +344,7 @@ describe("Media library toolbar fits one row", () => {
   const inlineTokens = MEDIA_VIEW_INLINE.split(" ");
   const classicInlineSize = inlineTokens.find((t) => /^@[\w-]+:flex$/.test(t))?.match(/^@([\w-]+):/)?.[1];
   const windowInlineSize = inlineTokens.find((t) => /^@[\w-]+\/content:flex$/.test(t))?.match(/^@([\w-]+)\//)?.[1];
-  const labelSize = page.match(/<span className="hidden @([\w-]+):inline">\{t\.label\}<\/span>/)?.[1];
+  const labelSize = page.match(/"hidden @([\w-]+):inline"/)?.[1];
   const searchClasses = page.match(/<SearchField\s+containerClassName="([^"]+)"/)?.[1].split(/\s+/) ?? [];
 
   /**

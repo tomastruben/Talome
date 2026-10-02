@@ -76,39 +76,38 @@ function HomeShellActions() {
 
 function AutomationsShellActions() {
   const { openCreate } = useAutomation();
-  const actions = useMemo<DesktopAppAction[]>(() => [{
+  const embedded = useIsEmbeddedFrame();
+  const actions = useMemo<DesktopAppAction[]>(() => embedded ? [] : [{
     id: "automation-new",
     label: "New",
     icon: "add",
     onSelect: openCreate,
-  }], [openCreate]);
+  }], [embedded, openCreate]);
 
   usePublishShellActions(actions);
   return null;
 }
 
-/**
- * The App Store keeps Create in its own toolbar row (apps/page.tsx), like every
- * other verb, so the title bar gets no actions. Coming back from a detail
- * route, it clears the detail's title so the window reads "App Store" again.
- */
+/** Classic mode resets the detail title; the embedded page publishes its selected view. */
 function AppStoreShellActions() {
   const setPageTitle = useSetAtom(pageTitleAtom);
+  const embedded = useIsEmbeddedFrame();
 
   useEffect(() => {
-    setPageTitle(null);
-  }, [setPageTitle]);
+    if (!embedded) setPageTitle(null);
+  }, [embedded, setPageTitle]);
 
   return <EmptyShellActions />;
 }
 
 function ServicesShellActions() {
   const checkAllUpdates = useCheckServiceUpdates();
-  const actions = useMemo<DesktopAppAction[]>(() => [{
+  const embedded = useIsEmbeddedFrame();
+  const actions = useMemo<DesktopAppAction[]>(() => embedded ? [] : [{
     id: "services-check-updates",
     label: "Check updates",
     onSelect: checkAllUpdates,
-  }], [checkAllUpdates]);
+  }], [checkAllUpdates, embedded]);
 
   usePublishShellActions(actions);
   return null;

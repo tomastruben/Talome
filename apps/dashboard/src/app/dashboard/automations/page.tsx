@@ -29,6 +29,8 @@ import { relativeTime } from "@/lib/format";
 import { automationStatus, automationStatusMeta, type AutomationStatus, type AutomationStatusTone } from "@/lib/automation-status";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 
 /** Throws on failure, so a failed load never shows "No automations yet". */
 async function fetcher<T = unknown>(url: string): Promise<T> {
@@ -126,6 +128,7 @@ function stepSummary(row: AutomationRow): string {
 }
 
 export default function AutomationsPage() {
+  const embedded = useIsEmbeddedFrame();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data, error: loadError, mutate } = useSWR<{ automations: AutomationRow[] }>(
@@ -210,6 +213,14 @@ export default function AutomationsPage() {
     // A flex column filling the page (or the window's content), so the empty
     // and error states centre in the space left
     <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-1 flex-col gap-6">
+      {embedded && (
+        <DesktopAppToolbar className="flex items-center justify-end gap-2">
+          <Button size="sm" onClick={openCreate}>
+            <HugeiconsIcon icon={Add01Icon} size={15} aria-hidden="true" />
+            New automation
+          </Button>
+        </DesktopAppToolbar>
+      )}
       {/* Failure banner */}
       {recentFailures.length > 0 && !bannerDismissed && (
         <Banner className="rounded-xl bg-destructive/8 text-destructive dark:text-status-critical" inset>

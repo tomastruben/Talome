@@ -138,7 +138,8 @@ describe("App Store title bar", () => {
     expect(store.get(desktopShellActionsAtom)).toEqual([]);
   });
 
-  it("clears a detail page's title when the window comes back to the store", () => {
+  it("clears a detail page's title in classic mode, where the page does not publish a window title", () => {
+    navigation.embedded = false;
     navigation.pathname = "/dashboard/apps";
     const store = createStore();
     store.set(pageTitleAtom, "Photos");

@@ -40,7 +40,6 @@ import AppsPage from "@/app/dashboard/apps/page";
 import { appStoreViewTitle, categoryLabel, sourceLabel } from "@/app/dashboard/apps/_lib/app-store-view";
 import { INLINE_BACKUP_ACTIONS_MIN_WIDTH, fitsInlineBackupActions } from "@/app/dashboard/backups/_lib/use-min-width";
 import { FilesSidebar } from "@/components/files/files-sidebar";
-import { WINDOW_SIDEBAR_SHOWS } from "@/components/ui/source-list";
 
 const SRC = join(__dirname, "..");
 const read = (path: string) => readFileSync(join(SRC, path), "utf-8");
@@ -120,16 +119,13 @@ describe("App Store toolbar", () => {
     );
   }
 
-  it("names the view in a wide window (where the sidebar replaces the tabs), with the category chosen", async () => {
+  it("does not repeat the selected view as a heading beside the window title", async () => {
     renderPage();
     const pill = await screen.findByRole("button", { name: "Media" });
-    const heading = screen.getByRole("heading", { level: 2, name: /All apps/ });
-    // Shown exactly when the window's sidebar is
-    for (const name of WINDOW_SIDEBAR_SHOWS.split(" ")) expect(heading).toHaveClass(name);
-    expect(heading).not.toHaveTextContent("Media");
-
+    expect(screen.queryByRole("heading", { level: 2, name: /All apps/ })).toBeNull();
     fireEvent.click(pill);
-    expect(heading).toHaveTextContent("All apps· Media");
+    expect(pill).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("heading", { level: 2, name: /All apps/ })).toBeNull();
   });
 
   it("shows category pills in sentence case, as toggles", async () => {

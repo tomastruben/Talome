@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { useRouter } from "next/navigation";
 import { useSetAtom } from "jotai";
 import useSWR from "swr";
@@ -36,10 +38,10 @@ interface NativeDataState {
 }
 
 const SPAN_CLASSES = {
-  1: "lg:col-span-1",
-  2: "lg:col-span-2",
-  3: "lg:col-span-3",
-  4: "lg:col-span-4",
+  1: "@3xl/native:col-span-1",
+  2: "@3xl/native:col-span-2",
+  3: "@3xl/native:col-span-3",
+  4: "@3xl/native:col-span-4",
 } as const;
 
 async function fetchSpec(url: string): Promise<StoredAppSpecResponse> {
@@ -91,6 +93,7 @@ function refreshInterval(sources: TalomeDataSource[]) {
 
 export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: string }) {
   const router = useRouter();
+  const embedded = useIsEmbeddedFrame();
   const setPageTitle = useSetAtom(pageTitleAtom);
   const setDesktopActions = useSetAtom(desktopAppActionsAtom);
   const [pendingActionId, setPendingActionId] = useState<string>();
@@ -224,10 +227,10 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
 
   if (specLoading) {
     return (
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 @container/native">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-4 w-96 max-w-full" />
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-6 @lg/native:grid-cols-2 @3xl/native:grid-cols-4">
           {Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-48 w-full" />)}
         </div>
       </div>
@@ -254,12 +257,12 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
 
   const renderSurface = (surface: TalomeAppSpec["surfaces"][number]) => (
     <div data-native-surface={surface.id} className="flex flex-col gap-6 pt-1">
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-6 @lg/native:grid-cols-2 @3xl/native:grid-cols-4">
         {surface.blocks.map((block) => (
           <div
             key={block.id}
             data-native-block={block.id}
-            className={cn("min-w-0 md:col-span-2", SPAN_CLASSES[block.span ?? 2])}
+            className={cn("min-w-0 @lg/native:col-span-2", SPAN_CLASSES[block.span ?? 2])}
           >
             <NativeAppBlockRenderer
               block={block}
@@ -276,7 +279,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
 
   return (
     <div data-native-app={spec.appId} className="mx-auto flex w-full max-w-screen-2xl flex-col gap-6 pb-8 @container/native">
-      <header className="flex flex-col gap-4 @3xl/native:flex-row @3xl/native:items-start @3xl/native:justify-between">
+      <header className={cn(embedded && "hidden", "flex flex-col gap-4 @3xl/native:flex-row @3xl/native:items-start @3xl/native:justify-between")}>
         <div className="flex min-w-0 items-start gap-3">
           <div className="flex size-12 shrink-0 items-center justify-center rounded-xl border bg-card shadow-sm">
             <HugeiconsIcon icon={appIcon} size={30} className="text-foreground" aria-hidden />
@@ -303,6 +306,15 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
         </div>
       </header>
 
+      {embedded && spec.surfaces.length === 1 && primaryAction && (
+        <DesktopAppToolbar className="flex items-center justify-end gap-2">
+          <Button size="sm" disabled={Boolean(pendingActionId)} onClick={() => runAction(primaryAction)}>
+            {pendingActionId === primaryAction.id ? <Spinner data-icon="inline-start" /> : null}
+            {pendingActionId === primaryAction.id ? "Working…" : primaryAction.label}
+          </Button>
+        </DesktopAppToolbar>
+      )}
+
       {dataErrors.length ? (
         <Alert variant="destructive">
           <AlertTitle>Some app data is unavailable</AlertTitle>
@@ -317,18 +329,26 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
       ) : null}
 
       {dataLoading && !nativeData ? (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-6 @lg/native:grid-cols-2 @3xl/native:grid-cols-4">
           {Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-48 w-full" />)}
         </div>
       ) : spec.surfaces.length === 1 ? renderSurface(spec.surfaces[0]) : (
         <Tabs value={activeSurface.id} onValueChange={setSelectedSurfaceId}>
-          <div className="max-w-full overflow-x-auto pb-1">
-          <TabsList variant="underline" aria-label={`${spec.name} views`}>
+          <DesktopAppToolbar className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="min-w-0 max-w-full overflow-x-auto">
+          <TabsList variant={embedded ? "default" : "underline"} aria-label={`${spec.name} views`}>
             {spec.surfaces.map((surface) => (
               <TabsTab key={surface.id} value={surface.id}>{surface.title}</TabsTab>
             ))}
           </TabsList>
           </div>
+          {embedded && primaryAction && (
+            <Button className="ml-auto" size="sm" disabled={Boolean(pendingActionId)} onClick={() => runAction(primaryAction)}>
+              {pendingActionId === primaryAction.id ? <Spinner data-icon="inline-start" /> : null}
+              {pendingActionId === primaryAction.id ? "Working…" : primaryAction.label}
+            </Button>
+          )}
+          </DesktopAppToolbar>
           {spec.surfaces.map((surface) => (
             <TabsPanel key={surface.id} value={surface.id}>{renderSurface(surface)}</TabsPanel>
           ))}

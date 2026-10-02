@@ -21,19 +21,21 @@ import {
   Package01Icon,
   PlayIcon,
   StopIcon,
+  HugeiconsIcon,
+  Refresh01Icon,
 } from "@/components/icons";
 import {
   SourceList,
   SourceListItem,
   SourceListSection,
   WINDOW_SIDEBAR_REPLACES,
-  WINDOW_SIDEBAR_SHOWS,
   WindowSidebarLayout,
 } from "@/components/ui/source-list";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
-import { cn } from "@/lib/utils";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { Button } from "@/components/ui/button";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { useCheckServiceUpdates } from "@/hooks/use-check-service-updates";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -85,6 +87,8 @@ export default function ContainersPage() {
   const { stacks, isLoading, error, refresh } = useServiceStacks();
   const { handleSubmit, openPaletteInChatMode } = useAssistant();
   const router = useRouter();
+  const embedded = useIsEmbeddedFrame();
+  const checkAllUpdates = useCheckServiceUpdates();
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search).get("q")?.trim();
@@ -146,13 +150,7 @@ export default function ContainersPage() {
     <div className="flex min-w-0 flex-1 flex-col gap-5">
       {/* Controls. In a wide window the sidebar holds the filters, so the
           toolbar names the view and keeps the search. */}
-      <DesktopAppToolbar className="flex min-w-0 flex-wrap items-center gap-2">
-        <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 items-baseline gap-1.5 text-sm font-medium text-foreground")}>
-          <span className="truncate">{STATUS_HEADING[statusFilter]}</span>
-          {sourceFilter !== "all" && (
-            <span className="shrink-0 font-normal text-muted-foreground">· {SOURCE_HEADING[sourceFilter]}</span>
-          )}
-        </h2>
+      <DesktopAppToolbar windowTitle={`${STATUS_HEADING[statusFilter]}${sourceFilter !== "all" ? ` · ${SOURCE_HEADING[sourceFilter]}` : ""}`} className="flex min-w-0 flex-wrap items-center gap-2">
         <Tabs
           className={WINDOW_SIDEBAR_REPLACES}
           value={statusFilter}
@@ -205,6 +203,13 @@ export default function ContainersPage() {
               </TabsTrigger>
             </TabsList>
           </Tabs>
+        )}
+
+        {embedded && (
+          <Button variant="outline" size="sm" onClick={checkAllUpdates}>
+            <HugeiconsIcon icon={Refresh01Icon} size={15} aria-hidden="true" />
+            Check updates
+          </Button>
         )}
 
         {/* Beside the filters while it keeps 10rem, else a row of its own */}

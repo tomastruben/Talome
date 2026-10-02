@@ -21,7 +21,6 @@ import {
   SourceListItem,
   SourceListSection,
   WINDOW_SIDEBAR_REPLACES,
-  WINDOW_SIDEBAR_SHOWS,
   WindowSidebarLayout,
 } from "@/components/ui/source-list";
 import { Tabs, TabsList, TabsTrigger, TabsBadge } from "@/components/ui/tabs";
@@ -382,23 +381,11 @@ function AppsPageContent() {
   return (
     <WindowSidebarLayout sidebar={sidebar}>
     <div className="flex min-w-0 flex-1 flex-col gap-5">
-      <DesktopAppToolbar className="grid min-w-0 gap-3">
-        {/* ── Source tabs, Create, search (Finder order: view, verbs, search).
-            In a window it is one row whatever the width: the tabs scroll
-            sideways and the search gives way to 6rem before anything wraps
-            (a wrapped toolbar stacked three rows with the category pills). In
-            classic mode it wraps once the search can't keep 10rem beside the
-            tabs. In a wide window the sidebar holds the sources, so the row
-            names the view instead. A window's title bar holds no verbs, so in
-            a window Create sits here; in classic mode it stays in the page
-            header (as Files' verbs do). ── */}
-        <div className={cn("flex min-w-0 items-center gap-2", embeddedFrame ? "flex-nowrap" : "flex-wrap")}>
-          <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 items-baseline gap-1.5 text-sm font-medium text-foreground")}>
-            <span className="truncate">{appStoreViewTitle(tab)}</span>
-            {showCategories && category !== "all" && (
-              <span className="shrink-0 font-normal text-muted-foreground">· {categoryLabel(category)}</span>
-            )}
-          </h2>
+      <DesktopAppToolbar windowTitle={`${appStoreViewTitle(tab)}${showCategories && category !== "all" ? ` · ${categoryLabel(category)}` : ""}`} className="grid min-w-0 gap-3">
+        {/* Source navigation, Create and search wrap by the content column.
+            Wide windows put source navigation in the sidebar; the selected
+            view is published as the window title in both layouts. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {/* Where the sidebar is hidden (a narrow window, or classic) the
               tabs reach every place it does, My Apps and Installed included.
               On touch each tab is a 44px target. With every source on a
@@ -439,7 +426,7 @@ function AppsPageContent() {
           )}
 
           <SearchField
-            containerClassName={cn("flex-1 @xl:max-w-64", embeddedFrame ? "min-w-24" : "ml-auto min-w-40")}
+            containerClassName="ml-auto min-w-40 flex-1 @xl:max-w-64"
             className="pointer-coarse:h-11"
             aria-label="Search apps"
             placeholder="Search apps…"

@@ -1731,7 +1731,7 @@ function MediaPageInner() {
   const toolbar = (
     <DesktopAppToolbar className={cn("flex min-w-0 flex-wrap items-center gap-2", !isLibrary && WINDOW_SIDEBAR_REPLACES)}>
       <Tabs
-        className={cn(WINDOW_SIDEBAR_REPLACES, "shrink-0")}
+        className={cn(WINDOW_SIDEBAR_REPLACES, "min-w-0 max-w-full overflow-x-auto scrollbar-none")}
         value={tab}
         onValueChange={(v) => selectTab(v as MediaTab)}
       >
@@ -1747,7 +1747,7 @@ function MediaPageInner() {
               className="text-xs gap-1.5 pointer-coarse:h-11 pointer-coarse:min-w-11"
             >
               <HugeiconsIcon icon={t.icon} size={14} />
-              <span className="hidden @4xl:inline">{t.label}</span>
+              <span className={embedded ? "hidden @lg/content:inline" : "hidden @4xl:inline"}>{t.label}</span>
               {t.badge}
             </TabsTrigger>
           ))}

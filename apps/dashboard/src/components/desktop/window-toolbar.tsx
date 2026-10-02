@@ -189,6 +189,7 @@ export function WindowToolbar() {
       data-window-drag-region="toolbar"
       className="tm-window-unified-toolbar"
     >
+      <div className="tm-window-toolbar-heading">
       {(pageBack || leading.length > 0) && (
         <div className="tm-window-toolbar-item">
           <ToolbarGroup
@@ -202,6 +203,7 @@ export function WindowToolbar() {
       )}
       <div data-window-title="" className="tm-window-toolbar-item tm-window-title">
         <span
+          title={title}
           className={cn(
             "tm-cap-trim min-w-0 truncate text-sm font-medium leading-5 transition-colors duration-150 ease-out",
             !active && "text-muted-foreground",
@@ -210,13 +212,14 @@ export function WindowToolbar() {
           {title}
         </span>
       </div>
+      </div>
       <WindowToolbarSlot />
       {trailing.length > 0 && (
         <div
           role="group"
           aria-label={appName ? `${appName} actions` : "Actions"}
           data-window-toolbar-actions="trailing"
-          className="tm-window-toolbar-item ml-auto"
+          className="tm-window-toolbar-item tm-window-toolbar-trailing ml-auto"
         >
           {trailing.map((action) => <TrailingAction key={action.id} action={action} />)}
         </div>

@@ -1,8 +1,9 @@
 "use client";
 
-import type { ComponentProps } from "react";
+import { useEffect, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
+import { pageTitleAtom } from "@/atoms/page-title";
 import { windowToolbarSlotAtom } from "@/atoms/window-sidebar";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { cn } from "@/lib/utils";
@@ -20,9 +21,16 @@ import { cn } from "@/lib/utils";
  * controls' layout. In classic mode it renders in place with only the page's
  * own classes.
  */
-export function DesktopAppToolbar({ className, ...props }: ComponentProps<"div">) {
+export function DesktopAppToolbar({ windowTitle, className, ...props }: ComponentProps<"div"> & { windowTitle?: string }) {
   const embedded = useIsEmbeddedFrame();
   const slot = useAtomValue(windowToolbarSlotAtom);
+  const setPageTitle = useSetAtom(pageTitleAtom);
+
+  useEffect(() => {
+    if (!embedded || windowTitle === undefined) return;
+    setPageTitle(windowTitle);
+    return () => setPageTitle(null);
+  }, [embedded, windowTitle, setPageTitle]);
 
   if (!embedded) return <div className={className} {...props} />;
 
