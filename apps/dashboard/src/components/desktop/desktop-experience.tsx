@@ -2324,6 +2324,13 @@ export function DesktopExperience() {
             data-dock-dragging={draggingDockAppId || undefined}
             onPointerMove={(event) => {
               if (event.pointerType !== "mouse" || draggingDockAppId) return;
+              // React bubbles events from portals (Control Center, notifications,
+              // the Talome menu) through the Dock's tree; only the Dock itself
+              // drives magnification, and pointing into an open panel settles it.
+              if (!event.currentTarget.contains(event.target as Node)) {
+                dockPointerX.set(Number.POSITIVE_INFINITY);
+                return;
+              }
               dockPointerX.set(event.clientX);
             }}
             onPointerLeave={() => dockPointerX.set(Number.POSITIVE_INFINITY)}
