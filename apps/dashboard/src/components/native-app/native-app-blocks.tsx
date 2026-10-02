@@ -252,17 +252,19 @@ function MarkdownBlock({ block, data }: { block: TalomeMarkdownBlock; data: Reco
 function ActionsBlock({
   block,
   actions,
+  primaryActionId,
   pendingActionId,
   onAction,
 }: {
   block: TalomeActionsBlock;
   actions: TalomeAppAction[];
+  primaryActionId?: string;
   pendingActionId?: string;
   onAction: NativeAppActionHandler;
 }) {
   const visibleActions = block.actionIds.flatMap((id) => {
     const action = actions.find((candidate) => candidate.id === id);
-    return action ? [action] : [];
+    return action && id !== primaryActionId ? [action] : [];
   });
   return (
     <Card className="h-full rounded-xl">
@@ -274,7 +276,7 @@ function ActionsBlock({
         {visibleActions.map((action, index) => (
           <Button
             key={action.id}
-            variant={index ? "outline" : "default"}
+            variant={primaryActionId || index ? "outline" : "default"}
             disabled={Boolean(pendingActionId)}
             onClick={() => onAction(action)}
           >
@@ -290,12 +292,14 @@ export function NativeAppBlockRenderer({
   block,
   data,
   actions,
+  primaryActionId,
   pendingActionId,
   onAction,
 }: {
   block: TalomeAppBlock;
   data: Record<string, unknown>;
   actions: TalomeAppAction[];
+  primaryActionId?: string;
   pendingActionId?: string;
   onAction: NativeAppActionHandler;
 }) {
@@ -337,6 +341,7 @@ export function NativeAppBlockRenderer({
       <ActionsBlock
         block={block}
         actions={actions}
+        primaryActionId={primaryActionId}
         pendingActionId={pendingActionId}
         onAction={onAction}
       />

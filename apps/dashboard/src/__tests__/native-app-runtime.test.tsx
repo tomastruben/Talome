@@ -126,10 +126,12 @@ describe("NativeAppRuntime", () => {
   it("uses a window sidebar and compact view menu instead of a second tab row", async () => {
     mode.embedded = true;
     const spec = appSpec("budget-window-navigation", [{ id: "snapshot", kind: "static", value: {} }]);
+    spec.surfaces[0].primaryActionId = "ask-budget";
     spec.surfaces.push({ ...spec.surfaces[0], id: "activity", title: "Activity" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(specResponse(spec)))));
     render(<Provider><WindowSidebarSlot /><WindowToolbarSlot /><NativeAppRuntime storeId="user-apps" appId="budget-window-navigation" /></Provider>);
     const nav = await screen.findByRole("navigation", { name: "Budget Compass views" });
+    expect(screen.getAllByRole("button", { name: "Ask about budget" })).toHaveLength(1);
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Change view: Overview" })).toBeInTheDocument();
     fireEvent.click(within(nav).getByRole("button", { name: "Activity" }));

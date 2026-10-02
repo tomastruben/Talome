@@ -277,7 +277,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
   const renderSurface = (surface: TalomeAppSpec["surfaces"][number]) => (
     <div role="region" aria-label={surface.title} data-native-surface={surface.id} data-native-layout={surface.layout} className={cn("flex w-full min-w-0 flex-col gap-6 pt-1", surface.layout === "detail" && "max-w-3xl")}>
       <div className={cn("grid grid-cols-1 gap-6", surface.layout === "dashboard" && "@lg/native:grid-cols-2 @3xl/native:grid-cols-4")}>
-        {surface.blocks.map((block) => (
+        {surface.blocks.filter((block) => block.component !== "actions" || block.actionIds.some((id) => id !== surface.primaryActionId)).map((block) => (
           <div
             key={block.id}
             data-native-block={block.id}
@@ -287,6 +287,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
               block={block}
               data={nativeData?.values ?? {}}
               actions={spec.actions}
+              primaryActionId={surface.primaryActionId}
               pendingActionId={pendingActionId}
               onAction={runAction}
             />
@@ -307,7 +308,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
       </SourceList>
     ) : null}>
     <div data-native-app={spec.appId} className="mx-auto flex w-full max-w-screen-2xl flex-col gap-6 pb-8 @container/native">
-      <header className={cn("flex flex-col gap-4 @3xl/native:flex-row @3xl/native:items-start @3xl/native:justify-between", embedded && "hidden")}>
+      {!embedded && <header className="flex flex-col gap-4 @3xl/native:flex-row @3xl/native:items-start @3xl/native:justify-between">
         <div className="flex min-w-0 items-start gap-3">
           <div className="flex size-12 shrink-0 items-center justify-center rounded-xl border bg-card shadow-sm">
             <HugeiconsIcon icon={appIcon} size={30} className="text-foreground" aria-hidden />
@@ -332,7 +333,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
             Ask Talome
           </Button>
         </div>
-      </header>
+      </header>}
 
       {embedded && (
         <DesktopAppToolbar data-compact-toolbar="" className="flex min-w-0 items-center justify-end gap-2">
