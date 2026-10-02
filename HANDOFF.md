@@ -65,3 +65,7 @@ Validation: affected dashboard TypeScript check, focused regression suites, full
 - Follow-up mask adjustment: dock and Launchpad share `public/app-icons/mask.svg`, a continuous rounded square. Built-in SVG backgrounds fill their bounds; only the outer container masks them. Installed artwork uses `object-contain` with no inset (Sonarr preview showed inset creates a second square edge). Launcher widget styling outside desktop is unchanged.
 - Dock and built-in Launchpad images load eagerly; these small visible launch controls should not wait for lazy-image intersection detection.
 - In live dark-mode DOM inspection the shared mask is applied, and Sonarr loads. Browser screenshots and theme clicks remain blocked. A browser instrumentation MutationObserver error was also captured without a source URL; its origin has not been established.
+
+## 3 October UI engineering review
+
+Responsive/accessibility fixes are saved through `248c893a`; see `docs/ui-review-2026-10-03.md` for coverage and limitations. 116 targeted component tests passed, plus 53 tests in five navigation/window suites (one overlaps), dashboard TypeScript, and production build. Browser DOM reads/navigation work; clicks and screenshots remain blocked. Do not claim dark/light visual sign-off. Local deployment only; apps/web/.source edits remain untouched. Fresh DB/server backups are in `Talome-Data/backups/codex-ui-review-20261003` and `codex-ui-review-20261003-iteration`.
