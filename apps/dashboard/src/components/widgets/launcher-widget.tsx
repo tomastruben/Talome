@@ -100,7 +100,7 @@ export function extractLaunchableApps(stacks: ServiceStack[], { includeStopped =
   return apps;
 }
 
-export function LaunchableAppIcon({ app, iconClassName, className }: { app: LaunchableApp; iconClassName?: string; className?: string }) {
+export function LaunchableAppIcon({ app, iconClassName, className, desktop = false }: { app: LaunchableApp; iconClassName?: string; className?: string; desktop?: boolean }) {
   const realIconUrl = resolveApplicationIconUrl(app.iconUrl);
   const appIcon = resolveApplicationIcon(app.icon, app.name);
 
@@ -109,6 +109,7 @@ export function LaunchableAppIcon({ app, iconClassName, className }: { app: Laun
       className={cn(
         "relative size-12 rounded-xl bg-muted/40 border border-border/30",
         "flex items-center justify-center overflow-hidden shrink-0",
+        desktop && "desktop-app-icon border-0",
         className,
       )}
     >
@@ -117,7 +118,7 @@ export function LaunchableAppIcon({ app, iconClassName, className }: { app: Laun
           <Image
             src={realIconUrl}
             alt={`${app.name} icon`}
-            className="object-cover" fill
+            className={desktop ? "object-contain" : "object-cover"} fill
             onError={(e) => {
               const img = e.target as HTMLImageElement;
               img.style.display = "none";

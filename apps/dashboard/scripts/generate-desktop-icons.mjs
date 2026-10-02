@@ -26,7 +26,7 @@ for (const [id, , iconName, color] of apps) {
   const glyph = icons[iconName];
   if (!glyph) throw new Error(`Unknown Hugeicons glyph: ${iconName}`);
   const shapes = glyph.map(([tag, attrs]) => `<${tag} ${Object.entries(attrs).filter(([key]) => key !== 'key').map(([key, value]) => `${attribute(key)}="${escape(value)}"`).join(' ')}/>`).join('');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect x="1" y="1" width="62" height="62" rx="15" fill="${color}"/><rect x="1.5" y="1.5" width="61" height="61" rx="14.5" fill="none" stroke="#fff" stroke-opacity=".18"/><g transform="translate(14 14) scale(1.5)" fill="none" color="#fff" stroke-linecap="round" stroke-linejoin="round">${shapes}</g></svg>\n`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="${color}"/><g transform="translate(14 14) scale(1.5)" fill="none" color="#fff" stroke-linecap="round" stroke-linejoin="round">${shapes}</g></svg>\n`;
   await writeFile(new URL(`${id}.svg`, out), svg);
 }
 const entries = apps.filter(([, route]) => route).map(([id, route]) => `  "${route}": "/app-icons/${id}.svg",`).join('\n');

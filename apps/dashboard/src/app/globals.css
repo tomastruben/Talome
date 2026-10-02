@@ -3078,3 +3078,20 @@ html[data-embedded-frame] body {
   -webkit-backdrop-filter: blur(40px) saturate(1.2);
   backdrop-filter: blur(40px) saturate(1.2);
 }
+
+/* One continuous corner mask for desktop artwork. The image remains contained
+   inside it without cropping their aspect ratio or exposing a second tile edge. */
+.desktop-app-icon {
+  border-radius: 28%;
+  overflow: hidden;
+  -webkit-mask-image: url("/app-icons/mask.svg");
+  mask-image: url("/app-icons/mask.svg");
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+@supports ((mask-image: url("")) or (-webkit-mask-image: url(""))) {
+  .desktop-app-icon { border-radius: 0; }
+}

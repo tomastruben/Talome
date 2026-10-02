@@ -372,7 +372,7 @@ export function DesktopLaunchpad({
     windowState: windowState?.({ item }),
     order: index,
     icon: (
-      <span className="relative flex size-14 items-center justify-center overflow-hidden rounded-xl border border-border/60 bg-background/70">
+      <span className="desktop-app-icon relative flex size-14 items-center justify-center bg-background/70">
         {desktopAppArtwork(item.url) ? (
           <Image src={desktopAppArtwork(item.url)!} alt="" fill sizes="56px" className="object-contain" />
         ) : (
@@ -393,7 +393,7 @@ export function DesktopLaunchpad({
     hidden: visibility.hidden.has(`service:${app.id}`),
     windowState: windowState?.({ app }),
     order: builtins.length + index,
-    icon: <LaunchableAppIcon app={app} className="!size-14 !rounded-xl" iconClassName="!size-7" />,
+    icon: <LaunchableAppIcon app={app} desktop className="!size-14" iconClassName="!size-7" />,
     launch: () => onLaunchService(app),
   }));
 

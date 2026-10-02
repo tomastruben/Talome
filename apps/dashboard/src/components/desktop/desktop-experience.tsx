@@ -3073,13 +3073,13 @@ function DockAppIcon({
 
   if (realIconUrl) {
     return (
-      <span className="relative size-9 overflow-hidden rounded-lg bg-muted/30">
+      <span className="desktop-app-icon relative size-9 bg-muted/30">
         <Image
           src={realIconUrl}
           alt={`${label} icon`}
           fill
           sizes="36px"
-          className={realIconUrl.startsWith("/app-icons/") ? "object-contain" : "object-contain p-0.5"}
+          className="object-contain"
           onError={() => setFailedUrl(realIconUrl)}
         />
       </span>
