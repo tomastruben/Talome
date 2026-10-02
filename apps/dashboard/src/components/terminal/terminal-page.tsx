@@ -156,14 +156,14 @@ export function TerminalPage() {
 
   useEffect(() => setMounted(true), []);
 
-  // In a window the title bar says where you are: the session you're typing
-  // into (the sidebar lists the others). Classic mode keeps "Terminal" in the
-  // header; its toolbar's session picker names the session.
+  // The window is simply "Terminal" (the owner's call): a session name like
+  // "Default" says little on its own. The sidebar marks the open session, and
+  // the toolbar's session picker names it where the sidebar is hidden. Clear
+  // any title a previous page left behind.
   useEffect(() => {
     if (!embeddedFrame) return;
-    setPageTitle(sessionTitle);
-    return () => setPageTitle(null);
-  }, [embeddedFrame, sessionTitle, setPageTitle]);
+    setPageTitle(null);
+  }, [embeddedFrame, setPageTitle]);
 
   // Auto mode and remote control are remembered on this device.
   useEffect(() => {

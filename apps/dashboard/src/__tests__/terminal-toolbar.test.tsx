@@ -1,6 +1,6 @@
 /**
  * The Terminal's controls (the relayed request: "revisit positions of the
- * controls of the Terminal window"): a clean title bar that names the session,
+ * controls of the Terminal window"): a clean title bar that just says Terminal,
  * one toolbar row on the window glass (in place in classic mode) holding the
  * session picker where no sidebar lists the sessions, the Auto switch, the
  * image and keyboard controls and one split button for the agent. Every
@@ -138,15 +138,17 @@ afterEach(() => {
 });
 
 describe("Terminal in a desktop window", () => {
-  it("keeps the title bar clean: no title-bar controls, and the title names the session", async () => {
+  it("keeps the title bar clean: no title-bar controls, and the window is just \"Terminal\"", async () => {
     renderTerminal();
     await screen.findByTestId("terminal-inner");
     expect(store.get(desktopAppActionsAtom)).toEqual([]);
-    await waitFor(() => expect(store.get(pageTitleAtom)).toBe("Default"));
+    // No page title, so the window shows the app's own name
+    await waitFor(() => expect(store.get(pageTitleAtom)).toBeNull());
 
+    // Switching sessions doesn't rename the window
     const nav = await screen.findByRole("navigation", { name: "Terminal" });
     fireEvent.click(await within(nav).findByRole("button", { name: /^session 2/ }));
-    await waitFor(() => expect(store.get(pageTitleAtom)).toBe("session 2"));
+    await waitFor(() => expect(store.get(pageTitleAtom)).toBeNull());
   });
 
   it("puts every control in the window's toolbar row, on the glass and outside the dark well", async () => {
