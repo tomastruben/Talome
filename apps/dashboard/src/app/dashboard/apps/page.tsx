@@ -3,11 +3,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useSetAtom } from "jotai";
 import useSWR from "swr";
 import { SearchField } from "@/components/ui/search-field";
 import {
   HugeiconsIcon,
+  Add01Icon,
   CheckmarkCircle01Icon,
   AiMagicIcon,
   Package01Icon,
@@ -34,7 +34,6 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { StaleRow, useLoadedAt, useLoadingPhase } from "@/components/data-state/data-state";
 import { fetchJson } from "@/lib/fetch-json";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
-import { desktopAppActionsAtom } from "@/atoms/desktop-app-actions";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { CORE_URL } from "@/lib/constants";
 import { deleteCreatedAppCopy, emptyCatalogCopy } from "@/lib/app-store-copy";
@@ -55,6 +54,29 @@ const SOURCE_TAB_ORDER: Record<string, number> = {
 };
 /** Don't refetch the multi-MB catalog more than once per this window. */
 const CATALOG_DEDUPE_MS = 5 * 60 * 1000;
+/**
+ * Create opens the Assistant with the app-creation prompt. In a window the
+ * shell's link bridge turns the link into the Assistant's own window.
+ */
+const CREATE_APP_HREF = "/dashboard/assistant?prompt=I+want+to+create+a+new+app";
+
+/** A source tab: 44px on touch, where the tabs are a phone's source navigation */
+const TAB_CLASS = "text-xs pointer-coarse:h-11 pointer-coarse:min-w-11";
+
+/**
+ * A category pill. On a phone these pills are the only category navigation
+ * (the window sidebar replaces them), so on touch each is a 44px target. The
+ * rail scrolls sideways and clips overflow, so the pill itself grows rather
+ * than a hit area around it, and its focus ring is inset.
+ */
+function categoryPillClass(active: boolean) {
+  return cn(
+    "h-6 shrink-0 rounded-full border px-2 text-xs transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:h-11 pointer-coarse:px-3",
+    active
+      ? "border-foreground/30 bg-foreground/8 text-foreground"
+      : "border-border text-muted-foreground hover:text-foreground",
+  );
+}
 
 function useAutoLoadSentinel({
   targetRef,
@@ -96,7 +118,6 @@ function AppsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const embeddedFrame = useIsEmbeddedFrame();
-  const setDesktopAppActions = useSetAtom(desktopAppActionsAtom);
   const [sourceCache, setSourceCache] = useState<Record<string, CatalogApp[]>>({});
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
@@ -322,25 +343,6 @@ function AppsPageContent() {
       : fadeRight
         ? "[mask-image:linear-gradient(to_right,black_calc(100%-1rem),transparent)]"
         : undefined;
-  useEffect(() => {
-    setDesktopAppActions([
-      {
-        id: "app-store-my-apps",
-        label: "My Apps",
-        active: tab === "user-created",
-        onSelect: () => changeTab("user-created"),
-      },
-      {
-        id: "app-store-installed",
-        label: totalInstalled > 0 ? `Installed ${totalInstalled}` : "Installed",
-        active: tab === "installed",
-        onSelect: () => changeTab("installed"),
-      },
-    ]);
-
-    return () => setDesktopAppActions([]);
-  }, [changeTab, setDesktopAppActions, tab, totalInstalled]);
-
   // In a desktop window, sources, your apps and categories live in a sidebar
   const showCategories = !isInstalled && tab !== "user-created" && categories.length > 0;
   const sidebar = (
@@ -381,9 +383,12 @@ function AppsPageContent() {
     <WindowSidebarLayout sidebar={sidebar}>
     <div className="flex min-w-0 flex-1 flex-col gap-5">
       <DesktopAppToolbar className="grid min-w-0 gap-3">
-        {/* ── Source tabs + search. One row that wraps only when the search
-            can't keep 10rem beside the tabs; in a wide window the sidebar
-            holds the sources, so the row names the view instead. ── */}
+        {/* ── Source tabs, Create, search (Finder order: view, verbs, search).
+            One row that wraps only when the search can't keep 10rem beside
+            the tabs; in a wide window the sidebar holds the sources, so the
+            row names the view instead. A window's title bar holds no verbs,
+            so in a window Create sits here; in classic mode it stays in the
+            page header (as Files' verbs do). ── */}
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h2 className={cn(WINDOW_SIDEBAR_SHOWS, "min-w-0 flex-1 items-baseline gap-1.5 text-sm font-medium text-foreground")}>
             <span className="truncate">{appStoreViewTitle(tab)}</span>
@@ -391,31 +396,48 @@ function AppsPageContent() {
               <span className="shrink-0 font-normal text-muted-foreground">· {categoryLabel(category)}</span>
             )}
           </h2>
-          <Tabs className={WINDOW_SIDEBAR_REPLACES} value={tab} onValueChange={changeTab}>
-            <TabsList>
-              <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
-              {sourceTypes.filter((t) => !embeddedFrame || t !== "user-created").map((t) => (
-                t === "user-created" ? (
-                  <TabsTrigger key={t} value={t} className="text-xs" aria-label="My Apps" title="My Apps">
-                    My Apps
-                  </TabsTrigger>
-                ) : (
-                  <TabsTrigger key={t} value={t} className="text-xs">
-                    {sourceLabel(t)}
-                  </TabsTrigger>
-                )
-              ))}
-              {!embeddedFrame && (
-                <TabsTrigger value="installed" className="text-xs px-2" aria-label="Installed" title="Installed">
-                  <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} />
-                  {totalInstalled > 0 && <TabsBadge>{totalInstalled}</TabsBadge>}
+          {/* Where the sidebar is hidden (a narrow window, or classic) the
+              tabs reach every place it does, My Apps and Installed included.
+              On touch each tab is a 44px target. With every source on a
+              phone the strip is wider than the screen, so it scrolls sideways
+              instead of pushing the page off the screen. */}
+          <Tabs
+            className={cn(WINDOW_SIDEBAR_REPLACES, "min-w-0 max-w-full overflow-x-auto scrollbar-none")}
+            value={tab}
+            onValueChange={changeTab}
+          >
+            <TabsList className="pointer-coarse:h-12">
+              <TabsTrigger value="all" className={TAB_CLASS}>All</TabsTrigger>
+              {sourceTypes.map((t) => (
+                <TabsTrigger key={t} value={t} className={TAB_CLASS}>
+                  {t === "user-created" ? "My Apps" : sourceLabel(t)}
                 </TabsTrigger>
-              )}
+              ))}
+              <TabsTrigger value="installed" className={cn(TAB_CLASS, "px-2")} aria-label="Installed" title="Installed">
+                <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} aria-hidden="true" />
+                {totalInstalled > 0 && <TabsBadge>{totalInstalled}</TabsBadge>}
+              </TabsTrigger>
             </TabsList>
           </Tabs>
 
+          {embeddedFrame && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto shrink-0 text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:min-w-11"
+              asChild
+            >
+              <Link href={CREATE_APP_HREF} title="Create an app with the Assistant">
+                <HugeiconsIcon icon={Add01Icon} size={14} aria-hidden="true" />
+                {/* Labelled where the column has room; the name either way */}
+                <span className="sr-only @md:not-sr-only">Create</span>
+              </Link>
+            </Button>
+          )}
+
           <SearchField
-            containerClassName="ml-auto min-w-40 flex-1 @xl:max-w-64"
+            containerClassName={cn("min-w-40 flex-1 @xl:max-w-64", !embeddedFrame && "ml-auto")}
+            className="pointer-coarse:h-11"
             aria-label="Search apps"
             placeholder="Search apps…"
             value={search}
@@ -429,11 +451,7 @@ function AppsPageContent() {
             <button
               type="button"
               aria-pressed={category === "all"}
-              className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
-                category === "all"
-                  ? "border-foreground/30 bg-foreground/8 text-foreground"
-                  : "border-border text-muted-foreground hover:text-foreground"
-              }`}
+              className={categoryPillClass(category === "all")}
               onClick={() => changeCategory("all")}
             >
               All
@@ -446,11 +464,7 @@ function AppsPageContent() {
                     key={cat}
                     type="button"
                     aria-pressed={category === cat}
-                    className={`h-6 px-2 rounded-full border text-xs transition-colors shrink-0 ${
-                      category === cat
-                        ? "border-foreground/30 bg-foreground/8 text-foreground"
-                        : "border-border text-muted-foreground hover:text-foreground"
-                    }`}
+                    className={categoryPillClass(category === cat)}
                     onClick={() => changeCategory(cat)}
                   >
                     {categoryLabel(cat)}
@@ -536,7 +550,7 @@ function AppsPageContent() {
             description="Describe what you want to run and Claude Code will build it for you."
             action={
               <Button variant="outline" size="sm" asChild>
-                <Link href="/dashboard/assistant?prompt=I+want+to+create+a+new+app">Create your first app</Link>
+                <Link href={CREATE_APP_HREF}>Create your first app</Link>
               </Button>
             }
           />

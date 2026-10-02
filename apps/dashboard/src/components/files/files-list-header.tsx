@@ -39,7 +39,7 @@ export function FilesListHeader({ allSelected, hasSelection, onToggleSelectAll }
     <Table className="table-fixed" containerClassName="shrink-0 overflow-visible border-b border-border/50">
       <FilesColGroup />
       <thead data-slot="table-header">
-        <TableRow className="group/header border-0 hover:bg-transparent [&>th]:h-9 [&>th]:text-xs [&>th]:font-normal [&>th]:text-muted-foreground">
+        <TableRow className="group/header border-0 hover:bg-transparent [&>th]:h-9 [&>th]:text-xs [&>th]:font-normal [&>th]:text-muted-foreground pointer-coarse:[&>th]:h-11">
           <TableHead className={FILES_FIRST_CELL}>
             <div className="flex items-center justify-center">
               <button

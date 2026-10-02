@@ -51,6 +51,13 @@ interface FilesToolbarProps {
  * field filters the folder on screen as you type and searches its subfolders
  * on Enter or with "Include subfolders".
  *
+ * Below `@md` (a phone, or a very narrow window) the scope switch takes its
+ * own full-width row under the field, like a scope bar under a search field,
+ * so a phone can go back from "Include subfolders" (which the keyboard's
+ * Search key picks) to "This folder" without retyping the query. It sits
+ * under the field rather than above it so the field doesn't move while
+ * you type the first letter.
+ *
  * In a desktop window it sits in the window's toolbar slot and carries the
  * verbs, so the title bar holds only the window controls, Back and the
  * title. In classic mode it sits above the list and the verbs stay in the
@@ -71,7 +78,7 @@ export function FilesToolbar({
 }: FilesToolbarProps) {
   const label = `Search ${locationLabel}`;
   return (
-    <DesktopAppToolbar className="flex shrink-0 items-center gap-2 px-[var(--window-pad,0.75rem)] pb-3">
+    <DesktopAppToolbar className="flex shrink-0 flex-wrap items-center gap-2 px-[var(--window-pad,0.75rem)] pb-3">
       {showScope && (
         <ToggleGroup
           type="single"
@@ -82,12 +89,13 @@ export function FilesToolbar({
             if (value === "folder" || value === "deep") onScopeChange(value);
           }}
           aria-label="Where to search"
-          className="hidden shrink-0 @md:flex"
+          data-files-scope=""
+          className="order-last flex w-full shrink-0 @md:order-none @md:w-auto"
         >
-          <ToggleGroupItem value="folder" className="px-2.5 pointer-coarse:h-11">
+          <ToggleGroupItem value="folder" className="flex-1 px-2.5 pointer-coarse:h-11 @md:flex-none">
             This folder
           </ToggleGroupItem>
-          <ToggleGroupItem value="deep" className="px-2.5 pointer-coarse:h-11">
+          <ToggleGroupItem value="deep" className="flex-1 px-2.5 pointer-coarse:h-11 @md:flex-none">
             Include subfolders
           </ToggleGroupItem>
         </ToggleGroup>
