@@ -198,9 +198,10 @@ describe("Terminal in classic mode", () => {
     expect(store.get(pageTitleAtom)).toBeNull();
   });
 
-  it("clears the home indicator on a phone: the dark well pads its bottom by the safe area", () => {
+  it("leaves the home indicator to the classic shell, so a phone isn't padded twice", () => {
     const page = read("components/terminal/terminal-page.tsx");
-    expect(page).toMatch(/className="dark absolute inset-0[^"]*pb-\[env\(safe-area-inset-bottom\)\][^"]*md:pb-0/);
+    expect(page).not.toMatch(/safe-area-inset-bottom/);
+    expect(read("components/ui/sidebar.tsx") + read("components/layout/dashboard-shell.tsx")).toMatch(/pb-\[env\(safe-area-inset-bottom\)\]/);
   });
 
   it("hides the session's time on touch rather than drawing it under the End button", async () => {

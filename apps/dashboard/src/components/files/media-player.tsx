@@ -2185,7 +2185,12 @@ export function VideoPlayer({
                         ))}
                       </DropdownMenuRadioGroup>
                       <DropdownMenuSeparator />
-                      <SubtitleStylePicker subStyle={subStyle} onChange={(s) => { setSubStyle(s); saveSubtitleStyle(s); }} />
+                      <SubtitleStylePicker
+                        subStyle={subStyle}
+                        onChange={(s) => { setSubStyle(s); saveSubtitleStyle(s); }}
+                        // In fullscreen only the player is shown: the popover opens inside it, like its menu
+                        container={isFullscreen || cinemaMode ? containerRef.current : undefined}
+                      />
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
@@ -2372,9 +2377,12 @@ export function VideoPlayer({
 function SubtitleStylePicker({
   subStyle,
   onChange,
+  container,
 }: {
   subStyle: SubtitleStyle;
   onChange: (style: SubtitleStyle) => void;
+  /** Where the popover portals (the player in fullscreen) */
+  container?: HTMLElement | null;
 }) {
   const fontSizes: { label: string; value: SubtitleFontSize }[] = [
     { label: "S", value: "small" },
@@ -2402,6 +2410,7 @@ function SubtitleStylePicker({
         align="end"
         sideOffset={8}
         className="w-56 p-4 space-y-4"
+        container={container}
       >
         {/* Font size */}
         <div>
@@ -2414,8 +2423,8 @@ function SubtitleStylePicker({
                 className={cn(
                   "flex-1 py-1.5 rounded text-sm text-center transition-colors",
                   subStyle.fontSize === fs.value
-                    ? "bg-white/15 text-white"
-                    : "bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/70",
+                    ? "bg-foreground/15 text-foreground"
+                    : "bg-foreground/5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
                 )}
               >
                 {fs.label}
@@ -2434,8 +2443,8 @@ function SubtitleStylePicker({
                 className={cn(
                   "flex-1 py-1.5 rounded text-xs text-center transition-colors",
                   subStyle.bgOpacity === opt.value
-                    ? "bg-white/15 text-white"
-                    : "bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/70",
+                    ? "bg-foreground/15 text-foreground"
+                    : "bg-foreground/5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
                 )}
               >
                 {opt.label}

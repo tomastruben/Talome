@@ -38,7 +38,7 @@ export function FilesStatusBar({
   onToggleHidden,
 }: FilesStatusBarProps) {
   return (
-    <WindowStatusBar className="flex min-h-9 shrink-0 items-center gap-2 border-t border-border/60 px-[var(--window-pad,0.75rem)] pb-[env(safe-area-inset-bottom)] text-xs text-muted-foreground">
+    <WindowStatusBar className="flex min-h-9 shrink-0 items-center gap-2 border-t border-border/60 px-[var(--window-pad,0.75rem)] text-xs text-muted-foreground">
       <nav
         aria-label="Folder path"
         className="flex min-w-0 flex-1 items-center overflow-x-auto scrollbar-none [mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]"

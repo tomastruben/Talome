@@ -364,10 +364,8 @@ export function TerminalPage() {
       <div
         // The terminal stays dark in both themes, so its status and text tokens
         // use the dark values (the light ones are too dark for this surface).
-        // On a phone its last rows clear the home indicator (a window's
-        // iframe has no safe-area inset; md+ Home Screen apps get it from the
-        // shell's inset margin).
-        className="dark absolute inset-0 flex flex-col overflow-hidden bg-terminal pb-[env(safe-area-inset-bottom)] text-terminal-foreground md:pb-0"
+        // The classic shell pads the home indicator on phones (SidebarInset).
+        className="dark absolute inset-0 flex flex-col overflow-hidden bg-terminal text-terminal-foreground"
       >
         {error ? (
           <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
