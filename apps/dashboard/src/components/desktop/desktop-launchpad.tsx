@@ -12,6 +12,8 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import Image from "next/image";
+import { desktopAppArtwork } from "@/lib/desktop-app-artwork";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -370,8 +372,12 @@ export function DesktopLaunchpad({
     windowState: windowState?.({ item }),
     order: index,
     icon: (
-      <span className="flex size-14 items-center justify-center rounded-xl border border-border/60 bg-background/70">
-        <HugeiconsIcon icon={item.icon} className="size-7" strokeWidth={1.5} />
+      <span className="relative flex size-14 items-center justify-center overflow-hidden rounded-xl border border-border/60 bg-background/70">
+        {desktopAppArtwork(item.url) ? (
+          <Image src={desktopAppArtwork(item.url)!} alt="" fill sizes="56px" className="object-contain" />
+        ) : (
+          <HugeiconsIcon icon={item.icon} className="size-7" strokeWidth={1.5} />
+        )}
       </span>
     ),
     launch: () => onLaunch(item),

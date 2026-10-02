@@ -92,6 +92,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { DesktopWindow, desktopWindowChrome } from "@/components/desktop/desktop-window";
+import { desktopAppArtwork } from "@/lib/desktop-app-artwork";
 import { DesktopLaunchpad } from "@/components/desktop/desktop-launchpad";
 import { DesktopDriveIcons } from "@/components/desktop/desktop-drive-icons";
 import {
@@ -385,7 +386,7 @@ function removeWindowChrome(
   );
 }
 
-const DESKTOP_APPS: DesktopAppDefinition[] = [
+const DESKTOP_APPS: DesktopAppDefinition[] = ([
   {
     id: "files",
     title: "Files",
@@ -434,7 +435,7 @@ const DESKTOP_APPS: DesktopAppDefinition[] = [
     adminOnly: true,
     minimum: { width: 480, height: 360 },
   },
-];
+] satisfies DesktopAppDefinition[]).map((app) => ({ ...app, iconUrl: desktopAppArtwork(app.url) }));
 
 const appById = new Map(DESKTOP_APPS.map((app) => [app.id, app]));
 const DEFAULT_AREA: DesktopArea = { width: 1440, height: 820 };
@@ -453,6 +454,7 @@ function appDefinitionFromNav(item: NavItem): DesktopAppDefinition {
       title: item.title,
       url: item.url,
       icon: item.icon,
+      iconUrl: desktopAppArtwork(item.url),
       permission: item.permission,
       adminOnly: item.adminOnly,
       minimum: { width: 440, height: 340 },
@@ -2355,6 +2357,7 @@ export function DesktopExperience() {
                   <DockButton
                     label="Launchpad"
                     icon={StartUp02Icon}
+                    iconUrl="/app-icons/launchpad.svg"
                     active={launchpadOpen}
                     expanded={launchpadOpen}
                     running={false}
@@ -3076,7 +3079,7 @@ function DockAppIcon({
           alt={`${label} icon`}
           fill
           sizes="36px"
-          className="object-contain p-0.5"
+          className={realIconUrl.startsWith("/app-icons/") ? "object-contain" : "object-contain p-0.5"}
           onError={() => setFailedUrl(realIconUrl)}
         />
       </span>
