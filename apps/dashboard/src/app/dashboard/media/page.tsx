@@ -1811,7 +1811,7 @@ function MediaPageInner() {
           />
           <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
             {embedded && (
-              <div data-media-actions="" className="flex shrink-0 items-center gap-1">
+              <div data-toolbar-secondary="" data-media-actions="" className="flex shrink-0 items-center gap-1">
                 <MediaLibraryActions
                   placement="toolbar"
                   selecting={selectionMode}
