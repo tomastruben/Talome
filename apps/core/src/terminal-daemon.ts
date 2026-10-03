@@ -30,6 +30,7 @@ import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { allowsTerminalAccess, parseTokenScopes } from "./approval/grants.js";
 import { homedir } from "node:os";
 import { DAEMON_PORT } from "./terminal-constants.js";
+import { restoredTerminalHistory } from "./terminal-replay.js";
 import { hasBackupPassword, PUBLIC_BACKUP_AUTH_PATHS, registerBackupAuthRoutes } from "./terminal-backup-auth.js";
 import {
   bindTerminalToUser,
@@ -397,9 +398,7 @@ function getOrCreateSession(id: string, name: string): PtySession {
 
   // Pre-fill buffer with recovered scroll history so clients see old output
   if (recovered && recovered.buffer) {
-    const separator =
-      "\r\n\x1b[90m── session restored ──\x1b[0m\r\n\r\n";
-    session.buffer.push(recovered.buffer, separator);
+    session.buffer.push(restoredTerminalHistory(recovered.buffer));
     recoveredSessions.delete(id);
   } else if (recovered) {
     recoveredSessions.delete(id);
