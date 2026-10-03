@@ -1,6 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useSWRConfig } from "swr";
+import { useContainers } from "@/hooks/use-containers";
+import { talomePost } from "@/hooks/use-talome-api";
 import { useSetAtom } from "jotai";
 import { pageTitleAtom } from "@/atoms/page-title";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -11,9 +14,10 @@ import {
   Globe02Icon,
   Share04Icon,
   Cancel01Icon,
+  PlayIcon,
 } from "@/components/icons";
 import { cn } from "@/lib/utils";
-import { getHostUrl } from "@/lib/constants";
+import { CORE_URL, getHostUrl } from "@/lib/constants";
 import { useQuickLook } from "./quick-look-context";
 import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
@@ -55,7 +59,13 @@ function PortPicker({
 
 // ── Main QuickLook component ──────────────────────────────────────────────────
 
-export function QuickLookContent({ container, standalone = false, port, onClose }: { container: Container; standalone?: boolean; port?: number; onClose: () => void }) {
+export function QuickLookContent({ container: initialContainer, standalone = false, port, onClose }: { container: Container; standalone?: boolean; port?: number; onClose: () => void }) {
+  const { containers, refresh } = useContainers();
+  const { mutate } = useSWRConfig();
+  const container = containers.find((item) => item.id === initialContainer.id) ?? initialContainer;
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const startingRef = useRef(false);
   const close = onClose;
   const embedded = useIsEmbeddedFrame();
   const name = containerDisplayName(container);
@@ -74,6 +84,12 @@ export function QuickLookContent({ container, standalone = false, port, onClose 
   const [activePort, setActivePort] = useState<number | null>(port && tcpPorts.includes(port) ? port : container.webUi?.port && tcpPorts.includes(container.webUi.port) ? container.webUi.port : tcpPorts[0] ?? null);
   const [iframeState, setIframeState] = useState<"loading" | "ready" | "blocked">("loading");
   const [iframeKey, setIframeKey] = useState(0);
+
+  // Published ports can become available after starting a stopped service.
+  useEffect(() => {
+    if (activePort && tcpPorts.includes(activePort)) return;
+    setActivePort(port && tcpPorts.includes(port) ? port : container.webUi?.port && tcpPorts.includes(container.webUi.port) ? container.webUi.port : tcpPorts[0] ?? null);
+  }, [activePort, port, container.ports, container.webUi]);
 
   // Reset when port changes
   useEffect(() => {
@@ -98,6 +114,26 @@ export function QuickLookContent({ container, standalone = false, port, onClose 
   }, [close, standalone]);
 
   const isRunning = container.status === "running";
+  const canStart = ["stopped", "exited", "created"].includes(container.status);
+
+  async function handleStart() {
+    if (startingRef.current) return;
+    startingRef.current = true;
+    setStarting(true);
+    setStartError(null);
+    try {
+      await talomePost(`/api/containers/${encodeURIComponent(container.id)}/start`);
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : "Could not start this service. Try again.");
+      setStarting(false);
+      startingRef.current = false;
+      return;
+    }
+    // Refresh failures must not misreport a successful start as a failed action.
+    await Promise.allSettled([refresh(), mutate(`${CORE_URL}/api/containers?grouped=true`)]);
+    setStarting(false);
+    startingRef.current = false;
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -166,10 +202,15 @@ export function QuickLookContent({ container, standalone = false, port, onClose 
             <p className="text-sm text-muted-foreground capitalize">
               {container.status === "running" ? "No web interface" : container.status}
             </p>
-            {(container.status === "stopped" || container.status === "exited") && (
-              <p className="text-xs text-muted-foreground">
-                Start this container to open its interface.
-              </p>
+            {canStart && (
+              <>
+                <p className="text-sm text-muted-foreground">Start {name} to use this service.</p>
+                <Button onClick={handleStart} disabled={starting} aria-label={`Start ${name}`} aria-busy={starting}>
+                  {starting ? <Spinner className="size-4" /> : <HugeiconsIcon icon={PlayIcon} size={16} />}
+                  {starting ? "Starting…" : "Start"}
+                </Button>
+                {startError && <p role="alert" className="max-w-sm text-sm text-status-critical">{startError}</p>}
+              </>
             )}
           </div>
         ) : (
@@ -233,7 +274,7 @@ export function QuickLookModal() {
       >
         {/* Hidden title satisfies radix accessibility requirement */}
         <DialogTitle className="sr-only">
-          {container ? `Quick Look — ${name}` : "Quick Look"}
+          {container ? `Quick Look — ${containerDisplayName(container)}` : "Quick Look"}
         </DialogTitle>
         <DialogDescription className="sr-only">Container quick look preview</DialogDescription>
         {container && <QuickLookContent container={container} port={port} onClose={close} />}
