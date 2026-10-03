@@ -52,6 +52,7 @@ import {
   Message01Icon,
   ComputerTerminal01Icon,
   Settings01Icon,
+  MoreHorizontalIcon,
   Search01Icon,
   UserIcon,
   Logout01Icon,
@@ -79,6 +80,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { dockAppCapacity } from "@/lib/dock-capacity";
 import { DOCK_ICON_SIZE, DOCK_MAGNIFY_SPRING, dockMagnification } from "@/lib/dock-magnification";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { IconSwap } from "@/components/ui/micro";
@@ -820,6 +822,9 @@ export function DesktopExperience() {
   const workAreaRef = useRef<HTMLDivElement>(null);
   const appFrameRefs = useRef(new Map<string, HTMLIFrameElement>());
   const desktopWindowRefs = useRef(new Map<string, HTMLElement>());
+  const dockTrayRef = useRef<HTMLDivElement>(null);
+  const dockOverflowButtonRef = useRef<HTMLButtonElement>(null);
+  const [dockSpace, setDockSpace] = useState({ width: 0, tray: 0 });
   const dockButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const desktopWidgetDoneButtonRef = useRef<HTMLButtonElement>(null);
   const wallpaperAccountRestoredRef = useRef<string | undefined>(undefined);
@@ -971,6 +976,32 @@ export function DesktopExperience() {
       .map((app) => app.id),
     [visibleDockApps],
   );
+
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    const tray = dockTrayRef.current;
+    if (!workspace || !tray) return;
+    const measure = () => setDockSpace((previous) => {
+      const width = workspace.clientWidth;
+      const trayWidth = Math.ceil(tray.getBoundingClientRect().width);
+      return previous.width === width && previous.tray === trayWidth
+        ? previous : { width, tray: trayWidth };
+    });
+    const observer = new ResizeObserver(measure);
+    observer.observe(workspace);
+    observer.observe(tray);
+    measure();
+    return () => observer.disconnect();
+  }, [desktopWidgetsEditing]);
+
+  const dockOrderedApps = visibleDockApps.filter((app) => app.id !== "settings");
+  const dockCapacity = dockAppCapacity(dockSpace.width, dockSpace.tray, dockOrderedApps.length,
+    visibleDockApps.some((app) => app.id === "settings"));
+  const overflowDockApps = dockOrderedApps.slice(dockCapacity);
+  const shelfDockApps = [
+    ...dockOrderedApps.slice(0, dockCapacity),
+    ...visibleDockApps.filter((app) => app.id === "settings"),
+  ];
 
   const windowByAppId = useMemo(
     () => new Map(windows.map((windowModel) => [windowModel.appId, windowModel])),
@@ -1291,7 +1322,7 @@ export function DesktopExperience() {
     });
 
     const windowElement = desktopWindowRefs.current.get(id);
-    const dockButton = dockButtonRefs.current.get(appId);
+    const dockButton = dockButtonRefs.current.get(appId) ?? dockOverflowButtonRef.current;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     try {
@@ -1736,7 +1767,7 @@ export function DesktopExperience() {
     minimizingWindowIdsRef.current.add(id);
 
     const windowElement = desktopWindowRefs.current.get(id);
-    const dockButton = dockButtonRefs.current.get(appId);
+    const dockButton = dockButtonRefs.current.get(appId) ?? dockOverflowButtonRef.current;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     if (!windowElement || !dockButton || reduceMotion) {
@@ -2042,6 +2073,43 @@ export function DesktopExperience() {
       // Cross-origin service windows cannot expose their location, which is expected.
     }
   }, [router]);
+
+  const dockOverflowMenu = overflowDockApps.length > 0 ? (
+    <DropdownMenu onOpenChange={() => dockPointerX.set(Number.POSITIVE_INFINITY)}>
+      <DropdownMenuTrigger asChild>
+        <button ref={dockOverflowButtonRef} type="button"
+          className="relative flex size-12 shrink-0 items-center justify-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          aria-label={`More apps, ${overflowDockApps.length} applications`}>
+          <HugeiconsIcon icon={MoreHorizontalIcon} size={24} strokeWidth={1.6} />
+          {overflowDockApps.some((hidden) => windowByAppId.has(hidden.id)) ? (
+            <span className="absolute -bottom-1 size-1 rounded-full bg-foreground/70" aria-hidden="true" />
+          ) : null}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="center" sideOffset={16}
+        className="z-[1200] w-64 rounded-2xl p-2">
+        <DropdownMenuLabel className="font-normal text-muted-foreground">More apps</DropdownMenuLabel>
+        {overflowDockApps.map((hidden) => {
+          const hiddenWindow = windowByAppId.get(hidden.id);
+          const service = serviceStatusFor(hidden);
+          return (
+            <DropdownMenuItem key={hidden.id} textValue={hidden.title}
+              className="gap-3 rounded-xl p-2" onSelect={() => openApp(hidden)}>
+              <DockAppIcon label={hidden.title} icon={hidden.icon} iconUrl={hidden.iconUrl} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{hidden.title}</span>
+                {hiddenWindow || service ? (
+                  <span className="block text-sm text-muted-foreground">
+                    {hiddenWindow ? (hiddenWindow.minimized ? "Minimized" : "Open") : service?.state}
+                  </span>
+                ) : null}
+              </span>
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
 
   if (!desktopModeAvailable) return null;
 
@@ -2395,7 +2463,7 @@ export function DesktopExperience() {
                 items={reorderableDockAppIds}
                 strategy={horizontalListSortingStrategy}
               >
-                {visibleDockApps.map((app) => {
+                {shelfDockApps.map((app) => {
                   const windowModel = windowByAppId.get(app.id);
                   const dockIndex = reorderableDockAppIds.indexOf(app.id);
                   const canReorder = dockIndex >= 0;
@@ -2475,11 +2543,13 @@ export function DesktopExperience() {
 
                   return (
                     <div key={app.id} className="flex items-center gap-1">
-                      <span className="mx-1 h-9 w-px bg-border" />
+                      {dockOverflowMenu}
+                      <span className="mx-1 h-9 w-px bg-border" aria-hidden="true" />
                       {contextMenu()}
                     </div>
                   );
                 })}
+                {!visibleDockApps.some((app) => app.id === "settings") ? dockOverflowMenu : null}
               </SortableContext>
             </DndContext>
             </DockPointerContext.Provider>
@@ -2487,7 +2557,7 @@ export function DesktopExperience() {
             <span className="mx-1 h-9 w-px self-center bg-border" aria-hidden="true" />
             {/* The status tray: what the menu bar used to hold (now playing, approvals,
                 search, Control Center, notifications, the Talome menu with health). */}
-            <div role="group" aria-label="Status" className="flex items-center gap-0.5 self-center">
+            <div ref={dockTrayRef} role="group" aria-label="Status" className="flex shrink-0 items-center gap-0.5 self-center">
               <AnimatePresence initial={false}>
                 {desktopAudiobookPlayer.book ? (
                   <motion.div
