@@ -2659,6 +2659,20 @@ html[data-embedded-frame] body {
   .tm-window-toolbar-trailing {
     padding-inline-end: var(--window-pad);
   }
+  /* Keep secondary icon verbs compact beside the view and primary action. */
+  .tm-window-toolbar-trailing [data-window-action-icon] {
+    width: 2rem;
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .tm-window-toolbar-trailing [data-window-action-icon] > span {
+    display: none;
+  }
+  @media (pointer: coarse) {
+    .tm-window-toolbar-trailing [data-window-action-icon] {
+      width: 2.75rem;
+    }
+  }
   .tm-window-toolbar {
     order: 1;
     flex-basis: 100%;

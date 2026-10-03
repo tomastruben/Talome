@@ -64,6 +64,18 @@ function renderToolbar(store = createStore(), app?: React.ReactNode) {
 }
 
 describe("WindowToolbar", () => {
+  it("keeps compact icon actions named and operable", () => {
+    const store = createStore();
+    const ask = vi.fn();
+    store.set(desktopAppActionsAtom, [{ id: "assistant", label: "Ask about Budget Compass", icon: "assistant", onSelect: ask }]);
+    const { row } = renderToolbar(store);
+    const button = within(row).getByRole("button", { name: "Ask about Budget Compass" });
+    expect(button).toHaveAttribute("title", "Ask about Budget Compass");
+    expect(button).toHaveAttribute("data-window-action-icon");
+    fireEvent.click(button);
+    expect(ask).toHaveBeenCalledOnce();
+  });
+
   it("uses the selected view as its only title and releases it when the app unmounts", () => {
     const view = renderToolbar(createStore(), <DesktopAppToolbar windowTitle="All apps" />);
     expect(view.store.get(pageTitleAtom)).toBe("All apps");

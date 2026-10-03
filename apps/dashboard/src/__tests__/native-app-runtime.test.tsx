@@ -132,6 +132,7 @@ describe("NativeAppRuntime", () => {
     render(<Provider><WindowSidebarSlot /><WindowToolbarSlot /><NativeAppRuntime storeId="user-apps" appId="budget-window-navigation" /></Provider>);
     const nav = await screen.findByRole("navigation", { name: "Budget Compass views" });
     expect(screen.getAllByRole("button", { name: "Ask about budget" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Ask about budget" })).toHaveAttribute("title", "Ask about budget");
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Change view: Overview" })).toBeInTheDocument();
     fireEvent.click(within(nav).getByRole("button", { name: "Activity" }));

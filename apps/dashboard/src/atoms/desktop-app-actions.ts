@@ -2,6 +2,7 @@ import { atom } from "jotai";
 
 const desktopAppActionIcons = [
   "add",
+  "assistant",
   "back",
   "remote",
   "source-code",

@@ -146,6 +146,8 @@ function TrailingAction({ action }: { action: DesktopAppAction }) {
       disabled={action.disabled}
       aria-pressed={action.kind === "toggle" ? action.active === true : undefined}
       title={action.label}
+      aria-label={action.label}
+      data-window-action-icon={icon ? "" : undefined}
       className={cn(TRAILING_ACTION_CLASS, action.active && "bg-foreground/10 text-foreground")}
       onClick={() => action.onSelect?.()}
     >

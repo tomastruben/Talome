@@ -156,6 +156,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
     setDesktopActions([
       {
         id: "native-app-assistant",
+        icon: "assistant",
         label: `Ask about ${spec.name}`,
         onSelect: () => openAssistant(
           `${spec.assistant.context}\n\nReview the current app state and recommend the next best action.`,
@@ -352,7 +353,7 @@ export function NativeAppRuntime({ storeId, appId }: { storeId: string; appId: s
             </DropdownMenu>
           )}
           {primaryAction && (
-            <Button className="min-w-0 shrink" size="sm" disabled={Boolean(pendingActionId)} onClick={() => runAction(primaryAction)}>
+            <Button className="min-w-0 shrink" size="sm" title={primaryAction.label} aria-label={pendingActionId === primaryAction.id ? `${primaryAction.label}: working` : primaryAction.label} disabled={Boolean(pendingActionId)} onClick={() => runAction(primaryAction)}>
               {pendingActionId === primaryAction.id ? <Spinner data-icon="inline-start" /> : null}
               <span className="truncate">{pendingActionId === primaryAction.id ? "Working…" : primaryAction.label}</span>
             </Button>
