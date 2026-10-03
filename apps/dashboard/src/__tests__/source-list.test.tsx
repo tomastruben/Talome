@@ -113,7 +113,7 @@ describe("SourceListItem", () => {
   it("is a compact row that grows to a 44px target on touch, with an inset focus ring", () => {
     render(<SourceListItem label="Movies" onSelect={vi.fn()} />);
     const row = screen.getByRole("button", { name: "Movies" });
-    expect(row).toHaveClass("h-8", "pointer-coarse:h-11", "focus-visible:ring-2", "focus-visible:ring-inset", "text-foreground/80");
+    expect(row).toHaveClass("h-8", "phone-touch:h-11", "focus-visible:ring-2", "focus-visible:ring-inset", "text-foreground/80");
   });
 
   it("navigates with a link that marks the current place", () => {

@@ -87,7 +87,7 @@ function SheetContent({
         )}
         {children}
         {showCloseButton && (
-          <SheetPrimitive.Close className="absolute top-3 right-3 inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color] duration-150 ease-out hover:bg-muted hover:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none pointer-coarse:size-11">
+          <SheetPrimitive.Close className="absolute top-3 right-3 inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color] duration-150 ease-out hover:bg-muted hover:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none phone-touch:size-11">
             <HugeiconsIcon icon={Cancel01Icon} size={16} aria-hidden="true" />
             <span className="sr-only">Close</span>
           </SheetPrimitive.Close>

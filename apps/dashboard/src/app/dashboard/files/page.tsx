@@ -189,7 +189,7 @@ function FilesTableSkeleton({ rows = 12 }: { rows?: number }) {
       <FilesColGroup />
       <TableBody>
         {Array.from({ length: rows }).map((_, i) => (
-          <TableRow key={i} className="h-10 border-transparent hover:bg-transparent pointer-coarse:h-11">
+          <TableRow key={i} className="h-10 border-transparent hover:bg-transparent phone-touch:h-11">
             <TableCell className={FILES_FIRST_CELL}>
               <div className="flex items-center justify-center">
                 <SelectMark selected={false} className="text-dim-foreground" />
@@ -524,7 +524,7 @@ function FileQuickLook({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-7 text-muted-foreground hover:text-foreground disabled:text-dim-foreground disabled:pointer-events-none pointer-coarse:size-11"
+                  className="size-7 text-muted-foreground hover:text-foreground disabled:text-dim-foreground disabled:pointer-events-none phone-touch:size-11"
                   onClick={goToPrev}
                   disabled={!hasPrev}
                   aria-label="Previous file"
@@ -537,7 +537,7 @@ function FileQuickLook({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-7 text-muted-foreground hover:text-foreground disabled:text-dim-foreground disabled:pointer-events-none pointer-coarse:size-11"
+                  className="size-7 text-muted-foreground hover:text-foreground disabled:text-dim-foreground disabled:pointer-events-none phone-touch:size-11"
                   onClick={goToNext}
                   disabled={!hasNext}
                   aria-label="Next file"
@@ -549,7 +549,7 @@ function FileQuickLook({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:min-w-11"
+              className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground phone-touch:h-11 phone-touch:min-w-11"
               onClick={() => filePath && onDownload(filePath, fileName)}
             >
               <HugeiconsIcon icon={Download01Icon} size={12} aria-hidden="true" />
@@ -559,7 +559,7 @@ function FileQuickLook({
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 text-muted-foreground hover:text-foreground pointer-coarse:size-11"
+              className="size-7 text-muted-foreground hover:text-foreground phone-touch:size-11"
               onClick={onClose}
               aria-label="Close preview"
             >
@@ -666,7 +666,7 @@ function MoveDialog({
             {hasMultipleRoots && (
               <button
                 type="button"
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors px-1 py-0.5 rounded pointer-coarse:min-h-11"
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors px-1 py-0.5 rounded phone-touch:min-h-11"
                 onClick={() => setBrowsePath(null)}
               >
                 Volumes
@@ -691,7 +691,7 @@ function MoveDialog({
                   <button
                     key={root}
                     type="button"
-                    className="flex items-center gap-2.5 w-full px-4 py-2 text-left pointer-coarse:min-h-11 hover:bg-muted/30 transition-colors"
+                    className="flex items-center gap-2.5 w-full px-4 py-2 text-left phone-touch:min-h-11 hover:bg-muted/30 transition-colors"
                     onClick={() => setBrowsePath(root)}
                   >
                     <HugeiconsIcon icon={icon} size={16} className="text-dim-foreground shrink-0" />
@@ -705,7 +705,7 @@ function MoveDialog({
               {canGoBack && (
                 <button
                   type="button"
-                  className="flex items-center gap-2.5 w-full px-4 py-2 text-left pointer-coarse:min-h-11 hover:bg-muted/30 transition-colors"
+                  className="flex items-center gap-2.5 w-full px-4 py-2 text-left phone-touch:min-h-11 hover:bg-muted/30 transition-colors"
                   onClick={goBack}
                 >
                   <HugeiconsIcon icon={ArrowLeft01Icon} size={16} className="text-dim-foreground shrink-0" />
@@ -734,7 +734,7 @@ function MoveDialog({
                 <button
                   key={folder.path}
                   type="button"
-                  className="flex items-center gap-2.5 w-full px-4 py-2 text-left pointer-coarse:min-h-11 hover:bg-muted/30 transition-colors group"
+                  className="flex items-center gap-2.5 w-full px-4 py-2 text-left phone-touch:min-h-11 hover:bg-muted/30 transition-colors group"
                   onClick={() => setBrowsePath(folder.path)}
                 >
                   <HugeiconsIcon icon={Folder01Icon} size={16} className="text-muted-foreground shrink-0" />
@@ -752,10 +752,10 @@ function MoveDialog({
 
         {/* Footer */}
         <DialogFooter className="border-t border-border/40 px-4 py-3">
-          <Button variant="ghost" size="sm" className="pointer-coarse:h-11" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" size="sm" className="phone-touch:h-11" onClick={onClose}>Cancel</Button>
           <Button
             size="sm"
-            className="pointer-coarse:h-11"
+            className="phone-touch:h-11"
             onClick={() => void handleConfirm()}
             disabled={isAtRoot || isMoving || !data?.path}
           >
@@ -1717,7 +1717,7 @@ function FilesPageInner({
             title="This folder is empty"
             description="Drop files here, or upload them."
             action={
-              <Button variant="outline" size="sm" className="pointer-coarse:h-11" onClick={uploadFiles}>
+              <Button variant="outline" size="sm" className="phone-touch:h-11" onClick={uploadFiles}>
                 <HugeiconsIcon icon={CloudUploadIcon} size={14} />
                 Upload files
               </Button>
@@ -1758,7 +1758,7 @@ function FilesPageInner({
                         tabIndex={item.path === rovingRowPath ? 0 : -1}
                         aria-selected={isSelected}
                         className={cn(
-                          "group h-10 border-transparent transition-colors pointer-coarse:h-11",
+                          "group h-10 border-transparent transition-colors phone-touch:h-11",
                           "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
                           clickable && "cursor-pointer",
                           isSelected && "bg-muted/60",
@@ -1777,7 +1777,7 @@ function FilesPageInner({
                               tabIndex={-1}
                               aria-label={isSelected ? `Deselect ${item.name}` : `Select ${item.name}`}
                               className={cn(
-                                "flex items-center justify-center rounded-full transition-opacity duration-150 focus-visible:opacity-100 pointer-coarse:size-11",
+                                "flex items-center justify-center rounded-full transition-opacity duration-150 focus-visible:opacity-100 phone-touch:size-11",
                                 // With a mouse the mark appears on hover; on touch there is no hover, so it stays
                                 hasSelection || isSelected
                                   ? "opacity-100"
@@ -1819,7 +1819,7 @@ function FilesPageInner({
                                   // Tab from the focused row reaches its menu; other rows' menus stay out of the tab order.
                                   tabIndex={item.path === rovingRowPath ? 0 : -1}
                                   // Revealed on hover only where there is hover (a mouse or trackpad): on touch it stays
-                                  className="size-6 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100 pointer-fine:focus-visible:opacity-100 pointer-coarse:size-11"
+                                  className="size-6 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100 pointer-fine:focus-visible:opacity-100 phone-touch:size-11"
                                   onClick={(e) => e.stopPropagation()}
                                   onKeyDown={(e) => e.stopPropagation()}
                                   aria-label="File actions"
@@ -1867,7 +1867,7 @@ function FilesPageInner({
               <button
                 type="button"
                 onClick={searchSubfolders}
-                className="flex min-h-10 w-full items-center gap-2.5 px-[var(--list-gutter,0.75rem)] text-left text-sm text-muted-foreground transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+                className="flex min-h-10 w-full items-center gap-2.5 px-[var(--list-gutter,0.75rem)] text-left text-sm text-muted-foreground transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring phone-touch:min-h-11"
               >
                 <HugeiconsIcon icon={Search01Icon} size={16} aria-hidden="true" className="shrink-0" />
                 <span className="truncate">

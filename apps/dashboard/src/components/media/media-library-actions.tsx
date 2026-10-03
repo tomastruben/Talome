@@ -42,7 +42,7 @@ export function MediaLibraryActions({
   const selectLabel = selecting ? "Cancel" : "Select";
 
   if (placement === "header") {
-    const headerClass = "h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11";
+    const headerClass = "h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground phone-touch:h-11";
     return (
       <>
         <Button

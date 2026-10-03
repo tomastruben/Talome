@@ -194,7 +194,7 @@ describe("deleting from the classic history list", () => {
 
   it("gives Show N more a 44px target on a touch screen", () => {
     renderPage();
-    expect(screen.getByRole("button", { name: "Show 2 more" })).toHaveClass("pointer-coarse:min-h-11");
+    expect(screen.getByRole("button", { name: "Show 2 more" })).toHaveClass("phone-touch:min-h-11");
   });
 
   it("drops a group's heading once Delete has emptied it, and moves focus to the chat before", () => {

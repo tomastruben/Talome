@@ -69,10 +69,10 @@ export function useDesktopWindowState(): DesktopWindowState | null {
 
 /** A quiet text verb for the toolbar's trailing end (a page's published action). */
 const TRAILING_ACTION_CLASS =
-  "flex h-8 min-w-0 max-w-44 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm text-muted-foreground outline-none transition-colors duration-150 ease-out hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40 pointer-coarse:h-11 data-[state=open]:bg-foreground/10 data-[state=open]:text-foreground";
+  "flex h-8 min-w-0 max-w-44 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm text-muted-foreground outline-none transition-colors duration-150 ease-out hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40 phone-touch:h-11 data-[state=open]:bg-foreground/10 data-[state=open]:text-foreground";
 /** A labelled verb inside the leading capsule */
 const CAPSULE_TEXT_CLASS =
-  "flex h-8 min-w-0 max-w-44 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm text-muted-foreground outline-none transition-colors duration-150 ease-out hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40 pointer-coarse:h-11 data-[state=open]:bg-foreground/10 data-[state=open]:text-foreground";
+  "flex h-8 min-w-0 max-w-44 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm text-muted-foreground outline-none transition-colors duration-150 ease-out hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40 phone-touch:h-11 data-[state=open]:bg-foreground/10 data-[state=open]:text-foreground";
 
 function ActionMenu({ action, align, triggerClassName }: { action: DesktopAppAction; align: "start" | "end"; triggerClassName: string }) {
   const icon = action.icon ? desktopActionIcons[action.icon] : undefined;

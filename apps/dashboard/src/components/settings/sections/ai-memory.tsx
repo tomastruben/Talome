@@ -143,7 +143,7 @@ export function AiMemorySection() {
                   onClick={() => toggleType(type)}
                   aria-expanded={isOpen}
                   aria-controls={panelId}
-                  className="flex w-full items-center gap-2 rounded-md py-1.5 text-xs font-medium text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:text-foreground pointer-coarse:min-h-11"
+                  className="flex w-full items-center gap-2 rounded-md py-1.5 text-xs font-medium text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:text-foreground phone-touch:min-h-11"
                 >
                   <HugeiconsIcon
                     icon={ArrowRight01Icon}

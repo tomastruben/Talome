@@ -110,7 +110,7 @@ describe("toasts", () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const css = readFileSync(join(__dirname, "../app/globals.css"), "utf8");
-    expect(css).toMatch(/@media \(pointer: coarse\) \{[\s\S]*?\[data-close-button\] \{[^}]*width: 2\.75rem;[^}]*height: 2\.75rem;/);
+    expect(css).toMatch(/@media \(pointer: coarse\) and \(width < 48rem\) \{\s*:root:not\(\[data-tablet-device\]\) \{[\s\S]*?\[data-close-button\] \{[^}]*width: 2\.75rem;[^}]*height: 2\.75rem;/);
   });
 
   it("gives warning and error different glyphs, with colour only on the icon", () => {

@@ -136,7 +136,7 @@ describe("Files verbs in a window", () => {
     for (const verb of [upload, newFolder]) {
       expect(verb).toHaveAttribute("title");
       expect(verb.textContent).toBe("");
-      expect(verb).toHaveClass("h-8", "pointer-coarse:h-11", "pointer-coarse:min-w-11");
+      expect(verb).toHaveClass("h-8", "phone-touch:h-11", "phone-touch:min-w-11");
     }
     // Classic's header action stays empty in a window
     expect(store.get(pageActionAtom)).toBeNull();
@@ -167,7 +167,7 @@ describe("Files verbs in a window", () => {
     const bar = await screen.findByRole("group", { name: "1 selected" });
     for (const name of ["Move", "Download", "Delete"]) {
       const button = within(bar).getByRole("button", { name });
-      expect(button.className).toMatch(/pointer-coarse:h-11/);
+      expect(button.className).toMatch(/phone-touch:h-11/);
       expect(within(button).getByText(name).className).toMatch(/sr-only @md:not-sr-only/);
     }
     expect(within(bar).getByRole("button", { name: "Delete" }).className).toMatch(/text-status-critical-inverse/);
@@ -226,6 +226,6 @@ describe("Files on touch", () => {
     expect(page).toMatch(/pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100/);
     const header = readFileSync(join(SRC, "components/files/files-list-header.tsx"), "utf-8");
     expect(header).toMatch(/pointer-fine:opacity-0 pointer-fine:group-hover\/header:opacity-100/);
-    expect(header).toMatch(/pointer-coarse:size-11/);
+    expect(header).toMatch(/phone-touch:size-11/);
   });
 });

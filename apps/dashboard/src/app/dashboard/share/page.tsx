@@ -299,7 +299,7 @@ export default function SharePage() {
           aria-label={allSelected ? "Deselect all" : "Select all"}
           title={allSelected ? "Deselect all" : "Select all"}
           onClick={allSelected ? selectNone : selectAll}
-          className="h-8 px-2 text-muted-foreground hover:text-foreground pointer-coarse:h-11"
+          className="h-8 px-2 text-muted-foreground hover:text-foreground phone-touch:h-11"
         >
           {embedded ? <HugeiconsIcon icon={CheckmarkCircle01Icon} size={16} aria-hidden /> : allSelected ? "Deselect all" : "Select all"}
         </Button>
@@ -313,7 +313,7 @@ export default function SharePage() {
           busyLabel={embedded ? "Preparing…" : "Preparing the share package…"}
           disabled={effectiveSelection.size === 0}
           // On a phone it wraps under the count and spans the row
-          className={cn("ml-auto min-w-0 px-4 pointer-coarse:h-11", !embedded && "@max-sm:w-full")}
+          className={cn("ml-auto min-w-0 px-4 phone-touch:h-11", !embedded && "@max-sm:w-full")}
           aria-label={shareCode ? "Prepare again" : "Prepare share package"}
         >
           {embedded ? "Prepare" : shareCode ? "Prepare again" : "Prepare share package"}
@@ -392,7 +392,7 @@ export default function SharePage() {
                 </div>
 
                 <div className="mt-3 grid grid-cols-1 gap-2 @lg:grid-cols-3">
-                  <Button size="sm" onClick={() => void copyCode()} className="h-9 w-full gap-1.5 rounded-full text-xs pointer-coarse:h-11">
+                  <Button size="sm" onClick={() => void copyCode()} className="h-9 w-full gap-1.5 rounded-full text-xs phone-touch:h-11">
                     <AnimatePresence mode="wait" initial={false}>
                       <motion.span
                         key={copiedState ? "copied" : "copy"}
@@ -406,10 +406,10 @@ export default function SharePage() {
                       </motion.span>
                     </AnimatePresence>
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void shareRecipe()} className="h-9 w-full gap-1.5 rounded-full text-xs pointer-coarse:h-11">
+                  <Button size="sm" variant="secondary" onClick={() => void shareRecipe()} className="h-9 w-full gap-1.5 rounded-full text-xs phone-touch:h-11">
                     <HugeiconsIcon icon={Share04Icon} size={13} /> Share recipe
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={downloadRecipe} className="h-9 w-full gap-1.5 rounded-full text-xs pointer-coarse:h-11">
+                  <Button size="sm" variant="secondary" onClick={downloadRecipe} className="h-9 w-full gap-1.5 rounded-full text-xs phone-touch:h-11">
                     <HugeiconsIcon icon={Download01Icon} size={13} /> Download
                   </Button>
                 </div>
@@ -436,7 +436,7 @@ export default function SharePage() {
                     size="sm"
                     variant="secondary"
                     onClick={() => void copyLink()}
-                    className="h-7 gap-1.5 text-xs rounded-full px-4 pointer-coarse:h-11"
+                    className="h-7 gap-1.5 text-xs rounded-full px-4 phone-touch:h-11"
                   >
                     <AnimatePresence mode="wait" initial={false}>
                       <motion.span
@@ -451,7 +451,7 @@ export default function SharePage() {
                       </motion.span>
                     </AnimatePresence>
                   </Button>
-                  <Button size="sm" variant="ghost" className="h-7 text-xs rounded-full px-4 pointer-coarse:h-11" asChild>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs rounded-full px-4 phone-touch:h-11" asChild>
                     <a href={shareUrl} target="_blank" rel="noopener noreferrer">Open preview</a>
                   </Button>
                 </div>
@@ -470,7 +470,7 @@ export default function SharePage() {
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   The recipe cannot fully recreate {missingCatalogApps.join(", ")} because {missingCatalogApps.length === 1 ? "it is" : "they are"} not in the recipient&apos;s catalog. The recovery file contains sanitized Compose, but no app data; review it and share only with people you trust.
                 </p>
-                <Button size="sm" variant="outline" onClick={downloadRecovery} className="mt-3 h-8 gap-1.5 rounded-full px-4 text-xs pointer-coarse:h-11">
+                <Button size="sm" variant="outline" onClick={downloadRecovery} className="mt-3 h-8 gap-1.5 rounded-full px-4 text-xs phone-touch:h-11">
                   <HugeiconsIcon icon={Download01Icon} size={12} /> Download recovery file
                 </Button>
               </div>

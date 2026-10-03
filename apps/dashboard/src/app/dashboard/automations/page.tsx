@@ -301,7 +301,7 @@ export default function AutomationsPage() {
                   {/* Info */}
                   <Button
                     variant="ghost"
-                    className="h-auto min-w-0 flex-1 flex-col items-start gap-0 rounded-lg px-1 py-1 text-left pointer-coarse:min-h-11"
+                    className="h-auto min-w-0 flex-1 flex-col items-start gap-0 rounded-lg px-1 py-1 text-left phone-touch:min-h-11"
                     aria-label={`Edit ${row.name}`}
                     onClick={() => openEdit(row)}
                   >
@@ -318,7 +318,7 @@ export default function AutomationsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="pointer-coarse:size-11"
+                          className="phone-touch:size-11"
                           aria-label={`Run ${row.name} now`}
                           disabled={isRunning}
                           onClick={() => runManually(row.id)}
@@ -330,7 +330,7 @@ export default function AutomationsPage() {
                       </TooltipTrigger>
                       <TooltipContent>Run now</TooltipContent>
                     </Tooltip>
-                    <div className="flex min-h-8 items-center pointer-coarse:min-h-11">
+                    <div className="flex min-h-8 items-center phone-touch:min-h-11">
                       <Switch
                         checked={row.enabled}
                         onCheckedChange={(v) => toggleEnabled(row.id, v)}

@@ -93,10 +93,10 @@ export function FilesToolbar({
           data-files-scope=""
           className="order-last flex w-full shrink-0 @md:order-none @md:w-auto"
         >
-          <ToggleGroupItem value="folder" className="flex-1 px-2.5 pointer-coarse:h-11 @md:flex-none">
+          <ToggleGroupItem value="folder" className="flex-1 px-2.5 phone-touch:h-11 @md:flex-none">
             This folder
           </ToggleGroupItem>
-          <ToggleGroupItem value="deep" className="flex-1 px-2.5 pointer-coarse:h-11 @md:flex-none">
+          <ToggleGroupItem value="deep" className="flex-1 px-2.5 phone-touch:h-11 @md:flex-none">
             Include subfolders
           </ToggleGroupItem>
         </ToggleGroup>
@@ -126,7 +126,7 @@ export function FilesToolbar({
           onChange={(event) => onQueryChange(event.target.value)}
           onKeyDown={onFieldKeyDown}
           containerClassName="flex-1"
-          className="h-8 pr-14 text-sm pointer-coarse:h-11 pointer-coarse:text-base [&::-webkit-search-cancel-button]:appearance-none"
+          className="h-8 pr-14 text-sm phone-touch:h-11 pointer-coarse:text-base [&::-webkit-search-cancel-button]:appearance-none"
         />
         {query ? (
           <button
@@ -134,7 +134,7 @@ export function FilesToolbar({
             aria-label="Clear search"
             title="Clear search"
             onClick={onClear}
-            className="absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:size-11"
+            className="absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring phone-touch:size-11"
           >
             <HugeiconsIcon icon={Cancel01Icon} size={14} aria-hidden="true" />
           </button>
@@ -197,7 +197,7 @@ export function FilesActions({ onUploadFiles, onUploadFolder, onNewFolder, place
     );
   }
 
-  const buttonClass = "h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:min-w-11";
+  const buttonClass = "h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground phone-touch:h-11 phone-touch:min-w-11";
   const labelClass = "sr-only sm:not-sr-only";
   return (
     <>

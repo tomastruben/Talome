@@ -186,7 +186,7 @@ export function ToolCappedRegion({
           aria-expanded={expanded}
           aria-controls={id}
           onClick={toggle}
-          className="text-muted-foreground hover:text-foreground pointer-coarse:min-h-11"
+          className="text-muted-foreground hover:text-foreground phone-touch:min-h-11"
         >
           {expanded ? "Show less" : "Show all"}
         </Button>
@@ -223,7 +223,7 @@ export function ToolDataBlock({ label, value, cap, tone = "default", className, 
           label={`Copy ${label.toLowerCase()}`}
           size="icon-xs"
           selectOnFailRef={textRef}
-          className="text-muted-foreground hover:text-foreground pointer-coarse:size-11"
+          className="text-muted-foreground hover:text-foreground phone-touch:size-11"
         />
       </div>
       <ToolCappedRegion

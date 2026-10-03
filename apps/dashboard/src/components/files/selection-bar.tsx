@@ -49,7 +49,7 @@ export function SelectionBar({ count, open = count > 0, className, children }: S
             role="group"
             aria-labelledby={countId}
             data-selection-bar=""
-            className="pointer-events-auto flex items-center gap-1 rounded-full bg-foreground py-2 pr-2 pl-4 text-background shadow-lg pointer-coarse:py-1 pointer-coarse:pr-1"
+            className="pointer-events-auto flex items-center gap-1 rounded-full bg-foreground py-2 pr-2 pl-4 text-background shadow-lg phone-touch:py-1 phone-touch:pr-1"
           >
             <span id={countId} className="text-sm font-medium whitespace-nowrap tabular-nums">
               {countFormat.format(count)} selected
@@ -81,7 +81,7 @@ export function SelectionBarButton({ icon, label, tone = "default", onClick }: S
       className={cn(
         "inline-flex h-7 items-center justify-center gap-1.5 rounded-full px-2.5 text-xs transition-colors duration-150 hover:bg-background/10",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-background",
-        "pointer-coarse:h-11 pointer-coarse:min-w-11 pointer-coarse:px-3",
+        "phone-touch:h-11 phone-touch:min-w-11 phone-touch:px-3",
         tone === "critical" ? "text-status-critical-inverse" : "text-background/70 hover:text-background",
       )}
     >

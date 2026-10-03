@@ -1040,7 +1040,7 @@ export default function AudiobooksPage() {
               type="button"
               variant="ghost"
               size="xs"
-              className="px-1.5 text-foreground/80 hover:text-foreground pointer-coarse:h-11"
+              className="px-1.5 text-foreground/80 hover:text-foreground phone-touch:h-11"
               onClick={() => void mutateLibraries()}
             >
               Retry

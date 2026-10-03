@@ -635,7 +635,7 @@ export function DesktopLaunchpad({
         <Button
           variant="ghost"
           size="sm"
-          className="shrink-0 pointer-coarse:h-11"
+          className="shrink-0 phone-touch:h-11"
           onClick={() => {
             setEditing(true);
             // This row goes away: keep focus in the panel, on Done
@@ -784,7 +784,7 @@ export function DesktopLaunchpad({
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-6 rounded-full pointer-coarse:size-11"
+                className="size-6 rounded-full phone-touch:size-11"
                 aria-label="Clear search"
                 onClick={() => clearQuery(true)}
               >
@@ -800,8 +800,8 @@ export function DesktopLaunchpad({
                   size={editing ? "default" : "icon"}
                   aria-label={editing ? undefined : "Customize"}
                   className={editing
-                    ? "h-7 rounded-full px-3 text-sm pointer-coarse:h-11"
-                    : "size-7 rounded-full pointer-coarse:size-11"}
+                    ? "h-7 rounded-full px-3 text-sm phone-touch:h-11"
+                    : "size-7 rounded-full phone-touch:size-11"}
                   onClick={() => {
                     setEditing((current) => !current);
                     setKeyMode("text");
@@ -850,7 +850,7 @@ export function DesktopLaunchpad({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 shrink-0 text-xs pointer-coarse:h-11"
+                className="h-7 shrink-0 text-xs phone-touch:h-11"
                 disabled={visibility.hidden.size === 0}
                 onClick={() => {
                   setStorageError(!visibility.reset());

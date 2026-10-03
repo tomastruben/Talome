@@ -22,6 +22,6 @@ describe("memory group disclosure", () => {
   });
 
   it("is a 44px target on touch", () => {
-    expect(source).toMatch(/pointer-coarse:min-h-11/);
+    expect(source).toMatch(/phone-touch:min-h-11/);
   });
 });

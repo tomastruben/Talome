@@ -177,7 +177,7 @@ function RebuildDashboardRow() {
           Compile the dashboard again after code changes. If the build fails, the current one keeps running.
         </p>
       </div>
-      <RebuildDashboardButton aria-describedby={labelId} className="pointer-coarse:h-11" />
+      <RebuildDashboardButton aria-describedby={labelId} className="phone-touch:h-11" />
     </SettingsRow>
   );
 }

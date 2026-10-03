@@ -59,13 +59,13 @@ function TokenRow({
         </p>
       </div>
       <div className="ml-auto flex items-center gap-1 shrink-0">
-        <Button size="sm" variant="ghost" className="pointer-coarse:h-11" aria-label={`${token.legacy ? "Restrict" : "Edit"} ${token.name}'s access`} onClick={onEdit}>
+        <Button size="sm" variant="ghost" className="phone-touch:h-11" aria-label={`${token.legacy ? "Restrict" : "Edit"} ${token.name}'s access`} onClick={onEdit}>
           {token.legacy ? "Restrict" : "Edit"}
         </Button>
         <Button
           size="sm"
           variant="ghost"
-          className="pointer-coarse:h-11 text-status-critical hover:text-status-critical"
+          className="phone-touch:h-11 text-status-critical hover:text-status-critical"
           aria-label={`Revoke ${token.name}'s access`}
           onClick={onRevoke}
         >

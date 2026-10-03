@@ -90,7 +90,7 @@ describe("tool card actions (P0-6)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(message);
     expect(alert.className).not.toMatch(/\btruncate\b/);
-    expect(screen.getByRole("button", { name: "Retry" }).className).toContain("pointer-coarse:min-h-11");
+    expect(screen.getByRole("button", { name: "Retry" }).className).toContain("phone-touch:min-h-11");
   });
 
   it("names the reason when the action is blocked or fails, and offers Retry", async () => {

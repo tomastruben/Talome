@@ -94,7 +94,7 @@ export const AuthField = forwardRef<
           <RevealToggle
             revealed={revealed}
             onToggle={() => setRevealed((value) => !value)}
-            className="absolute top-1 right-1 pointer-coarse:size-11 pointer-coarse:top-0 pointer-coarse:right-0"
+            className="absolute top-1 right-1 phone-touch:size-11 phone-touch:top-0 phone-touch:right-0"
           />
         ) : null}
       </div>
@@ -174,7 +174,7 @@ export function AuthLink({ className, ...props }: ComponentProps<"button">) {
     <button
       type="button"
       className={cn(
-        "rounded-sm text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background outline-none pointer-coarse:min-h-11",
+        "rounded-sm text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background outline-none phone-touch:min-h-11",
         className,
       )}
       {...props}
@@ -243,7 +243,7 @@ export const LockField = forwardRef<
       />
       {/* On touch each button's hit area grows to 44px; the wider gap keeps them apart */}
       {trailing ? (
-        <div className="relative flex shrink-0 items-center gap-1 pr-1.5 transition-opacity duration-150 pointer-coarse:gap-3 peer-placeholder-shown:not-focus-within:pointer-events-none peer-placeholder-shown:not-focus-within:opacity-0">
+        <div className="relative flex shrink-0 items-center gap-1 pr-1.5 transition-opacity duration-150 phone-touch:gap-3 peer-placeholder-shown:not-focus-within:pointer-events-none peer-placeholder-shown:not-focus-within:opacity-0">
           {trailing}
         </div>
       ) : null}
@@ -299,7 +299,7 @@ export function LockLink({ className, ...props }: ComponentProps<"button">) {
     <button
       type="button"
       className={cn(
-        "tm-on-scrim inline-flex min-h-6 max-w-full items-center rounded-sm px-1 text-xs text-foreground underline-offset-4 transition-colors duration-150 hover:underline pointer-coarse:min-h-11",
+        "tm-on-scrim inline-flex min-h-6 max-w-full items-center rounded-sm px-1 text-xs text-foreground underline-offset-4 transition-colors duration-150 hover:underline phone-touch:min-h-11",
         FOCUS_RING,
         className,
       )}

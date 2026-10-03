@@ -356,7 +356,7 @@ describe("Terminal toolbar controls", () => {
     ];
     expect(targets.length).toBeGreaterThanOrEqual(8);
     for (const target of targets) {
-      expect(target.className, target.getAttribute("aria-label") ?? target.textContent ?? "").toMatch(/pointer-coarse:(h|size)-11/);
+      expect(target.className, target.getAttribute("aria-label") ?? target.textContent ?? "").toMatch(/phone-touch:(h|size)-11/);
     }
   });
 

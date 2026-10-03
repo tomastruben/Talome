@@ -81,7 +81,7 @@ export function NotificationRow({
       <button
         type="button"
         onClick={onDismiss}
-        className="mr-2 mt-2.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 outline-none hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 pointer-coarse:size-11 pointer-coarse:mt-0 pointer-coarse:opacity-100"
+        className="mr-2 mt-2.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 outline-none hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 phone-touch:size-11 phone-touch:mt-0 pointer-coarse:opacity-100"
         aria-label={`Dismiss ${n.title}`}
       >
         <HugeiconsIcon icon={Cancel01Icon} size={12} />

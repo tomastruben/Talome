@@ -1002,9 +1002,9 @@ export type PromptInputButtonTooltip =
       side?: ComponentProps<typeof TooltipContent>["side"];
     };
 
-/** Composer controls are 44px on touch screens (WCAG target size, pointer-coarse). */
+/** Composer controls expand only on phones; tablets keep desktop dimensions. */
 const coarseTarget = (size: unknown) =>
-  typeof size === "string" && size.startsWith("icon") ? "pointer-coarse:size-11" : "pointer-coarse:h-11";
+  typeof size === "string" && size.startsWith("icon") ? "phone-touch:size-11" : "phone-touch:h-11";
 
 /** An icon-only control takes its accessible name from a text tooltip when it has none. */
 const tooltipName = (tooltip: PromptInputButtonTooltip | undefined, props: { "aria-label"?: string; children?: ReactNode }) =>
@@ -1177,7 +1177,7 @@ export const PromptInputSubmit = ({
   return (
     <InputGroupButton
       aria-label={isGenerating ? "Stop" : "Submit"}
-      className={cn("size-9 rounded-full pointer-coarse:size-11", className)}
+      className={cn("size-9 rounded-full phone-touch:size-11", className)}
       onClick={handleClick}
       size={size}
       type={isGenerating && onStop ? "button" : "submit"}

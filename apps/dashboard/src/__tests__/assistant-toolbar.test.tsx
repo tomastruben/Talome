@@ -202,7 +202,7 @@ describe("the Assistant in a window", () => {
     expect(within(sidebarSlot).getByRole("button", { name: "New chat" })).toBeInTheDocument();
 
     const newChat = within(row!).getByRole("button", { name: "New chat" });
-    expect(newChat.className).toContain("pointer-coarse:h-11");
+    expect(newChat.className).toContain("phone-touch:h-11");
     act(() => newChat.focus());
     fireEvent.click(newChat);
     expect(assistant.state.startNew).toHaveBeenCalledTimes(1);
@@ -280,11 +280,11 @@ describe("the Assistant's classic header", () => {
     expect(toolbar()).toBeNull();
 
     const back = screen.getByRole("button", { name: "Back to conversations" });
-    expect(back.className).toContain("pointer-coarse:size-11");
-    expect(screen.getByRole("button", { name: "Open navigation" }).className).toContain("pointer-coarse:size-11");
+    expect(back.className).toContain("phone-touch:size-11");
+    expect(screen.getByRole("button", { name: "Open navigation" }).className).toContain("phone-touch:size-11");
 
     const newChat = screen.getByRole("button", { name: "New chat" });
-    expect(newChat.className).toContain("pointer-coarse:h-11");
+    expect(newChat.className).toContain("phone-touch:h-11");
     act(() => newChat.focus());
     fireEvent.click(newChat);
     expect(assistant.state.startNew).toHaveBeenCalledTimes(1);
@@ -305,7 +305,7 @@ describe("the composer's keyboard toggle", () => {
     const { unmount } = renderPage();
     const toggle = screen.getByRole("button", { name: "Virtual keyboard" });
     expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(toggle.className).toContain("pointer-coarse:size-11");
+    expect(toggle.className).toContain("phone-touch:size-11");
     expect(composer.props.inputMode).toBe("text");
     fireEvent.click(toggle);
     expect(keyboard.value.toggle).toHaveBeenCalledTimes(1);
@@ -351,7 +351,7 @@ describe("a tool card's header", () => {
       </Tool>,
     );
     const header = screen.getByRole("button", { name: /Get system stats/ });
-    expect(header.className).toContain("pointer-coarse:min-h-11");
+    expect(header.className).toContain("phone-touch:min-h-11");
     const chevron = [...header.querySelectorAll(":scope > svg")].at(-1);
     expect(chevron?.getAttribute("class")).toContain("pointer-coarse:opacity-100");
   });

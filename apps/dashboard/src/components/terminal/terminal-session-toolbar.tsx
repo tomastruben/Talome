@@ -79,7 +79,7 @@ function SessionRow({
   return (
     <div
       className={cn(
-        "group flex min-h-8 w-full items-center gap-2 rounded-md px-2.5 transition-colors duration-150 pointer-coarse:min-h-11",
+        "group flex min-h-8 w-full items-center gap-2 rounded-md px-2.5 transition-colors duration-150 phone-touch:min-h-11",
         isSelected ? "bg-muted" : "hover:bg-muted/60",
       )}
     >
@@ -117,7 +117,7 @@ function SessionRow({
             type="button"
             aria-label={`End ${session.name}`}
             title={`End ${session.name}`}
-            className="absolute inset-y-0 right-0 flex w-6 items-center justify-center rounded-sm text-muted-foreground opacity-0 outline-none transition-opacity duration-150 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:w-11 pointer-coarse:opacity-100"
+            className="absolute inset-y-0 right-0 flex w-6 items-center justify-center rounded-sm text-muted-foreground opacity-0 outline-none transition-opacity duration-150 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100 phone-touch:w-11 pointer-coarse:opacity-100"
             onClick={(e) => {
               e.stopPropagation();
               onDelete(session.id);
@@ -223,7 +223,7 @@ export function TerminalSessionPicker({
             variant="ghost"
             size="sm"
             title="Switch session"
-            className="h-8 min-w-0 shrink gap-1.5 px-2 font-normal text-foreground pointer-coarse:h-11"
+            className="h-8 min-w-0 shrink gap-1.5 px-2 font-normal text-foreground phone-touch:h-11"
           >
             <span className="truncate">{sessionName}</span>
             {otherActiveCount > 0 && (
@@ -303,7 +303,7 @@ export function TerminalSessionPicker({
                   onChange={(e) => setCreateName(e.target.value)}
                   placeholder={suggestedName}
                   disabled={creating}
-                  className="h-8 text-sm pointer-coarse:h-11"
+                  className="h-8 text-sm phone-touch:h-11"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
@@ -325,7 +325,7 @@ export function TerminalSessionPicker({
                   <Button
                     variant="ghost"
                     size="xs"
-                    className="pointer-coarse:h-11 pointer-coarse:px-3"
+                    className="phone-touch:h-11 phone-touch:px-3"
                     disabled={creating}
                     onClick={resetCreate}
                   >
@@ -333,7 +333,7 @@ export function TerminalSessionPicker({
                   </Button>
                   <Button
                     size="xs"
-                    className="pointer-coarse:h-11 pointer-coarse:px-3"
+                    className="phone-touch:h-11 phone-touch:px-3"
                     busy={creating}
                     busyLabel="Creating session…"
                     onClick={() => void handleCreate()}
@@ -347,7 +347,7 @@ export function TerminalSessionPicker({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 flex-1 justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11"
+                  className="h-7 flex-1 justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground phone-touch:h-11"
                   disabled={!canCreate}
                   onClick={() => setCreateMode(true)}
                 >
@@ -360,7 +360,7 @@ export function TerminalSessionPicker({
                       variant="ghost"
                       size="icon"
                       aria-label="Refresh sessions"
-                      className="size-7 text-muted-foreground hover:text-foreground pointer-coarse:size-11"
+                      className="size-7 text-muted-foreground hover:text-foreground phone-touch:size-11"
                       onClick={() => {
                         void onRefresh();
                       }}
@@ -411,7 +411,7 @@ export function TerminalConnectionState({
           <Button
             variant="ghost"
             size="xs"
-            className="shrink-0 text-foreground/80 hover:text-foreground pointer-coarse:h-11 pointer-coarse:min-w-11"
+            className="shrink-0 text-foreground/80 hover:text-foreground phone-touch:h-11 phone-touch:min-w-11"
             onClick={onReconnect}
           >
             <HugeiconsIcon icon={Refresh01Icon} size={12} aria-hidden="true" />
@@ -444,7 +444,7 @@ export function TerminalKeyboardToggle({
           aria-label="Virtual keyboard"
           aria-pressed={mode === "virtual"}
           className={cn(
-            "size-8 pointer-coarse:size-11",
+            "size-8 phone-touch:size-11",
             mode === "virtual" ? "text-foreground" : "text-muted-foreground hover:text-foreground",
             className,
           )}
@@ -499,7 +499,7 @@ export function TerminalAttachImageButton({
           size="icon"
           aria-label="Attach image"
           disabled={disabled}
-          className={cn("size-8 text-muted-foreground hover:text-foreground pointer-coarse:size-11", className)}
+          className={cn("size-8 text-muted-foreground hover:text-foreground phone-touch:size-11", className)}
           onClick={onClick}
         >
           <HugeiconsIcon icon={Image01Icon} size={16} aria-hidden="true" />

@@ -92,7 +92,7 @@ describe("App Store in a desktop window", () => {
     const search = within(toolbar).getByRole("textbox", { name: "Search apps" });
     expect(create.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(create).toHaveAccessibleName("Create app");
-    expect(create).toHaveClass("pointer-coarse:size-11");
+    expect(create).toHaveClass("phone-touch:size-11");
     // The title bar keeps only the window controls, Back and the title
     expect(store.get(desktopAppActionsAtom)).toEqual([]);
   });
@@ -144,7 +144,7 @@ describe("App Store on touch", () => {
     for (const name of ["All", "Media", "AI"]) {
       const pill = screen.getByRole("button", { name });
       expect(pill).toHaveAttribute("aria-pressed");
-      expect(pill).toHaveClass("h-6", "pointer-coarse:h-11", "pointer-coarse:px-3", "focus-visible:ring-inset");
+      expect(pill).toHaveClass("h-6", "phone-touch:h-11", "phone-touch:px-3", "focus-visible:ring-inset");
     }
   });
 
@@ -162,7 +162,7 @@ describe("App Store on touch", () => {
       "My Apps",
       "Installed",
     ]);
-    for (const tab of tabs) expect(tab).toHaveClass("pointer-coarse:h-11");
+    for (const tab of tabs) expect(tab).toHaveClass("phone-touch:h-11");
     // With every source, the strip is wider than a 375px phone: it scrolls in
     // its own row rather than widening the page.
     const strip = tablist.closest('[data-slot="tabs"]');

@@ -72,7 +72,7 @@ export function ToolbarGroupButton({
         "data-[active]:bg-foreground/10 data-[active]:text-foreground data-[state=open]:bg-foreground/10 data-[state=open]:text-foreground",
         "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         "disabled:pointer-events-none disabled:opacity-40",
-        "pointer-coarse:h-11 pointer-coarse:min-w-11",
+        "phone-touch:h-11 phone-touch:min-w-11",
         className,
       )}
       {...props}

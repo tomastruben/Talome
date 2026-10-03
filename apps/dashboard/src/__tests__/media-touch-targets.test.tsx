@@ -32,7 +32,7 @@ describe("Media genre rail on touch", () => {
     render(<MediaFiltersRow {...props} />);
     const pills = ["All", ...props.genres].map((name) => screen.getByRole("button", { name }));
     for (const pill of pills) {
-      expect(classes(pill), pill.textContent ?? "").toEqual(expect.arrayContaining(["h-6", "pointer-coarse:h-11", "pointer-coarse:px-3"]));
+      expect(classes(pill), pill.textContent ?? "").toEqual(expect.arrayContaining(["h-6", "phone-touch:h-11", "phone-touch:px-3"]));
     }
     expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Comedy" }));
@@ -58,7 +58,7 @@ describe("Media genre rail on touch", () => {
     render(<MediaFiltersRow {...props} selectedGenres={["Drama"]} minRating={7} onClearFilters={onClearFilters} />);
     const clear = screen.getByRole("button", { name: "Clear filters" });
     expect(clear).toHaveTextContent("Clear");
-    expect(classes(clear)).toEqual(expect.arrayContaining(["h-6", "pointer-coarse:h-11", "pointer-coarse:px-3"]));
+    expect(classes(clear)).toEqual(expect.arrayContaining(["h-6", "phone-touch:h-11", "phone-touch:px-3"]));
     expect(screen.getByText("Drama · Rated 7+")).toBeInTheDocument();
     fireEvent.click(clear);
     expect(onClearFilters).toHaveBeenCalledTimes(1);
@@ -75,7 +75,7 @@ describe("Media genre rail on touch", () => {
     const page = read("app/dashboard/media/page.tsx");
     const small = page.split("\n").filter((line) => /className=.*\bh-[67]\b/.test(line));
     expect(small.length).toBeGreaterThanOrEqual(2);
-    for (const line of small) expect(line.trim()).toMatch(/pointer-coarse:(h|size)-11\b/);
+    for (const line of small) expect(line.trim()).toMatch(/phone-touch:(h|size)-11\b/);
   });
 
   it.each(["header", "toolbar"] as const)("grows Cinema and Select for a finger in the %s", (placement) => {
@@ -83,9 +83,9 @@ describe("Media genre rail on touch", () => {
     for (const name of ["Cinema", "Select"]) {
       const button = classes(screen.getByRole("button", { name }));
       expect(button).toContain(placement === "header" ? "h-7" : "h-8");
-      expect(button).toContain("pointer-coarse:h-11");
+      expect(button).toContain("phone-touch:h-11");
       // Icon-only in a narrow window column: 44px wide as well
-      if (placement === "toolbar") expect(button).toContain("pointer-coarse:min-w-11");
+      if (placement === "toolbar") expect(button).toContain("phone-touch:min-w-11");
     }
   });
 
@@ -94,15 +94,15 @@ describe("Media genre rail on touch", () => {
     const fields = page.split("\n").filter((line) => /className=.*\bh-8\b/.test(line));
     // Search, the Show, Sort and Minimum rating selects
     expect(fields.length).toBeGreaterThanOrEqual(4);
-    for (const line of fields) expect(line.trim()).toMatch(/pointer-coarse:h-11\b/);
+    for (const line of fields) expect(line.trim()).toMatch(/phone-touch:h-11\b/);
     // An xs button carries no height in its className, so check it by size
     for (const line of page.split("\n").filter((l) => /size="(xs|icon-xs)"/.test(l))) {
-      expect(line.trim()).toMatch(/pointer-coarse:(h|size)-11\b/);
+      expect(line.trim()).toMatch(/phone-touch:(h|size)-11\b/);
     }
     // The classic tab strip is icon-only on a phone: 44px tall and wide
-    expect(page).toMatch(/<TabsList className="[^"]*pointer-coarse:h-12/);
+    expect(page).toMatch(/<TabsList className="[^"]*phone-touch:h-12/);
     const trigger = page.slice(page.indexOf("<TabsTrigger"), page.indexOf("</TabsTrigger>"));
-    expect(trigger).toMatch(/pointer-coarse:h-11 pointer-coarse:min-w-11/);
+    expect(trigger).toMatch(/phone-touch:h-11 phone-touch:min-w-11/);
   });
 });
 
@@ -142,7 +142,7 @@ describe("Media selection bar", () => {
     renderBar();
     for (const name of ["Remove", "Cancel"]) {
       expect(classes(screen.getByRole("button", { name }))).toEqual(
-        expect.arrayContaining(["h-7", "pointer-coarse:h-11", "pointer-coarse:min-w-11"]),
+        expect.arrayContaining(["h-7", "phone-touch:h-11", "phone-touch:min-w-11"]),
       );
     }
   });

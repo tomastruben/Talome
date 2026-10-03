@@ -199,7 +199,7 @@ export function ServicesSection({ heading }: { heading: React.ReactNode }) {
                 <p className="flex-1 text-sm text-muted-foreground">
                   Status unavailable · Talome&apos;s supervisor isn&apos;t running, so services can&apos;t be restarted from here.
                 </p>
-                <Button variant="ghost" size="sm" className="pointer-coarse:h-11" onClick={() => void mutate()}>Retry</Button>
+                <Button variant="ghost" size="sm" className="phone-touch:h-11" onClick={() => void mutate()}>Retry</Button>
               </>
             )}
           </div>

@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
  *
  * - Red, amber and green already mean critical, warning and healthy across
  *   Talome, so coloured dots in every window would read as status.
- * - 14px dots are hard to hit on an iPad; these are 24px (32px on touch, with
+ * - 14px dots are hard to hit on an iPad; these are 24px (32px on phone-sized touch screens, with
  *   a 44px hit area: globals.css).
  * - The green button's meaning (full screen or zoom?) is a guess; Arrange
  *   says exactly what will happen and shows where the window is now.

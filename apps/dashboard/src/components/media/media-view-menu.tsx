@@ -75,7 +75,7 @@ export function MediaViewMenu({
         <Button
           variant={filtered ? "secondary" : "outline"}
           size="icon-sm"
-          className={cn("pointer-coarse:size-11", className)}
+          className={cn("phone-touch:size-11", className)}
           aria-label={`${navigation ? "View options" : "Sort and filter"}${filtered ? ", filtered" : ""}`}
           title={navigation ? "View options" : "Sort and filter"}
         >

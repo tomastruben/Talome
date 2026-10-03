@@ -109,13 +109,13 @@ export function SourceListItem({
     ? TRAILING_TONE.selected
     : cn(TRAILING_TONE.rest, !disabled && (action ? TRAILING_TONE.hoverWithAction : TRAILING_TONE.hover));
   const rowClassName = cn(
-    "group/source-item flex h-8 w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm pointer-coarse:h-11",
+    "group/source-item flex h-8 w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm phone-touch:h-11",
     "transition-colors duration-150 ease-out",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
     selected ? "bg-foreground/10 text-foreground" : cn("text-foreground/80", !disabled && hover),
     disabled && "pointer-events-none opacity-50",
     // Room for the action button, so the label and count never sit under it
-    action && "pr-9 pointer-coarse:pr-11",
+    action && "pr-9 phone-touch:pr-11",
     className,
   );
   const content = (
@@ -188,7 +188,7 @@ export function SourceListItem({
           "group-hover/source-row:opacity-100 group-focus-within/source-row:opacity-100 focus-visible:opacity-100",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           // No hover on touch: always shown, with a 44px target
-          "pointer-coarse:right-1.5 pointer-coarse:opacity-100 pointer-coarse:after:absolute pointer-coarse:after:-inset-2.5",
+          "phone-touch:right-1.5 pointer-coarse:opacity-100 pointer-coarse:after:absolute pointer-coarse:after:-inset-2.5",
           disabled && "pointer-events-none",
         )}
         onClick={(event) => {
@@ -242,7 +242,7 @@ export function SourceListSkeleton({ rows = 3 }: { rows?: number }) {
   return (
     <div aria-hidden="true" data-slot="source-list-skeleton" className="flex flex-col gap-1">
       {Array.from({ length: rows }, (_, index) => (
-        <Skeleton key={index} className={cn("h-8 rounded-lg pointer-coarse:h-11", SKELETON_WIDTHS[index % SKELETON_WIDTHS.length])} />
+        <Skeleton key={index} className={cn("h-8 rounded-lg phone-touch:h-11", SKELETON_WIDTHS[index % SKELETON_WIDTHS.length])} />
       ))}
     </div>
   );

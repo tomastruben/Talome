@@ -61,7 +61,7 @@ const CATALOG_DEDUPE_MS = 5 * 60 * 1000;
 const CREATE_APP_HREF = "/dashboard/assistant?prompt=I+want+to+create+a+new+app";
 
 /** A source tab: 44px on touch, where the tabs are a phone's source navigation */
-const TAB_CLASS = "text-xs pointer-coarse:h-11 pointer-coarse:min-w-11";
+const TAB_CLASS = "text-xs phone-touch:h-11 phone-touch:min-w-11";
 
 /**
  * A category pill. On a phone these pills are the only category navigation
@@ -71,7 +71,7 @@ const TAB_CLASS = "text-xs pointer-coarse:h-11 pointer-coarse:min-w-11";
  */
 function categoryPillClass(active: boolean) {
   return cn(
-    "h-6 shrink-0 rounded-full border px-2 text-xs transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:h-11 pointer-coarse:px-3",
+    "h-6 shrink-0 rounded-full border px-2 text-xs transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring phone-touch:h-11 phone-touch:px-3",
     active
       ? "border-foreground/30 bg-foreground/8 text-foreground"
       : "border-border text-muted-foreground hover:text-foreground",
@@ -391,7 +391,7 @@ function AppsPageContent() {
             value={tab}
             onValueChange={changeTab}
           >
-            <TabsList className="pointer-coarse:h-12">
+            <TabsList className="phone-touch:h-12">
               <TabsTrigger value="all" className={TAB_CLASS}>All</TabsTrigger>
               {sourceTypes.map((t) => (
                 <TabsTrigger key={t} value={t} className={TAB_CLASS}>
@@ -422,7 +422,7 @@ function AppsPageContent() {
 
           <SearchField
             containerClassName={cn("ml-auto flex-1 @xl:max-w-64", embeddedFrame ? "min-w-0" : "min-w-40")}
-            className="pointer-coarse:h-11"
+            className="phone-touch:h-11"
             aria-label="Search apps"
             placeholder="Search apps…"
             value={search}
@@ -434,7 +434,7 @@ function AppsPageContent() {
               data-toolbar-secondary=""
               variant="ghost"
               size="icon-sm"
-              className="shrink-0 pointer-coarse:size-11"
+              className="shrink-0 phone-touch:size-11"
               asChild
             >
               <Link href={CREATE_APP_HREF} aria-label="Create app" title="Create an app with the Assistant">

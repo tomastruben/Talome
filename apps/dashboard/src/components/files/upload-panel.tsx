@@ -87,18 +87,18 @@ export function UploadPanel({
               )}
             </div>
             {remaining > 0 ? (
-              <Button variant="ghost" size="sm" className="h-7 text-xs pointer-coarse:h-11" onClick={onCancelAll}>
+              <Button variant="ghost" size="sm" className="h-7 text-xs phone-touch:h-11" onClick={onCancelAll}>
                 Cancel all
               </Button>
             ) : (
-              <Button variant="ghost" size="sm" className="h-7 text-xs pointer-coarse:h-11" onClick={onClear}>
+              <Button variant="ghost" size="sm" className="h-7 text-xs phone-touch:h-11" onClick={onClear}>
                 Done
               </Button>
             )}
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 pointer-coarse:size-11"
+              className="size-7 phone-touch:size-11"
               aria-label={collapsed ? "Show uploads" : "Hide uploads"}
               onClick={() => setCollapsed((c) => !c)}
             >
@@ -126,12 +126,12 @@ export function UploadPanel({
                     )}
                   </div>
                   {(item.status === "queued" || item.status === "uploading") && (
-                    <Button variant="ghost" size="icon" className="size-7 shrink-0 pointer-coarse:size-11" aria-label={`Cancel ${item.relativePath}`} onClick={() => onCancel(item.id)}>
+                    <Button variant="ghost" size="icon" className="size-7 shrink-0 phone-touch:size-11" aria-label={`Cancel ${item.relativePath}`} onClick={() => onCancel(item.id)}>
                       <HugeiconsIcon icon={Cancel01Icon} size={14} />
                     </Button>
                   )}
                   {(item.status === "failed" || item.status === "cancelled") && (
-                    <Button variant="ghost" size="icon" className="size-7 shrink-0 pointer-coarse:size-11" aria-label={`Retry ${item.relativePath}`} onClick={() => onRetry(item.id)}>
+                    <Button variant="ghost" size="icon" className="size-7 shrink-0 phone-touch:size-11" aria-label={`Retry ${item.relativePath}`} onClick={() => onRetry(item.id)}>
                       <HugeiconsIcon icon={Refresh01Icon} size={14} />
                     </Button>
                   )}

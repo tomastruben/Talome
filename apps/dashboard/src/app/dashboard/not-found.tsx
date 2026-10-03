@@ -12,7 +12,7 @@ export default function DashboardNotFound() {
         title="Page not found"
         description="This page doesn't exist, or it moved. Go back to the dashboard to find what you need."
         action={
-          <Button variant="outline" size="sm" className="pointer-coarse:h-11" asChild>
+          <Button variant="outline" size="sm" className="phone-touch:h-11" asChild>
             <Link href="/dashboard">Go to the dashboard</Link>
           </Button>
         }

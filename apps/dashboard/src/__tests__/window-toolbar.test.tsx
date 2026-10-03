@@ -228,7 +228,7 @@ describe("ToolbarGroup", () => {
     const button = within(group).getByRole("button", { name: "New folder" });
     expect(button).toHaveAttribute("title", "New folder");
     expect(button).toHaveAttribute("type", "button");
-    expect(button).toHaveClass("h-8", "min-w-8", "rounded-full", "pointer-coarse:h-11", "pointer-coarse:min-w-11");
+    expect(button).toHaveClass("h-8", "min-w-8", "rounded-full", "phone-touch:h-11", "phone-touch:min-w-11");
     expect(button).toHaveClass("focus-visible:ring-2", "focus-visible:ring-inset");
     expect(button.textContent).toBe("");
     fireEvent.click(button);

@@ -75,7 +75,7 @@ function CheckboxField({
       data-slot="checkbox-field"
       htmlFor={checkboxId}
       className={cn(
-        "flex min-h-6 cursor-pointer items-start gap-2 select-none pointer-coarse:min-h-11 pointer-coarse:items-center",
+        "flex min-h-6 cursor-pointer items-start gap-2 select-none phone-touch:min-h-11 phone-touch:items-center",
         props.disabled && "cursor-not-allowed",
         className,
       )}
@@ -85,7 +85,7 @@ function CheckboxField({
         // Name from the label text only; the description is the description.
         aria-labelledby={labelId}
         aria-describedby={descriptionId}
-        className="mt-0.5 pointer-coarse:mt-0"
+        className="mt-0.5 phone-touch:mt-0"
         {...props}
       />
       <span className={cn("flex min-w-0 flex-col gap-0.5", props.disabled && "opacity-50")}>

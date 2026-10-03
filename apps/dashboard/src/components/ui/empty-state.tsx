@@ -82,7 +82,7 @@ export function ErrorState({
       </div>
       {onRetry && (
         // The only action on every error screen: a 44px target on touch
-        <Button variant="ghost" size="sm" onClick={onRetry} className="mt-1 h-7 text-xs pointer-coarse:h-11 pointer-coarse:px-4">
+        <Button variant="ghost" size="sm" onClick={onRetry} className="mt-1 h-7 text-xs phone-touch:h-11 phone-touch:px-4">
           Retry
         </Button>
       )}

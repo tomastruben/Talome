@@ -384,7 +384,7 @@ export function TerminalPage() {
               <p className="text-sm font-medium text-terminal-foreground">Couldn&apos;t connect to the terminal</p>
               <p className="text-sm text-muted-foreground">{error}</p>
             </div>
-            <Button variant="outline" size="sm" className="pointer-coarse:h-11" onClick={retry}>
+            <Button variant="outline" size="sm" className="phone-touch:h-11" onClick={retry}>
               Retry
             </Button>
           </div>

@@ -56,7 +56,7 @@ export function RenameTerminalSession({ name, onRename, disabled, className = ""
     }}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size={labelled ? "sm" : "icon-sm"} aria-label={accessibleLabel} disabled={disabled} className={`shrink-0 text-muted-foreground pointer-coarse:min-h-11 ${className}`} onClick={() => { setDraft(name); setError(null); setOpen(true); }}>
+          <Button variant="ghost" size={labelled ? "sm" : "icon-sm"} aria-label={accessibleLabel} disabled={disabled} className={`shrink-0 text-muted-foreground phone-touch:min-h-11 ${className}`} onClick={() => { setDraft(name); setError(null); setOpen(true); }}>
             <HugeiconsIcon icon={Edit02Icon} size={16} strokeWidth={1.5} aria-hidden="true" />
             {labelled && <span>Rename session</span>}
           </Button>
@@ -154,7 +154,7 @@ export function TerminalDictation({ sessionId, connected, onInsert }: {
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="Dictate terminal input" disabled={!connected} className="shrink-0 text-muted-foreground pointer-coarse:size-11">
+            <Button variant="ghost" size="icon-sm" aria-label="Dictate terminal input" disabled={!connected} className="shrink-0 text-muted-foreground phone-touch:size-11">
               <HugeiconsIcon icon={Mic01Icon} size={16} strokeWidth={1.5} aria-hidden="true" />
             </Button>
           </PopoverTrigger>

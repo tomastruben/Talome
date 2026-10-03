@@ -333,7 +333,7 @@ export function FileSearchResults({
                           size="icon"
                           tabIndex={rowActive && activeColumn === 1 ? 0 : -1}
                           onFocus={() => setActiveCell(index, 1)}
-                          className="size-6 shrink-0 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100 pointer-fine:focus-visible:opacity-100 pointer-fine:data-[state=open]:opacity-100 pointer-coarse:size-11"
+                          className="size-6 shrink-0 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100 pointer-fine:focus-visible:opacity-100 pointer-fine:data-[state=open]:opacity-100 phone-touch:size-11"
                           aria-label={`Actions for ${item.name}`}
                         >
                           <HugeiconsIcon icon={MoreHorizontalIcon} size={14} />

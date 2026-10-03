@@ -33,10 +33,10 @@ describe("shapes in a desktop window", () => {
     expect(ruleAfter(':is(.tm-window-content, [data-window-sidebar]) [data-slot="textarea"]').body).toMatch(/border-radius: var\(--radius-lg\)/);
   });
 
-  it("gives every toolbar control one 32px height, 44px on touch", () => {
+  it("gives every toolbar control one 32px height, 44px only on phones", () => {
     const height = ruleAfter('.tm-window-unified-toolbar :is([data-slot="button"]');
     expect(height.body).toMatch(/height: 2rem/);
-    expect(css).toMatch(/@media \(pointer: coarse\) \{\s*\.tm-window-unified-toolbar :is[\s\S]*?height: 2\.75rem/);
+    expect(css).toMatch(/@media \(pointer: coarse\) and \(width < 48rem\) \{\s*:root:not\(\[data-tablet-device\]\) \{\s*\.tm-window-unified-toolbar :is[\s\S]*?height: 2\.75rem/);
   });
 
   it("ends the toolbar 10px from the edge, as far as its capsules sit from the top", () => {

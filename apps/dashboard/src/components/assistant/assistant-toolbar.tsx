@@ -21,7 +21,7 @@ export function NewChatButton({ onSelect, className }: { onSelect: () => void; c
       variant="ghost"
       size="sm"
       onClick={onSelect}
-      className={cn("text-muted-foreground hover:text-foreground pointer-coarse:h-11", className)}
+      className={cn("text-muted-foreground hover:text-foreground phone-touch:h-11", className)}
     >
       <HugeiconsIcon icon={Add01Icon} size={14} aria-hidden="true" />
       New chat
@@ -73,7 +73,7 @@ export function ComposerKeyboardToggle({
       hidden={!shown}
       onClick={onToggle}
       className={cn(
-        "pointer-coarse:size-11",
+        "phone-touch:size-11",
         on ? "text-foreground" : "text-muted-foreground hover:text-foreground",
       )}
     >

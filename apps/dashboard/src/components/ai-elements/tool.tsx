@@ -253,7 +253,7 @@ function CardActionButton({
         busy={state.kind === "running"}
         busyLabel={busyLabel}
         onClick={() => void run()}
-        className={cn("rounded-full pointer-coarse:min-h-11 pointer-coarse:px-3", className)}
+        className={cn("rounded-full phone-touch:min-h-11 phone-touch:px-3", className)}
       >
         {state.kind === "failed" ? "Retry" : state.kind === "approval" ? `${label} now` : label}
       </Button>
@@ -433,7 +433,7 @@ export const ToolHeader = ({
   return (
     <CollapsibleTrigger
       className={cn(
-        "group/tool-row flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors duration-150 ease-out hover:bg-muted/40 group-data-[state=open]/tool:rounded-b-none group-data-[state=open]/tool:hover:bg-transparent pointer-coarse:min-h-11",
+        "group/tool-row flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors duration-150 ease-out hover:bg-muted/40 group-data-[state=open]/tool:rounded-b-none group-data-[state=open]/tool:hover:bg-transparent phone-touch:min-h-11",
         className
       )}
       {...props}

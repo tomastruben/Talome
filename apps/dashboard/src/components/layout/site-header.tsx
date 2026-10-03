@@ -110,7 +110,7 @@ function AutomationsHeaderAction() {
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:px-3"
+        className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground phone-touch:h-11 phone-touch:px-3"
         onClick={openCreate}
       >
         <HugeiconsIcon icon={Add01Icon} size={14} />
@@ -159,7 +159,7 @@ function HomeEditControls() {
       <Button
         variant="ghost"
         size="icon"
-        className="size-7 text-muted-foreground hover:text-foreground transition-colors pointer-coarse:size-11"
+        className="size-7 text-muted-foreground hover:text-foreground transition-colors phone-touch:size-11"
         asChild
       >
         <Link href="/dashboard/share" aria-label="Share setup">
@@ -169,7 +169,7 @@ function HomeEditControls() {
       <Button
         variant="ghost"
         size="icon"
-        className="size-7 text-muted-foreground hover:text-foreground transition-colors pointer-coarse:size-11"
+        className="size-7 text-muted-foreground hover:text-foreground transition-colors phone-touch:size-11"
         onClick={() => setEditMode((v) => !v)}
         aria-label={editMode ? "Done editing" : "Edit widgets"}
       >
@@ -219,7 +219,7 @@ function ServicesHeaderAction() {
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:px-3"
+        className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground phone-touch:h-11 phone-touch:px-3"
         onClick={checkAllUpdates}
       >
         <HugeiconsIcon icon={BubbleChatDownload02Icon} size={14} />
@@ -292,7 +292,7 @@ export function SiteHeader() {
     <header className="flex h-12 shrink-0 items-center gap-1.5 bg-background px-4">
       {/* Desktop: standard sidebar toggle */}
       <div className="hidden md:flex">
-        <SidebarTrigger className="size-8 shrink-0 text-muted-foreground hover:text-foreground transition-colors pointer-coarse:size-11">
+        <SidebarTrigger className="size-8 shrink-0 text-muted-foreground hover:text-foreground transition-colors phone-touch:size-11">
           <HugeiconsIcon icon={LayoutAlignLeftIcon} size={20} strokeWidth={1.5} />
         </SidebarTrigger>
       </div>
@@ -302,7 +302,7 @@ export function SiteHeader() {
         <Button
           variant="ghost"
           size="icon"
-          className="size-8 shrink-0 text-muted-foreground hover:text-foreground transition-colors pointer-coarse:size-11"
+          className="size-8 shrink-0 text-muted-foreground hover:text-foreground transition-colors phone-touch:size-11"
           onClick={() => setMobileNavOpen(true)}
           aria-label="Open navigation"
         >
@@ -316,7 +316,7 @@ export function SiteHeader() {
         <Button
           variant="ghost"
           size="icon"
-          className="size-7 shrink-0 text-muted-foreground hover:text-foreground transition-colors -ml-1 pointer-coarse:size-11"
+          className="size-7 shrink-0 text-muted-foreground hover:text-foreground transition-colors -ml-1 phone-touch:size-11"
           onClick={startNew}
           aria-label="Back to conversations"
         >
@@ -336,13 +336,13 @@ export function SiteHeader() {
               marginRight: isDrilldownSub ? 6 : 0,
             }}
             transition={BACK_BUTTON_TRANSITION}
-            className={cn("overflow-hidden shrink-0", isDrilldownSub && "pointer-coarse:min-w-11")}
+            className={cn("overflow-hidden shrink-0", isDrilldownSub && "phone-touch:min-w-11")}
           >
             {activeDrilldown.useHistoryBack ? (
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-7 text-muted-foreground hover:text-foreground transition-colors pointer-coarse:size-11"
+                className="size-7 text-muted-foreground hover:text-foreground transition-colors phone-touch:size-11"
                 onClick={() => router.back()}
                 tabIndex={isDrilldownSub ? 0 : -1}
                 aria-label="Go back"
@@ -353,7 +353,7 @@ export function SiteHeader() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-7 text-muted-foreground hover:text-foreground transition-colors pointer-coarse:size-11"
+                className="size-7 text-muted-foreground hover:text-foreground transition-colors phone-touch:size-11"
                 asChild
                 tabIndex={isDrilldownSub ? 0 : -1}
               >
@@ -395,12 +395,12 @@ export function SiteHeader() {
               marginRight: 6,
             }}
             transition={BACK_BUTTON_TRANSITION}
-            className="overflow-hidden shrink-0 pointer-coarse:min-w-11"
+            className="overflow-hidden shrink-0 phone-touch:min-w-11"
           >
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 text-muted-foreground hover:text-foreground transition-colors pointer-coarse:size-11"
+              className="size-7 text-muted-foreground hover:text-foreground transition-colors phone-touch:size-11"
               onClick={pageBack}
               aria-label="Go back"
             >
@@ -434,7 +434,7 @@ export function SiteHeader() {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:px-3"
+            className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground phone-touch:h-11 phone-touch:px-3"
             onClick={startNew}
           >
             <HugeiconsIcon icon={Add01Icon} size={14} />
@@ -451,7 +451,7 @@ export function SiteHeader() {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:px-3"
+            className="h-7 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground phone-touch:h-11 phone-touch:px-3"
             asChild
           >
             <Link href="/dashboard/assistant?prompt=I+want+to+create+a+new+app">

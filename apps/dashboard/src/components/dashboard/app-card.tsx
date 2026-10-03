@@ -124,7 +124,7 @@ export function AppCard({ app, onDelete, priority = false, eager = false, hasUpd
       {card}
       <button
         type="button"
-        className="absolute left-2 top-[calc(132px-0.5rem)] -translate-y-full z-10 flex items-center justify-center size-7 pointer-coarse:size-11 rounded-md bg-background border border-border text-muted-foreground hover:text-status-critical hover:border-status-critical/40 transition-[color,border-color,opacity] duration-150 opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
+        className="absolute left-2 top-[calc(132px-0.5rem)] -translate-y-full z-10 flex items-center justify-center size-7 phone-touch:size-11 rounded-md bg-background border border-border text-muted-foreground hover:text-status-critical hover:border-status-critical/40 transition-[color,border-color,opacity] duration-150 opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => onDelete(app.id)}
         aria-label={`Delete ${app.installed?.displayName || app.name}`}
         title="Delete app"

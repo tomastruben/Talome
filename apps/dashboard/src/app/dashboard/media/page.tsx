@@ -327,7 +327,7 @@ function SourceStatusLine({ message, onRetry }: { message: string; onRetry: () =
   return (
     <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status">
       {message} ·
-      <Button variant="ghost" size="xs" className="pointer-coarse:h-11 pointer-coarse:px-3" onClick={onRetry}>Retry</Button>
+      <Button variant="ghost" size="xs" className="phone-touch:h-11 phone-touch:px-3" onClick={onRetry}>Retry</Button>
     </p>
   );
 }
@@ -440,7 +440,7 @@ function DownloadQueueRow({
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-primary/80 hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-60 pointer-coarse:size-11"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-primary/80 hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-60 phone-touch:size-11"
                     onClick={() => onRetry(item)}
                     disabled={retryingId === item.id}
                     aria-label={retryingId === item.id ? "Retrying download" : "Retry download"}
@@ -1733,7 +1733,7 @@ function MediaPageInner() {
         onValueChange={(v) => selectTab(v as MediaTab)}
       >
         {/* Classic mode folds labels until the whole toolbar fits. */}
-        <TabsList className="pointer-coarse:h-12">
+        <TabsList className="phone-touch:h-12">
           {tabs.map((t) => (
             <TabsTrigger
               key={t.id}
@@ -1741,7 +1741,7 @@ function MediaPageInner() {
               value={t.id}
               aria-label={t.ariaLabel}
               title={t.label}
-              className="text-xs gap-1.5 pointer-coarse:h-11 pointer-coarse:min-w-11"
+              className="text-xs gap-1.5 phone-touch:h-11 phone-touch:min-w-11"
             >
               <HugeiconsIcon icon={t.icon} size={14} />
               <span className={embedded ? "inline" : "hidden @4xl:inline"}>{t.label}</span>
@@ -1759,7 +1759,7 @@ function MediaPageInner() {
               <Select value={collection} onValueChange={(v) => setCollection(v as MediaCollection)}>
                 <SelectTrigger
                   aria-label="Show"
-                  className={cn(WINDOW_SIDEBAR_REPLACES, "h-8 min-w-28 text-xs pointer-coarse:h-11")}
+                  className={cn(WINDOW_SIDEBAR_REPLACES, "h-8 min-w-28 text-xs phone-touch:h-11")}
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -1771,7 +1771,7 @@ function MediaPageInner() {
               </Select>
             )}
             <Select value={sort} onValueChange={(v) => setSort(v as MediaSortKey)}>
-              <SelectTrigger aria-label="Sort" className="h-8 min-w-28 text-xs pointer-coarse:h-11">
+              <SelectTrigger aria-label="Sort" className="h-8 min-w-28 text-xs phone-touch:h-11">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1784,7 +1784,7 @@ function MediaPageInner() {
               value={minRating === null ? "any" : String(minRating)}
               onValueChange={(v) => setMinRating(v === "any" ? null : Number(v))}
             >
-              <SelectTrigger aria-label="Minimum rating" className="h-8 min-w-24 text-xs pointer-coarse:h-11">
+              <SelectTrigger aria-label="Minimum rating" className="h-8 min-w-24 text-xs phone-touch:h-11">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1823,7 +1823,7 @@ function MediaPageInner() {
             )}
             <SearchField
               containerClassName="min-w-24 flex-1 max-w-56 @3xl/content:max-w-64 @max-md:max-w-none"
-              className="h-8 pointer-coarse:h-11 pointer-coarse:text-base"
+              className="h-8 phone-touch:h-11 pointer-coarse:text-base"
               placeholder={tab === "movies" ? "Search movies…" : "Search shows…"}
               aria-label={tab === "movies" ? "Search movies" : "Search shows"}
               value={search}
@@ -2250,7 +2250,7 @@ function MediaPageInner() {
               aria-pressed={collection === "ready"}
               onClick={() => patchView({ collection: collection === "ready" ? "all" : "ready" })}
               className={cn(
-                "inline-flex min-h-6 items-center gap-1 rounded-full px-2 transition-colors duration-150 pointer-coarse:min-h-11",
+                "inline-flex min-h-6 items-center gap-1 rounded-full px-2 transition-colors duration-150 phone-touch:min-h-11",
                 collection === "ready" ? "bg-status-healthy/12 text-status-healthy" : "hover:bg-muted/50",
               )}
             >
@@ -2264,7 +2264,7 @@ function MediaPageInner() {
                   aria-pressed={collection === "needs-conversion"}
                   onClick={() => patchView({ collection: collection === "needs-conversion" ? "all" : "needs-conversion" })}
                   className={cn(
-                    "inline-flex min-h-6 items-center gap-1 rounded-full px-2 transition-colors duration-150 pointer-coarse:min-h-11",
+                    "inline-flex min-h-6 items-center gap-1 rounded-full px-2 transition-colors duration-150 phone-touch:min-h-11",
                     collection === "needs-conversion" ? "bg-status-warning/12 text-status-warning" : "hover:bg-muted/50",
                   )}
                 >
@@ -2276,7 +2276,7 @@ function MediaPageInner() {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 text-xs shrink-0 pointer-coarse:h-11"
+            className="h-7 gap-1.5 text-xs shrink-0 phone-touch:h-11"
             disabled={scanning}
             onClick={async () => {
               setScanning(true);

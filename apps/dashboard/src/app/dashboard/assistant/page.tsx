@@ -208,7 +208,7 @@ function AssistantHeader({
         <Button
           variant="ghost"
           size="icon"
-          className="size-8 shrink-0 text-muted-foreground hover:text-foreground transition-colors pointer-coarse:size-11"
+          className="size-8 shrink-0 text-muted-foreground hover:text-foreground transition-colors phone-touch:size-11"
           onClick={() => setMobileNavOpen(true)}
           aria-label="Open navigation"
         >
@@ -223,7 +223,7 @@ function AssistantHeader({
         <Button
           variant="ghost"
           size="icon"
-          className="size-7 shrink-0 text-muted-foreground hover:text-foreground transition-colors -ml-1 pointer-coarse:size-11"
+          className="size-7 shrink-0 text-muted-foreground hover:text-foreground transition-colors -ml-1 phone-touch:size-11"
           onClick={onBack}
           aria-label={backToOrigin ? "Back" : "Back to conversations"}
         >
@@ -878,7 +878,7 @@ export default function AssistantPage() {
                               size="icon-sm"
                               aria-label={`Delete "${conv.title}"`}
                               onClick={() => requestDelete(conv.id, conv.title || "Untitled conversation", "history")}
-                              className="mr-1 shrink-0 text-muted-foreground hover:text-status-critical sm:opacity-0 sm:group-hover/item:opacity-100 sm:group-focus-within/item:opacity-100 sm:focus-visible:opacity-100 pointer-coarse:size-11 pointer-coarse:opacity-100"
+                              className="mr-1 shrink-0 text-muted-foreground hover:text-status-critical sm:opacity-0 sm:group-hover/item:opacity-100 sm:group-focus-within/item:opacity-100 sm:focus-visible:opacity-100 phone-touch:size-11 pointer-coarse:opacity-100"
                             >
                               <HugeiconsIcon icon={Delete01Icon} size={14} strokeWidth={1.5} aria-hidden="true" />
                             </Button>
@@ -891,7 +891,7 @@ export default function AssistantPage() {
                       <button
                         type="button"
                         onClick={() => toggleGroup(group)}
-                        className="mt-1 mb-2 w-full rounded-lg px-3 py-2 text-left text-sm text-muted-foreground outline-none transition-colors duration-150 ease-out hover:bg-accent/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+                        className="mt-1 mb-2 w-full rounded-lg px-3 py-2 text-left text-sm text-muted-foreground outline-none transition-colors duration-150 ease-out hover:bg-accent/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring phone-touch:min-h-11"
                       >
                         {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
                       </button>

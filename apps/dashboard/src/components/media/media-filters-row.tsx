@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
  */
 export function mediaFilterPill(active: boolean): string {
   return cn(
-    "h-6 shrink-0 rounded-full border px-2 text-xs transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:h-11 pointer-coarse:px-3",
+    "h-6 shrink-0 rounded-full border px-2 text-xs transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring phone-touch:h-11 phone-touch:px-3",
     active
       ? "border-foreground/30 bg-foreground/10 text-foreground"
       : "border-border text-muted-foreground hover:text-foreground",
@@ -91,7 +91,7 @@ export function MediaFiltersRow({
             variant="ghost"
             size="sm"
             aria-label="Clear filters"
-            className="h-6 shrink-0 px-2 text-xs pointer-coarse:h-11 pointer-coarse:px-3"
+            className="h-6 shrink-0 px-2 text-xs phone-touch:h-11 phone-touch:px-3"
             onClick={onClearFilters}
           >
             Clear

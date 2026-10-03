@@ -116,7 +116,7 @@ describe("Rebuild dashboard row in Settings", () => {
     renderSettings();
     const button = within(row()).getByRole("button", { name: "Rebuild" });
     expect(button).toHaveAccessibleDescription(/Rebuild dashboard/);
-    expect(button.className).toContain("pointer-coarse:h-11");
+    expect(button.className).toContain("phone-touch:h-11");
   });
 
   it("shows the build in flight with the busy state, then a receipt toast", async () => {

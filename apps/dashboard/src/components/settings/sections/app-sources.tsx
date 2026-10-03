@@ -178,7 +178,7 @@ export function AppSourcesSection() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="pointer-coarse:min-h-11"
+                  className="phone-touch:min-h-11"
                   aria-label={`${hasSynced ? "Re-sync" : "Sync"} ${store.name}`}
                   busy={isSyncing}
                   busyLabel={`Syncing ${store.name}`}
@@ -190,7 +190,7 @@ export function AppSourcesSection() {
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon-sm" className="pointer-coarse:min-h-11 pointer-coarse:min-w-11" aria-label={`Actions for ${store.name}`} disabled={isSyncing}>
+                    <Button variant="ghost" size="icon-sm" className="phone-touch:min-h-11 phone-touch:min-w-11" aria-label={`Actions for ${store.name}`} disabled={isSyncing}>
                       <HugeiconsIcon icon={MoreHorizontalIcon} size={16} />
                     </Button>
                   </DropdownMenuTrigger>

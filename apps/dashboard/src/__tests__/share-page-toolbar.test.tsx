@@ -119,7 +119,7 @@ describe("Share", () => {
 
     const selectAll = screen.getByRole("button", { name: "Select all" });
     expect(selectAll).toHaveAttribute("type", "button");
-    expect(selectAll.className).toMatch(/pointer-coarse:h-11/);
+    expect(selectAll.className).toMatch(/phone-touch:h-11/);
     fireEvent.click(selectAll);
     expect(tile).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Deselect all" })).toBeInTheDocument();
@@ -140,7 +140,7 @@ describe("Share", () => {
 
     // Every action on the receipt is a 44px target on touch
     for (const name of ["Copy code", "Share recipe", "Download"]) {
-      expect(screen.getByRole("button", { name }).className).toMatch(/pointer-coarse:h-11/);
+      expect(screen.getByRole("button", { name }).className).toMatch(/phone-touch:h-11/);
     }
 
     const again = screen.getByRole("button", { name: "Prepare again" });

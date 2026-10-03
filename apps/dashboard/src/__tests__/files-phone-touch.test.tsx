@@ -108,7 +108,7 @@ describe("Files search scope on a phone", () => {
     expect(scope.parentElement).toHaveClass("flex-wrap");
     for (const name of ["This folder", "Include subfolders"]) {
       const item = within(scope).getByRole("radio", { name });
-      expect(item).toHaveClass("flex-1", "@md:flex-none", "pointer-coarse:h-11");
+      expect(item).toHaveClass("flex-1", "@md:flex-none", "phone-touch:h-11");
     }
   });
 
@@ -137,17 +137,17 @@ describe("Files touch targets", () => {
     renderClassic();
     await screen.findByText("notes.txt");
     const selectAll = screen.getByRole("button", { name: "Select all" });
-    expect(selectAll).toHaveClass("pointer-coarse:size-11");
+    expect(selectAll).toHaveClass("phone-touch:size-11");
     const row = selectAll.closest("tr")!;
-    // The rows are pointer-coarse:h-11; the header matches so the mark isn't cramped
-    expect(row).toHaveClass("[&>th]:h-9", "pointer-coarse:[&>th]:h-11");
+    // The rows are phone-touch:h-11; the header matches so the mark isn't cramped
+    expect(row).toHaveClass("[&>th]:h-9", "phone-touch:[&>th]:h-11");
   });
 
   it("makes the toolbar search field 44px tall on touch, like its Clear button", async () => {
     renderClassic();
     await screen.findByText("notes.txt");
-    expect(field()).toHaveClass("h-8", "pointer-coarse:h-11", "pointer-coarse:text-base");
+    expect(field()).toHaveClass("h-8", "phone-touch:h-11", "pointer-coarse:text-base");
     fireEvent.change(field(), { target: { value: "report" } });
-    expect(screen.getByRole("button", { name: "Clear search" })).toHaveClass("pointer-coarse:size-11");
+    expect(screen.getByRole("button", { name: "Clear search" })).toHaveClass("phone-touch:size-11");
   });
 });

@@ -39,7 +39,7 @@ import { TERMINAL_AGENTS, useTerminalHeaderAction } from "./use-terminal-header-
 import { RenameTerminalSession, TerminalDictation } from "./terminal-input-tools";
 
 /** Menu rows a finger can hit (the menu primitives are sized for a pointer). */
-const MENU_ROW = "pointer-coarse:min-h-11";
+const MENU_ROW = "phone-touch:min-h-11";
 
 export interface TerminalToolbarProps extends TerminalSessionPickerProps {
   /** The terminal is connected: image uploads and agent launches can reach it. */
@@ -107,7 +107,7 @@ export function TerminalToolbar({
     >
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         <TerminalSessionPicker {...picker} onRename={onRename} className={WINDOW_SIDEBAR_REPLACES} />
-        {onRename && <RenameTerminalSession key={picker.selectedSessionId} name={picker.selectedSessionName ?? "Default"} onRename={onRename} disabled={!connected} className="hidden @md:inline-flex pointer-coarse:size-11" />}
+        {onRename && <RenameTerminalSession key={picker.selectedSessionId} name={picker.selectedSessionName ?? "Default"} onRename={onRename} disabled={!connected} className="hidden @md:inline-flex phone-touch:size-11" />}
         <TerminalConnectionState status={connectionStatus} onReconnect={onReconnect} />
         {remoteActive && (
           <div role="status" title="Remote session active" className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -141,7 +141,7 @@ export function TerminalToolbar({
                 variant="ghost"
                 size="icon"
                 aria-label="More terminal controls"
-                className="size-8 text-muted-foreground hover:text-foreground pointer-coarse:size-11 @md:hidden"
+                className="size-8 text-muted-foreground hover:text-foreground phone-touch:size-11 @md:hidden"
               >
                 <HugeiconsIcon icon={MoreHorizontalIcon} size={16} aria-hidden="true" />
               </Button>
@@ -204,7 +204,7 @@ function AutoModeSwitch({
       <TooltipTrigger asChild>
         <label
           data-terminal-auto=""
-          className="flex h-8 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-full px-2 text-sm font-medium transition-colors duration-150 hover:bg-accent dark:hover:bg-accent/50 pointer-coarse:h-11"
+          className="flex h-8 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-full px-2 text-sm font-medium transition-colors duration-150 hover:bg-accent dark:hover:bg-accent/50 phone-touch:h-11"
         >
           <Switch
             size="sm"
@@ -262,7 +262,7 @@ function AgentLaunchButton({
             size="sm"
             aria-label={continueName}
             disabled={disabled}
-            className="h-8 min-w-8 gap-1.5 px-2.5 pointer-coarse:h-11 pointer-coarse:min-w-11"
+            className="h-8 min-w-8 gap-1.5 px-2.5 phone-touch:h-11 phone-touch:min-w-11"
             onClick={() => onLaunch(true)}
           >
             {/* Narrow rows show the play icon alone; mid-width rows the name alone; wide rows both */}
@@ -283,7 +283,7 @@ function AgentLaunchButton({
             variant="secondary"
             size="icon"
             aria-label={`More ${label} options`}
-            className="size-8 pointer-coarse:size-11"
+            className="size-8 phone-touch:size-11"
           >
             <HugeiconsIcon icon={ArrowDown01Icon} size={14} aria-hidden="true" />
           </Button>
