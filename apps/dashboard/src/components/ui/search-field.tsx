@@ -39,7 +39,7 @@ function SearchField({ containerClassName, className, ref, onKeyDown, ...props }
         aria-hidden="true"
       />
       <Input
-        className={cn("rounded-full pl-9", className)}
+        className={cn("rounded-full border-border/50 pl-9 transition-[color,border-color,box-shadow] duration-150 ease-out hover:border-border focus-visible:border-ring contrast-more:border-input", className)}
         {...props}
         ref={(node) => {
           inputRef.current = node
