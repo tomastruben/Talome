@@ -3219,3 +3219,7 @@ html[data-embedded-frame] body {
 @media (prefers-reduced-motion: reduce) {
   .quick-assistant-panel { transition: none; }
 }
+
+/* Voice turns disappear into soft scroll edges; padding keeps the final line
+   clear when the viewport reaches either end. */
+.voice-transcript-scroll .edge-fade { --edge-fade-size: 2rem; }
