@@ -28,12 +28,14 @@ const nextConfig: NextConfig = {
     ];
   },
   async rewrites() {
-    return [
-      {
+    // Array rewrites run before dynamic routes and bypass our [...path]
+    // streaming relay. Only fall back to core after route handlers run.
+    return {
+      fallback: [{
         source: "/api/:path*",
         destination: `${CORE_BACKEND}/api/:path*`,
-      },
-    ];
+      }],
+    };
   },
 };
 
