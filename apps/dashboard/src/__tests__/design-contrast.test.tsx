@@ -221,13 +221,13 @@ const contentOver = (theme: Theme, backdrop: number) =>
 describe("desktop window glass", () => {
   it("is one frosted material on the window (the thick material) and never see-through", () => {
     expect(glass.dark).toMatchObject({ token: "--card", alpha: 0.92, blur: 56, saturate: 1.8, brightness: 0.7 });
-    expect(glass.light).toMatchObject({ token: "--card", alpha: 0.94, blur: 56, saturate: 1.8, brightness: 1.2 });
+    expect(glass.light).toMatchObject({ token: "--card", alpha: 0.90, blur: 56, saturate: 1.8, brightness: 1.2 });
     for (const m of Object.values(glass)) expect(m.webkitFilter).toBe(m.filter);
     expect(content).toEqual({ dark: 0.15, light: 0.25 });
 
     // How much of the (dimmed, blurred) wallpaper shows through: enough to read
     // as frosted glass, not so much that the window turns see-through (the
-    // owner found 85% / 90% windows too transparent, so they are 92% / 94%)
+    // reading panes retain a tint while the light chrome admits more wallpaper)
     for (const [name, m] of Object.entries(glass)) {
       const through = (1 - m.alpha) * Math.min(1, m.brightness);
       expect(through, name).toBeGreaterThanOrEqual(0.05);
@@ -255,9 +255,9 @@ describe("desktop window glass", () => {
       regular: { dark: scale.regular.dark.alpha, light: scale.regular.light.alpha },
       thick: { dark: scale.thick.dark.alpha, light: scale.thick.light.alpha },
     }).toEqual({
-      thin: { dark: 0.85, light: 0.88 },
-      regular: { dark: 0.88, light: 0.92 },
-      thick: { dark: 0.92, light: 0.94 },
+      thin: { dark: 0.85, light: 0.86 },
+      regular: { dark: 0.88, light: 0.88 },
+      thick: { dark: 0.92, light: 0.90 },
     });
     for (const theme of ["dark", "light"] as const) {
       // The sign-in card is the regular material
@@ -294,6 +294,20 @@ describe("desktop window glass", () => {
           .toBeGreaterThanOrEqual(name === "thin" ? 3 : 4.5);
       }
     }
+  });
+
+  it("keeps clear light Dock controls legible over black and white wallpaper", () => {
+    const selector = ":root:not(.dark) .desktop-dock.tm-glass";
+    const dock = material(selector);
+    const filterContrast = Number(/contrast\(([\d.]+)\)/.exec(dock.filter)?.[1]);
+    expect(filterContrast).toBeGreaterThan(0);
+    for (const backdrop of [0, 1]) {
+      const filtered = Math.min(1, ((backdrop - 0.5) * filterContrast + 0.5) * dock.brightness);
+      const surface = over(color(light, dock.token), gray(filtered), dock.alpha);
+      expect(contrast(color(light, "--foreground"), surface)).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(ruleBody(":root:not(.dark) .desktop-dock [role=\"group\"] button")).toContain("color: var(--foreground)");
+    expect(css.slice(css.indexOf("@media (prefers-reduced-transparency"))).toContain(selector);
   });
 
   it("keeps text at AA on the glass and the content tint over any wallpaper, active or not", () => {

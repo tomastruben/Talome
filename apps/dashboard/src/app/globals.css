@@ -144,7 +144,7 @@
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.5 0 0);
+  --muted-foreground: oklch(0.49 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: var(--status-critical);
@@ -2476,9 +2476,9 @@
    turns smoky instead of foggy, then lay a --card tint over it.
 
                  dark                       light
-     thin        85%  blur 40  ×0.75        88%  blur 40  ×1.15   Dock, desktop icons (.tm-glass)
-     regular     88%  blur 48  ×0.75        92%  blur 48  ×1.2    Desktop widgets, sign-in pills, setup panel (.tm-glass-dense)
-     thick       92%  blur 56  ×0.7         94%  blur 56  ×1.2    Windows (.tm-window, plus the content tint)
+     thin        85%  blur 40  ×0.75        86%  blur 40  ×1.15   Desktop icons (.tm-glass); light Dock uses the clear variant below
+     regular     88%  blur 48  ×0.75        88%  blur 48  ×1.2    Desktop widgets, sign-in pills, setup panel (.tm-glass-dense)
+     thick       92%  blur 56  ×0.7         90%  blur 56  ×1.2    Windows (.tm-window, plus the content tint)
 
    Denser as the content gets denser: the Dock holds icons, widgets hold short
    readouts, windows hold whole apps. Over a pure white (dark) / pure black
@@ -2518,7 +2518,7 @@
     0 12px 28px -8px oklch(0 0 0 / 45%);
 }
 :root:not(.dark) .tm-window {
-  background: color-mix(in oklch, var(--card) 94%, transparent);
+  background: color-mix(in oklch, var(--card) 90%, transparent);
   -webkit-backdrop-filter: blur(56px) saturate(1.8) brightness(1.2);
   backdrop-filter: blur(56px) saturate(1.8) brightness(1.2);
   border-color: oklch(0 0 0 / 10%);
@@ -2894,7 +2894,7 @@ html[data-embedded-frame] body {
       --input: color-mix(in oklch, var(--foreground) 38%, transparent);
     }
     :root:not(.dark) :is(.tm-window-content, [data-window-sidebar]) :is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"], [data-slot="input-group"], [data-slot="button"][data-variant="outline"], [data-slot="toggle"][data-variant="outline"], [data-slot="toggle-group-item"][data-variant="outline"]) {
-      --input: color-mix(in oklch, var(--foreground) 48%, transparent);
+      --input: color-mix(in oklch, var(--foreground) 52%, transparent);
     }
     :is(.tm-window-content, [data-window-sidebar]) [data-slot="button"][data-variant="outline"] {
       --border: var(--input);
@@ -2988,7 +2988,7 @@ html[data-embedded-frame] body {
   border-color: oklch(1 0 0 / 8%);
 }
 :root:not(.dark) [data-desktop-widget-canvas] [data-widget] {
-  background: color-mix(in oklch, var(--card) 92%, transparent);
+  background: color-mix(in oklch, var(--card) 88%, transparent);
   -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
   backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
   border-color: oklch(0 0 0 / 8%);
@@ -3014,7 +3014,7 @@ html[data-embedded-frame] body {
 /* The sign-in screen is a dark scope in both themes (auth-shell.tsx), so the
    light recipe stops at a .dark ancestor. */
 :root:not(.dark) .tm-glass-dense:not(.dark *) {
-  background: color-mix(in oklch, var(--card) 92%, transparent);
+  background: color-mix(in oklch, var(--card) 88%, transparent);
   border-color: oklch(0 0 0 / 8%);
   -webkit-backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
   backdrop-filter: blur(48px) saturate(1.8) brightness(1.2);
@@ -3066,11 +3066,25 @@ html[data-embedded-frame] body {
     0 18px 40px -14px oklch(0 0 0 / 55%);
 }
 :root:not(.dark) .tm-glass {
-  background: color-mix(in oklch, var(--card) 88%, transparent);
+  background: color-mix(in oklch, var(--card) 86%, transparent);
   -webkit-backdrop-filter: blur(40px) saturate(1.8) brightness(1.15);
   backdrop-filter: blur(40px) saturate(1.8) brightness(1.15);
   border-color: oklch(0 0 0 / 8%);
   box-shadow: 0 0 0 1px oklch(1 0 0 / 50%), inset 0 1px 0 oklch(1 0 0 / 60%), 0 18px 40px -14px oklch(0 0 0 / 25%);
+}
+
+/* Icon-only Dock: clear glass lets the wallpaper carry its colour. The
+   backdrop contrast lift keeps black wallpaper from swallowing dark controls;
+   labels and reading surfaces retain their denser material. */
+:root:not(.dark) .desktop-dock.tm-glass {
+  background: color-mix(in oklch, var(--card) 24%, transparent);
+  -webkit-backdrop-filter: blur(40px) saturate(1.8) contrast(0.35) brightness(1.15);
+  backdrop-filter: blur(40px) saturate(1.8) contrast(0.35) brightness(1.15);
+  border-color: oklch(1 0 0 / 45%);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 45%), 0 12px 32px -16px oklch(0 0 0 / 20%);
+}
+:root:not(.dark) .desktop-dock [role="group"] button {
+  color: var(--foreground);
 }
 
 /* Glass is a material: opaque under reduced transparency or increased
@@ -3082,6 +3096,7 @@ html[data-embedded-frame] body {
   .tm-window,
   [data-desktop-widget-canvas] [data-widget],
   :root:not(.dark) .tm-glass,
+  :root:not(.dark) .desktop-dock.tm-glass,
   :root:not(.dark) .tm-glass-dense:not(.dark *),
   :root:not(.dark) .tm-window,
   :root:not(.dark) [data-desktop-widget-canvas] [data-widget] {
