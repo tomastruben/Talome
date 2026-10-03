@@ -61,7 +61,7 @@ export interface TerminalToolbarProps extends TerminalSessionPickerProps {
 
 /**
  * The Terminal's toolbar. In a desktop window it renders into the window's
- * toolbar row (on the glass, under a title bar that only names the session);
+ * unified header row beside the session title;
  * in classic mode it is a full-width row above the terminal.
  *
  * Leading: the session picker (where no sidebar lists the sessions) and the
@@ -97,7 +97,8 @@ export function TerminalToolbar({
   return (
     <DesktopAppToolbar
       data-terminal-toolbar=""
-      className="flex min-h-12 min-w-0 shrink-0 items-center gap-2 border-b border-border px-3 py-1.5"
+      data-compact-toolbar=""
+      className="@container flex min-h-12 min-w-0 shrink-0 items-center gap-2 border-b border-border px-3 py-1.5"
     >
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         <TerminalSessionPicker {...picker} className={WINDOW_SIDEBAR_REPLACES} />
