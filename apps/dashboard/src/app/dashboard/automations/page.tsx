@@ -228,7 +228,7 @@ export default function AutomationsPage() {
           <BannerTitle className="text-sm">
             {recentFailures.length === 1
               ? `"${recentFailures[0].name}" failed ${relativeTime(recentFailures[0].triggeredAt)}`
-              : `${recentFailures.length} automations failed recently`}
+              : `${recentFailures.length} failed runs recorded`}
           </BannerTitle>
           <BannerClose onClick={() => setBannerDismissed(true)} className="text-destructive hover:text-destructive hover:bg-destructive/10" />
         </Banner>
@@ -260,7 +260,7 @@ export default function AutomationsPage() {
           }
         />
       ) : (
-        <div className="space-y-2">
+        <div className="flex flex-col gap-2">
           {rows.map((row) => {
             const trigger = (() => {
               try { return JSON.parse(row.trigger) as TriggerConfig; } catch { return null; }
@@ -277,15 +277,13 @@ export default function AutomationsPage() {
             return (
               <div
                 key={row.id}
-                role="button"
-                tabIndex={0}
-                className="px-4 py-3.5 rounded-xl border cursor-pointer hover:bg-muted/30 transition-colors"
-                onClick={() => openEdit(row)}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") openEdit(row); }}
+                role="group"
+                aria-label={row.name}
+                className="px-4 py-3 rounded-xl border"
               >
                 <div className="flex items-center gap-3">
                   {/* Status-aware trigger icon */}
-                  <div className="relative shrink-0 w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
+                  <div className="relative shrink-0 size-8 rounded-lg bg-muted flex items-center justify-center">
                     <HugeiconsIcon
                       icon={triggerInfo?.icon ?? FlashIcon}
                       size={14}
@@ -301,12 +299,17 @@ export default function AutomationsPage() {
                   </div>
 
                   {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm truncate">{row.name}</p>
-                    <p className="text-xs text-muted-foreground truncate mt-0.5">
+                  <Button
+                    variant="ghost"
+                    className="h-auto min-w-0 flex-1 flex-col items-start gap-0 rounded-lg px-1 py-1 text-left pointer-coarse:min-h-11"
+                    aria-label={`Edit ${row.name}`}
+                    onClick={() => openEdit(row)}
+                  >
+                    <span className="w-full font-medium text-sm truncate">{row.name}</span>
+                    <span className="w-full text-xs text-muted-foreground truncate mt-0.5">
                       {triggerLabel(row.trigger)} → {stepSummary(row)}
-                    </p>
-                  </div>
+                    </span>
+                  </Button>
 
                   {/* Actions */}
                   <div className="flex items-center gap-2 flex-shrink-0">
@@ -315,10 +318,10 @@ export default function AutomationsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 text-muted-foreground"
-                          aria-label="Run now"
+                          className="pointer-coarse:size-11"
+                          aria-label={`Run ${row.name} now`}
                           disabled={isRunning}
-                          onClick={(e) => { e.stopPropagation(); runManually(row.id); }}
+                          onClick={() => runManually(row.id)}
                         >
                           {isRunning
                             ? <Spinner className="size-3.5" />
@@ -327,12 +330,11 @@ export default function AutomationsPage() {
                       </TooltipTrigger>
                       <TooltipContent>Run now</TooltipContent>
                     </Tooltip>
-                    {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-                    <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex min-h-8 items-center pointer-coarse:min-h-11">
                       <Switch
                         checked={row.enabled}
                         onCheckedChange={(v) => toggleEnabled(row.id, v)}
-                        aria-label="Enable automation"
+                        aria-label={`${row.enabled ? "Pause" : "Enable"} ${row.name}`}
                       />
                     </div>
                   </div>

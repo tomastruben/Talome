@@ -191,18 +191,17 @@ export default function ContainersPage() {
                 <TabsBadge>{stacks.length}</TabsBadge>
               )}
             </TabsTrigger>
-            {/* Labels show once the column has room (the column, not the screen:
-                in a window the screen includes the sidebar) */}
+            {/* Keep status labels visible: a dot alone is ambiguous on phones. */}
             <TabsTrigger value="running" className="text-xs gap-1.5" title="Running">
               <TabsDot color="emerald" />
-              <span className="sr-only @lg:not-sr-only">Running</span>
+              <span>Running</span>
               {!isLoading && runningCount > 0 && (
                 <TabsBadge>{runningCount}</TabsBadge>
               )}
             </TabsTrigger>
             <TabsTrigger value="stopped" className="text-xs gap-1.5" title="Stopped">
               <TabsDot color="muted" />
-              <span className="sr-only @lg:not-sr-only">Stopped</span>
+              <span>Stopped</span>
               {!isLoading && stoppedCount > 0 && (
                 <TabsBadge>{stoppedCount}</TabsBadge>
               )}

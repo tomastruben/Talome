@@ -33,6 +33,7 @@ import { useContainerLookup } from "@/hooks/use-containers";
 import { DURATION, EASE_ENTER, EASE_EXIT, enter } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { humanizeSlug, navTitleForPath } from "./nav-config";
+import { SETTINGS_CATEGORIES } from "@/components/settings/settings-nav";
 
 interface DrilldownRoute {
   rootPrefix: string;
@@ -54,23 +55,12 @@ const DRILLDOWN_ROUTES: DrilldownRoute[] = [
     slugIndex: 2,
     useHistoryBack: true,
     titles: {
-      users: "Users & Access",
-      "ai-provider": "AI Provider",
-      "ai-tools": "AI Tools",
-      "ai-prompt": "System Prompt",
-      "ai-memory": "Memory",
-      connections: "Media Services",
-      integrations: "Chat Bots",
-      mcp: "MCP Server",
-      "app-sources": "App Sources",
-      "community-review": "Community Review",
-      stacks: "Export & Import",
+      // Legacy deep links that aren't listed in the menu.
       networking: "Networking",
       backups: "Backups",
-      intelligence: "Intelligence",
-      "ai-cost": "API Cost",
-      "file-manager": "File Manager",
-      "media-player": "Media Player",
+      // Visible sections share the menu's names, including AI Agents and Audit Log.
+      ...Object.fromEntries(SETTINGS_CATEGORIES.flatMap((category) =>
+        category.items.map((item) => [item.slug, item.title]))),
     },
   },
   {
@@ -385,7 +375,8 @@ export function SiteHeader() {
                 className={`text-sm font-medium truncate ${isDrilldownSub ? "text-muted-foreground" : ""}`}
               >
                 {isDrilldownSub
-                  ? (dynamicTitle
+                  ? ((activeDrilldown.rootPrefix === "/dashboard/settings" ? activeDrilldown.titles?.[drilldownSlug!] : undefined)
+                      ?? dynamicTitle
                       ?? activeDrilldown.titles?.[drilldownSlug!]
                       ?? humanizeSlug(drilldownSlug!))
                   : activeDrilldown.rootTitle}

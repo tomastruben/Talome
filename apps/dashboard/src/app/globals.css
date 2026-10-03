@@ -458,7 +458,7 @@
     height: 100%;
     object-fit: cover;
     object-position: center top;
-    transition: transform 500ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: transform var(--duration-base) var(--ease-enter);
   }
   .app-detail-cover-frame:hover .app-detail-cover-img {
     transform: scale(1.025);
@@ -494,7 +494,7 @@
     margin: 0 auto;
     border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
     box-shadow: 0 0 0 3px var(--background), var(--shadow-md);
-    transition: box-shadow 220ms ease;
+    transition: box-shadow var(--duration-fast) var(--ease-default);
   }
   .app-detail-hero--has-cover .app-detail-hero-icon {
     box-shadow: 0 0 0 3px var(--background), 0 8px 24px -6px rgba(0,0,0,0.3);
@@ -524,7 +524,7 @@
     padding: 0;
     border-radius: var(--radius-xl);
     cursor: zoom-in;
-    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease;
+    transition: transform var(--duration-base) var(--ease-enter), opacity var(--duration-fast) var(--ease-default);
   }
   .app-detail-cover-frame.app-detail-preview-trigger {
     border-radius: var(--radius-2xl);
@@ -1048,8 +1048,10 @@
     color: inherit;
     cursor: pointer;
     min-width: 0;
-    transition: box-shadow var(--duration-normal) var(--ease-default),
-                transform var(--duration-normal) var(--ease-default);
+    transition: box-shadow var(--duration-fast) var(--ease-default),
+                transform var(--duration-fast) var(--ease-default),
+                border-color var(--duration-fast) var(--ease-default),
+                background-color var(--duration-fast) var(--ease-default);
     overflow: hidden;
     transform: translateZ(0);
     backface-visibility: hidden;
@@ -1064,7 +1066,7 @@
   .app-card:active {
     transform: translate3d(0, -1px, 0);
     box-shadow: var(--shadow-sm);
-    transition-duration: 140ms;
+    transition-duration: var(--duration-exit);
   }
 
   .app-card-media {
@@ -1084,8 +1086,8 @@
     object-fit: cover;
     transform: scale(1.001);
     filter: saturate(0.98) brightness(0.985);
-    transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
-                filter 280ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: transform var(--duration-base) var(--ease-enter),
+                filter var(--duration-fast) var(--ease-default);
   }
   .app-card:hover .app-card-media img {
     transform: scale(1.022) translateY(-0.4px);
@@ -1191,8 +1193,8 @@
     display: grid;
     gap: var(--space-md);
     padding: var(--space-lg);
-    transition: transform 260ms cubic-bezier(0.2, 0.9, 0.2, 1),
-                opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+    transition: transform var(--duration-base) var(--ease-enter),
+                opacity var(--duration-fast) var(--ease-default);
     transform: translateY(0);
   }
   .app-card:hover .app-card-body {
@@ -1365,8 +1367,18 @@
 
   @media (prefers-reduced-motion: reduce) {
     .app-card,
+    .app-card:hover,
+    .app-card:active,
     .app-card-body,
-    .app-card-media img {
+    .app-card:hover .app-card-body,
+    .app-card-media img,
+    .app-card:hover .app-card-media img,
+    .app-detail-cover-img,
+    .app-detail-cover-frame:hover .app-detail-cover-img,
+    .app-detail-preview-trigger,
+    .app-detail-preview-trigger:hover,
+    .preview-thumb,
+    .preview-thumb:hover {
       transition: none;
       transform: none;
       animation: none;
@@ -1837,6 +1849,7 @@
   text-decoration: underline;
   text-underline-offset: 2px;
   opacity: 0.8;
+  transition: opacity var(--duration-fast) var(--ease-default);
 }
 .chat-response a:hover { opacity: 1; }
 
@@ -1858,7 +1871,7 @@
   text-decoration-style: solid;
   text-decoration-color: color-mix(in oklch, var(--foreground) 45%, transparent);
   text-underline-offset: 3px;
-  transition: text-decoration-color 100ms ease, background-color 100ms ease;
+  transition: text-decoration-color var(--duration-press) var(--ease-default), background-color var(--duration-press) var(--ease-default);
   border-radius: 3px;
 }
 .media-tag:hover {
