@@ -116,6 +116,7 @@ export {
   KeyboardIcon,
   Stethoscope02Icon,
   LayoutAlignLeftIcon,
+  SidebarLeftIcon,
   PlayListAddIcon,
   PlayListRemoveIcon,
   DatabaseRestoreIcon,

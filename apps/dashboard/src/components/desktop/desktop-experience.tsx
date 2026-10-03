@@ -52,6 +52,7 @@ import {
   Message01Icon,
   ComputerTerminal01Icon,
   Settings01Icon,
+  SidebarLeftIcon,
   MoreHorizontalIcon,
   Search01Icon,
   UserIcon,
@@ -2774,7 +2775,7 @@ export function DesktopExperience() {
                     </DropdownMenuItem>
                   ) : null}
                   <DropdownMenuItem onSelect={selectClassicMode}>
-                    <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+                    <HugeiconsIcon icon={SidebarLeftIcon} size={14} />
                     Switch to classic layout
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
