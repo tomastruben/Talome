@@ -19,6 +19,7 @@ import type { UserPermissions } from "@talome/types";
 import { getDefaultPermissions } from "@talome/types";
 import { hashInvitationToken } from "../auth/invitations.js";
 import { writeAuditEntry } from "../db/audit.js";
+import { publicSignInWallpaper } from "../auth/sign-in-wallpaper.js";
 
 /**
  * Produce session-cookie options that flip `secure` on automatically when
@@ -529,7 +530,13 @@ auth.post("/recover", async (c) => {
 /** GET /api/auth/status — unauthenticated probe: is any user configured? */
 auth.get("/status", (c) => {
   try {
-    return c.json({ passwordConfigured: usersExist() });
+    // The original administrator's bundled artwork gives new origins the
+    // same backdrop. No account identity or custom image is returned.
+    const owner = db.select({ preferences: schema.users.preferences })
+      .from(schema.users).where(eq(schema.users.role, "admin"))
+      .orderBy(schema.users.createdAt, schema.users.id).limit(1).get();
+    const wallpaperUrl = publicSignInWallpaper(owner?.preferences ?? null);
+    return c.json({ passwordConfigured: usersExist(), ...(wallpaperUrl ? { wallpaperUrl } : {}) });
   } catch {
     // Never answer "no account" when we simply couldn't tell: the sign-in
     // screen shows an error with Retry instead of the setup form.

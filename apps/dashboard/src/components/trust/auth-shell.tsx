@@ -393,6 +393,7 @@ export function SignInFrame({
   unlocking = false,
   shakeClassName,
   layout = "panel",
+  wallpaperUrl,
 }: {
   title: string;
   /** Changes when the view changes, so the content cross-fades (defaults to the title). */
@@ -405,6 +406,7 @@ export function SignInFrame({
   /** The panel's shake (panel layout; on the lock screen the page shakes its pills). */
   shakeClassName?: string;
   layout?: "lock" | "panel";
+  wallpaperUrl?: string;
 }) {
   const reduceMotion = useReducedMotion();
   // On a phone the keyboard covers the low identity area; the frame makes room
@@ -435,7 +437,7 @@ export function SignInFrame({
       className="dark relative h-dvh overflow-y-auto overscroll-contain bg-background text-foreground [color-scheme:dark] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
       style={keyboardInset ? { paddingBottom: `${keyboardInset}px` } : undefined}
     >
-      <SignInBackdrop unlocking={unlocking} />
+      <SignInBackdrop unlocking={unlocking} wallpaperUrl={wallpaperUrl} />
 
       <motion.div
         initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: TRAVEL.lift }}
@@ -460,7 +462,7 @@ export function SignInFrame({
             reduceMotion={Boolean(reduceMotion)}
             // The lock view reserves room for a two-line message, so an error
             // (or switching user) never moves the avatar.
-            className={layout === "lock" ? "mt-auto min-h-80 max-w-xs" : "my-auto max-w-sm"}
+            className={layout === "lock" ? "my-auto min-h-80 max-w-xs" : "my-auto max-w-sm"}
           >
             {layout === "lock" ? (
               <>
@@ -533,8 +535,8 @@ function subscribeToWallpaper(onChange: () => void) {
   return () => window.removeEventListener("storage", onChange);
 }
 
-function SignInBackdrop({ unlocking }: { unlocking: boolean }) {
-  const stored = useSyncExternalStore(subscribeToWallpaper, () => readStoredWallpaper() ?? DEFAULT_SIGN_IN_WALLPAPER, () => null);
+function SignInBackdrop({ unlocking, wallpaperUrl }: { unlocking: boolean; wallpaperUrl?: string }) {
+  const stored = useSyncExternalStore(subscribeToWallpaper, () => readStoredWallpaper() ?? wallpaperUrl ?? DEFAULT_SIGN_IN_WALLPAPER, () => null);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const reduceMotion = useReducedMotion();

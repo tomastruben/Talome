@@ -3125,8 +3125,8 @@ html[data-embedded-frame] body {
    and fading the scrim on sign-in sharpens the wallpaper as the desktop comes
    forward. It blurs a photo, not UI, so it stays under reduced transparency. */
 .tm-lock-backdrop {
-  -webkit-backdrop-filter: blur(40px) saturate(1.2);
-  backdrop-filter: blur(40px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
 }
 
 /* One continuous corner mask for desktop artwork. The image remains contained

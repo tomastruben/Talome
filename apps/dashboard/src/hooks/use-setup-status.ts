@@ -171,7 +171,7 @@ export function useSetupStatus(): SetupStatus {
 
 export type AuthStatus =
   | { state: "loading" }
-  | { state: "ready"; accountExists: boolean }
+  | { state: "ready"; accountExists: boolean; wallpaperUrl?: string }
   | { state: "error"; message: string };
 
 /**
@@ -182,11 +182,12 @@ export type AuthStatus =
 export async function fetchAuthStatus(): Promise<AuthStatus> {
   try {
     const res = await fetch("/api/auth/status", { credentials: "include", cache: "no-store" });
-    const body = (await res.json().catch(() => null)) as { passwordConfigured?: unknown } | null;
+    const body = (await res.json().catch(() => null)) as { passwordConfigured?: unknown; wallpaperUrl?: unknown } | null;
     if (!res.ok || typeof body?.passwordConfigured !== "boolean") {
       return { state: "error", message: "Couldn't reach the Talome server. Check that it's running, then retry." };
     }
-    return { state: "ready", accountExists: body.passwordConfigured };
+    return { state: "ready", accountExists: body.passwordConfigured,
+      ...(typeof body.wallpaperUrl === "string" && /^\/wallpapers\/(?:[a-z][a-z0-9-]*|generated\/talome-\d{2})\.jpg$/.test(body.wallpaperUrl) ? { wallpaperUrl: body.wallpaperUrl } : {}) };
   } catch {
     return { state: "error", message: "Couldn't reach the Talome server. Check that it's running, then retry." };
   }

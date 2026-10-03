@@ -22,6 +22,7 @@ import LoginPage from "@/app/login/page";
 import SetupPage from "@/app/setup/page";
 import { useUser } from "@/hooks/use-user";
 import { LAST_USER_STORAGE_KEY } from "@/lib/sign-in";
+import { DESKTOP_WALLPAPER_STORAGE_KEY } from "@/lib/wallpaper";
 
 const fetchMock = vi.fn();
 
@@ -222,6 +223,22 @@ describe("sign-in and setup integrity (P0-3)", () => {
 });
 
 describe("the lock screen", () => {
+  it("uses the server's bundled desktop wallpaper on a fresh origin", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ passwordConfigured: true, wallpaperUrl: "/wallpapers/generated/talome-07.jpg" }));
+    const { container } = render(<LoginPage />);
+    await screen.findByRole("heading", { name: "Sign in to Talome" });
+    expect(container.querySelector("main img")).toHaveAttribute("src", "/wallpapers/generated/talome-07.jpg");
+    expect(screen.getByText("Welcome home")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible());
+  });
+
+  it("keeps this browser's remembered wallpaper ahead of the server fallback", async () => {
+    localStorage.setItem(DESKTOP_WALLPAPER_STORAGE_KEY, "/wallpapers/alpenglow.jpg");
+    fetchMock.mockResolvedValueOnce(jsonResponse({ passwordConfigured: true, wallpaperUrl: "/wallpapers/generated/talome-07.jpg" }));
+    const { container } = render(<LoginPage />);
+    await screen.findByRole("heading", { name: "Sign in to Talome" });
+    expect(container.querySelector("main img")).toHaveAttribute("src", "/wallpapers/alpenglow.jpg");
+  });
   it("has no card: the fields sit on the wallpaper, under a large clock", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ passwordConfigured: true }));
     const { container } = render(<LoginPage />);

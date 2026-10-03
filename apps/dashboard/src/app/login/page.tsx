@@ -15,7 +15,6 @@ import {
   LockLink,
   LockPlaceholder,
   LockRevealToggle,
-  LockSubmit,
   SignInFrame,
 } from "@/components/trust/auth-shell";
 import { RecoveryCodeReveal } from "@/components/trust/recovery-code";
@@ -125,6 +124,7 @@ function LoginContent() {
 
   const returnTo = safeRedirectPath(searchParams.get("from"));
   const noAccount = status.state === "ready" && !status.accountExists;
+  const wallpaperUrl = status.state === "ready" ? status.wallpaperUrl : undefined;
 
   // No account yet: setup lives on its own screen (and its own endpoint).
   useEffect(() => {
@@ -299,6 +299,7 @@ function LoginContent() {
   if (view === "recovery-success") {
     return (
       <SignInFrame
+        wallpaperUrl={wallpaperUrl}
         unlocking={unlocking}
         shakeClassName={shakeClassName}
         titleKey="code"
@@ -314,6 +315,7 @@ function LoginContent() {
     const mismatch = fieldError?.field === "confirm" ? fieldError.message : null;
     return (
       <SignInFrame
+        wallpaperUrl={wallpaperUrl}
         unlocking={unlocking}
         shakeClassName={shakeClassName}
         titleKey="recover"
@@ -386,9 +388,10 @@ function LoginContent() {
   const message = usernameError ?? passwordError ?? error;
 
   return (
-    <SignInFrame layout="lock" unlocking={unlocking} titleKey={knownUser ? "known" : "anyone"} title={SIGN_IN_TITLE}>
+    <SignInFrame layout="lock" wallpaperUrl={wallpaperUrl} unlocking={unlocking} titleKey={knownUser ? "known" : "anyone"} title={SIGN_IN_TITLE}>
       <form onSubmit={handleLogin} className="flex w-full flex-col items-center" noValidate>
         <LockAvatar name={knownUser} />
+        <p className="tm-on-scrim mt-3 text-lg font-medium text-foreground">{knownUser ? "Welcome back" : "Welcome home"}</p>
         {knownUser ? (
           <>
             <p className="tm-on-scrim mt-3 max-w-full truncate text-base font-medium text-foreground">{knownUser}</p>
@@ -436,15 +439,12 @@ function LoginContent() {
             trailing={
               <>
                 {password ? <LockRevealToggle revealed={revealed} onToggle={() => setRevealed((value) => !value)} /> : null}
-                <LockSubmit
-                  label="Sign in"
-                  busy={loading || unlocking}
-                  busyLabel={unlocking ? "Opening Talome…" : "Signing in…"}
-                />
               </>
             }
           />
         </div>
+
+        <Button type="submit" className="mt-3 h-11 w-full rounded-full" busy={loading || unlocking} busyLabel={unlocking ? "Opening Talome…" : "Signing in…"}>Sign in</Button>
 
         <AuthError onScrim id={messageId} message={message} className="mt-3" />
 
