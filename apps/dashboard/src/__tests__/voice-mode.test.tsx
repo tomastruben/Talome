@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("swr", () => ({ default: () => ({ data: { live: mocks.liveEnabled ? { model: "live" } : null } }) }));
 vi.mock("next-themes", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
-vi.mock("thinking-orbs", () => ({ ThinkingOrb: ({ state }: { state: string }) => <span data-testid="voice-orb" data-state={state} /> }));
+vi.mock("thinking-orbs", () => ({ ThinkingOrb: ({ state, paused }: { state: string; paused: boolean }) => <span data-testid="voice-orb" data-state={state} data-paused={String(paused)} /> }));
 vi.mock("voice-glow", () => ({ VoiceBeam: () => null }));
 vi.mock("@/hooks/use-voice-input", () => ({ useVoiceInput: mocks.voice }));
 vi.mock("@/hooks/use-live-voice", () => ({ useLiveVoice: mocks.live }));
@@ -123,18 +123,28 @@ describe("voice conversation startup", () => {
     mocks.live.mockReturnValue({ ...live, activity: "speaking" });
     page.rerender(<VoiceMode {...props} />);
     act(() => vi.advanceTimersByTime(300));
-    expect(screen.getByTestId("voice-orb")).toHaveAttribute("data-state", "listening");
+    expect(screen.getByTestId("voice-orb")).toHaveAttribute("data-state", "breathing");
     mocks.live.mockReturnValue(live);
     page.rerender(<VoiceMode {...props} />);
     act(() => vi.advanceTimersByTime(700));
-    expect(screen.getByTestId("voice-orb")).toHaveAttribute("data-state", "listening");
+    expect(screen.getByTestId("voice-orb")).toHaveAttribute("data-state", "breathing");
     mocks.live.mockReturnValue({ ...live, activity: "speaking" });
     page.rerender(<VoiceMode {...props} />);
     act(() => vi.advanceTimersByTime(600));
-    expect(screen.getAllByTestId("voice-orb").some(el => el.dataset.state === "composing")).toBe(true);
+    expect(screen.getAllByTestId("voice-orb").some(el => el.dataset.state === "weaving")).toBe(true);
     expect(screen.queryByText("Talome", { selector: "p" })).not.toBeInTheDocument();
     expect(screen.queryByText("Just talk — interrupt any time.")).not.toBeInTheDocument();
     page.unmount();
+  });
+
+  it("stops the orb when voice ends instead of displaying active listening", () => {
+    mocks.liveEnabled = true;
+    mocks.live.mockReturnValue({ state: "ended", activity: "listening", error: null,
+      userLevel: level, agentLevel: level, start: mocks.start, stop: mocks.stop });
+    render(<VoiceMode {...props} />);
+    expect(screen.getByTestId("voice-orb")).toHaveAttribute("data-state", "breathing");
+    expect(screen.getByTestId("voice-orb")).toHaveAttribute("data-paused", "true");
+    expect(screen.getByText("Voice ended")).toBeInTheDocument();
   });
 
   it("offers audio recovery without ending the conversation", () => {

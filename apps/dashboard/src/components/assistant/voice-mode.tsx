@@ -106,6 +106,7 @@ interface StageProps {
   muted?: boolean;
   onToggleMute?: () => void;
   muteDisabled?: boolean;
+  paused?: boolean;
   onResumePlayback?: () => void;
 }
 
@@ -134,19 +135,20 @@ function useSettledVoiceStatus(orb: OrbState, label: string, urgent: boolean) {
   return urgent ? { orb, label } : settled;
 }
 
-function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onRetry, onClose, transcript, muted, onToggleMute, muteDisabled, onResumePlayback }: StageProps) {
+function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onRetry, onClose, transcript, muted, onToggleMute, muteDisabled, paused = false, onResumePlayback }: StageProps) {
   const [showTranscript, setShowTranscript] = useState(true);
   const reduceMotion = useReducedMotion();
   const { resolvedTheme } = useTheme();
-  const urgent = Boolean(onRetry || muteDisabled || muted || label.includes("unavailable"));
+  const visualPaused = paused || Boolean(muted && orb === "breathing");
+  const urgent = Boolean(onRetry || muteDisabled || muted || paused || label.includes("unavailable"));
   const showStatusTitle = Boolean(onRetry || muteDisabled || label.includes("unavailable"));
-  const shown = useSettledVoiceStatus(muted && orb === "listening" ? "breathing" : orb, label, urgent);
+  const shown = useSettledVoiceStatus(orb, label, urgent);
   // The orb swells with the voice level, eased toward it frame by frame. It
   // tracks live data, so it is not a spring (CLAUDE.md: DRAG_SETTLE_SPRING only)
   // and it stays still under reduced motion.
   const smoothed = useMotionValue(0);
   useAnimationFrame(() => {
-    if (reduceMotion) {
+    if (reduceMotion || visualPaused) {
       if (smoothed.get() !== 0) smoothed.set(0);
       return;
     }
@@ -186,7 +188,15 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
               animate={{ opacity: 1, scale: 1, transition: reduceMotion ? { duration: 0 } : enter(DURATION.base) }}
               exit={{ opacity: 0, transition: reduceMotion ? { duration: 0 } : enter(DURATION.fast) }}
             >
-              <ThinkingOrb state={shown.orb} theme={resolvedTheme === "light" ? "light" : "dark"} size={64} aria-hidden />
+              <ThinkingOrb
+                state={shown.orb}
+                theme={resolvedTheme === "light" ? "light" : "dark"}
+                size={64}
+                speed={shown.orb === "breathing" ? 0.6 : shown.orb === "weaving" ? 0.8 : 0.75}
+                dots={0.8}
+                paused={visualPaused || Boolean(reduceMotion)}
+                aria-hidden
+              />
             </motion.span>
           </AnimatePresence>
         </motion.span>
@@ -269,7 +279,7 @@ function useChatReply({ onSend, status, lastAssistant }: Pick<VoiceModeProps, "o
 
 // ── GPT-Live: full duplex ────────────────────────────────────────────────────
 
-const LIVE_ORB: Record<string, OrbState> = { listening: "listening", speaking: "composing", working: "working" };
+const LIVE_ORB: Record<string, OrbState> = { listening: "breathing", speaking: "weaving", working: "working" };
 const LIVE_LABEL: Record<string, string> = { listening: "Listening", speaking: "Talome", working: "Working on it" };
 
 function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceModeProps) {
@@ -299,7 +309,8 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceM
     <VoiceStage
       level={level}
       processing={live.state === "connecting" || live.activity === "working"}
-      orb={live.state === "connecting" ? "connecting" : LIVE_ORB[live.activity]}
+      orb={live.error || live.state === "ended" ? "breathing" : live.state === "connecting" ? "connecting" : LIVE_ORB[live.activity]}
+      paused={Boolean(live.error || live.state === "ended")}
       label={label}
       caption={caption}
       // Where the voice goes, in plain words (no protocol or model id)
@@ -322,10 +333,10 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceM
 type Phase = "listening" | "transcribing" | "thinking" | "speaking";
 
 const PHASE_ORB: Record<Phase, OrbState> = {
-  listening: "listening",
+  listening: "breathing",
   transcribing: "solving",
   thinking: "working",
-  speaking: "composing",
+  speaking: "weaving",
 };
 
 const PHASE_LABEL: Record<Phase, string> = {
@@ -432,7 +443,8 @@ function ClassicSession({ onClose, onSend, status, lastAssistant }: VoiceModePro
     <VoiceStage
       level={level}
       processing={phase === "transcribing" || phase === "thinking"}
-      orb={PHASE_ORB[phase]}
+      orb={voice.error || !engine ? "breathing" : voice.status === "starting" ? "connecting" : PHASE_ORB[phase]}
+      paused={Boolean(voice.error || !engine)}
       label={voice.error ? "Microphone unavailable" : !engine ? "Voice unavailable" : voice.status === "starting" ? "Starting microphone…" : PHASE_LABEL[phase]}
       caption={voice.error || transcript || ""}
       footnote={
