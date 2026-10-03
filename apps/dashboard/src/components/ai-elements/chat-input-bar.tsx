@@ -105,6 +105,8 @@ export interface ChatInputBarProps {
   placeholder?: string;
   extraTools?: ReactNode;
   maxWidth?: string;
+  /** Concentric composer inside a compact floating panel. */
+  insetPanel?: boolean;
   /** Show the voice-conversation button; called when it's pressed */
   onVoiceMode?: () => void;
   /**
@@ -128,6 +130,7 @@ export function ChatInputBar({
   onVoiceMode,
   onDictationActiveChange,
   inputMode,
+  insetPanel = false,
 }: ChatInputBarProps) {
   const isActive = status === "streaming" || status === "submitted";
   const { resolvedTheme } = useTheme();
@@ -182,15 +185,15 @@ export function ChatInputBar({
     // Its own container, so the gutter follows the column it sits in (a
     // window's content column is narrower than the screen): the same p-4 /
     // p-6 step as the conversation above it
-    <div className="@container/composer relative shrink-0 pb-3 pt-2">
-      <div className={`${maxWidth} mx-auto w-full px-4 @md/composer:px-6`}>
+    <div className={`@container/composer relative shrink-0 ${insetPanel ? "p-4 pt-2" : "pb-3 pt-2"}`}>
+      <div className={`${maxWidth} mx-auto w-full ${insetPanel ? "" : "px-4 @md/composer:px-6"}`}>
         {/* Provider lifts the text so dictation can write into the composer */}
         <PromptInputProvider key={initialInput} initialInput={initialInput}>
         <VoiceBeam
           active={glowOn}
           level={readLevel}
           processing={processing}
-          borderRadius={28}
+          borderRadius={insetPanel ? 16 : 28}
           theme={resolvedTheme === "light" ? "light" : "dark"}
           onDeactivate={handleGlowGone}
           style={glowShown ? undefined : { overflow: "visible" }}

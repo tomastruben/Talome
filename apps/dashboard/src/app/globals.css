@@ -3241,3 +3241,15 @@ html[data-embedded-frame] body {
     box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 50%, transparent);
   }
 }
+
+/* Compact chat nests its composer concentrically: 32px shell − 16px inset. */
+.quick-assistant-dialog {
+  --quick-assistant-radius: 2rem;
+  --quick-assistant-inset: 1rem;
+  border-radius: var(--quick-assistant-radius);
+}
+.quick-assistant-panel .prompt-input [data-slot="input-group"],
+.quick-assistant-panel .prompt-input [data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) {
+  border-radius: calc(var(--quick-assistant-radius) - var(--quick-assistant-inset));
+  box-shadow: 0 0 0 1px var(--border);
+}

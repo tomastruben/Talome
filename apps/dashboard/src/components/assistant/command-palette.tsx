@@ -407,7 +407,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
         onOpenChange={handleOpenChange}
         showCloseButton={false}
         commandMode={mode !== "chat"}
-        className="rounded-2xl border-border/60 [&_[data-slot=command]]:rounded-none [&_[cmdk-item]]:rounded-xl"
+        className={cn("rounded-2xl border-border/60 [&_[data-slot=command]]:rounded-none [&_[cmdk-item]]:rounded-xl", mode === "chat" && "quick-assistant-dialog")}
         title={mode === "chat" ? "Quick question" : "Command Palette"}
         description={mode === "chat" ? "Ask Talome a quick question or continue in the Assistant app." : undefined}
         onEscapeKeyDown={voiceOpen || dictationActive ? (event) => {
@@ -420,7 +420,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
           // Share the Assistant composer and voice stage; expand with the saved conversation.
           <div data-expanded={hasMessages || voiceOpen} className="quick-assistant-panel relative flex flex-col motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150">
             {/* Chat header — same height as CommandInput (h-12) */}
-            <div className="flex h-12 items-center gap-1 px-2 border-b border-border shrink-0">
+            <div className="flex h-12 items-center gap-1 px-4 border-b border-border shrink-0">
               <Button
                 variant="ghost"
                 size="icon"
@@ -506,6 +506,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
             )}
 
             <ChatInputBar
+              insetPanel
               status={status as ChatStatus}
               onSubmit={({ text, files }) => onChatSubmit(text, files)}
               onStop={stop}
