@@ -107,6 +107,19 @@ describe("terminal proxy access", () => {
     expect(daemonCalls[0].headers.get("x-talome-user-id")).toBe("user-admin");
   });
 
+  it("preserves upload content type while supplying trusted daemon credentials", async () => {
+    const contentType = "multipart/form-data; boundary=talome-test";
+    const res = await buildApp().request("/api/terminal/upload", {
+      method: "POST",
+      headers: { cookie: await cookieFor("admin"), "content-type": contentType, "x-daemon-auth": "forged" },
+      body: "--talome-test--\r\n",
+    });
+    expect(res.status).toBe(200);
+    expect(daemonCalls[0].headers.get("content-type")).toBe(contentType);
+    expect(daemonCalls[0].headers.get("x-daemon-auth")).not.toBe("forged");
+    expect(daemonCalls[0].headers.get("cookie")).toBeNull();
+  });
+
   it("no PTY token is minted in locked mode, even for an admin", async () => {
     setSetting("security_mode", "locked");
     const app = buildApp();

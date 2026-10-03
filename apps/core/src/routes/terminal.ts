@@ -117,8 +117,11 @@ export function setupTerminal(
         method: c.req.method,
         headers: (() => {
           const h = new Headers();
-          for (const [k, v] of Object.entries(c.req.raw.headers)) {
-            if (k !== "host") h.set(k, v as string);
+          // Preserve body metadata, especially the multipart upload boundary.
+          // Credentials and daemon identity are supplied by this admin proxy.
+          for (const name of ["content-type", "content-length"]) {
+            const value = c.req.header(name);
+            if (value) h.set(name, value);
           }
           if (DAEMON_INTERNAL_KEY) h.set("x-daemon-auth", DAEMON_INTERNAL_KEY);
           // Who is asking: the daemon binds a new terminal to this admin and
