@@ -516,8 +516,8 @@ export default function AudiobookDetailPage() {
           : "audiobook-detail-wide--solo",
       )}>
         {/* ── Left column: cover, metadata, player ────── */}
-        <div className="audiobook-detail-now-playing min-h-0 min-w-0">
-          <ScrollArea className="audiobook-detail-now-playing-scroll h-full min-w-0">
+        <div className="audiobook-detail-now-playing flex min-h-0 min-w-0 flex-col">
+          <ScrollArea className="audiobook-detail-now-playing-scroll min-h-0 min-w-0 flex-1">
             <div className="audiobook-detail-now-playing-content flex min-h-full flex-col items-center space-y-4 text-center">
               <div className="audiobook-detail-wide-cover">{coverWithGlow}</div>
 
@@ -532,7 +532,6 @@ export default function AudiobookDetailPage() {
               </div>
 
               {statsRow}
-              <div className="w-full max-w-sm">{playerWidget}</div>
 
               {meta?.description && (
                 <div className="text-left w-full pt-2">
@@ -551,6 +550,9 @@ export default function AudiobookDetailPage() {
               <div className="pt-4">{removeButton}</div>
             </div>
           </ScrollArea>
+          <div className="flex shrink-0 justify-center border-t border-border p-4">
+            <div className="w-full max-w-sm">{playerWidget}</div>
+          </div>
         </div>
 
         {/* ── Right column: chapters ── */}
