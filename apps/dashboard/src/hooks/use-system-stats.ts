@@ -51,7 +51,7 @@ const INITIAL_SNAPSHOT: SystemStatsSnapshot = {
   history: EMPTY_HISTORY,
 };
 
-function createSystemStatsStore(): SystemStatsStore {
+export function createSystemStatsStore(): SystemStatsStore {
   let snapshot: SystemStatsSnapshot = INITIAL_SNAPSHOT;
   let eventSource: EventSource | null = null;
   let firstEventTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -90,71 +90,108 @@ function createSystemStatsStore(): SystemStatsStore {
     };
   }
 
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let pollController: AbortController | null = null;
+  let polling = false;
+
+  function receiveStats(stats: SystemStats) {
+    // Validate the fields consumed by history before replacing the last good data.
+    const history = pushHistory(stats, snapshot.history);
+    setSnapshot({ stats, history, error: null, isConnecting: false });
+  }
+
+  function stopPolling() {
+    polling = false;
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = null;
+    pollController?.abort();
+    pollController = null;
+  }
+
+  async function poll() {
+    if (!polling || !listeners.size || pollController) return;
+    const controller = new AbortController();
+    pollController = controller;
+    const timeout = setTimeout(() => controller.abort(), FIRST_EVENT_TIMEOUT_MS);
+    try {
+      // Regular requests can still succeed when a proxy buffers the live stream.
+      const response = await fetch("/api/system", {
+        credentials: "same-origin", cache: "no-store", signal: controller.signal,
+      });
+      if (!response.ok) throw new Error("Stats request failed");
+      const stats: SystemStats = await response.json();
+      if (pollController === controller && polling && listeners.size) receiveStats(stats);
+    } catch {
+      if (pollController === controller && polling && listeners.size) {
+        setSnapshot({ ...snapshot, isConnecting: false,
+          error: "Could not reach the Talome server. Retrying automatically." });
+      }
+    } finally {
+      clearTimeout(timeout);
+      if (pollController === controller) {
+        pollController = null;
+        if (polling && listeners.size) pollTimer = setTimeout(poll, 5000);
+      }
+    }
+  }
+
+  function recover() {
+    closeStream();
+    if (!listeners.size) return;
+    if (!polling) {
+      polling = true;
+      void poll();
+    }
+    if (!reconnectTimer) reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, 3000);
+  }
+
+  function watchStream(timeout: number) {
+    clearFirstEventTimeout();
+    firstEventTimeout = setTimeout(recover, timeout);
+  }
+
   function connect() {
-    // No live stats where EventSource is missing (tests, very old browsers)
-    if (eventSource || typeof window === "undefined" || typeof EventSource === "undefined") return;
-
-    setSnapshot({
-      ...snapshot,
-      error: null,
-      isConnecting: snapshot.stats === null,
-    });
-
-    eventSource = new EventSource(`${getDirectCoreUrl()}/api/stats/stream`, {
+    if (eventSource || typeof window === "undefined" || !listeners.size) return;
+    if (typeof EventSource === "undefined") {
+      if (!polling) { polling = true; void poll(); }
+      return;
+    }
+    const source = new EventSource(`${getDirectCoreUrl()}/api/stats/stream`, {
       withCredentials: true,
     });
-
-    firstEventTimeout = setTimeout(() => {
-      if (eventSource) {
-        setSnapshot({
-          ...snapshot,
-          isConnecting: false,
-          error: "Could not reach the Talome server. Check that it is running.",
-        });
-      }
-    }, FIRST_EVENT_TIMEOUT_MS);
-
-    eventSource.addEventListener("stats", (event) => {
+    eventSource = source;
+    watchStream(FIRST_EVENT_TIMEOUT_MS);
+    source.addEventListener("stats", (event) => {
+      if (eventSource !== source) return;
       try {
-        const parsed: SystemStats = JSON.parse(event.data);
-        clearFirstEventTimeout();
-        setSnapshot({
-          stats: parsed,
-          error: null,
-          isConnecting: false,
-          history: pushHistory(parsed, snapshot.history),
-        });
+        receiveStats(JSON.parse(event.data));
+        stopPolling();
+        // Detect an open connection that silently stops delivering events.
+        watchStream(15_000);
       } catch {
-        // Ignore malformed SSE payloads and keep the last good snapshot.
+        // Keep the last good snapshot; the watchdog handles malformed streams.
       }
     });
-
-    eventSource.addEventListener("error", () => {
-      clearFirstEventTimeout();
-      setSnapshot({
-        ...snapshot,
-        isConnecting: false,
-        error: "Stats stream lost — retrying in the background.",
-      });
-      // Close dead connection and schedule reconnect
-      disconnect();
-      if (listeners.size > 0) {
-        reconnectTimer = setTimeout(connect, 3000);
-      }
+    source.addEventListener("error", () => {
+      if (eventSource === source) recover();
     });
   }
 
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  function closeStream() {
+    clearFirstEventTimeout();
+    eventSource?.close();
+    eventSource = null;
+  }
 
   function disconnect() {
-    clearFirstEventTimeout();
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    if (!eventSource) return;
-    eventSource.close();
-    eventSource = null;
+    closeStream();
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    stopPolling();
   }
 
   return {
