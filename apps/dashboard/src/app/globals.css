@@ -3158,3 +3158,37 @@ html[data-embedded-frame] body {
 @supports ((mask-image: url("")) or (-webkit-mask-image: url(""))) {
   .desktop-app-icon { border-radius: 0; }
 }
+
+/* Composer voice controls share the Hugeicons outline, with restrained speech feedback. */
+.composer-dictation-mic,
+.composer-dictation-wave {
+  transition: opacity var(--duration-fast) ease-out;
+}
+.composer-dictation-wave { opacity: 0; }
+.composer-dictation-glyph[data-active="true"] .composer-dictation-mic { opacity: 0; }
+.composer-dictation-glyph[data-active="true"] .composer-dictation-wave { opacity: 1; }
+.composer-dictation-wave path {
+  transform-box: fill-box;
+  transform-origin: center;
+  vector-effect: non-scaling-stroke;
+  transform: scaleY(calc(0.55 + var(--dictation-level, 0) * 0.45));
+  transition: transform var(--duration-fast) ease-out;
+}
+.composer-dictation-wave path:nth-child(2n) {
+  transform: scaleY(calc(0.65 + var(--dictation-level, 0) * 0.35));
+}
+.composer-conversation-button svg {
+  transition: transform var(--duration-fast) ease-out;
+}
+@media (hover: hover) {
+  .composer-conversation-button:hover svg { transform: scaleY(1.12); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-dictation-mic,
+  .composer-dictation-wave,
+  .composer-dictation-wave path,
+  .composer-conversation-button svg { transition: none; }
+  .composer-dictation-wave path,
+  .composer-dictation-wave path:nth-child(2n),
+  .composer-conversation-button:hover svg { transform: none; }
+}

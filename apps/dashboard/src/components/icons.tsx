@@ -8,6 +8,7 @@ export {
   Mic01Icon,
   MicOff01Icon,
   AudioWave01Icon,
+  AudioWave02Icon,
   Package01Icon,
   Package02Icon,
   DownloadSquare01Icon,

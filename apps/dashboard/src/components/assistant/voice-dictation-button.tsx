@@ -1,25 +1,27 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { motion, useTransform, type MotionValue } from "motion/react";
+import { motion, useTransform, type MotionStyle, type MotionValue } from "motion/react";
 import { toast } from "sonner";
-import { HugeiconsIcon, Mic01Icon } from "@/components/icons";
+import { HugeiconsIcon, Mic01Icon, AudioWave01Icon } from "@/components/icons";
 import { PromptInputButton, usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { Spinner } from "@/components/ui/spinner";
 import { useVoiceInput, type VoiceStatus } from "@/hooks/use-voice-input";
 import { unlockAudio } from "@/lib/audio-session";
 
-/** Three bars that follow the microphone level. */
-function LevelBars({ level }: { level: MotionValue<number> }) {
-  const a = useTransform(level, (v) => 0.35 + Math.min(1, v * 1.4) * 0.65);
-  const b = useTransform(level, (v) => 0.35 + Math.min(1, v * 2) * 0.65);
-  const c = useTransform(level, (v) => 0.35 + Math.min(1, v * 1.1) * 0.65);
+/** Hugeicons waveform follows speech without changing its rounded stroke weight. */
+function DictationGlyph({ level, active }: { level: MotionValue<number>; active: boolean }) {
+  const amplitude = useTransform(level, (value) => Math.min(1, Math.max(0, value * 1.6)));
   return (
-    <span className="flex h-3.5 items-center gap-0.5" aria-hidden>
-      {[a, b, c].map((scaleY, i) => (
-        <motion.span key={i} className="h-full w-0.5 origin-center rounded-full bg-current" style={{ scaleY }} />
-      ))}
-    </span>
+    <motion.span
+      className="composer-dictation-glyph relative inline-grid size-5 place-items-center"
+      data-active={active}
+      style={{ "--dictation-level": amplitude } as MotionStyle}
+      aria-hidden
+    >
+      <HugeiconsIcon icon={Mic01Icon} size={16} strokeWidth={1.5} className="composer-dictation-mic" />
+      <HugeiconsIcon icon={AudioWave01Icon} size={16} strokeWidth={1.5} className="composer-dictation-wave absolute" />
+    </motion.span>
   );
 }
 
@@ -80,7 +82,7 @@ export function VoiceDictationButton({ onStatusChange, onTranscript }: VoiceDict
   if (voice.unavailableReason) {
     return (
       <PromptInputButton tooltip={voice.unavailableReason} disabled aria-label="Dictation unavailable" className="opacity-40">
-        <HugeiconsIcon icon={Mic01Icon} size={16} />
+        <HugeiconsIcon icon={Mic01Icon} size={16} strokeWidth={1.5} />
       </PromptInputButton>
     );
   }
@@ -88,7 +90,7 @@ export function VoiceDictationButton({ onStatusChange, onTranscript }: VoiceDict
   return (
     <PromptInputButton
       tooltip={active ? { content: "Stop dictation", shortcut: "Esc cancels" } : "Dictate"}
-      aria-label={active ? "Stop dictation" : "Dictate"}
+      aria-label={voice.status === "transcribing" ? "Transcribing dictation" : active ? "Stop dictation" : "Dictate"}
       aria-pressed={active}
       onClick={() => void toggle()}
       className={active ? "text-foreground bg-muted" : undefined}
@@ -96,10 +98,8 @@ export function VoiceDictationButton({ onStatusChange, onTranscript }: VoiceDict
     >
       {voice.status === "transcribing" ? (
         <Spinner className="size-4" />
-      ) : active ? (
-        <LevelBars level={voice.level} />
       ) : (
-        <HugeiconsIcon icon={Mic01Icon} size={16} />
+        <DictationGlyph level={voice.level} active={active} />
       )}
     </PromptInputButton>
   );

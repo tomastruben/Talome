@@ -31,7 +31,7 @@ import {
 import { VoiceDictationButton } from "@/components/assistant/voice-dictation-button";
 import type { VoiceStatus } from "@/hooks/use-voice-input";
 import { unlockAudio } from "@/lib/audio-session";
-import { AudioWave01Icon } from "@/components/icons";
+import { AudioWave02Icon } from "@/components/icons";
 
 // ── Attachment preview ──────────────────────────────────────────────────────
 
@@ -212,6 +212,7 @@ export function ChatInputBar({
               <VoiceDictationButton onStatusChange={handleDictationStatus} onTranscript={handleTranscript} />
               {onVoiceMode && (
                 <PromptInputButton
+                  className="composer-conversation-button"
                   tooltip="Voice conversation"
                   aria-label="Start voice conversation"
                   onClick={() => {
@@ -220,7 +221,7 @@ export function ChatInputBar({
                     onVoiceMode();
                   }}
                 >
-                  <HugeiconsIcon icon={AudioWave01Icon} size={16} />
+                  <HugeiconsIcon icon={AudioWave02Icon} size={16} strokeWidth={1.5} />
                 </PromptInputButton>
               )}
               <PromptInputSubmit
