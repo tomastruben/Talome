@@ -3,9 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const audio = vi.hoisted(() => {
   const node = () => ({ connect: vi.fn().mockReturnThis(), disconnect: vi.fn(), gain: { value: 1 }, fftSize: 512, getFloatTimeDomainData: vi.fn() });
-  return { ctx: { state: "running", currentTime: 0, destination: {}, createGain: node, createAnalyser: node, createMediaStreamSource: node, audioWorklet: { addModule: vi.fn(async () => undefined) } } };
+  return { ctx: { state: "running", currentTime: 0, destination: {}, resume: vi.fn(async () => undefined), addEventListener: vi.fn(), removeEventListener: vi.fn(), createGain: node, createAnalyser: node, createMediaStreamSource: node, audioWorklet: { addModule: vi.fn(async () => undefined) } } };
 });
-vi.mock("@/lib/audio-session", () => ({ sharedAudioContext: () => audio.ctx }));
+vi.mock("@/lib/audio-session", () => ({ sharedAudioContext: () => audio.ctx, acquireVoiceAudioSession: () => vi.fn(), unlockAudio: vi.fn() }));
 import { useLiveVoice } from "@/hooks/use-live-voice";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -27,6 +27,7 @@ describe("live microphone mute", () => {
       port = {}; connect = vi.fn().mockReturnThis(); disconnect = vi.fn();
       constructor() { port = this.port; }
     });
+    audio.ctx.state = "interrupted";
     const hook = renderHook(() => useLiveVoice({ onDelegate: async () => "Done" }));
     await act(async () => { await hook.result.current.start(); });
     act(() => {
@@ -35,6 +36,10 @@ describe("live microphone mute", () => {
       socket!.onmessage!({ data: JSON.stringify({ type: "session.output_transcript.delta", delta: "Still speaking", start_ms: 0, end_ms: 1000 }) });
       port!.onmessage!({ data: new ArrayBuffer(4) });
     });
+    expect(hook.result.current.playbackBlocked).toBe(true);
+    audio.ctx.resume.mockImplementation(async () => { audio.ctx.state = "running"; });
+    await act(async () => { hook.result.current.resumePlayback(); });
+    expect(hook.result.current.playbackBlocked).toBe(false);
     expect(send.mock.calls.some(([message]) => JSON.parse(message).type === "session.input_audio.append")).toBe(true);
     send.mockClear();
     act(() => { hook.result.current.toggleMute(); port!.onmessage!({ data: new ArrayBuffer(4) }); });

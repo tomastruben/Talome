@@ -5,7 +5,7 @@ import { microphoneErrorMessage } from "@/lib/microphone-error";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMotionValue, type MotionValue } from "motion/react";
 import { getWsUrl } from "@/lib/constants";
-import { sharedAudioContext } from "@/lib/audio-session";
+import { acquireVoiceAudioSession, sharedAudioContext, unlockAudio } from "@/lib/audio-session";
 
 /**
  * Full-duplex voice with OpenAI GPT-Live, relayed through Talome
@@ -38,6 +38,8 @@ export interface LiveVoice {
   /** Last thing said, by either side */
   caption: { role: "user" | "assistant"; text: string } | null;
   transcript: LiveTranscriptEntry[];
+  playbackBlocked: boolean;
+  resumePlayback: () => void;
   muted: boolean;
   toggleMute: () => void;
   userLevel: MotionValue<number>;
@@ -137,6 +139,7 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
   const [error, setError] = useState<string | null>(null);
   const [caption, setCaption] = useState<LiveVoice["caption"]>(null);
   const [transcript, setTranscript] = useState<LiveTranscriptEntry[]>([]);
+  const [playbackBlocked, setPlaybackBlocked] = useState(false);
   const [muted, setMuted] = useState(false);
   const mutedRef = useRef(false);
   const userLevel = useMotionValue(0);
@@ -154,6 +157,8 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     nodes: AudioNode[];
     capture: AudioWorkletNode | null;
     output: GainNode;
+    releaseAudio: () => void;
+    onAudioState: () => void;
     sources: Set<AudioBufferSourceNode>;
     playhead: number;
     lastOutputAt: number;
@@ -171,6 +176,8 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     if (!s) return;
     session.current = null;
     cancelAnimationFrame(s.frame);
+    s.ctx.removeEventListener("statechange", s.onAudioState);
+    s.releaseAudio();
     if (s.ws.readyState <= 1) {
       try {
         if (s.ws.readyState === 1) s.ws.send(JSON.stringify({ type: "session.close" }));
@@ -223,8 +230,12 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
       return;
     }
 
+    const releaseAudio = acquireVoiceAudioSession();
     const ctx = sharedAudioContext();
-    if (ctx.state === "suspended") await ctx.resume().catch(() => undefined);
+    if (ctx.state !== "running") void ctx.resume().catch(() => setPlaybackBlocked(true));
+    const onAudioState = () => setPlaybackBlocked(ctx.state !== "running");
+    onAudioState();
+    ctx.addEventListener("statechange", onAudioState);
     const output = ctx.createGain();
     const outAnalyser = ctx.createAnalyser();
     outAnalyser.fftSize = 512;
@@ -244,6 +255,8 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
       nodes: [output, outAnalyser, micSource, micAnalyser] as AudioNode[],
       capture: null as AudioWorkletNode | null,
       output,
+      releaseAudio,
+      onAudioState,
       sources: new Set<AudioBufferSourceNode>(),
       playhead: 0,
       lastOutputAt: 0,
@@ -414,6 +427,13 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     s.frame = requestAnimationFrame(tick);
   }, [stop, userLevel, agentLevel]);
 
+  const resumePlayback = useCallback(() => {
+    const s = session.current;
+    if (!s) return;
+    unlockAudio();
+    void s.ctx.resume().then(() => s.onAudioState()).catch(() => setPlaybackBlocked(true));
+  }, []);
+
   const toggleMute = useCallback(() => {
     const s = session.current;
     if (!s) return;
@@ -424,5 +444,5 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     setMuted(next);
   }, [userLevel]);
 
-  return { state, activity, error, caption, transcript, muted, toggleMute, userLevel, agentLevel, start, stop };
+  return { state, activity, error, caption, transcript, playbackBlocked, resumePlayback, muted, toggleMute, userLevel, agentLevel, start, stop };
 }

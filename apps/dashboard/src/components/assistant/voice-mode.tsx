@@ -7,7 +7,7 @@ import useSWR from "swr";
 import { useTheme } from "next-themes";
 import { ThinkingOrb, type OrbState } from "thinking-orbs";
 import { VoiceBeam } from "voice-glow";
-import { HugeiconsIcon, Cancel01Icon, Mic01Icon, ViewIcon, ViewOffSlashIcon } from "@/components/icons";
+import { HugeiconsIcon, Cancel01Icon, Mic01Icon, MicOff01Icon, VolumeHighIcon, ViewIcon, ViewOffSlashIcon } from "@/components/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useSpeechOutput } from "@/hooks/use-speech-output";
 import { useLiveVoice, type LiveHistoryItem } from "@/hooks/use-live-voice";
@@ -15,6 +15,7 @@ import { VoiceTranscript } from "@/components/assistant/voice-transcript";
 import { CORE_URL } from "@/lib/constants";
 import { unlockAudio } from "@/lib/audio-session";
 import { DesktopLink } from "@/components/desktop/desktop-link";
+import { IconSwap } from "@/components/ui/micro";
 import { Button } from "@/components/ui/button";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { cn } from "@/lib/utils";
@@ -104,12 +105,14 @@ interface StageProps {
   muted?: boolean;
   onToggleMute?: () => void;
   muteDisabled?: boolean;
+  onResumePlayback?: () => void;
 }
 
 /** Share of the gap to the live voice level the orb closes each frame: smoothing, not a spring. */
 const LEVEL_SMOOTHING = 0.25;
+const VOICE_CONTROL = "h-12 rounded-full border-border bg-muted/30 px-4 shadow-none hover:bg-muted/60 dark:border-border dark:bg-muted/30 dark:hover:bg-muted/60 [&_svg]:size-5";
 
-function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onRetry, onClose, transcript, muted, onToggleMute, muteDisabled }: StageProps) {
+function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onRetry, onClose, transcript, muted, onToggleMute, muteDisabled, onResumePlayback }: StageProps) {
   const [showTranscript, setShowTranscript] = useState(true);
   const reduceMotion = useReducedMotion();
   const { resolvedTheme } = useTheme();
@@ -179,23 +182,21 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
 
       <div className="relative flex shrink-0 flex-col items-center gap-3">
         <div className="flex flex-wrap items-center justify-center gap-3">
-          {onToggleMute && <Button variant={muted ? "secondary" : "outline"} className="rounded-full" disabled={muteDisabled} aria-pressed={muted} onClick={onToggleMute}>
-            <HugeiconsIcon icon={Mic01Icon} size={18} />
+          {onToggleMute && <Button variant="outline" className={cn(VOICE_CONTROL, "min-w-32", muted && "bg-muted dark:bg-muted")} disabled={muteDisabled} aria-pressed={muted} onClick={onToggleMute}>
+            <IconSwap active={muted ? "b" : "a"} a={<HugeiconsIcon icon={Mic01Icon} size={20} />} b={<HugeiconsIcon icon={MicOff01Icon} size={20} />} />
             {muted ? "Unmute mic" : "Mute mic"}
           </Button>}
-          {transcript && <Button variant="outline" className="rounded-full" aria-pressed={showTranscript} onClick={() => setShowTranscript((shown) => !shown)}>
-            <HugeiconsIcon icon={showTranscript ? ViewOffSlashIcon : ViewIcon} size={18} />
+          {transcript && <Button variant="outline" className={cn(VOICE_CONTROL, "min-w-40")} aria-pressed={showTranscript} onClick={() => setShowTranscript((shown) => !shown)}>
+            <IconSwap active={showTranscript ? "a" : "b"} a={<HugeiconsIcon icon={ViewOffSlashIcon} size={20} />} b={<HugeiconsIcon icon={ViewIcon} size={20} />} />
             {showTranscript ? "Hide transcript" : "Show transcript"}
           </Button>}
 
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="End voice conversation"
-          className="flex size-12 items-center justify-center rounded-full bg-muted text-foreground transition-[background-color,transform] duration-150 hover:bg-muted/70 motion-safe:active:scale-95"
-        >
-          <HugeiconsIcon icon={Cancel01Icon} size={18} />
-        </button>
+          {onResumePlayback && <Button variant="outline" className={VOICE_CONTROL} onClick={onResumePlayback}>
+            <HugeiconsIcon icon={VolumeHighIcon} size={20} /> Enable audio
+          </Button>}
+          <Button variant="outline" className={VOICE_CONTROL} onClick={onClose} aria-label="End voice conversation">
+            <HugeiconsIcon icon={Cancel01Icon} size={20} /> End
+          </Button>
         </div>
         {/* A quiet hint: where the voice goes, or why voice is unavailable */}
         {footnote && <p className="text-xs text-dim-foreground">{footnote}</p>}
@@ -262,6 +263,7 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceM
   const level = useCallback(() => (speaking ? agentLevel.get() : userLevel.get()), [speaking, agentLevel, userLevel]);
   const label = live.state === "connecting" ? "Connecting…" : live.error || live.state === "ended" ? "Voice ended" : live.muted && live.activity === "listening" ? "Microphone muted" : LIVE_LABEL[live.activity];
   const caption = live.error
+    ?? (live.playbackBlocked ? "Audio playback is paused. Tap Enable audio to hear Talome." : null)
     ?? (live.state === "live" ? "Just talk — interrupt any time." : "");
   const retry = () => {
     unlockAudio();
@@ -282,6 +284,7 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceM
       muted={live.muted}
       onToggleMute={live.toggleMute}
       muteDisabled={live.state !== "live"}
+      onResumePlayback={live.playbackBlocked ? live.resumePlayback : undefined}
       orbLabel={live.error ? "Try microphone again" : "End voice conversation"}
       onOrbTap={live.error ? retry : onClose}
       onRetry={live.error ? retry : undefined}

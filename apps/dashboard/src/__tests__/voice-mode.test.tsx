@@ -110,4 +110,15 @@ describe("voice conversation startup", () => {
     expect(mocks.stop).not.toHaveBeenCalled();
   });
 
+  it("offers audio recovery without ending the conversation", () => {
+    mocks.liveEnabled = true;
+    const resumePlayback = vi.fn();
+    mocks.live.mockReturnValue({ state: "live", activity: "listening", error: null, playbackBlocked: true, resumePlayback,
+      userLevel: level, agentLevel: level, start: mocks.start, stop: mocks.stop });
+    render(<VoiceMode {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Enable audio" }));
+    expect(resumePlayback).toHaveBeenCalledOnce();
+    expect(mocks.stop).not.toHaveBeenCalled();
+  });
+
 });

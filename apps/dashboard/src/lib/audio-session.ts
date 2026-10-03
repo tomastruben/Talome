@@ -21,7 +21,13 @@ export function unlockAudio(): void {
   if (typeof window === "undefined") return;
   try {
     const ctx = sharedAudioContext();
-    if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
+    if (ctx.state !== "running") void ctx.resume().catch(() => undefined);
+    // WebKit also needs a source started during the gesture to unlock output.
+    const primer = ctx.createBufferSource();
+    primer.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+    primer.connect(ctx.destination);
+    primer.onended = () => primer.disconnect();
+    primer.start();
   } catch {
     // No Web Audio — voice will explain what's missing
   }
@@ -35,4 +41,24 @@ export function unlockAudio(): void {
   } catch {
     // Replies will be shown instead of spoken
   }
+}
+
+/** Safari can change audio routing when microphone capture begins. */
+export function acquireVoiceAudioSession(): () => void {
+  const nav = navigator as Navigator & { audioSession?: { type: string } };
+  const audio = nav.audioSession;
+  if (!audio) return () => undefined;
+  const previous = audio.type;
+  try {
+    audio.type = "play-and-record";
+  } catch {
+    return () => undefined;
+  }
+  return () => {
+    try {
+      if (audio.type === "play-and-record") audio.type = previous;
+    } catch {
+      // Optional browser API; ordinary playback remains available.
+    }
+  };
 }
