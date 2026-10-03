@@ -34,7 +34,7 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    // Solid, not translucent: see lib/device.ts.
+    // Default presentation; iOS workspace clearance also lives in globals.css.
     statusBarStyle: APPLE_STATUS_BAR_STYLE,
     title: "Talome",
   },

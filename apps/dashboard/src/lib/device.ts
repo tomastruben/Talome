@@ -1,15 +1,7 @@
 /**
- * How Talome sits on a screen it's opened full screen on.
- *
- * A web app opened from the iOS or iPadOS Home Screen gets iOS's solid status
- * bar, coloured by `theme-color` (kept on the theme chosen in Talome by
- * ThemeColorSync), and the page starts below it. It is deliberately not the
- * translucent style that draws the page under the status bar: iOS 26 blurs
- * whatever sits in the band under a translucent status bar (the header's title
- * and buttons, a window's title) and sizes the layout viewport a status bar
- * short of the bottom, leaving a dead band above the home indicator. Only the
- * home indicator still overlays the page; `env(safe-area-inset-bottom)` keeps
- * content and the Dock clear of it, and is 0 everywhere else.
+ * Keep the default status-bar presentation. Home Screen WebKit can still draw
+ * a system blur over the page; globals.css reserves space for its controls.
+ * Its extent is not exposed by safe-area-inset-top on every iOS version.
  */
 export const APPLE_STATUS_BAR_STYLE = "default" as const;
 
@@ -18,4 +10,4 @@ export const APPLE_STATUS_BAR_STYLE = "default" as const;
  * desktop window, whose page background then turns transparent so the
  * window's frosted glass shows through.
  */
-export const FRAME_SCRIPT = `(function(){try{if(window.self!==window.top)document.documentElement.setAttribute("data-embedded-frame","");}catch(e){}})();`;
+export const FRAME_SCRIPT = `(function(){try{if(window.self!==window.top)document.documentElement.setAttribute("data-embedded-frame","");if(/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1))document.documentElement.setAttribute("data-apple-touch-device","");}catch(e){}})();`;

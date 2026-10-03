@@ -2402,6 +2402,28 @@
   }
 }
 
+/* iOS Home Screen status-bar blur can extend beyond the reported safe area.
+   Reserve a 64px floor (or the safe area plus 16px on a notched device).
+   This is a clearance, not an OS blur measurement; only wallpaper sits under it.
+   Device marking also covers iPadOS requesting a desktop user agent. */
+:root { --app-top-inset: 0px; }
+:root[data-apple-touch-device] { --app-top-inset: env(safe-area-inset-top, 0px); }
+@media (display-mode: standalone) {
+  :root[data-apple-touch-device] {
+    --app-top-inset: max(4rem, calc(env(safe-area-inset-top, 0px) + 1rem));
+  }
+  :root[data-apple-touch-device]:not([data-embedded-frame]) [data-slot="sidebar-inset"] {
+    padding-top: 0;
+    margin-top: calc(var(--app-top-inset) + 0.5rem);
+  }
+  :root[data-apple-touch-device]:not([data-embedded-frame]) [data-slot="sidebar-container"] {
+    padding-top: calc(var(--app-top-inset) + 0.5rem);
+  }
+}
+[data-desktop-root] {
+  padding-top: var(--app-top-inset);
+}
+
 /* Desktop mode opened full screen: the wallpaper runs to every edge. */
 @media (display-mode: standalone) {
   [data-desktop-root] {
