@@ -133,15 +133,16 @@ export function ClockWidget({ compact = false }: { compact?: boolean }) {
         {incident ? (
           <DesktopLink
             href={getNotificationRoute(incident.notification, { isAdmin })}
-            className="mt-1 block min-w-0 rounded-sm text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground transition-colors duration-150 ease-out"
+            className="flex min-w-0 items-center gap-1.5 rounded-sm text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground transition-colors duration-150 ease-out"
             title={`Recent alert: ${incident.notification.title}. Open to investigate.`}
           >
-            <span className={cn("block truncate", incident.notification.type === "critical" ? "text-status-critical" : "text-status-warning")}>
-              {incident.headline}
+            <span className={cn("shrink-0", incident.notification.type === "critical" ? "text-status-critical" : "text-status-warning")}>
+              {compact ? "Recent alert" : incident.headline}
             </span>
-            <span className="block truncate text-muted-foreground">
-              {incident.notification.title}{incident.more ? ` · +${incident.more} more` : ""}
+            <span className="truncate text-muted-foreground">
+              · {incident.notification.title}
             </span>
+            {incident.more ? <span className="shrink-0 text-muted-foreground">+{incident.more}</span> : null}
           </DesktopLink>
         ) : null}
       </div>
