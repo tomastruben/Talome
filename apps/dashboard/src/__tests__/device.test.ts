@@ -16,10 +16,12 @@ describe("a Home Screen web app on iOS and iPadOS", () => {
     expect(layout).not.toContain("black-translucent");
   });
 
-  it("reserves iOS Home Screen clearance without changing other desktops", () => {
+  it("keeps phone overlay clearance but removes extra iPad Home Screen clearance", () => {
     const css = read("app/globals.css");
     expect(css).toContain(':root[data-apple-touch-device]');
     expect(css).toContain('--app-top-inset: max(4rem, calc(env(safe-area-inset-top, 0px) + 1rem))');
+    expect(css).toMatch(/:root\[data-apple-touch-device\]:not\(\[data-tablet-device\]\) \{\s*--app-top-inset: max/);
+    expect(css).toMatch(/:root\[data-apple-touch-device\]\[data-tablet-device\] \{\s*--app-top-inset: 0px;/);
     expect(css).toContain('padding-top: var(--app-top-inset)');
     expect(FRAME_SCRIPT).toContain('navigator.maxTouchPoints>1');
     expect(FRAME_SCRIPT).toContain('navigator.platform==="MacIntel"');

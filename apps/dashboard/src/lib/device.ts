@@ -1,6 +1,7 @@
 /**
- * Keep the default status-bar presentation. Home Screen WebKit can still draw
- * a system blur over the page; globals.css reserves space for its controls.
+ * Keep the default status-bar presentation. Phone Home Screen WebKit can still draw
+ * a system blur over the page; globals.css reserves space there. iPad uses
+ * a solid status bar and does not need extra content clearance.
  * Its extent is not exposed by safe-area-inset-top on every iOS version.
  */
 export const APPLE_STATUS_BAR_STYLE = "default" as const;
