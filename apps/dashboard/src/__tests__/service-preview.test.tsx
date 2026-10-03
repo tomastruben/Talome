@@ -1,10 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Provider, createStore } from "jotai";
+import { pageTitleAtom } from "@/atoms/page-title";
+import { QuickLookContent } from "@/components/quick-look/quick-look";
 import type { Container } from "@talome/types";
 import { containerDisplayName, findContainerReference } from "@/lib/container-label";
 import { QuickLookProvider, useQuickLook } from "@/components/quick-look/quick-look-context";
 
 const navigation = vi.hoisted(() => vi.fn());
+vi.mock("@/hooks/use-desktop-mode", () => ({ useIsEmbeddedFrame: () => true }));
 vi.mock("@/lib/desktop-navigation", () => ({ requestDesktopNavigation: navigation }));
 const container: Container = { id: "559a5c6ca5b2abcdef", name: "559a5c6ca5b2", image: "public.ecr.aws/supabase/logflare:1.45.6", labels: {}, status: "stopped", created: "", ports: [] };
 
@@ -15,6 +19,13 @@ function PreviewTrigger() {
 
 beforeEach(() => navigation.mockReset());
 describe("service previews", () => {
+  it("keeps a stopped detached preview to one shell header", () => {
+    const store = createStore();
+    const { container: view } = render(<Provider store={store}><QuickLookContent standalone container={container} onClose={vi.fn()} /></Provider>);
+    expect(store.get(pageTitleAtom)).toBe("logflare");
+    expect(screen.getByText("stopped")).toBeInTheDocument();
+    expect(view.querySelector("[data-app-toolbar]")).toBeNull();
+  });
   it("detaches even stopped containers without opening a nested dialog", () => {
     navigation.mockReturnValue(true);
     render(<QuickLookProvider><PreviewTrigger /></QuickLookProvider>);
