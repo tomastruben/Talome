@@ -3,13 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { VoiceBeam } from "voice-glow";
 import { toast } from "sonner";
+import { useTheme } from "next-themes";
 import { DictationGlyph } from "@/components/assistant/voice-dictation-button";
 import { HugeiconsIcon, Edit02Icon, Mic01Icon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Textarea } from "@/components/ui/textarea";
+import { InputGroup, InputGroupTextarea } from "@/components/ui/input-group";
+import { PromptInputButton, PromptInputFooter } from "@/components/ai-elements/prompt-input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useVoiceInput } from "@/hooks/use-voice-input";
@@ -87,6 +89,7 @@ function TerminalDictationDraft({ draft, setDraft, onInsert, connected }: {
   onInsert: (text: string) => void;
   connected: boolean;
 }) {
+  const { resolvedTheme } = useTheme();
   const prefix = useRef("");
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -108,15 +111,27 @@ function TerminalDictationDraft({ draft, setDraft, onInsert, connected }: {
   return (
     <div className="grid gap-3">
       <p className="text-sm font-medium">Terminal input</p>
-      <VoiceBeam active={active} processing={processing} level={readLevel} borderRadius={24} theme="dark">
-        <div className="rounded-3xl bg-muted/50 p-3">
-          <Textarea aria-label="Terminal input draft" placeholder="Dictate or type a prompt…" value={draft} disabled={active || processing} onChange={(e) => setDraft(e.target.value)} className="min-h-24 resize-none border-0 bg-transparent shadow-none dark:bg-transparent" />
-          <div className="flex items-center justify-between gap-2 pt-2">
-            <Button variant="ghost" size="icon-sm" aria-label={processing ? "Transcribing dictation" : active ? "Stop dictation" : "Dictate"} aria-pressed={active} disabled={processing || !!voice.unavailableReason} title={voice.unavailableReason ?? "Dictate"} onClick={() => void toggle()}>
-              {processing ? <Spinner className="size-4" /> : <DictationGlyph level={voice.level} active={active} />}
-            </Button>
-            <Button size="sm" disabled={!connected || active || processing || !terminalDraftText(draft).trim()} onClick={() => onInsert(terminalDraftText(draft))}>Insert text</Button>
-          </div>
+      <VoiceBeam active={active} processing={processing} level={readLevel} borderRadius={16}
+        theme={resolvedTheme === "light" ? "light" : "dark"}>
+        <div className="prompt-input terminal-dictation-composer">
+          <InputGroup>
+            <InputGroupTextarea aria-label="Terminal input draft" placeholder="Dictate or type a prompt…"
+              value={draft} disabled={active || processing} onChange={(e) => setDraft(e.target.value)} />
+            <PromptInputFooter>
+              <span className="flex-1" aria-hidden="true" />
+              <div className="flex items-center gap-1">
+                <PromptInputButton aria-label={processing ? "Transcribing dictation" : active ? "Stop dictation" : "Dictate"}
+                  aria-pressed={active} disabled={processing || !!voice.unavailableReason}
+                  tooltip={voice.unavailableReason ?? (active ? "Stop dictation" : "Dictate")}
+                  onClick={() => void toggle()}>
+                  {processing ? <Spinner className="size-4" /> : <DictationGlyph level={voice.level} active={active} />}
+                </PromptInputButton>
+                <PromptInputButton variant="default" size="sm" className="h-9 rounded-full px-3"
+                  aria-label="Insert text" disabled={!connected || active || processing || !terminalDraftText(draft).trim()}
+                  onClick={() => onInsert(terminalDraftText(draft))}>Insert text</PromptInputButton>
+              </div>
+            </PromptInputFooter>
+          </InputGroup>
         </div>
       </VoiceBeam>
       <p className="text-sm text-muted-foreground">Review it here, then insert it. Press Enter in the terminal to submit.</p>
@@ -146,7 +161,7 @@ export function TerminalDictation({ sessionId, connected, onInsert }: {
         </TooltipTrigger>
         <TooltipContent>Dictate terminal input</TooltipContent>
       </Tooltip>
-      <PopoverContent align="end" className="dark w-[min(24rem,calc(100vw-2rem))] rounded-2xl p-4">
+      <PopoverContent align="end" className="inset-composer-panel w-[min(24rem,calc(100vw-2rem))] p-4">
         {open && <TerminalDictationDraft key={sessionId} draft={drafts[sessionId] ?? ""} setDraft={(text) => setDrafts((prev) => ({ ...prev, [sessionId]: text }))} connected={connected} onInsert={(text) => {
           onInsert(text);
           setDrafts((prev) => ({ ...prev, [sessionId]: "" }));

@@ -3243,13 +3243,22 @@ html[data-embedded-frame] body {
 }
 
 /* Compact chat nests its composer concentrically: 32px shell − 16px inset. */
-.quick-assistant-dialog {
+.quick-assistant-dialog,
+.inset-composer-panel {
   --quick-assistant-radius: 2rem;
   --quick-assistant-inset: 1rem;
   border-radius: var(--quick-assistant-radius);
 }
 .quick-assistant-panel .prompt-input [data-slot="input-group"],
-.quick-assistant-panel .prompt-input [data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) {
+.quick-assistant-panel .prompt-input [data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible),
+.inset-composer-panel .prompt-input [data-slot="input-group"],
+.inset-composer-panel .prompt-input [data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) {
   border-radius: calc(var(--quick-assistant-radius) - var(--quick-assistant-inset));
   box-shadow: 0 0 0 1px var(--border);
+}
+
+.terminal-dictation-composer [data-slot="input-group"] textarea {
+  min-height: 6rem;
+  max-height: 14rem;
+  resize: none;
 }
