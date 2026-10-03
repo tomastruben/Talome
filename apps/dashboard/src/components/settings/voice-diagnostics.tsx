@@ -108,7 +108,7 @@ export function VoiceDiagnostics() {
 
   return <div className="grid gap-6">
     <div className="space-y-2">
-      <SectionLabel>Voice diagnostics</SectionLabel>
+      <SectionLabel>Browser checks</SectionLabel>
       <p className="text-sm text-muted-foreground">Check this in the browser where voice fails. Opening this tool does not access your microphone.</p>
     </div>
     <SettingsGroup>
