@@ -992,7 +992,7 @@ export function DesktopExperience() {
     observer.observe(tray);
     measure();
     return () => observer.disconnect();
-  }, [desktopWidgetsEditing]);
+  }, [desktopModeAvailable, desktopWidgetsEditing]);
 
   const dockOrderedApps = visibleDockApps.filter((app) => app.id !== "settings");
   const dockCapacity = dockAppCapacity(dockSpace.width, dockSpace.tray, dockOrderedApps.length,
