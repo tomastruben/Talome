@@ -8,9 +8,10 @@ import { healthBannerCopy } from "@/components/system-health-banner";
 import { healthChecked, useIsOnline, type HealthState } from "@/hooks/use-is-online";
 import { useSystemStats } from "@/hooks/use-system-stats";
 import { useUser } from "@/hooks/use-user";
-import { useNotifications, getNotificationRoute } from "@/hooks/use-notifications";
-import { DesktopLink } from "@/components/desktop/desktop-link";
-import { welcomeIncident } from "@/lib/welcome-incidents";
+import { useNotifications } from "@/hooks/use-notifications";
+import { Button } from "@/components/ui/button";
+import { openPalette } from "@/lib/palette";
+import { welcomeIncident, incidentExplanationPrompt } from "@/lib/welcome-incidents";
 import { cn } from "@/lib/utils";
 import { Widget, WidgetHeader } from "./widget";
 
@@ -97,7 +98,7 @@ function useNow(): Date | null {
  */
 export function ClockWidget({ compact = false }: { compact?: boolean }) {
   const now = useNow();
-  const { user, isAdmin } = useUser();
+  const { user } = useUser();
   const { notifications } = useNotifications();
   const incident = now ? welcomeIncident(notifications, now.getTime()) : null;
   const { stats } = useSystemStats();
@@ -131,19 +132,19 @@ export function ClockWidget({ compact = false }: { compact?: boolean }) {
             : " "}
         </p>
         {incident ? (
-          <DesktopLink
-            href={getNotificationRoute(incident.notification, { isAdmin })}
-            className="flex min-w-0 items-center gap-1.5 rounded-sm text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground transition-colors duration-150 ease-out"
-            title={`Recent alert: ${incident.notification.title}. Open to investigate.`}
+          <Button
+            variant="ghost"
+            onClick={() => openPalette({ mode: "chat", prefill: incidentExplanationPrompt(incident.notification) })}
+            className="h-auto min-w-0 justify-start gap-2 rounded-sm p-0 text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
+            aria-label={`Ask Talome about recent alert: ${incident.notification.title}`}
+            title={`${incident.notification.title}${incident.more ? ` · ${incident.more} other recent alerts` : ""}. Ask Talome to explain.`}
           >
-            <span className={cn("shrink-0", incident.notification.type === "critical" ? "text-status-critical" : "text-status-warning")}>
-              {compact ? "Recent alert" : incident.headline}
+            <span className={cn("size-1.5 shrink-0 rounded-full", incident.notification.type === "critical" ? "bg-status-critical" : "bg-status-warning")} aria-hidden />
+            <span className="min-w-0 truncate">
+              {compact ? "Recent activity" : incident.notification.title}
             </span>
-            <span className="truncate text-muted-foreground">
-              · {incident.notification.title}
-            </span>
-            {incident.more ? <span className="shrink-0 text-muted-foreground">+{incident.more}</span> : null}
-          </DesktopLink>
+            <span className="ml-auto shrink-0">Ask Talome</span>
+          </Button>
         ) : null}
       </div>
       <div className="mt-auto flex items-center justify-between gap-3 border-t border-border/60 px-4 py-2.5 text-xs text-muted-foreground">
