@@ -18,6 +18,8 @@ import {
   SourceListSection,
   SourceListSkeleton,
 } from "@/components/ui/source-list";
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from "@/components/ui/context-menu";
+import { RenameTerminalSession } from "./terminal-input-tools";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusDot } from "@/components/ui/status-dot";
 import { relativeTime } from "@/lib/format";
@@ -88,6 +90,7 @@ interface TerminalSidebarProps {
   onCreate: () => Promise<TerminalSessionActionResult>;
   onDelete: (sessionId: string) => Promise<TerminalSessionActionResult>;
   onRetry: () => void;
+  onRename: (sessionId: string, name: string) => Promise<void>;
 }
 
 function lastActiveTitle(session: TerminalSessionSummary): string {
@@ -102,6 +105,8 @@ function SessionRow({
   listed,
   onSelect,
   onEnd,
+  onRename,
+  canRename,
 }: {
   session: TerminalSessionSummary;
   icon: IconSvgElement;
@@ -110,34 +115,59 @@ function SessionRow({
   listed: boolean;
   onSelect: (sessionId: string) => void;
   onEnd?: (session: SessionRef) => void;
+  onRename: (sessionId: string, name: string) => Promise<void>;
+  canRename: boolean;
 }) {
-  const handleKeyDown = onEnd
-    ? (event: KeyboardEvent<HTMLElement>) => {
-        if (event.key !== "Delete" && event.key !== "Backspace") return;
-        event.preventDefault();
-        onEnd(session);
-      }
-    : undefined;
+  const [renaming, setRenaming] = useState(false);
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "F2" && canRename && listed) {
+      event.preventDefault();
+      setRenaming(true);
+    } else if (onEnd && (event.key === "Delete" || event.key === "Backspace")) {
+      event.preventDefault();
+      onEnd(session);
+    }
+  };
+
+  const attachmentTitle = session.clients > 0
+    ? `Attached to ${session.clients} browser ${session.clients === 1 ? "client" : "clients"}. This does not indicate a running command.`
+    : "No browser client attached. The shell keeps running.";
 
   return (
-    <SourceListItem
-      icon={icon}
-      label={session.name}
-      active={active}
-      title={listed ? lastActiveTitle(session) : undefined}
-      trailing={
-        listed && session.clients > 0 ? (
-          <StatusDot state="healthy" size="sm" hideLabel label="Attached" />
-        ) : undefined
-      }
-      onSelect={() => onSelect(session.id)}
-      onKeyDown={handleKeyDown}
-      action={
-        onEnd
-          ? { icon: Cancel01Icon, label: `End ${session.name}`, onSelect: () => onEnd(session) }
-          : undefined
-      }
-    />
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="group/terminal-session relative">
+          <SourceListItem
+            className="pr-16 pointer-coarse:pr-16"
+            icon={icon}
+            label={session.name}
+            active={active}
+            title={listed ? lastActiveTitle(session) : undefined}
+            trailing={
+              listed ? (
+                <StatusDot state={session.clients > 0 ? "healthy" : "stopped"} size="sm" hideLabel
+                  label={session.clients > 0 ? "Attached" : "Detached"} title={attachmentTitle} />
+              ) : undefined
+            }
+            onSelect={() => onSelect(session.id)}
+            onKeyDown={handleKeyDown}
+            action={
+              onEnd
+                ? { icon: Cancel01Icon, label: `End ${session.name}`, onSelect: () => onEnd(session) }
+                : undefined
+            }
+          />
+          <RenameTerminalSession name={session.name} onRename={(name) => onRename(session.id, name)}
+            open={renaming} onOpenChange={setRenaming} accessibleLabel={`Rename ${session.name}`}
+            disabled={!canRename || !listed}
+            className={`absolute right-8 top-1/2 size-6 -translate-y-1/2 rounded-full p-0 transition-opacity duration-150 ease-out pointer-coarse:opacity-100 group-hover/terminal-session:opacity-100 group-focus-within/terminal-session:opacity-100 ${active ? "opacity-100" : "opacity-0"}`} />
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="rounded-xl">
+        <ContextMenuItem disabled={!canRename || !listed} onSelect={() => setRenaming(true)}>Rename session</ContextMenuItem>
+        {onEnd && <ContextMenuItem variant="destructive" onSelect={() => onEnd(session)}>End session…</ContextMenuItem>}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -188,6 +218,7 @@ export function TerminalSidebar({
   onCreate,
   onDelete,
   onRetry,
+  onRename,
 }: TerminalSidebarProps) {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -269,6 +300,8 @@ export function TerminalSidebar({
                 active={session.id === selected}
                 listed={listedIds.has(session.id)}
                 onSelect={onSelect}
+                onRename={onRename}
+                canRename={canCreate}
                 onEnd={canEndTerminalSession(session.id) ? requestEnd : undefined}
               />
             ))}
@@ -291,6 +324,8 @@ export function TerminalSidebar({
               active={session.id === selected}
               listed={listedIds.has(session.id)}
               onSelect={onSelect}
+              onRename={onRename}
+              canRename={canCreate}
               onEnd={canEndTerminalSession(session.id) ? requestEnd : undefined}
             />
           ))}

@@ -134,6 +134,35 @@ describe("Terminal window sidebar", () => {
     expect(within(system).getByRole("button", { name: /^End Evolution/ })).toBeInTheDocument();
   });
 
+  it("renames an unselected session from its sidebar pencil without switching or restarting the shell", async () => {
+    routes["PATCH /api/terminal/sessions/sess_session-2"] = { status: 200, body: { ok: true } };
+    renderTerminal();
+    const nav = await sidebar();
+    await within(nav).findByText("session 2");
+    const selectedShell = (await screen.findByTestId("terminal-inner")).getAttribute("data-session");
+    fireEvent.click(within(nav).getByRole("button", { name: "Rename session 2" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename session" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Session name" }), { target: { value: "Media jobs" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save name" }));
+    await within(nav).findByText("Media jobs");
+    expect(screen.getByTestId("terminal-inner")).toHaveAttribute("data-session", selectedShell);
+    expect(calls.filter((call) => call.method === "DELETE")).toHaveLength(0);
+    expect(calls.filter((call) => call.method === "PATCH")).toEqual([{ method: "PATCH", path: "/api/terminal/sessions/sess_session-2" }]);
+  });
+
+  it("offers keyboard renaming and explains both attachment states", async () => {
+    renderTerminal();
+    const nav = await sidebar();
+    await within(nav).findByText("session 2");
+    expect(within(nav).getByTitle(/Attached to 1 browser client/)).toBeInTheDocument();
+    expect(within(nav).getAllByTitle("No browser client attached. The shell keeps running.")).toHaveLength(2);
+    fireEvent.keyDown(row(nav, /^session 2/), { key: "F2" });
+    const dialog = await screen.findByRole("dialog", { name: "Rename session" });
+    expect(within(dialog).getByRole("textbox", { name: "Session name" })).toHaveValue("session 2");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(0);
+  });
+
   it("ends an agent's session through the same destructive confirm", async () => {
     let deleted = false;
     routes["DELETE /api/terminal/sessions/sess_evolution-ev_1758000000000"] = () => {

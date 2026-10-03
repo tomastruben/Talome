@@ -16,17 +16,25 @@ import { useVoiceInput } from "@/hooks/use-voice-input";
 import { unlockAudio } from "@/lib/audio-session";
 import { terminalDraftText } from "./terminal-draft";
 
-export function RenameTerminalSession({ name, onRename, disabled, className = "", labelled = false }: {
+export function RenameTerminalSession({ name, onRename, disabled, className = "", labelled = false, open: controlledOpen, onOpenChange, accessibleLabel = "Rename session" }: {
   name: string;
   onRename: (name: string) => Promise<void>;
   disabled?: boolean;
   className?: string;
   labelled?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  accessibleLabel?: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [draft, setDraft] = useState(name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (open) { setDraft(name); setError(null); }
+  }, [open, name]);
   async function save() {
     if (busy || !draft.trim()) return;
     setBusy(true);
@@ -46,7 +54,7 @@ export function RenameTerminalSession({ name, onRename, disabled, className = ""
     }}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size={labelled ? "sm" : "icon-sm"} aria-label="Rename session" disabled={disabled} className={`shrink-0 text-muted-foreground pointer-coarse:min-h-11 ${className}`} onClick={() => { setDraft(name); setError(null); setOpen(true); }}>
+          <Button variant="ghost" size={labelled ? "sm" : "icon-sm"} aria-label={accessibleLabel} disabled={disabled} className={`shrink-0 text-muted-foreground pointer-coarse:min-h-11 ${className}`} onClick={() => { setDraft(name); setError(null); setOpen(true); }}>
             <HugeiconsIcon icon={Edit02Icon} size={16} strokeWidth={1.5} aria-hidden="true" />
             {labelled && <span>Rename session</span>}
           </Button>

@@ -326,6 +326,7 @@ export function TerminalPage() {
       onCreate={handleCreateSession}
       onDelete={handleDeleteSession}
       onRetry={handleRefreshSessions}
+      onRename={renameSession}
     />
   );
 
