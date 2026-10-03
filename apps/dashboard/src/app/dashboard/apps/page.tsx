@@ -385,7 +385,7 @@ function AppsPageContent() {
       <DesktopAppToolbar data-compact-toolbar="" windowTitle={`${appStoreViewTitle(tab)}${showCategories && category !== "all" ? ` · ${categoryLabel(category)}` : ""}`} className="grid min-w-0 gap-3">
         {/* Windows use sidebar navigation or a compact Source/Category menu.
             Classic mode keeps its scrollable tabs and category rail. */}
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className={cn("flex min-w-0 items-center gap-2", embeddedFrame ? "flex-nowrap" : "flex-wrap")}>
           {!embeddedFrame && <Tabs
             className={cn(WINDOW_SIDEBAR_REPLACES, "min-w-0 max-w-full overflow-x-auto scrollbar-none")}
             value={tab}
@@ -423,21 +423,19 @@ function AppsPageContent() {
           {embeddedFrame && (
             <Button
               data-toolbar-secondary=""
-              variant="ghost"
-              size="sm"
-              className="ml-auto shrink-0 text-muted-foreground hover:text-foreground pointer-coarse:h-11 pointer-coarse:min-w-11"
+              variant="outline"
+              size="icon-sm"
+              className="ml-auto shrink-0 pointer-coarse:size-11"
               asChild
             >
-              <Link href={CREATE_APP_HREF} title="Create an app with the Assistant">
+              <Link href={CREATE_APP_HREF} aria-label="Create app" title="Create an app with the Assistant">
                 <HugeiconsIcon icon={Add01Icon} size={14} aria-hidden="true" />
-                {/* Labelled where the column has room; the name either way */}
-                <span className="sr-only @md:not-sr-only">Create</span>
               </Link>
             </Button>
           )}
 
           <SearchField
-            containerClassName="ml-auto min-w-40 flex-1 @xl:max-w-64"
+            containerClassName={cn("ml-auto flex-1 @xl:max-w-64", embeddedFrame ? "min-w-0" : "min-w-40")}
             className="pointer-coarse:h-11"
             aria-label="Search apps"
             placeholder="Search apps…"

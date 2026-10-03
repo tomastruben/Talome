@@ -37,6 +37,7 @@ vi.mock("@/components/dashboard/service-stack-list", () => ({ ServiceStackList: 
 
 import ContainersPage from "@/app/dashboard/containers/page";
 import { WindowToolbarSlot } from "@/components/desktop/window-content";
+import { WINDOW_SIDEBAR_REPLACES } from "@/components/ui/source-list";
 
 const SRC = join(__dirname, "..");
 const read = (path: string) => readFileSync(join(SRC, path), "utf8");
@@ -116,16 +117,18 @@ describe("Services in a desktop window", () => {
     vi.clearAllMocks();
   });
 
-  it("puts its controls in the window toolbar, with one window title and an always reachable search", () => {
+  it("puts its controls in the window toolbar, with one window title and an always reachable search", async () => {
     const { container } = renderServices();
     const toolbar = container.querySelector<HTMLElement>('[data-desktop-app-toolbar="true"]');
     expect(toolbar).not.toBeNull();
     expect(store.get(pageTitleAtom)).toBe("All services");
     expect(within(toolbar!).queryByRole("heading")).toBeNull();
-    fireEvent.click(within(toolbar!).getByRole("tab", { name: "Running" }));
+    const filter = within(toolbar!).getByRole("button", { name: "Filter services" });
+    fireEvent.keyDown(filter, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Running" }));
     expect(store.get(pageTitleAtom)).toBe("Running");
     expect(within(toolbar!).getByRole("textbox", { name: "Search services" })).toBeInTheDocument();
-    expect(within(toolbar!).getByRole("tablist").closest('[class*="@3xl/window:hidden"]')).not.toBeNull();
+    expect(filter).toHaveClass(...WINDOW_SIDEBAR_REPLACES.split(" "));
   });
 
   it("renders the toolbar in place in classic mode", () => {

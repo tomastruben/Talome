@@ -87,13 +87,12 @@ describe("App Store in a desktop window", () => {
   it("puts Create in the toolbar, before the search, and publishes no title-bar actions", async () => {
     renderPage();
     const toolbar = await screen.findByTestId("toolbar-slot");
-    const create = await within(toolbar).findByRole("link", { name: "Create" });
+    const create = await within(toolbar).findByRole("link", { name: "Create app" });
     expect(create).toHaveAttribute("href", "/dashboard/assistant?prompt=I+want+to+create+a+new+app");
     const search = within(toolbar).getByRole("textbox", { name: "Search apps" });
     expect(create.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // An icon button with a name where the column is narrow, labelled where it's wide
-    expect(within(create).getByText("Create").className).toMatch(/sr-only @md:not-sr-only/);
-    expect(create.className).toMatch(/pointer-coarse:h-11/);
+    expect(create).toHaveAccessibleName("Create app");
+    expect(create).toHaveClass("pointer-coarse:size-11");
     // The title bar keeps only the window controls, Back and the title
     expect(store.get(desktopAppActionsAtom)).toEqual([]);
   });
@@ -111,13 +110,18 @@ describe("App Store in a desktop window", () => {
     expect(within(toolbar).queryByRole("tablist")).toBeNull();
   });
 
-  it("keeps search usable and allows controls to wrap in compact windows", async () => {
+  it("keeps search in the header row and preserves its query when collapsed", async () => {
     renderPage();
     const toolbar = await screen.findByTestId("toolbar-slot");
     const search = within(toolbar).getByRole("textbox", { name: "Search apps" });
     const field = search.closest(".search-field");
-    expect(field).toHaveClass("min-w-40", "flex-1");
-    expect(field?.parentElement).toHaveClass("flex", "flex-wrap");
+    expect(field).toHaveClass("min-w-0", "flex-1");
+    expect(field?.parentElement).toHaveClass("flex", "flex-nowrap");
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Search apps", exact: true }));
+    fireEvent.change(search, { target: { value: "coffee" } });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Collapse search" }));
+    expect(search).toHaveValue("coffee");
+    expect(within(toolbar).getByRole("button", { name: "Search apps, filtered by coffee" })).toHaveAttribute("aria-expanded", "false");
     expect(within(toolbar).queryByRole("tablist")).toBeNull();
   });
 });
