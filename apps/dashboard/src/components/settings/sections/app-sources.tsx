@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { HugeiconsIcon, Refresh04Icon, MoreHorizontalIcon, Delete02Icon } from "@/components/icons";
 import { CORE_URL } from "@/lib/constants";
 import { toast } from "sonner";
 import type { StoreSource } from "@talome/types";
@@ -154,16 +156,16 @@ export function AppSourcesSection() {
           const hasSynced = !!store.lastSyncedAt;
           const syncError = storeSyncErrors[store.id];
           return (
-            <SettingsRow key={store.id} className="flex-col items-stretch gap-2.5">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{store.name}</p>
+            <SettingsRow key={store.id} className="flex-col items-stretch gap-3 py-4 @lg:flex-row @lg:items-center">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium break-words">{store.name}</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  <span className="text-muted-foreground">{store.type}</span>
-                  {" · "}{store.appCount} apps
+                  <span className="text-muted-foreground">{store.type === "casaos" ? "CasaOS" : store.type === "umbrel" ? "Umbrel" : store.type === "user-created" ? "Custom apps" : "Talome"}</span>
+                  {" · "}{store.appCount} {store.appCount === 1 ? "app" : "apps"}
                   {isSyncing ? (
-                    <span className="text-status-info motion-safe:animate-pulse"> · syncing</span>
+                    <span> · Syncing</span>
                   ) : hasSynced ? (
-                    <> · {relativeTime(store.lastSyncedAt!)}</>
+                    <> · Updated {relativeTime(store.lastSyncedAt!)}</>
                   ) : (
                     <span className="text-status-warning"> · never synced</span>
                   )}
@@ -172,22 +174,33 @@ export function AppSourcesSection() {
                   <p className="text-xs text-destructive mt-1 break-words">{syncError}</p>
                 )}
               </div>
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
-                  onClick={() => handleSyncStore(store.id)}
+              <div className="flex shrink-0 items-center justify-end gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="pointer-coarse:min-h-11"
+                  aria-label={`${hasSynced ? "Re-sync" : "Sync"} ${store.name}`}
+                  busy={isSyncing}
+                  busyLabel={`Syncing ${store.name}`}
+                  onClick={() => void handleSyncStore(store.id)}
                   disabled={isSyncing}
                 >
-                  {isSyncing ? "Syncing..." : hasSynced ? "Re-sync" : "Sync"}
-                </button>
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground hover:text-destructive transition-colors"
-                  onClick={() => handleRemoveStore(store.id)}
-                >
-                  Remove
-                </button>
+                  <HugeiconsIcon icon={Refresh04Icon} size={16} />
+                  {hasSynced ? "Re-sync" : "Sync"}
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" className="pointer-coarse:min-h-11 pointer-coarse:min-w-11" aria-label={`Actions for ${store.name}`} disabled={isSyncing}>
+                      <HugeiconsIcon icon={MoreHorizontalIcon} size={16} />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem variant="destructive" onSelect={() => void handleRemoveStore(store.id)}>
+                      <HugeiconsIcon icon={Delete02Icon} size={16} />
+                      Remove source
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </SettingsRow>
           );
