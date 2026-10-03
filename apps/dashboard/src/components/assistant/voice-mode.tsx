@@ -13,6 +13,7 @@ import { useSpeechOutput } from "@/hooks/use-speech-output";
 import { useLiveVoice, type LiveHistoryItem } from "@/hooks/use-live-voice";
 import { CORE_URL } from "@/lib/constants";
 import { unlockAudio } from "@/lib/audio-session";
+import { DesktopLink } from "@/components/desktop/desktop-link";
 import { Button } from "@/components/ui/button";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { cn } from "@/lib/utils";
@@ -162,7 +163,10 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
           </motion.p>
         </AnimatePresence>
         <p className="text-sm text-muted-foreground">{caption}</p>
-        {onRetry && <Button variant="outline" onClick={onRetry}>Try microphone again</Button>}
+        {onRetry && <div className="flex flex-wrap justify-center gap-2">
+          <Button variant="outline" onClick={onRetry}>Try microphone again</Button>
+          <Button variant="ghost" asChild><DesktopLink href="/dashboard/settings/voice-diagnostics">Voice diagnostics</DesktopLink></Button>
+        </div>}
       </div>
 
       <div className="relative flex flex-col items-center gap-3">

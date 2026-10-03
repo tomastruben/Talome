@@ -8,6 +8,7 @@ import { useUser } from "@/hooks/use-user";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getSettingsAccessDecision } from "@/lib/settings-navigation";
 
+import { VoiceDiagnostics } from "@/components/settings/voice-diagnostics";
 import { GeneralSection } from "@/components/settings/sections/general";
 import { UsersSection } from "@/components/settings/sections/users";
 import { AiProviderSection } from "@/components/settings/sections/ai-provider";
@@ -43,6 +44,7 @@ interface SectionDef {
 }
 
 const SECTIONS: Record<string, SectionDef> = {
+  "voice-diagnostics": { component: VoiceDiagnostics, title: "Voice diagnostics" },
   "general":          { component: GeneralSection,        title: "General" },
   "users":            { component: UsersSection,          title: "Users & Access", adminOnly: true },
   "ai-provider":      { component: AiProviderSection,     title: "AI Provider" },

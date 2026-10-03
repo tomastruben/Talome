@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { DesktopLink } from "@/components/desktop/desktop-link";
 import { toast } from "sonner";
 import { HugeiconsIcon, AlertCircleIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
@@ -108,7 +109,10 @@ export function VoiceSettings() {
 
   return (
     <div className="grid gap-2">
-      <SectionLabel>Voice</SectionLabel>
+      <div className="flex items-center justify-between gap-2">
+        <SectionLabel>Voice</SectionLabel>
+        <Button variant="ghost" size="sm" asChild><DesktopLink href="/dashboard/settings/voice-diagnostics">Voice diagnostics</DesktopLink></Button>
+      </div>
       {loadError ? (
         <p role="alert" className="flex flex-wrap items-center gap-2 px-1 text-sm text-status-critical">
           <HugeiconsIcon icon={AlertCircleIcon} size={14} aria-hidden="true" />
