@@ -10,6 +10,7 @@ import { CORE_URL } from "@/lib/constants";
 import { microphoneErrorMessage } from "@/lib/microphone-error";
 import { microphonePromptExplanation, readVoiceEnvironment, type VoiceEnvironment } from "@/lib/voice-diagnostics";
 import { SectionLabel, SettingsGroup, SettingsRow } from "@/components/settings/settings-primitives";
+import { sharedAudioContext, unlockAudio, resumeVoiceAudio, voiceAudioDestination, pauseVoiceAudio } from "@/lib/audio-session";
 
 const statusSchema = z.object({ server: z.boolean(), model: z.string().nullable(), live: z.object({ model: z.string(), voice: z.string() }).nullable() });
 const transcriptSchema = z.object({ ok: z.boolean(), text: z.string().optional(), error: z.string().optional() });
@@ -25,6 +26,8 @@ export function VoiceDiagnostics() {
   const [transcribing, setTranscribing] = useState(false);
   const [transcript, setTranscript] = useState<string | null>(null);
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+  const [playbackResult, setPlaybackResult] = useState<string | null>(null);
+  const testSource = useRef<AudioBufferSourceNode | null>(null);
   const requestId = useRef(0);
   const upload = useRef<AbortController | null>(null);
 
@@ -42,7 +45,7 @@ export function VoiceDiagnostics() {
   }, []);
   useEffect(() => {
     void refresh();
-    return () => { requestId.current += 1; upload.current?.abort(); };
+    return () => { requestId.current += 1; upload.current?.abort(); testSource.current?.stop(); };
   }, [refresh]);
 
   const testMicrophone = async () => {
@@ -106,6 +109,30 @@ export function VoiceDiagnostics() {
     ["Live voice", readiness ? readiness.live ? `Configured (${readiness.live.model}) — connection not tested` : "Not configured" : "Unknown"],
   ] : [];
 
+  const testPlayback = async () => {
+    unlockAudio();
+    try {
+      const ctx = sharedAudioContext();
+      await resumeVoiceAudio(ctx);
+      testSource.current?.stop();
+      const buffer = ctx.createBuffer(1, 24_000, 24_000);
+      const samples = buffer.getChannelData(0);
+      for (let i = 0; i < samples.length; i++) {
+        const envelope = Math.min(i / 1200, (samples.length - i) / 1200, 1);
+        samples[i] = Math.sin(2 * Math.PI * 440 * i / 24_000) * 0.12 * envelope;
+      }
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(voiceAudioDestination(ctx));
+      source.onended = () => { source.disconnect(); if (testSource.current === source) { testSource.current = null; pauseVoiceAudio(ctx); } };
+      testSource.current = source;
+      source.start();
+      setPlaybackResult(`A one-second tone was scheduled using voice's 24 kHz mono PCM path. Output context: ${ctx.state}, ${ctx.sampleRate} Hz. If it is silent, the problem is browser or device playback, rather than the AI response codec.`);
+    } catch (error) {
+      setPlaybackResult(`Playback failed: ${error instanceof Error ? error.message : "audio unavailable"}.`);
+    }
+  };
+
   return <div className="grid gap-6">
     <div className="space-y-2">
       <SectionLabel>Browser checks</SectionLabel>
@@ -121,11 +148,17 @@ export function VoiceDiagnostics() {
         <Button onClick={() => void testMicrophone()} disabled={testing || !environment}>Test microphone</Button>
         {testing && <Button variant="outline" onClick={() => { requestId.current += 1; setTesting(false); setResult("Test canceled. Any capture granted later will be released immediately."); }}>Cancel test</Button>}
         <Button variant="ghost" onClick={() => void refresh()}>Refresh checks</Button>
-        <CopyButton label="Copy voice diagnostic report" text="Copy report" size="sm" disabled={!environment} value={() => JSON.stringify({ capturedAt: new Date().toISOString(), browser: navigator.userAgent, environment, readiness, loadError, microphoneTest: result, transcriptionError }, null, 2)} />
+        <CopyButton label="Copy voice diagnostic report" text="Copy report" size="sm" disabled={!environment} value={() => JSON.stringify({ capturedAt: new Date().toISOString(), browser: navigator.userAgent, environment, readiness, loadError, microphoneTest: result, playbackTest: playbackResult, transcriptionError }, null, 2)} />
         {environment?.embedded && <Button variant="ghost" asChild><a href="/dashboard/settings/voice-diagnostics" target="_blank" rel="noopener noreferrer" data-desktop-navigation="bypass">Open outside desktop</a></Button>}
       </div>
       <p role="status" className="text-sm break-words">{testing ? "Waiting for the browser's microphone request. Check for a permission prompt; you can cancel this test." : result}</p>
       <p className="text-sm text-muted-foreground">In Safari: Settings → Websites → Microphone → this site → Ask. Also check macOS System Settings → Privacy & Security → Microphone for the browser. A granted permission does not guarantee capture succeeds.</p>
+    </div>
+    <div className="space-y-3">
+      <SectionLabel>Playback test</SectionLabel>
+      <p className="text-sm text-muted-foreground">Play a quiet local tone through the same PCM output as live voice. No microphone or AI service is used. Stop an active voice conversation before testing.</p>
+      <Button variant="outline" onClick={() => void testPlayback()}>Test voice playback</Button>
+      {playbackResult && <p role="status" className="text-sm text-muted-foreground">{playbackResult}</p>}
     </div>
     <div className="space-y-3">
       <SectionLabel>Transcription test</SectionLabel>

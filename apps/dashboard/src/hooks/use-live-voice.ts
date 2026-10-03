@@ -5,7 +5,7 @@ import { microphoneErrorMessage } from "@/lib/microphone-error";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMotionValue, type MotionValue } from "motion/react";
 import { getWsUrl } from "@/lib/constants";
-import { acquireVoiceAudioSession, sharedAudioContext, unlockAudio } from "@/lib/audio-session";
+import { acquireVoiceAudioSession, sharedAudioContext, unlockAudio, voiceAudioDestination, resumeVoiceAudio, voiceAudioBlocked, pauseVoiceAudio } from "@/lib/audio-session";
 
 /**
  * Full-duplex voice with OpenAI GPT-Live, relayed through Talome
@@ -177,6 +177,7 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     session.current = null;
     cancelAnimationFrame(s.frame);
     s.ctx.removeEventListener("statechange", s.onAudioState);
+    pauseVoiceAudio(s.ctx);
     s.releaseAudio();
     if (s.ws.readyState <= 1) {
       try {
@@ -232,15 +233,15 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
 
     const releaseAudio = acquireVoiceAudioSession();
     const ctx = sharedAudioContext();
-    if (ctx.state !== "running") void ctx.resume().catch(() => setPlaybackBlocked(true));
-    const onAudioState = () => setPlaybackBlocked(ctx.state !== "running");
+    const onAudioState = () => setPlaybackBlocked(voiceAudioBlocked(ctx));
+    void resumeVoiceAudio(ctx).then(onAudioState).catch(() => setPlaybackBlocked(true));
     onAudioState();
     ctx.addEventListener("statechange", onAudioState);
     const output = ctx.createGain();
     const outAnalyser = ctx.createAnalyser();
     outAnalyser.fftSize = 512;
     output.connect(outAnalyser);
-    outAnalyser.connect(ctx.destination);
+    outAnalyser.connect(voiceAudioDestination(ctx));
 
     const micSource = ctx.createMediaStreamSource(stream);
     const micAnalyser = ctx.createAnalyser();
@@ -399,7 +400,7 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
       // Keep the worklet pulled without making the microphone audible
       const mute = ctx.createGain();
       mute.gain.value = 0;
-      capture.connect(mute).connect(ctx.destination);
+      capture.connect(mute).connect(voiceAudioDestination(ctx));
       s.capture = capture;
       s.nodes.push(capture, mute);
     } catch {
@@ -431,7 +432,7 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     const s = session.current;
     if (!s) return;
     unlockAudio();
-    void s.ctx.resume().then(() => s.onAudioState()).catch(() => setPlaybackBlocked(true));
+    void resumeVoiceAudio(s.ctx).then(() => s.onAudioState()).catch(() => setPlaybackBlocked(true));
   }, []);
 
   const toggleMute = useCallback(() => {

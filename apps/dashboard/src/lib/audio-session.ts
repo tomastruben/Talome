@@ -11,9 +11,47 @@
  */
 
 let shared: AudioContext | null = null;
+const mediaOutputs = new WeakMap<AudioContext, { destination: MediaStreamAudioDestinationNode; audio: HTMLAudioElement }>();
+
+/** WebKit's media player owns duplex speaker routing more reliably than a direct Web Audio sink. */
+export function voiceAudioDestination(ctx: AudioContext): AudioNode {
+  const webkit = /Safari\/|iPad|iPhone|iPod/.test(navigator.userAgent) && !/Chrome\/|Chromium\/|Edg\//.test(navigator.userAgent);
+  if (!webkit) return ctx.destination;
+  let output = mediaOutputs.get(ctx);
+  if (!output) {
+    const destination = ctx.createMediaStreamDestination();
+    const audio = document.createElement("audio");
+    audio.hidden = true;
+    audio.setAttribute("playsinline", "");
+    audio.srcObject = destination.stream;
+    document.body.appendChild(audio);
+    output = { destination, audio };
+    mediaOutputs.set(ctx, output);
+  }
+  return output.destination;
+}
+
+export function resumeVoiceAudio(ctx: AudioContext): Promise<void> {
+  voiceAudioDestination(ctx);
+  const audio = mediaOutputs.get(ctx)?.audio;
+  // Start both synchronously: awaiting resume() first loses Safari's tap activation.
+  const playback = audio?.play();
+  return Promise.all([ctx.resume(), playback]).then(() => undefined);
+}
+
+export function voiceAudioBlocked(ctx: AudioContext): boolean {
+  return ctx.state !== "running" || (mediaOutputs.get(ctx)?.audio.paused ?? false);
+}
+
+export function pauseVoiceAudio(ctx: AudioContext): void {
+  mediaOutputs.get(ctx)?.audio.pause();
+}
 
 export function sharedAudioContext(): AudioContext {
-  if (!shared || shared.state === "closed") shared = new AudioContext();
+  if (!shared || shared.state === "closed") {
+    if (shared) mediaOutputs.get(shared)?.audio.remove();
+    shared = new AudioContext();
+  }
   return shared;
 }
 
@@ -21,7 +59,7 @@ export function unlockAudio(): void {
   if (typeof window === "undefined") return;
   try {
     const ctx = sharedAudioContext();
-    if (ctx.state !== "running") void ctx.resume().catch(() => undefined);
+    void resumeVoiceAudio(ctx).catch(() => undefined);
     // WebKit also needs a source started during the gesture to unlock output.
     const primer = ctx.createBufferSource();
     primer.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);

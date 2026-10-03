@@ -5,7 +5,7 @@ const audio = vi.hoisted(() => {
   const node = () => ({ connect: vi.fn().mockReturnThis(), disconnect: vi.fn(), gain: { value: 1 }, fftSize: 512, getFloatTimeDomainData: vi.fn() });
   return { ctx: { state: "running", currentTime: 0, destination: {}, resume: vi.fn(async () => undefined), addEventListener: vi.fn(), removeEventListener: vi.fn(), createGain: node, createAnalyser: node, createMediaStreamSource: node, audioWorklet: { addModule: vi.fn(async () => undefined) } } };
 });
-vi.mock("@/lib/audio-session", () => ({ sharedAudioContext: () => audio.ctx, acquireVoiceAudioSession: () => vi.fn(), unlockAudio: vi.fn() }));
+vi.mock("@/lib/audio-session", () => ({ sharedAudioContext: () => audio.ctx, acquireVoiceAudioSession: () => vi.fn(), unlockAudio: vi.fn(), voiceAudioDestination: () => audio.ctx.destination, resumeVoiceAudio: () => audio.ctx.resume(), voiceAudioBlocked: () => audio.ctx.state !== "running", pauseVoiceAudio: vi.fn() }));
 import { useLiveVoice } from "@/hooks/use-live-voice";
 
 afterEach(() => vi.unstubAllGlobals());
