@@ -8,6 +8,9 @@ import { healthBannerCopy } from "@/components/system-health-banner";
 import { healthChecked, useIsOnline, type HealthState } from "@/hooks/use-is-online";
 import { useSystemStats } from "@/hooks/use-system-stats";
 import { useUser } from "@/hooks/use-user";
+import { useNotifications, getNotificationRoute } from "@/hooks/use-notifications";
+import { DesktopLink } from "@/components/desktop/desktop-link";
+import { welcomeIncident } from "@/lib/welcome-incidents";
 import { cn } from "@/lib/utils";
 import { Widget, WidgetHeader } from "./widget";
 
@@ -94,7 +97,9 @@ function useNow(): Date | null {
  */
 export function ClockWidget({ compact = false }: { compact?: boolean }) {
   const now = useNow();
-  const { user } = useUser();
+  const { user, isAdmin } = useUser();
+  const { notifications } = useNotifications();
+  const incident = now ? welcomeIncident(notifications, now.getTime()) : null;
   const { stats } = useSystemStats();
   const health = useIsOnline();
   const footer = clockFooterStatus(health, stats?.uptime);
@@ -125,6 +130,20 @@ export function ClockWidget({ compact = false }: { compact?: boolean }) {
               : `${greetingFor(now.getHours())}${name ? `, ${name}` : ""} · ${now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}`
             : " "}
         </p>
+        {incident ? (
+          <DesktopLink
+            href={getNotificationRoute(incident.notification, { isAdmin })}
+            className="mt-1 block min-w-0 rounded-sm text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground transition-colors duration-150 ease-out"
+            title={`Recent alert: ${incident.notification.title}. Open to investigate.`}
+          >
+            <span className={cn("block truncate", incident.notification.type === "critical" ? "text-status-critical" : "text-status-warning")}>
+              {incident.headline}
+            </span>
+            <span className="block truncate text-muted-foreground">
+              {incident.notification.title}{incident.more ? ` · +${incident.more} more` : ""}
+            </span>
+          </DesktopLink>
+        ) : null}
       </div>
       <div className="mt-auto flex items-center justify-between gap-3 border-t border-border/60 px-4 py-2.5 text-xs text-muted-foreground">
         {footer.label ? (

@@ -16,6 +16,7 @@ vi.mock("@/hooks/use-is-online", async (importOriginal) => {
 });
 vi.mock("@/hooks/use-system-stats", () => ({ useSystemStats: () => ({ stats: state.stats }) }));
 vi.mock("@/hooks/use-user", () => ({ useUser: () => ({ user: { username: "owner" } }) }));
+vi.mock("@/hooks/use-notifications", () => ({ useNotifications: () => ({ notifications: [] }) }));
 
 import { ClockWidget, clockFooterStatus } from "@/components/widgets/clock-widget";
 
