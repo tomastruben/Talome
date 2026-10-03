@@ -165,6 +165,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
   const [mode, setMode] = useState<PaletteMode>(() => initialRequest?.mode ?? "search");
   const [query, setQuery] = useState("");
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [dictationActive, setDictationActive] = useState(false);
   const [chatPrefill, setChatPrefill] = useState<string | undefined>(
     () => (initialRequest?.mode === "chat" ? initialRequest.prefill : undefined),
   );
@@ -287,6 +288,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
     setOpen(v);
     if (!v) {
       setVoiceOpen(false);
+      setDictationActive(false);
       setQuery("");
       setMode("search");
       setChatPrefill(undefined);
@@ -408,7 +410,10 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
         className="rounded-2xl border-border/60 [&_[data-slot=command]]:rounded-none [&_[cmdk-item]]:rounded-xl"
         title={mode === "chat" ? "Quick question" : "Command Palette"}
         description={mode === "chat" ? "Ask Talome a quick question or continue in the Assistant app." : undefined}
-        onEscapeKeyDown={voiceOpen ? (event) => { event.preventDefault(); setVoiceOpen(false); } : undefined}
+        onEscapeKeyDown={voiceOpen || dictationActive ? (event) => {
+          event.preventDefault();
+          if (voiceOpen) setVoiceOpen(false);
+        } : undefined}
       >
         {mode === "chat" ? (
           // ── Chat mode ──────────────────────────────────────────────────────
@@ -507,6 +512,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
               initialInput={chatPrefill}
               autoFocus
               maxWidth="max-w-none"
+              onDictationActiveChange={setDictationActive}
               onVoiceMode={() => setVoiceOpen(true)}
             />
             <VoiceMode

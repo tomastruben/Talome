@@ -112,6 +112,7 @@ export interface ChatInputBarProps {
    * touch screen with a hardware keyboard), as the composer's Virtual
    * keyboard toggle chooses. Left out, the browser decides.
    */
+  onDictationActiveChange?: (active: boolean) => void;
   inputMode?: HTMLAttributes<HTMLTextAreaElement>["inputMode"];
 }
 
@@ -125,6 +126,7 @@ export function ChatInputBar({
   extraTools,
   maxWidth = "max-w-2xl",
   onVoiceMode,
+  onDictationActiveChange,
   inputMode,
 }: ChatInputBarProps) {
   const isActive = status === "streaming" || status === "submitted";
@@ -140,7 +142,8 @@ export function ChatInputBar({
   const [voiceTurn, setVoiceTurn] = useState(false);
   const handleDictationStatus = useCallback((next: VoiceStatus, level: MotionValue<number>) => {
     setDictation({ status: next, level });
-  }, []);
+    onDictationActiveChange?.(next === "listening" || next === "starting");
+  }, [onDictationActiveChange]);
   const handleTranscript = useCallback(() => setDictated(true), []);
 
   // A voice turn ends when the reply does
