@@ -19,7 +19,7 @@ interface FilesStatusBarProps {
 }
 
 const segmentClass =
-  "inline-flex h-6 max-w-36 items-center truncate rounded-md px-1.5 text-xs text-muted-foreground pointer-coarse:h-11";
+  "inline-flex h-6 max-w-36 items-center truncate rounded-full px-1.5 text-xs text-muted-foreground pointer-coarse:h-11";
 const interactiveClass =
   "transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
@@ -96,7 +96,7 @@ export function FilesStatusBar({
         onClick={onToggleHidden}
         title={showHidden ? "Hide hidden files" : "Show hidden files"}
         className={cn(
-          "inline-flex h-6 shrink-0 items-center rounded-md px-1.5 text-xs pointer-coarse:h-11",
+          "inline-flex h-6 shrink-0 items-center rounded-full px-1.5 text-xs pointer-coarse:h-11",
           interactiveClass,
           showHidden ? "bg-foreground/10 text-foreground" : "text-muted-foreground",
         )}

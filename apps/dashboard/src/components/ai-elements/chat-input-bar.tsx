@@ -81,7 +81,7 @@ function AttachmentPreviewList() {
 
             <button
               aria-label={`Remove ${file.filename || "attachment"}`}
-              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               onClick={() => attachments.remove(file.id)}
               type="button"
             >

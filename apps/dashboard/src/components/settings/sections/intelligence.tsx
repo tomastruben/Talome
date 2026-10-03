@@ -328,7 +328,7 @@ export function IntelligenceSection() {
                           type="button"
                           onClick={() => applyPreset(p)}
                           className={cn(
-                            "rounded-lg px-3 py-2 text-xs font-medium transition-all duration-150",
+                            "rounded-full px-3 py-2 text-xs font-medium transition-all duration-150",
                             isPresetActive(p)
                               ? "bg-primary/10 text-primary border border-primary/20"
                               : "bg-muted/30 text-muted-foreground hover:bg-muted/50 border border-transparent",
@@ -718,7 +718,7 @@ function AutoSetupSection() {
                     key={app.appId}
                     onClick={() => toggleExclusion(app.appId)}
                     className={cn(
-                      "text-xs px-2.5 py-1 rounded-md transition-colors",
+                      "text-xs px-2.5 py-1 rounded-full transition-colors",
                       isExcluded
                         ? "bg-muted/50 text-muted-foreground line-through"
                         : "bg-foreground/[0.06] text-foreground",

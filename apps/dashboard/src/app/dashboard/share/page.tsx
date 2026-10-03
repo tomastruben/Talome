@@ -392,7 +392,7 @@ export default function SharePage() {
                 </div>
 
                 <div className="mt-3 grid grid-cols-1 gap-2 @lg:grid-cols-3">
-                  <Button size="sm" onClick={() => void copyCode()} className="h-9 w-full gap-1.5 rounded-lg text-xs pointer-coarse:h-11">
+                  <Button size="sm" onClick={() => void copyCode()} className="h-9 w-full gap-1.5 rounded-full text-xs pointer-coarse:h-11">
                     <AnimatePresence mode="wait" initial={false}>
                       <motion.span
                         key={copiedState ? "copied" : "copy"}
@@ -406,10 +406,10 @@ export default function SharePage() {
                       </motion.span>
                     </AnimatePresence>
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void shareRecipe()} className="h-9 w-full gap-1.5 rounded-lg text-xs pointer-coarse:h-11">
+                  <Button size="sm" variant="secondary" onClick={() => void shareRecipe()} className="h-9 w-full gap-1.5 rounded-full text-xs pointer-coarse:h-11">
                     <HugeiconsIcon icon={Share04Icon} size={13} /> Share recipe
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={downloadRecipe} className="h-9 w-full gap-1.5 rounded-lg text-xs pointer-coarse:h-11">
+                  <Button size="sm" variant="secondary" onClick={downloadRecipe} className="h-9 w-full gap-1.5 rounded-full text-xs pointer-coarse:h-11">
                     <HugeiconsIcon icon={Download01Icon} size={13} /> Download
                   </Button>
                 </div>

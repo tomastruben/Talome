@@ -347,7 +347,7 @@ export function MediaPlayerSection() {
                       disabled={optSaving}
                       onClick={() => void updateOptConfig({ mediaTypes: value })}
                       className={cn(
-                        "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
                         active
                           ? "bg-foreground/10 text-foreground shadow-sm"
                           : "text-muted-foreground hover:text-foreground",

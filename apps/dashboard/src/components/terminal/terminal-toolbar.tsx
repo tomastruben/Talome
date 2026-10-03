@@ -197,7 +197,7 @@ function AutoModeSwitch({
       <TooltipTrigger asChild>
         <label
           data-terminal-auto=""
-          className="flex h-8 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors duration-150 hover:bg-accent dark:hover:bg-accent/50 pointer-coarse:h-11"
+          className="flex h-8 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-full px-2 text-sm font-medium transition-colors duration-150 hover:bg-accent dark:hover:bg-accent/50 pointer-coarse:h-11"
         >
           <Switch
             size="sm"
