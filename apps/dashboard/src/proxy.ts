@@ -25,6 +25,14 @@ function decodeJwtPayload(token: string): { exp?: number } | null {
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Only the WebSocket goes straight to the independent terminal daemon.
+  // It authenticates the first frame with a one-use admin token. Protected
+  // HTTP routes still pass through core's admin check and internal-key proxy.
+  if (pathname === "/api/terminal/ws") {
+    const daemonPort = process.env.TERMINAL_DAEMON_PORT || "4001";
+    return NextResponse.rewrite(new URL(`/ws${request.nextUrl.search}`, `http://127.0.0.1:${daemonPort}`));
+  }
+
   // Proxy /api/* requests to the core backend (needed for standalone/Docker mode)
   if (pathname.startsWith("/api/")) {
     const url = new URL(pathname + request.nextUrl.search, CORE_BACKEND);

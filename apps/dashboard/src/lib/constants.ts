@@ -36,6 +36,11 @@ export function getWsUrl(): string {
 }
 
 export function getTerminalDaemonWsUrl(): string {
+  // HTTPS pages cannot connect to a plaintext daemon WebSocket. Next proxies
+  // this exact socket path to the independent daemon; token auth stays there.
+  if (typeof window !== "undefined" && window.location.protocol === "https:") {
+    return `wss://${window.location.host}/api/terminal`;
+  }
   const port = process.env.NEXT_PUBLIC_TERMINAL_DAEMON_PORT ?? "4001";
   if (typeof window !== "undefined") {
     return `ws://${window.location.hostname.toLowerCase()}:${port}`;
@@ -44,6 +49,9 @@ export function getTerminalDaemonWsUrl(): string {
 }
 
 export function getTerminalDaemonHttpUrl(): string {
+  if (typeof window !== "undefined" && window.location.protocol === "https:") {
+    return `${window.location.origin}/api/terminal`;
+  }
   const port = process.env.NEXT_PUBLIC_TERMINAL_DAEMON_PORT ?? "4001";
   if (typeof window !== "undefined") {
     return `http://${window.location.hostname.toLowerCase()}:${port}`;
