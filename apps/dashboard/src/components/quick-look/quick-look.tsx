@@ -51,14 +51,14 @@ function PortPicker({
 // ── Main QuickLook component ──────────────────────────────────────────────────
 
 function QuickLookContent({ container }: { container: Container }) {
-  const { close } = useQuickLook();
+  const { close, port } = useQuickLook();
 
   const tcpPorts = container.ports
     .filter((p) => p.protocol === "tcp" && p.host > 0)
     .map((p) => p.host)
     .filter((p, i, arr) => arr.indexOf(p) === i);
 
-  const [activePort, setActivePort] = useState<number | null>(tcpPorts[0] ?? null);
+  const [activePort, setActivePort] = useState<number | null>(port && tcpPorts.includes(port) ? port : tcpPorts[0] ?? null);
   const [iframeState, setIframeState] = useState<"loading" | "ready" | "blocked">("loading");
   const [iframeKey, setIframeKey] = useState(0);
 

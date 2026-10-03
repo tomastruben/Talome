@@ -49,7 +49,7 @@ import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { useAssistant } from "@/components/assistant/assistant-context";
 import { useSWRConfig } from "swr";
 import { useRouter } from "next/navigation";
-import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+import { requestDesktopNavigation, requestDesktopServicePort } from "@/lib/desktop-navigation";
 import {
   Dialog,
   DialogContent,
@@ -447,7 +447,11 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                                 </DropdownMenuItem>
                                 {primaryPorts.map((p) => (
                                   <DropdownMenuItem key={p.host} asChild>
-                                    <a href={getHostUrl(p.host)} target="_blank" rel="noopener noreferrer">
+                                    <a href={getHostUrl(p.host)} target="_blank" rel="noopener noreferrer"
+                                      onClick={(event) => {
+                                        if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+                                          && requestDesktopServicePort(primary.id, p.host)) event.preventDefault();
+                                      }}>
                                       <HugeiconsIcon icon={Share04Icon} size={15} />
                                       <span>Open :{p.host}</span>
                                     </a>
@@ -553,7 +557,8 @@ export function ServiceStackList({ stacks }: ServiceStackListProps) {
                                           <button
                                             key={p.host}
                                             type="button"
-                                            onClick={() => quickLook.open(container)}
+                                            onClick={() => { if (!requestDesktopServicePort(container.id, p.host)) quickLook.open(container, p.host); }}
+                                            aria-label={`Open ${container.name} on port ${p.host}`}
                                             className="port-chip"
                                           >
                                             <HugeiconsIcon icon={Share04Icon} size={10} />

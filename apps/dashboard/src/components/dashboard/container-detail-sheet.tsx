@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
+import { requestDesktopServicePort } from "@/lib/desktop-navigation";
 import { CORE_URL } from "@/lib/constants";
 import type { Container, ContainerStats } from "@talome/types";
 import { cn } from "@/lib/utils";
@@ -214,7 +215,7 @@ function OverviewTab({
   onOpenPreview,
 }: {
   container: Container;
-  onOpenPreview: () => void;
+  onOpenPreview: (port?: number) => void;
 }) {
   const health = containerHealth(container);
 
@@ -263,7 +264,8 @@ function OverviewTab({
                       <button
                         key={p.host}
                         type="button"
-                        onClick={onOpenPreview}
+                        onClick={() => { if (!requestDesktopServicePort(container.id, p.host)) onOpenPreview(p.host); }}
+                        aria-label={`Open ${container.name} on port ${p.host}`}
                         className="port-chip"
                       >
                         <HugeiconsIcon icon={Share04Icon} size={10} />
@@ -399,7 +401,7 @@ export function ContainerDetailSheet({ open, onOpenChange, container, onAction }
             {activeTab === "overview" && (
               <OverviewTab
                 container={{ ...container, status: effectiveStatus }}
-                onOpenPreview={() => quickLook.open(container)}
+                onOpenPreview={(port) => quickLook.open(container, port)}
               />
             )}
             {activeTab === "stats"    && <StatsTab key={`stats-${container.id}-${effectiveStatus}`} container={container} />}

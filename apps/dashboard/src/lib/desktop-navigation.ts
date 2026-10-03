@@ -1,3 +1,6 @@
+import type { ServiceStack } from "@talome/types";
+import { getHostUrl } from "@/lib/constants";
+
 export const DESKTOP_OPEN_ROUTE_EVENT = "talome:desktop-open-route";
 export const DESKTOP_ROUTE_STATE_MESSAGE = "talome:desktop-route-state";
 export const DESKTOP_OPEN_ROUTE_MESSAGE = "talome:desktop-open-route-message";
@@ -142,4 +145,44 @@ export function desktopRouteFromEvent(event: Event): string | null {
   return detail && typeof detail.url === "string"
     ? dashboardRouteFromHref(detail.url)
     : null;
+}
+
+export const DESKTOP_OPEN_SERVICE_PORT_MESSAGE = "talome:desktop-open-service-port";
+
+export interface DesktopServicePortRequest {
+  containerId: string;
+  port: number;
+}
+
+export function desktopServicePortFromMessage(value: unknown): DesktopServicePortRequest | null {
+  if (typeof value !== "object" || value === null) return null;
+  const message = value as { type?: unknown; containerId?: unknown; port?: unknown };
+  if (message.type !== DESKTOP_OPEN_SERVICE_PORT_MESSAGE
+    || typeof message.containerId !== "string" || !message.containerId
+    || typeof message.port !== "number" || !Number.isInteger(message.port)
+    || message.port < 1 || message.port > 65535) return null;
+  return { containerId: message.containerId, port: message.port };
+}
+
+/** Only installed, running containers and their published TCP ports can be opened. */
+export function desktopServicePortTarget(request: DesktopServicePortRequest, stacks: readonly ServiceStack[]) {
+  const stack = stacks.find((candidate) => candidate.containers.some((container) => container.id === request.containerId));
+  const container = stack?.containers.find((candidate) => candidate.id === request.containerId);
+  if (!stack || !container || container.status !== "running"
+    || !container.ports.some((port) => port.protocol === "tcp" && port.host === request.port)) return null;
+  const ui = container.webUi?.port === request.port ? container.webUi : null;
+  const metadata = stack.containerIcons?.[container.id];
+  return {
+    id: `${container.name}:port:${request.port}`,
+    name: `${metadata?.name ?? (stack.containers.length === 1 ? stack.name : container.name)} · ${request.port}`,
+    url: ui ? `${getHostUrl(request.port).replace(/^http:/, `${ui.protocol}:`)}${ui.path}` : getHostUrl(request.port),
+    icon: metadata?.icon ?? stack.icon,
+    iconUrl: metadata?.iconUrl ?? stack.iconUrl,
+  };
+}
+
+export function requestDesktopServicePort(containerId: string, port: number): boolean {
+  if (typeof window === "undefined" || window.self === window.top) return false;
+  window.parent.postMessage({ type: DESKTOP_OPEN_SERVICE_PORT_MESSAGE, containerId, port }, window.location.origin);
+  return true;
 }

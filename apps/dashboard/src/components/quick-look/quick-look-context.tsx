@@ -4,7 +4,8 @@ import { createContext, useContext, useState, useCallback, useMemo, type ReactNo
 import type { Container } from "@talome/types";
 
 interface QuickLookContextValue {
-  open: (container: Container) => void;
+  open: (container: Container, port?: number) => void;
+  port: number | undefined;
   close: () => void;
   container: Container | null;
   isOpen: boolean;
@@ -21,12 +22,13 @@ export function useQuickLook() {
 export function QuickLookProvider({ children }: { children: ReactNode }) {
   const [container, setContainer] = useState<Container | null>(null);
 
-  const open = useCallback((c: Container) => setContainer(c), []);
+  const [port, setPort] = useState<number | undefined>();
+  const open = useCallback((c: Container, selectedPort?: number) => { setContainer(c); setPort(selectedPort); }, []);
   const close = useCallback(() => setContainer(null), []);
 
   const value = useMemo(
-    () => ({ open, close, container, isOpen: container !== null }),
-    [open, close, container]
+    () => ({ open, close, container, port, isOpen: container !== null }),
+    [open, close, container, port]
   );
 
   return (

@@ -1,5 +1,10 @@
+import type { Container, ServiceStack } from "@talome/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  DESKTOP_OPEN_SERVICE_PORT_MESSAGE,
+  desktopServicePortFromMessage,
+  desktopServicePortTarget,
+  requestDesktopServicePort,
   DESKTOP_ROUTE_STATE_MESSAGE,
   desktopRouteStateFromMessage,
   DESKTOP_OPEN_ROUTE_EVENT,
@@ -114,5 +119,43 @@ describe("desktop navigation", () => {
       type: "not-a-desktop-route",
       url: "/dashboard/media",
     })).toBeNull();
+  });
+});
+
+describe("service port windows", () => {
+  const container: Container = {
+    id: "container-1", name: "plex", image: "plex:1", status: "running", created: "", labels: {},
+    ports: [{ host: 32400, container: 32400, protocol: "tcp" }, { host: 32401, container: 32401, protocol: "tcp" }, { host: 32402, container: 32402, protocol: "udp" }],
+    webUi: { port: 32400, path: "/web/index.html", protocol: "http", source: "configured" },
+  };
+  const stack: ServiceStack = { id: "plex", name: "Plex", kind: "talome", status: "running", primaryContainer: container, containers: [container], cpuPercent: 0, memoryUsageMb: 0, runningCount: 1, totalCount: 1 };
+
+  it("keeps the detected GUI path and gives different ports separate identities", () => {
+    const main = desktopServicePortTarget({ containerId: container.id, port: 32400 }, [stack]);
+    const alternate = desktopServicePortTarget({ containerId: container.id, port: 32401 }, [stack]);
+    expect(main?.url).toMatch(/:32400\/web\/index.html$/);
+    expect(alternate?.url).toMatch(/:32401$/);
+    expect(main?.id).not.toBe(alternate?.id);
+    expect(main?.name).toBe("Plex · 32400");
+  });
+
+  it("rejects unknown, stopped, unpublished and UDP-only targets", () => {
+    expect(desktopServicePortTarget({ containerId: "other", port: 32400 }, [stack])).toBeNull();
+    expect(desktopServicePortTarget({ containerId: container.id, port: 9999 }, [stack])).toBeNull();
+    expect(desktopServicePortTarget({ containerId: container.id, port: 32402 }, [stack])).toBeNull();
+    expect(desktopServicePortTarget({ containerId: container.id, port: 32400 }, [{ ...stack, containers: [{ ...container, status: "stopped" }] }])).toBeNull();
+  });
+
+  it("accepts only typed container/port messages rather than arbitrary URLs", () => {
+    const message = { type: DESKTOP_OPEN_SERVICE_PORT_MESSAGE, containerId: container.id, port: 32400 };
+    expect(desktopServicePortFromMessage(message)).toEqual({ containerId: container.id, port: 32400 });
+    for (const port of [0, 65536, 1.5, "32400", null]) expect(desktopServicePortFromMessage({ ...message, port })).toBeNull();
+    expect(desktopServicePortFromMessage({ type: DESKTOP_OPEN_SERVICE_PORT_MESSAGE, url: "https://example.com" })).toBeNull();
+    expect(desktopServicePortFromMessage(null)).toBeNull();
+  });
+
+  it("leaves classic mode to its existing preview", () => {
+    window.history.replaceState({}, "", "/dashboard/containers");
+    expect(requestDesktopServicePort(container.id, 32400)).toBe(false);
   });
 });

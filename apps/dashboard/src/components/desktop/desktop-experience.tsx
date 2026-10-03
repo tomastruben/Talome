@@ -204,6 +204,8 @@ import {
   dashboardRouteFromHref,
   desktopRouteFromEvent,
   desktopRouteFromMessage,
+  desktopServicePortFromMessage,
+  desktopServicePortTarget,
   desktopRouteStateFromMessage,
   shouldHandleDesktopLink,
   nativeDashboardAppKey,
@@ -1504,11 +1506,20 @@ export function DesktopExperience() {
       if (event.origin !== window.location.origin) return;
       const route = desktopRouteFromMessage(event.data);
       const currentUrl = desktopRouteStateFromMessage(event.data);
-      if (!route && !currentUrl) return;
+      const servicePort = desktopServicePortFromMessage(event.data);
+      if (!route && !currentUrl && !servicePort) return;
       const frameEntry = Array.from(appFrameRefs.current.entries()).find(
         ([, frame]) => frame.contentWindow === event.source,
       );
       if (!frameEntry) return;
+      if (servicePort) {
+        if (!hasPermission("apps")) return;
+        const target = desktopServicePortTarget(servicePort, stacks);
+        if (!target) return;
+        const existing = launchableServiceApps.find((app) => app.container.id === servicePort.containerId && app.url === target.url);
+        openApp(serviceAppDefinition(existing ?? target));
+        return;
+      }
       if (currentUrl) {
         setWindows((current) => {
           const source = current.find((candidate) => candidate.id === frameEntry[0]);
@@ -1525,7 +1536,7 @@ export function DesktopExperience() {
 
     window.addEventListener("message", handleDesktopRouteMessage);
     return () => window.removeEventListener("message", handleDesktopRouteMessage);
-  }, [openDashboardRoute]);
+  }, [openDashboardRoute, hasPermission, stacks, launchableServiceApps, openApp]);
 
   useEffect(() => {
     const handleDesktopLink = (event: MouseEvent) => {
@@ -1770,7 +1781,8 @@ export function DesktopExperience() {
   const serviceStatusFor = (app: DesktopAppDefinition): DesktopServiceStatus | undefined => {
     const serviceId = app.serviceApp?.id;
     if (!serviceId || serviceId.startsWith("native:")) return undefined;
-    return withActiveOperation(serviceStatus(serviceId), serviceId, activeOperations);
+    const containerName = serviceId.replace(/:port:\d+$/, "");
+    return withActiveOperation(serviceStatus(containerName), containerName, activeOperations);
   };
 
   const windowApp = (windowModel: DesktopWindowModel): DesktopAppDefinition => resolveAppDefinition(
