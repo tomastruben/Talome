@@ -388,6 +388,17 @@ describe("Terminal toolbar controls", () => {
   });
 });
 
+it("offers renaming inside the compact session picker", async () => {
+  const rename = vi.fn().mockResolvedValue(undefined);
+  renderToolbar({ onRename: rename });
+  fireEvent.click(screen.getByRole("button", { name: "Default", exact: true }));
+  const picker = document.querySelector<HTMLElement>('[data-slot="popover-content"]')!;
+  fireEvent.click(within(picker).getByRole("button", { name: "Rename session" }));
+  fireEvent.change(screen.getByLabelText("Session name"), { target: { value: "My project" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+  await waitFor(() => expect(rename).toHaveBeenCalledWith("My project"));
+});
+
 it("renames a session through its display name without changing the selected PTY", async () => {
   routes["PATCH /api/terminal/sessions/sess_default"] = { status: 200, body: { ok: true } };
   renderTerminal();
