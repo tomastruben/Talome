@@ -96,7 +96,7 @@ export function TerminalToolbar({
   const attach = useAttachImage(onImageUpload);
   const keyboardToggle = showKeyboardToggle && onToggleKeyboard ? onToggleKeyboard : null;
   // Two small controls fold into one menu on a narrow row; one stays inline.
-  const foldsOnNarrow = Boolean(keyboardToggle && onImageUpload);
+  const foldsOnNarrow = Boolean(onImageUpload && (keyboardToggle || onInsertText));
   const inlineOnWide = foldsOnNarrow ? "hidden @md:inline-flex" : undefined;
 
   return (
@@ -106,8 +106,8 @@ export function TerminalToolbar({
       className="@container flex min-h-12 min-w-0 shrink-0 items-center gap-2 border-b border-border px-3 py-1.5"
     >
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        <TerminalSessionPicker {...picker} className={WINDOW_SIDEBAR_REPLACES} />
-        {onRename && <RenameTerminalSession key={picker.selectedSessionId} name={picker.selectedSessionName ?? "Default"} onRename={onRename} disabled={!connected} />}
+        <TerminalSessionPicker {...picker} onRename={onRename} className={WINDOW_SIDEBAR_REPLACES} />
+        {onRename && <RenameTerminalSession key={picker.selectedSessionId} name={picker.selectedSessionName ?? "Default"} onRename={onRename} disabled={!connected} className="hidden @md:inline-flex pointer-coarse:size-11" />}
         <TerminalConnectionState status={connectionStatus} onReconnect={onReconnect} />
         {remoteActive && (
           <div role="status" title="Remote session active" className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -134,7 +134,7 @@ export function TerminalToolbar({
         {onImageUpload && (
           <TerminalAttachImageButton onClick={attach.open} disabled={!connected} className={inlineOnWide} />
         )}
-        {foldsOnNarrow && keyboardToggle && (
+        {foldsOnNarrow && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -150,13 +150,13 @@ export function TerminalToolbar({
               <DropdownMenuItem className={MENU_ROW} disabled={!connected} onSelect={attach.open}>
                 Attach image…
               </DropdownMenuItem>
-              <DropdownMenuCheckboxItem
+              {keyboardToggle && <DropdownMenuCheckboxItem
                 className={MENU_ROW}
                 checked={keyboardMode === "virtual"}
                 onCheckedChange={() => keyboardToggle()}
               >
                 Virtual keyboard
-              </DropdownMenuCheckboxItem>
+              </DropdownMenuCheckboxItem>}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -266,8 +266,8 @@ function AgentLaunchButton({
             onClick={() => onLaunch(true)}
           >
             {/* Narrow rows show the play icon alone; mid-width rows the name alone; wide rows both */}
-            <HugeiconsIcon icon={PlayIcon} size={14} aria-hidden="true" className="@sm:@max-md:hidden" />
-            <span className="sr-only @sm:not-sr-only">{label}</span>
+            <HugeiconsIcon icon={PlayIcon} size={14} aria-hidden="true" className="@lg:@max-xl:hidden" />
+            <span className="sr-only @lg:not-sr-only">{label}</span>
             {withRemote && (
               <HugeiconsIcon data-terminal-remote="" icon={RemoteControlIcon} size={14} aria-hidden="true" />
             )}

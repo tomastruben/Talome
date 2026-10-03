@@ -28,6 +28,7 @@ import {
   type TerminalSessionActionResult,
 } from "./terminal-sidebar";
 import type { TerminalConnectionStatus } from "./terminal-inner";
+import { RenameTerminalSession } from "./terminal-input-tools";
 
 export interface TerminalSessionPickerProps {
   userSessions: TerminalSessionSummary[];
@@ -41,6 +42,7 @@ export interface TerminalSessionPickerProps {
   /** Resolve `{ ok: false, error }` (or reject) to keep the confirm open with the reason. */
   onDelete: (sessionId: string) => void | Promise<void | TerminalSessionActionResult>;
   onRefresh: () => void;
+  onRename?: (name: string) => Promise<void>;
   /** Set while the session list can't be refreshed. */
   refreshError?: string | null;
   /** False while the terminal can't be reached (locked, signed out): no new sessions. */
@@ -144,6 +146,7 @@ export function TerminalSessionPicker({
   onCreate,
   onDelete,
   onRefresh,
+  onRename,
   refreshError,
   canCreate = true,
   className,
@@ -285,6 +288,7 @@ export function TerminalSessionPicker({
           </div>
 
           <div className="space-y-2 border-t border-border p-2">
+            {onRename && <RenameTerminalSession key={safeSelected} name={sessionName} onRename={onRename} disabled={!canCreate} labelled className="w-full justify-start" />}
             {refreshError && !createMode && (
               <p role="status" className="px-2.5 text-xs text-muted-foreground">
                 Couldn&apos;t refresh the session list. {refreshError}.

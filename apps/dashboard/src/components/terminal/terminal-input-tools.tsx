@@ -16,10 +16,12 @@ import { useVoiceInput } from "@/hooks/use-voice-input";
 import { unlockAudio } from "@/lib/audio-session";
 import { terminalDraftText } from "./terminal-draft";
 
-export function RenameTerminalSession({ name, onRename, disabled }: {
+export function RenameTerminalSession({ name, onRename, disabled, className = "", labelled = false }: {
   name: string;
   onRename: (name: string) => Promise<void>;
   disabled?: boolean;
+  className?: string;
+  labelled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(name);
@@ -44,8 +46,9 @@ export function RenameTerminalSession({ name, onRename, disabled }: {
     }}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon-sm" aria-label="Rename session" disabled={disabled} className="shrink-0 text-muted-foreground pointer-coarse:size-11" onClick={() => { setDraft(name); setError(null); setOpen(true); }}>
+          <Button variant="ghost" size={labelled ? "sm" : "icon-sm"} aria-label="Rename session" disabled={disabled} className={`shrink-0 text-muted-foreground pointer-coarse:min-h-11 ${className}`} onClick={() => { setDraft(name); setError(null); setOpen(true); }}>
             <HugeiconsIcon icon={Edit02Icon} size={16} strokeWidth={1.5} aria-hidden="true" />
+            {labelled && <span>Rename session</span>}
           </Button>
         </TooltipTrigger>
         <TooltipContent>Rename session</TooltipContent>
