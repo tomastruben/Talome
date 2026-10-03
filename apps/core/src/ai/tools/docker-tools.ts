@@ -52,7 +52,7 @@ function getTalomeManagedContainerIds(): Set<string> {
 export const listContainersTool = tool({
   description: `List all Docker containers with their current status, ports, and images.
 
-After calling: Present as a concise table or list. Lead with a one-sentence summary (e.g. "You have 5 containers — 4 running, 1 stopped."). Highlight any stopped or unhealthy containers as alerts. Offer to start stopped ones or check logs on unhealthy ones.
+After calling: Use displayName for user-facing names and link labels; use id or name only for tool inputs. Never lead with container hashes. Present as a concise table or list. Lead with a one-sentence summary (e.g. "You have 5 containers — 4 running, 1 stopped."). Highlight any stopped or unhealthy containers as alerts. Offer to start stopped ones or check logs on unhealthy ones.
 When listing containers with exposed TCP ports, include direct markdown links using the provided webUrls (e.g. [sonarr](http://localhost:8989)).`,
   inputSchema: z.object({}),
   execute: async () => {
@@ -64,7 +64,11 @@ When listing containers with exposed TCP ports, include direct markdown links us
         .filter((p, i, arr) => arr.indexOf(p) === i);
       const webUrls = tcpPorts.map((port) => `http://localhost:${port}`);
       return {
+        id: container.id,
         name: container.name,
+        displayName: /^[a-f0-9]{12,64}$/i.test(container.name)
+          ? container.labels["com.docker.compose.service"] || container.image.split("/").pop()?.split(/[:@]/)[0] || "Service"
+          : container.name,
         image: container.image,
         status: container.status,
         tcpPorts,
@@ -75,7 +79,7 @@ When listing containers with exposed TCP ports, include direct markdown links us
     const stopped = containers.filter((c) => c.status !== "running").length;
     const alerts = containers
       .filter((c) => c.status !== "running")
-      .map((c) => `${c.name} is ${c.status}`);
+      .map((c) => `${c.displayName} is ${c.status}`);
 
     return {
       containers,

@@ -23,6 +23,12 @@ afterEach(() => {
 });
 
 describe("desktop navigation", () => {
+  it("keeps service preview routing separate from Services and Assistant", () => {
+    const target = "/dashboard/containers/preview?id=abc";
+    expect(isSameDashboardApp(target, "http://localhost/dashboard/containers")).toBe(false);
+    expect(isSameDashboardApp(target, "http://localhost/dashboard/assistant")).toBe(false);
+    expect(isSameDashboardApp(target, "http://localhost/dashboard/containers/preview?id=abc&port=4000")).toBe(true);
+  });
   it("opens file previews separately while sibling navigation stays in the preview", () => {
     const files = "http://localhost/dashboard/files?path=/books";
     const preview = "http://localhost/dashboard/files/preview?path=/books/cover.jpg";

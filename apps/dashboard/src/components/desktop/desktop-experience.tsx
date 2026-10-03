@@ -45,6 +45,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   HugeiconsIcon,
+  Globe02Icon,
   FileAttachmentIcon,
   StartUp02Icon,
   Home01Icon,
@@ -490,6 +491,19 @@ function appDefinitionFromDashboardRoute(
 
   const parsed = new URL(normalized, "http://talome.local");
   if (parsed.pathname === "/dashboard") return undefined;
+  if (parsed.pathname === "/dashboard/containers/preview") {
+    const id = parsed.searchParams.get("id");
+    if (!id) return undefined;
+    return {
+      id: `service-preview:${id}`,
+      title: parsed.searchParams.get("name") || "Service preview",
+      url: normalized,
+      icon: Globe02Icon,
+      permission: "apps",
+      minimum: { width: 440, height: 340 },
+    };
+  }
+
   if (parsed.pathname === "/dashboard/files/preview") {
     const path = parsed.searchParams.get("path");
     if (!path) return undefined;

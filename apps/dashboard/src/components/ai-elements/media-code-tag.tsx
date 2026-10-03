@@ -10,6 +10,7 @@ import {
   type AssistantEntityReference,
 } from "@/lib/assistant-entity-references";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
+import { containerDisplayName, findContainerReference } from "@/lib/container-label";
 import { cn } from "@/lib/utils";
 
 type CodeProps = ComponentPropsWithoutRef<"code"> & {
@@ -105,7 +106,8 @@ export function MediaCodeTag({
   }
 
   const entityReference = findAssistantEntityReference(title, entityReferences);
-  const matchingContainer = findMatchingContainer(
+  const containerReference = entityReference?.kind === "container" ? entityReference.id ?? entityReference.label : title;
+  const matchingContainer = findContainerReference(containers, containerReference) ?? findMatchingContainer(
     entityReference?.kind === "container" ? entityReference.label : title,
     containers,
   );
@@ -165,13 +167,13 @@ export function MediaCodeTag({
           : entityReference?.kind === "app"
           ? `Open "${title}" app`
           : canOpenContainer && matchingContainer
-          ? `Open "${title}" preview`
+          ? `Open "${containerDisplayName(matchingContainer)}" preview`
           : inLibrary
           ? `View "${title}" details`
           : `Look up "${title}"`
       }
     >
-      {children}
+      {canOpenContainer && matchingContainer && /^[a-f0-9]{12,64}$/i.test(title.trim()) ? containerDisplayName(matchingContainer) : children}
     </button>
   );
 }

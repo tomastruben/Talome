@@ -31,6 +31,7 @@ import { useRouter } from "next/navigation";
 import { requestDesktopNavigation } from "@/lib/desktop-navigation";
 import { useQuickLook } from "@/components/quick-look/quick-look-context";
 import { useMediaDetail } from "@/components/media/media-detail-context";
+import { containerDisplayName, findContainerReference } from "@/lib/container-label";
 import { useContainerLookup } from "@/hooks/use-containers";
 import { useStreamdownPlugins } from "@/lib/streamdown-plugins";
 import type { Container } from "@talome/types";
@@ -431,6 +432,11 @@ function MessageLink({
       ? children.filter((c): c is string => typeof c === "string").join("")
       : "";
 
+  const entity = findAssistantEntityReference(textLabel, entityReferences);
+  const referencedContainer = entity?.kind === "container"
+    ? findContainerReference(containers, entity.id ?? entity.label)
+    : findContainerReference(containers, textLabel) ?? (href ? resolveContainerFromLink(href, textLabel, containers) : null);
+
   return (
     <a
       href={href}
@@ -453,9 +459,7 @@ function MessageLink({
           return;
         }
         if (entity?.kind === "container") {
-          const entityContainer = containers.find(
-            (container) => normalizeContainerLabel(container.name) === normalizeContainerLabel(entity.label),
-          );
+          const entityContainer = referencedContainer;
           if (entityContainer) {
             event.preventDefault();
             quickLook.open(entityContainer);
@@ -470,13 +474,13 @@ function MessageLink({
           return;
         }
 
-        const target = resolveContainerFromLink(href, textLabel, containers);
+        const target = referencedContainer;
         if (!target) return;
         event.preventDefault();
         quickLook.open(target);
       }}
     >
-      {children}
+      {referencedContainer && /^[a-f0-9]{12,64}$/i.test(textLabel.trim()) ? containerDisplayName(referencedContainer) : children}
     </a>
   );
 }

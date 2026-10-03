@@ -65,6 +65,7 @@ export function isSameDashboardApp(href: string, currentHref: string): boolean {
   if (!route || !currentRoute) return false;
   const appRoot = (url: string) => {
     const parts = new URL(url, currentHref).pathname.split("/");
+    if (parts[2] === "containers" && parts[3] === "preview") return "containers/preview";
     if (parts[2] === "files" && parts[3] === "preview") return "files/preview";
     if (parts[2] !== "native-apps") return parts[2];
     const nativeKey = nativeDashboardAppKey(url, currentHref);

@@ -5,6 +5,14 @@ import {
 } from "@/lib/assistant-entity-references";
 
 describe("assistant entity references", () => {
+  it("keeps readable service labels while resolving container IDs", () => {
+    const references = extractAssistantEntityReferences([{
+      toolName: "list_containers",
+      output: { containers: [{ id: "559a5c6ca5b2", name: "559a5c6ca5b2", displayName: "logflare" }] },
+    }]);
+    expect(findAssistantEntityReference("logflare", references)).toEqual({ kind: "container", id: "559a5c6ca5b2", label: "logflare" });
+    expect(findAssistantEntityReference("559a5c6ca5b2", references)?.label).toBe("logflare");
+  });
   it("routes automation labels to their automation detail instead of media lookup", () => {
     const references = extractAssistantEntityReferences([{
       toolName: "list_automations",

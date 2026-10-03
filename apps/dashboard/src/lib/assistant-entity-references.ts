@@ -118,8 +118,8 @@ function addContainerReferences(
   const inputRecord = asRecord(input);
   const rows = recordList(outputRecord?.containers);
   for (const row of rows) {
-    const label = stringValue(row.name);
-    if (label) pushReference(references, { kind: "container", label, id: label });
+    const label = stringValue(row.displayName) ?? stringValue(row.name);
+    if (label) pushReference(references, { kind: "container", label, id: stringValue(row.id) ?? label });
   }
 
   const label = stringValue(outputRecord?.containerId)
@@ -272,5 +272,6 @@ export function findAssistantEntityReference(
   if (!normalized) return undefined;
   return references.find((reference) =>
     normalizeReferenceLabel(reference.label) === normalized
+    || (reference.kind === "container" && !!reference.id && normalizeReferenceLabel(reference.id) === normalized)
   );
 }

@@ -13,6 +13,9 @@ import {
 import { cn } from "@/lib/utils";
 import { getHostUrl } from "@/lib/constants";
 import { useQuickLook } from "./quick-look-context";
+import { DesktopAppToolbar } from "@/components/desktop/desktop-app-toolbar";
+import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
+import { containerDisplayName } from "@/lib/container-label";
 import type { Container } from "@talome/types";
 
 // ── Port picker — if multiple TCP ports, let user switch between them ──────────
@@ -34,7 +37,7 @@ function PortPicker({
           key={p}
           onClick={() => onChange(p)}
           className={cn(
-            "flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded-md transition-colors",
+            "flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded-full transition-colors duration-150 ease-out",
             p === active
               ? "bg-foreground/10 text-foreground"
               : "text-dim-foreground hover:text-muted-foreground hover:bg-foreground/5"
@@ -50,15 +53,17 @@ function PortPicker({
 
 // ── Main QuickLook component ──────────────────────────────────────────────────
 
-function QuickLookContent({ container }: { container: Container }) {
-  const { close, port } = useQuickLook();
+export function QuickLookContent({ container, standalone = false, port, onClose }: { container: Container; standalone?: boolean; port?: number; onClose: () => void }) {
+  const close = onClose;
+  const embedded = useIsEmbeddedFrame();
+  const name = containerDisplayName(container);
 
   const tcpPorts = container.ports
     .filter((p) => p.protocol === "tcp" && p.host > 0)
     .map((p) => p.host)
     .filter((p, i, arr) => arr.indexOf(p) === i);
 
-  const [activePort, setActivePort] = useState<number | null>(port && tcpPorts.includes(port) ? port : tcpPorts[0] ?? null);
+  const [activePort, setActivePort] = useState<number | null>(port && tcpPorts.includes(port) ? port : container.webUi?.port && tcpPorts.includes(container.webUi.port) ? container.webUi.port : tcpPorts[0] ?? null);
   const [iframeState, setIframeState] = useState<"loading" | "ready" | "blocked">("loading");
   const [iframeKey, setIframeKey] = useState(0);
 
@@ -68,7 +73,8 @@ function QuickLookContent({ container }: { container: Container }) {
     setIframeKey((k) => k + 1);
   }, [activePort]);
 
-  const activeUrl = activePort ? getHostUrl(activePort) : null;
+  const webUi = container.webUi?.port === activePort ? container.webUi : null;
+  const activeUrl = activePort ? webUi ? `${getHostUrl(activePort).replace(/^http:/, `${webUi.protocol}:`)}${webUi.path}` : getHostUrl(activePort) : null;
 
   const handlePortChange = useCallback((p: number) => {
     setActivePort(p);
@@ -77,18 +83,18 @@ function QuickLookContent({ container }: { container: Container }) {
   // Escape to close
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (!standalone && e.key === "Escape") close();
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [close]);
+  }, [close, standalone]);
 
   const isRunning = container.status === "running";
 
   return (
     <div className="flex flex-col h-full">
       {/* ── Header bar ─────────────────────────────────────────────────────── */}
-      <div className="flex h-12 items-center gap-2 px-3 border-b border-border shrink-0">
+      <DesktopAppToolbar detached={!standalone} windowTitle={standalone ? name : undefined} className="flex h-12 min-w-0 items-center gap-2 px-4 border-b border-border shrink-0">
         {/* Status + name */}
         <span className="relative flex size-1.5 shrink-0">
           {isRunning && (
@@ -101,12 +107,10 @@ function QuickLookContent({ container }: { container: Container }) {
             )}
           />
         </span>
-        <span className="font-medium text-sm text-muted-foreground truncate">
-          {container.name}
-        </span>
-        <span className="text-xs text-muted-foreground font-mono truncate hidden sm:block">
+        {!(standalone && embedded) && <span className="font-medium text-sm text-muted-foreground truncate">{name}</span>}
+        {!standalone && <span className="text-xs text-muted-foreground font-mono truncate hidden sm:block">
           {container.image}
-        </span>
+        </span>}
 
         <div className="ml-auto flex items-center gap-1 shrink-0">
           {/* Port picker */}
@@ -118,7 +122,7 @@ function QuickLookContent({ container }: { container: Container }) {
               href={activeUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-foreground/5"
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-full hover:bg-foreground/5"
             >
               Open
               <HugeiconsIcon icon={Share04Icon} size={12} />
@@ -126,16 +130,17 @@ function QuickLookContent({ container }: { container: Container }) {
           )}
 
           {/* Close */}
-          <Button
+          {!standalone && <Button
+            aria-label="Close preview"
             variant="ghost"
             size="icon"
             className="size-7 text-dim-foreground hover:text-foreground"
             onClick={close}
           >
             <HugeiconsIcon icon={Cancel01Icon} size={14} />
-          </Button>
+          </Button>}
         </div>
-      </div>
+      </DesktopAppToolbar>
 
       {/* ── Preview area ──────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 relative overflow-hidden bg-background">
@@ -171,7 +176,7 @@ function QuickLookContent({ container }: { container: Container }) {
                 <HugeiconsIcon icon={Globe02Icon} size={32} className="text-dim-foreground" />
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">
-                    {container.name} doesn't allow embedding.
+                    {name} doesn't allow embedding.
                   </p>
                   <p className="text-xs text-muted-foreground">
                     This is a security restriction set by the service itself.
@@ -183,7 +188,7 @@ function QuickLookContent({ container }: { container: Container }) {
                   rel="noopener noreferrer"
                   className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
                 >
-                  Open {container.name} in new tab
+                  Open {name} in new tab
                   <HugeiconsIcon icon={Share04Icon} size={13} />
                 </a>
               </div>
@@ -192,13 +197,13 @@ function QuickLookContent({ container }: { container: Container }) {
               key={iframeKey}
               src={activeUrl}
               className={cn(
-                "w-full h-full border-0 transition-opacity duration-300",
+                "w-full h-full border-0 transition-opacity duration-150 ease-out",
                 iframeState === "ready" ? "opacity-100" : "opacity-0"
               )}
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
               onLoad={() => setIframeState("ready")}
               onError={() => setIframeState("blocked")}
-              title={container.name}
+              title={name}
             />
           </>
         )}
@@ -210,20 +215,20 @@ function QuickLookContent({ container }: { container: Container }) {
 // ── Portal-level dialog ───────────────────────────────────────────────────────
 
 export function QuickLookModal() {
-  const { container, isOpen, close } = useQuickLook();
+  const { container, isOpen, close, port } = useQuickLook();
 
   return (
     <Dialog open={isOpen} onOpenChange={(v) => { if (!v) close(); }}>
       <DialogContent
         showCloseButton={false}
-        className="p-0 gap-0 overflow-hidden w-[calc(100vw-1.5rem)] h-[calc(100svh-1.5rem)] max-w-none! sm:max-w-none! flex flex-col rounded-xl sm:w-[calc(100vw-2.5rem)] sm:h-[calc(100svh-2.5rem)] mt-[env(safe-area-inset-top)]"
+        className="p-0 gap-0 overflow-hidden w-[calc(100vw-1.5rem)] h-[calc(100svh-1.5rem)] max-w-none! sm:max-w-none! flex flex-col rounded-3xl sm:w-[calc(100vw-2.5rem)] sm:h-[calc(100svh-2.5rem)] mt-[env(safe-area-inset-top)]"
       >
         {/* Hidden title satisfies radix accessibility requirement */}
         <DialogTitle className="sr-only">
-          {container ? `Quick Look — ${container.name}` : "Quick Look"}
+          {container ? `Quick Look — ${name}` : "Quick Look"}
         </DialogTitle>
         <DialogDescription className="sr-only">Container quick look preview</DialogDescription>
-        {container && <QuickLookContent container={container} />}
+        {container && <QuickLookContent container={container} port={port} onClose={close} />}
       </DialogContent>
     </Dialog>
   );

@@ -10,6 +10,7 @@ export type WindowContentLayout = "page" | "fill";
 
 export const FILL_ROUTES = [
   "/dashboard/files",
+  "/dashboard/containers/preview",
   "/dashboard/assistant",
   "/dashboard/terminal",
   "/dashboard/player",
