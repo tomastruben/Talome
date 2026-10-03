@@ -23,11 +23,15 @@ function normalizeLabel(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/** Match a backtick label to a container by name, compose service label, or image basename. */
+/** Match service names and Docker image references before media heuristics. */
 function findMatchingContainer<T extends { name: string; image: string; labels: Record<string, string> }>(
   label: string,
   containers: T[]
 ): T | undefined {
+  const imageReference = label.trim();
+  const exactImage = containers.filter(c => c.image === imageReference || c.image.split("/").pop() === imageReference);
+  if (exactImage.length === 1) return exactImage[0];
+  if (exactImage.length > 1) return undefined;
   const normalized = normalizeLabel(label);
   if (!normalized) return undefined;
   return containers.find((c) => {
@@ -48,6 +52,8 @@ function isLikelyMediaReference(title: string, inLibrary: boolean): boolean {
 
   const trimmed = title.trim();
   if (!trimmed) return false;
+  // Registry image references are technical identifiers, not film titles.
+  if (/^[\w.-]+(?:\/[\w.-]+)+(?::[\w.-]+|@sha256:[a-f0-9]+)$/i.test(trimmed)) return false;
   // Filesystem paths (e.g., `/Volumes/Media Hub`) are never media references.
   if (/^[~.]?\//.test(trimmed)) return false;
   // Tool names and technical identifiers should stay plain inline code.
