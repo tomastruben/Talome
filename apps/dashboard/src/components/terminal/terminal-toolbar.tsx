@@ -36,6 +36,7 @@ import {
   type TerminalSessionPickerProps,
 } from "./terminal-session-toolbar";
 import { TERMINAL_AGENTS, useTerminalHeaderAction } from "./use-terminal-header-action";
+import { RenameTerminalSession, TerminalDictation } from "./terminal-input-tools";
 
 /** Menu rows a finger can hit (the menu primitives are sized for a pointer). */
 const MENU_ROW = "pointer-coarse:min-h-11";
@@ -57,6 +58,8 @@ export interface TerminalToolbarProps extends TerminalSessionPickerProps {
   showKeyboardToggle?: boolean;
   keyboardMode?: "virtual" | "physical";
   onToggleKeyboard?: () => void;
+  onRename?: (name: string) => Promise<void>;
+  onInsertText?: (text: string) => void;
 }
 
 /**
@@ -85,6 +88,8 @@ export function TerminalToolbar({
   showKeyboardToggle,
   keyboardMode,
   onToggleKeyboard,
+  onRename,
+  onInsertText,
   ...picker
 }: TerminalToolbarProps) {
   const agent = useTerminalHeaderAction();
@@ -102,6 +107,7 @@ export function TerminalToolbar({
     >
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         <TerminalSessionPicker {...picker} className={WINDOW_SIDEBAR_REPLACES} />
+        {onRename && <RenameTerminalSession key={picker.selectedSessionId} name={picker.selectedSessionName ?? "Default"} onRename={onRename} disabled={!connected} />}
         <TerminalConnectionState status={connectionStatus} onReconnect={onReconnect} />
         {remoteActive && (
           <div role="status" title="Remote session active" className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -114,6 +120,7 @@ export function TerminalToolbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
+        {onInsertText && <TerminalDictation sessionId={picker.selectedSessionId ?? "sess_default"} connected={connectionStatus === "connected"} onInsert={onInsertText} />}
         <AutoModeSwitch
           checked={autoMode}
           onCheckedChange={onAutoModeChange}
@@ -322,4 +329,3 @@ function AgentLaunchButton({
     </ButtonGroup>
   );
 }
-

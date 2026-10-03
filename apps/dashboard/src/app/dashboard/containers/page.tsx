@@ -156,7 +156,7 @@ export default function ContainersPage() {
         {embedded && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon-sm" className={WINDOW_SIDEBAR_REPLACES} aria-label="Filter services" title="Filter services">
+              <Button variant="ghost" size="icon-sm" className={WINDOW_SIDEBAR_REPLACES} aria-label="Filter services" title="Filter services">
                 <HugeiconsIcon icon={SlidersHorizontalIcon} size={16} aria-hidden="true" />
               </Button>
             </DropdownMenuTrigger>

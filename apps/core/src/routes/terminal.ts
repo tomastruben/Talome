@@ -15,6 +15,7 @@
 
 import type { Hono, MiddlewareHandler } from "hono";
 import { inArray } from "drizzle-orm";
+import { z } from "zod";
 import { createHash } from "node:crypto";
 import { db, schema } from "../db/index.js";
 import { DAEMON_PORT } from "../terminal-constants.js";
@@ -111,6 +112,12 @@ export function setupTerminal(
     const suffix = c.req.path.replace(/^\/api\/terminal/, "") || "/";
     const search = new URL(c.req.raw.url).search;
     const url = `${DAEMON_URL}${suffix}${search}`;
+
+    if (c.req.method === "PATCH" && /^\/sessions\/[^/]+$/.test(suffix)) {
+      const body = await c.req.raw.clone().json().catch(() => null);
+      const parsed = z.object({ displayName: z.string().trim().min(1).max(80).regex(/^[^\u0000-\u001f\u007f]+$/) }).strict().safeParse(body);
+      if (!parsed.success) return c.json({ error: "Use a session name between 1 and 80 characters, without control characters." }, 400);
+    }
 
     try {
       const res = await fetch(url, {

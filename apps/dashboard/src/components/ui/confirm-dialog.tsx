@@ -200,7 +200,7 @@ export function ConfirmDialog<R = unknown>({
         data-slot="confirm-dialog"
         data-tier={tier}
         role="alertdialog"
-        className="gap-4 sm:max-w-md"
+        className="gap-6 rounded-2xl sm:max-w-md"
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           if (typeToConfirm) typeInputRef.current?.focus()
@@ -274,7 +274,7 @@ export function ConfirmDialog<R = unknown>({
         <DialogFooter className="gap-2 sm:justify-end">
           <Button
             ref={cancelRef}
-            variant="outline"
+            variant="ghost"
             aria-disabled={running || undefined}
             onClick={handleCancel}
           >

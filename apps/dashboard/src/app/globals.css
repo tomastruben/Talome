@@ -3223,3 +3223,21 @@ html[data-embedded-frame] body {
 /* Voice turns disappear into soft scroll edges; padding keeps the final line
    clear when the viewport reaches either end. */
 .voice-transcript-scroll .edge-fade { --edge-fade-size: 2rem; }
+
+/* Header verbs are quiet capsules, rather than bordered form fields. Search
+   inputs and destructive buttons retain their treatment. Focus indicators and
+   increased-contrast control edges remain visible in both themes. */
+@media not (prefers-contrast: more) {
+  [data-app-toolbar] :is([data-slot="button"][data-variant="outline"], [data-slot="select-trigger"]) {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+  }
+  [data-app-toolbar] :is([data-slot="button"][data-variant="outline"], [data-slot="select-trigger"]):hover {
+    background: var(--muted);
+  }
+  [data-app-toolbar] :is([data-slot="button"][data-variant="outline"], [data-slot="select-trigger"]):focus-visible {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 50%, transparent);
+  }
+}

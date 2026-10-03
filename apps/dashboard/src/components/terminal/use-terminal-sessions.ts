@@ -318,6 +318,18 @@ export function useTerminalSessions({
     await refreshSessions();
   }, [persistent, selectedSessionId, refreshSessions]);
 
+  const renameSession = useCallback(async (sessionId: string, name: string) => {
+    const displayName = name.trim();
+    if (!displayName || displayName.length > 80) throw new Error("Use a name between 1 and 80 characters.");
+    const res = await fetch(`${CORE_URL}/api/terminal/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName }),
+    });
+    if (!res.ok) throw new Error(await responseError(res, "Couldn't rename the session. Try again."));
+    setSessions((prev) => prev.map((session) => session.id === sessionId ? { ...session, name: displayName, displayName } : session));
+  }, []);
+
   return {
     sessions,
     sessionOptions,
@@ -329,6 +341,7 @@ export function useTerminalSessions({
     refreshSessions,
     createNewSession,
     deleteSession,
+    renameSession,
     loading,
     loaded,
     error,

@@ -16,7 +16,7 @@ export function DesktopViewMenu({ groups, className }: { groups: readonly Deskto
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon-sm" className={className} aria-label="View options" title="View options">
+        <Button variant="ghost" size="icon-sm" className={className} aria-label="View options" title="View options">
           <HugeiconsIcon icon={SlidersHorizontalIcon} size={16} aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>

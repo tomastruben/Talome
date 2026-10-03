@@ -60,7 +60,7 @@ function SearchField({ containerClassName, className, ref, onKeyDown, ...props }
       <Button
         ref={toggleRef}
         className="search-field-toggle"
-        variant={query ? "secondary" : "outline"}
+        variant={query ? "secondary" : "ghost"}
         size="icon-sm"
         aria-label={query ? `${label}, filtered by ${query}` : label}
         title={query ? `${label}: ${query}` : label}

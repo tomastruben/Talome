@@ -8,6 +8,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { CORE_URL, getTerminalDaemonHttpUrl, getTerminalDaemonWsUrl } from "@/lib/constants";
 import { shouldSuppressEmptyNormalBufferWheel } from "./terminal-scroll";
+import { terminalDraftText } from "./terminal-draft";
 
 // ── iOS emoji → ANSI replacement ─────────────────────────────────────────────
 // iOS renders Unicode emoji as oversized colorful glyphs that break terminal
@@ -49,6 +50,8 @@ function sanitizeEmoji(data: string): string {
 
 export interface TerminalInnerHandle {
   sendCommand: (cmd: string) => void;
+  /** Insert reviewed text without submitting the terminal's current line. */
+  insertText: (text: string) => void;
   /** Inject the taskPrompt into the PTY. Can be called multiple times (for retry). */
   injectPrompt: () => void;
   uploadImage: (file: File) => void;
@@ -115,6 +118,10 @@ export const TerminalInner = forwardRef<TerminalInnerHandle, TerminalInnerProps>
     }
 
     useImperativeHandle(ref, () => ({
+      insertText(text: string) {
+        sendOrQueueInput(terminalDraftText(text));
+        termRef.current?.focus();
+      },
       sendCommand(cmd: string) {
         // Header actions launch full shell commands. Clear any partially typed
         // input or late terminal capability reply before submitting so the

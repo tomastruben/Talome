@@ -388,6 +388,19 @@ describe("Terminal toolbar controls", () => {
   });
 });
 
+it("renames a session through its display name without changing the selected PTY", async () => {
+  routes["PATCH /api/terminal/sessions/sess_default"] = { status: 200, body: { ok: true } };
+  renderTerminal();
+  await screen.findByRole("button", { name: "Rename session" });
+  fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+  fireEvent.change(screen.getByLabelText("Session name"), { target: { value: "  My shell  " } });
+  fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/sessions/sess_default"), expect.objectContaining({ method: "PATCH", body: JSON.stringify({ displayName: "My shell" }) }));
+  expect(screen.getByTestId("terminal-inner")).toHaveAttribute("data-session", "sess_default");
+  expect(within(screen.getByRole("navigation", { name: "Terminal" })).getByRole("button", { name: /^My shell/ })).toBeInTheDocument();
+});
+
 describe("Terminal error boundary", () => {
   it("uses the shared error state that fills the window, with Retry", () => {
     const reset = vi.fn();

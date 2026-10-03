@@ -32,11 +32,12 @@ export function DesktopAppToolbar({ windowTitle, className, ...props }: Componen
     return () => setPageTitle(null);
   }, [embedded, windowTitle, setPageTitle]);
 
-  if (!embedded) return <div className={className} {...props} />;
+  if (!embedded) return <div data-app-toolbar="" className={className} {...props} />;
 
   const toolbar = (
     <div
       data-desktop-app-toolbar="true"
+      data-app-toolbar=""
       className={cn(className, "tm-window-toolbar")}
       {...props}
     />

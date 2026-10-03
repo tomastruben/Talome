@@ -10,7 +10,7 @@ import { useVoiceInput, type VoiceStatus } from "@/hooks/use-voice-input";
 import { unlockAudio } from "@/lib/audio-session";
 
 /** Hugeicons waveform follows speech without changing its rounded stroke weight. */
-function DictationGlyph({ level, active }: { level: MotionValue<number>; active: boolean }) {
+export function DictationGlyph({ level, active }: { level: MotionValue<number>; active: boolean }) {
   const amplitude = useTransform(level, (value) => Math.min(1, Math.max(0, value * 1.6)));
   return (
     <motion.span

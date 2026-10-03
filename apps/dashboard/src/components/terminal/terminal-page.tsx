@@ -141,6 +141,7 @@ export function TerminalPage() {
     setSelectedSessionId,
     createNewSession,
     deleteSession,
+    renameSession,
     refreshSessions,
     loading: sessionsLoading,
     loaded: sessionsLoaded,
@@ -346,6 +347,8 @@ export function TerminalPage() {
         onSelect={setSelectedSessionId}
         onCreate={handleCreateSession}
         onDelete={handleDeleteSession}
+        onRename={(name) => renameSession(selectedSessionId ?? "sess_default", name)}
+        onInsertText={(text) => termRef.current?.insertText(text)}
         onRefresh={handleRefreshSessions}
         connected={connected}
         connectionStatus={connected ? connectionStatus : null}
