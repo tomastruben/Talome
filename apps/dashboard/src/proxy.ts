@@ -83,7 +83,9 @@ export const config = {
      * - api/files/upload-stream — the proxy buffers request bodies (10 MB
      *   proxyClientMaxBodySize), which would truncate uploads. Excluded here, it
      *   is served by app/api/[...path]/route.ts, which streams the body to core.
+     * - api/stats/stream and api/operations/stream — SSE must bypass rewrites
+     *   and use the route handler's unbuffered response relay.
      */
-    "/((?!_next/static|_next/image|favicon.ico|api/files/upload-stream).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/files/upload-stream|api/stats/stream|api/operations/stream).*)",
   ],
 };

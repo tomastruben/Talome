@@ -16,9 +16,13 @@ export function getHostUrl(port: number): string {
   return `http://localhost:${port}`;
 }
 
-/** Direct URL to the core backend, bypassing the Next.js rewrite proxy.
- *  Required for streaming endpoints (SSE) which Next.js rewrites buffer. */
+/** Core streaming/health URL: direct on HTTP, same-origin relay on HTTPS. */
 export function getDirectCoreUrl(): string {
+  // Secure dashboards stream through the same-origin route handler. Direct
+  // plaintext access to core would be blocked as mixed content.
+  if (typeof window !== "undefined" && window.location.protocol === "https:") {
+    return window.location.origin;
+  }
   // An explicit core URL wins (reverse proxies, remapped ports, sandboxes).
   if (process.env.NEXT_PUBLIC_CORE_URL) return process.env.NEXT_PUBLIC_CORE_URL;
   const port = process.env.NEXT_PUBLIC_CORE_PORT || "4000";
