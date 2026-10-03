@@ -2408,7 +2408,6 @@ export function DesktopExperience() {
                   const dockButton = (dragHandle?: DockDragHandle) => (
                     <DockButton
                       label={app.title}
-                      hoverBackground={app.id === "settings"}
                       icon={app.icon}
                       iconUrl={app.iconUrl}
                       active={
@@ -2923,7 +2922,6 @@ function DockAppContextMenu({
 interface DockButtonProps {
   label: string;
   /** Utility controls retain a hover fill; application icons use magnification. */
-  hoverBackground?: boolean;
   icon: IconSvgElement;
   iconUrl?: string;
   active: boolean;
@@ -2946,7 +2944,6 @@ interface DockButtonProps {
 
 function DockButton({
   label,
-  hoverBackground = false,
   icon,
   iconUrl,
   active,
@@ -3009,8 +3006,6 @@ function DockButton({
       className={cn(
         "relative isolate flex size-12 origin-bottom transform-gpu items-center justify-center rounded-xl border border-transparent bg-transparent outline-none transition-[background-color,border-color] duration-150 ease-out will-change-transform focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         dragHandle && "cursor-grab touch-none active:cursor-grabbing",
-        hoverBackground && "hover:bg-muted/40",
-        hoverBackground && active && "bg-muted",
       )}
       onClick={onClick}
     >
