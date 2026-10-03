@@ -138,7 +138,10 @@ export function MediaCodeTag({
   return (
     <button
       type="button"
-      onClick={() => {
+      onClick={(event) => {
+        // Inline tags can sit inside markdown links; handle the action once.
+        event.preventDefault();
+        event.stopPropagation();
         if (entityReference?.href) {
           if (!requestDesktopNavigation(entityReference.href)) {
             router.push(entityReference.href);
