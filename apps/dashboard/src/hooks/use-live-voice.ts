@@ -1,5 +1,6 @@
 "use client";
 
+import { appendLiveTranscript, type LiveTranscriptEntry } from "@/lib/live-transcript";
 import { microphoneErrorMessage } from "@/lib/microphone-error";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMotionValue, type MotionValue } from "motion/react";
@@ -36,6 +37,9 @@ export interface LiveVoice {
   error: string | null;
   /** Last thing said, by either side */
   caption: { role: "user" | "assistant"; text: string } | null;
+  transcript: LiveTranscriptEntry[];
+  muted: boolean;
+  toggleMute: () => void;
   userLevel: MotionValue<number>;
   agentLevel: MotionValue<number>;
   start: () => Promise<void>;
@@ -132,6 +136,9 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
   const [activity, setActivity] = useState<LiveActivity>("listening");
   const [error, setError] = useState<string | null>(null);
   const [caption, setCaption] = useState<LiveVoice["caption"]>(null);
+  const [transcript, setTranscript] = useState<LiveTranscriptEntry[]>([]);
+  const [muted, setMuted] = useState(false);
+  const mutedRef = useRef(false);
   const userLevel = useMotionValue(0);
   const agentLevel = useMotionValue(0);
 
@@ -198,6 +205,9 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     if (session.current) return;
     setError(null);
     setCaption(null);
+    setTranscript([]);
+    setMuted(false);
+    mutedRef.current = false;
     setActivity("listening");
     setState("connecting");
 
@@ -247,44 +257,15 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     };
     session.current = s;
 
-    try {
-      if (!workletContexts.has(ctx)) {
-        const url = URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: "application/javascript" }));
-        await ctx.audioWorklet.addModule(url);
-        URL.revokeObjectURL(url);
-        workletContexts.add(ctx);
-      }
-      const capture = new AudioWorkletNode(ctx, "talome-pcm-capture");
-      capture.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-        if (s.started && ws.readyState === 1) {
-          ws.send(JSON.stringify({ type: "session.input_audio.append", audio: toBase64(event.data) }));
-        }
-      };
-      micSource.connect(capture);
-      // Keep the worklet pulled without making the microphone audible
-      const mute = ctx.createGain();
-      mute.gain.value = 0;
-      capture.connect(mute).connect(ctx.destination);
-      s.capture = capture;
-      s.nodes.push(capture, mute);
-    } catch {
-      setError("This browser can't stream audio.");
-      stop();
-      return;
-    }
-
-    let lastCaptionAt = 0;
-    const updateCaption = (role: "user" | "assistant", delta: string) => {
-      const now = performance.now();
-      // A new speaker, or a pause, starts a new line
-      if (s.captionRole !== role || now - lastCaptionAt > 1200) {
-        s.captionRole = role;
-        s.captionText = "";
-        delta = delta.trimStart();
-      }
-      lastCaptionAt = now;
-      s.captionText = `${s.captionText}${delta}`.slice(-240);
-      setCaption({ role, text: s.captionText.trim() });
+    const updateCaption = (role: "user" | "assistant", delta: string, msg: Record<string, unknown>) => {
+      const startMs = typeof msg.start_ms === "number" && Number.isFinite(msg.start_ms) ? msg.start_ms : null;
+      const endMs = typeof msg.end_ms === "number" && Number.isFinite(msg.end_ms) ? msg.end_ms : null;
+      setTranscript((entries) => appendLiveTranscript(entries, role, delta, startMs, endMs));
+      // Kept for delegation fallback; display uses the independent transcript streams.
+      if (s.captionRole !== role) s.captionText = "";
+      s.captionRole = role;
+      s.captionText += delta;
+      setCaption({ role, text: s.captionText });
     };
 
     const stopPlayback = () => {
@@ -357,13 +338,13 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
         case "session.input_transcript.delta": {
           const delta = String(msg.delta ?? "");
           s.heard += delta;
-          updateCaption("user", delta);
+          updateCaption("user", delta, msg);
           // Barge-in: the model stopped sending, so drop what's still queued
           if (delta.trim() && s.sources.size > 0 && performance.now() - s.lastOutputAt > 250) stopPlayback();
           break;
         }
         case "session.output_transcript.delta":
-          updateCaption("assistant", String(msg.delta ?? ""));
+          updateCaption("assistant", String(msg.delta ?? ""), msg);
           break;
         case "session.delegation.created": {
           const d = msg.delegation as { id?: string; target?: string } | undefined;
@@ -387,13 +368,40 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
       if (session.current === s) stop();
     };
 
+    try {
+      if (!workletContexts.has(ctx)) {
+        const url = URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: "application/javascript" }));
+        await ctx.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+        workletContexts.add(ctx);
+      }
+      if (session.current !== s) return;
+      const capture = new AudioWorkletNode(ctx, "talome-pcm-capture");
+      capture.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+        if (s.started && !mutedRef.current && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: "session.input_audio.append", audio: toBase64(event.data) }));
+        }
+      };
+      micSource.connect(capture);
+      // Keep the worklet pulled without making the microphone audible
+      const mute = ctx.createGain();
+      mute.gain.value = 0;
+      capture.connect(mute).connect(ctx.destination);
+      s.capture = capture;
+      s.nodes.push(capture, mute);
+    } catch {
+      setError("This browser can't stream audio.");
+      stop();
+      return;
+    }
+
     // Levels for the orb and glow, and who's talking
     const micSamples = new Float32Array(micAnalyser.fftSize);
     const outSamples = new Float32Array(outAnalyser.fftSize);
     let speaking = false;
     const tick = () => {
       if (session.current !== s) return;
-      userLevel.set(Math.min(1, rms(micAnalyser, micSamples) * 6));
+      userLevel.set(mutedRef.current ? 0 : Math.min(1, rms(micAnalyser, micSamples) * 6));
       const out = rms(outAnalyser, outSamples);
       agentLevel.set(Math.min(1, out * 6));
       const nowSpeaking = s.playhead > ctx.currentTime;
@@ -406,5 +414,15 @@ export function useLiveVoice({ onDelegate, history }: UseLiveVoiceOptions): Live
     s.frame = requestAnimationFrame(tick);
   }, [stop, userLevel, agentLevel]);
 
-  return { state, activity, error, caption, userLevel, agentLevel, start, stop };
+  const toggleMute = useCallback(() => {
+    const s = session.current;
+    if (!s) return;
+    const next = !mutedRef.current;
+    mutedRef.current = next;
+    s.stream.getAudioTracks().forEach((track) => { track.enabled = !next; });
+    if (next) userLevel.set(0);
+    setMuted(next);
+  }, [userLevel]);
+
+  return { state, activity, error, caption, transcript, muted, toggleMute, userLevel, agentLevel, start, stop };
 }

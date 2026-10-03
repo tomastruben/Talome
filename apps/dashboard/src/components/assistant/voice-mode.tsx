@@ -1,16 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationFrame, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import type { ChatStatus } from "ai";
 import useSWR from "swr";
 import { useTheme } from "next-themes";
 import { ThinkingOrb, type OrbState } from "thinking-orbs";
 import { VoiceBeam } from "voice-glow";
-import { HugeiconsIcon, Cancel01Icon } from "@/components/icons";
+import { HugeiconsIcon, Cancel01Icon, Mic01Icon, ViewIcon, ViewOffSlashIcon } from "@/components/icons";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useSpeechOutput } from "@/hooks/use-speech-output";
 import { useLiveVoice, type LiveHistoryItem } from "@/hooks/use-live-voice";
+import { VoiceTranscript } from "@/components/assistant/voice-transcript";
 import { CORE_URL } from "@/lib/constants";
 import { unlockAudio } from "@/lib/audio-session";
 import { DesktopLink } from "@/components/desktop/desktop-link";
@@ -76,7 +77,7 @@ export function VoiceMode(props: VoiceModeProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1, transition: enter(DURATION.base) }}
           exit={{ opacity: 0, transition: exit() }}
-          className={cn("fixed inset-0 z-[1300] flex flex-col items-center justify-center gap-8 p-6 backdrop-blur-xl", embedded ? "tm-window-voice bg-card/85" : "bg-background/85")}
+          className={cn("fixed inset-0 z-[1300] flex flex-col items-center justify-center gap-6 p-6 backdrop-blur-xl", embedded ? "tm-window-voice bg-card/85" : "bg-background/85")}
         >
           {data.live ? <LiveSession {...props} /> : <ClassicSession {...props} />}
         </motion.div>
@@ -99,12 +100,17 @@ interface StageProps {
   onOrbTap?: () => void;
   onRetry?: () => void;
   onClose: () => void;
+  transcript?: ReactNode;
+  muted?: boolean;
+  onToggleMute?: () => void;
+  muteDisabled?: boolean;
 }
 
 /** Share of the gap to the live voice level the orb closes each frame: smoothing, not a spring. */
 const LEVEL_SMOOTHING = 0.25;
 
-function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onRetry, onClose }: StageProps) {
+function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onRetry, onClose, transcript, muted, onToggleMute, muteDisabled }: StageProps) {
+  const [showTranscript, setShowTranscript] = useState(true);
   const reduceMotion = useReducedMotion();
   const { resolvedTheme } = useTheme();
   // The orb swells with the voice level, eased toward it frame by frame. It
@@ -141,14 +147,14 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
         type="button"
         onClick={onOrbTap}
         aria-label={orbLabel}
-        className="relative flex size-40 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-foreground/40"
+        className={cn("relative flex shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-foreground/40", transcript && showTranscript ? "size-24" : "size-40")}
       >
         <motion.span style={{ scale }} className="flex">
           <ThinkingOrb state={orb} size={64} aria-hidden />
         </motion.span>
       </button>
 
-      <div className="relative flex min-h-16 max-w-md flex-col items-center gap-2 text-center">
+      <div className="relative flex shrink-0 max-w-md flex-col items-center gap-2 text-center">
         {/* Status swaps in place: the old line lifts away as the new one rises */}
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.p
@@ -169,7 +175,19 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
         </div>}
       </div>
 
-      <div className="relative flex flex-col items-center gap-3">
+      {transcript && showTranscript && transcript}
+
+      <div className="relative flex shrink-0 flex-col items-center gap-3">
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          {onToggleMute && <Button variant={muted ? "secondary" : "outline"} className="rounded-full" disabled={muteDisabled} aria-pressed={muted} onClick={onToggleMute}>
+            <HugeiconsIcon icon={Mic01Icon} size={18} />
+            {muted ? "Unmute mic" : "Mute mic"}
+          </Button>}
+          {transcript && <Button variant="outline" className="rounded-full" aria-pressed={showTranscript} onClick={() => setShowTranscript((shown) => !shown)}>
+            <HugeiconsIcon icon={showTranscript ? ViewOffSlashIcon : ViewIcon} size={18} />
+            {showTranscript ? "Hide transcript" : "Show transcript"}
+          </Button>}
+
         <button
           type="button"
           onClick={onClose}
@@ -178,6 +196,7 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
         >
           <HugeiconsIcon icon={Cancel01Icon} size={18} />
         </button>
+        </div>
         {/* A quiet hint: where the voice goes, or why voice is unavailable */}
         {footnote && <p className="text-xs text-dim-foreground">{footnote}</p>}
       </div>
@@ -241,9 +260,8 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceM
   const speaking = live.activity === "speaking";
   const { agentLevel, userLevel } = live;
   const level = useCallback(() => (speaking ? agentLevel.get() : userLevel.get()), [speaking, agentLevel, userLevel]);
-  const label = live.state === "connecting" ? "Connecting…" : live.error ? "Voice ended" : LIVE_LABEL[live.activity];
+  const label = live.state === "connecting" ? "Connecting…" : live.error || live.state === "ended" ? "Voice ended" : live.muted && live.activity === "listening" ? "Microphone muted" : LIVE_LABEL[live.activity];
   const caption = live.error
-    ?? live.caption?.text
     ?? (live.state === "live" ? "Just talk — interrupt any time." : "");
   const retry = () => {
     unlockAudio();
@@ -260,6 +278,10 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceM
       caption={caption}
       // Where the voice goes, in plain words (no protocol or model id)
       footnote="Voice by OpenAI"
+      transcript={<VoiceTranscript entries={live.transcript ?? []} />}
+      muted={live.muted}
+      onToggleMute={live.toggleMute}
+      muteDisabled={live.state !== "live"}
       orbLabel={live.error ? "Try microphone again" : "End voice conversation"}
       onOrbTap={live.error ? retry : onClose}
       onRetry={live.error ? retry : undefined}

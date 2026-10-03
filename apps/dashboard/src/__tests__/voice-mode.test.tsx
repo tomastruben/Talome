@@ -91,4 +91,23 @@ describe("voice conversation startup", () => {
     expect(mocks.unlock).toHaveBeenCalledTimes(1);
     expect(mocks.start).toHaveBeenCalledTimes(1);
   });
+  it("lets the user hide and restore complete bubbles and mute without ending voice", () => {
+    mocks.liveEnabled = true;
+    const toggleMute = vi.fn();
+    mocks.live.mockReturnValue({ state: "live", activity: "listening", error: null, muted: false, toggleMute,
+      transcript: [{ id: 1, role: "user", text: "My question" }, { id: 2, role: "assistant", text: "A complete reply" }],
+      userLevel: level, agentLevel: level, start: mocks.start, stop: mocks.stop });
+    render(<VoiceMode {...props} />);
+    expect(screen.getByText("A complete reply")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hide transcript" }));
+    expect(screen.queryByText("A complete reply")).not.toBeInTheDocument();
+    expect(mocks.stop).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Show transcript" }));
+    expect(screen.getByText("My question")).toBeInTheDocument();
+    expect(screen.getByText("A complete reply")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mute mic" }));
+    expect(toggleMute).toHaveBeenCalledOnce();
+    expect(mocks.stop).not.toHaveBeenCalled();
+  });
+
 });
