@@ -8,7 +8,7 @@ import { snapshotGeneratedWorkspace } from "../creator/workspace-snapshot.js";
 
 const spec = createDefaultAppSpec({ appId: "fixture", name: "Fixture", description: "An isolated test." });
 const binding = { appId: "fixture", sourceSha256: "a".repeat(64), specSha256: "b".repeat(64), rendererBuildId: "build-one", rendererSha256: "e".repeat(64), harnessSha256: "c".repeat(64), fileCount: 2 };
-const report = () => NativeBrowserReportSchema.parse({ version: 1, scope: "native-renderer-fixture", binding, generatedAt: new Date().toISOString(), status: "passed", checks: ["surface:390:overview", "surface:480:overview", "surface:768:overview", "surface:1440:overview", "isolation", "console", "action:fixture-result", "data:error-recovery", "data:empty"].map((id) => ({ id, status: "passed", details: "Executed independently." })), screenshots: ["390.png", "480.png", "768.png", "1440.png"], unverified: ["Real application service"] });
+const report = () => NativeBrowserReportSchema.parse({ version: 1, scope: "native-renderer-fixture", binding, generatedAt: new Date().toISOString(), status: "passed", checks: ["surface:390:overview", "surface:480:overview", "surface:768:overview", "surface:1440:overview", "light:390:overview", "light:480:overview", "light:768:overview", "light:1440:overview", "presentation:standalone", "isolation", "console", "action:fixture-result", "data:error-recovery", "data:empty"].map((id) => ({ id, status: "passed", details: "Executed independently." })), screenshots: ["390.png", "480.png", "768.png", "1440.png", "light-390.png", "light-480.png", "light-768.png", "light-1440.png"], unverified: ["Real application service"] });
 
 describe("independent native browser evidence", () => {
   it.each(["Chrome executable is missing", "Browser process crashed", "Browser validation timed out"])("fails closed when %s", async (message) => {
@@ -65,6 +65,12 @@ describe("independent native browser evidence", () => {
     const missing = report();
     missing.checks = missing.checks.filter((check) => check.id !== "surface:390:overview");
     expect(() => assertNativeBrowserEvidence(missing, binding, ["overview"])).toThrow("missing surface:390");
+
+    for (const id of ["light:768:overview", "presentation:standalone"]) {
+      const incomplete = report();
+      incomplete.checks = incomplete.checks.filter((check) => check.id !== id);
+      expect(() => assertNativeBrowserEvidence(incomplete, binding, ["overview"])).toThrow(`missing ${id}`);
+    }
     const workflowMissing = report();
     workflowMissing.checks = workflowMissing.checks.filter((check) => check.id !== "data:empty");
     expect(() => assertNativeBrowserEvidence(workflowMissing, binding, ["overview"], true)).toThrow("missing data:empty");

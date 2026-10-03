@@ -58,7 +58,7 @@ export async function fingerprintNativeWorkspace(scaffoldPath: string, spec: Tal
 export function assertNativeBrowserEvidence(report: NativeBrowserReport, binding: z.infer<typeof BindingSchema>, surfaceIds: string[], hasDynamicData = false, chartIds: string[] = []) {
   if (JSON.stringify(report.binding) !== JSON.stringify(BindingSchema.parse(binding))) throw new Error("Browser evidence does not match the generated files, native contract, or renderer build.");
   const widths = [390, 480, 768, 1440];
-  const required = [...surfaceIds.flatMap((id) => widths.map((width) => `surface:${width}:${id}`)), ...chartIds.flatMap((id) => widths.map((width) => `chart:${width}:${id}`)), "isolation", "console", ...(hasDynamicData ? ["data:error-recovery", "data:empty"] : [])];
+  const required = [...surfaceIds.flatMap((id) => widths.map((width) => `surface:${width}:${id}`)), ...surfaceIds.flatMap((id) => widths.map((width) => `light:${width}:${id}`)), "presentation:standalone", ...chartIds.flatMap((id) => widths.map((width) => `chart:${width}:${id}`)), "isolation", "console", ...(hasDynamicData ? ["data:error-recovery", "data:empty"] : [])];
   if (report.status !== "passed" || report.checks.some((check) => check.status === "failed")) {
     throw new Error(report.checks.filter((check) => check.status === "failed").map((check) => check.details).join("; ") || "Native browser validation failed");
   }
@@ -68,7 +68,7 @@ export function assertNativeBrowserEvidence(report: NativeBrowserReport, binding
   if (!report.checks.some((check) => ["action:fixture-result", "action:input-handoff", "action:assistant-handoff"].includes(check.id)) || !["data:error-recovery", "data:empty"].every((id) => report.checks.some((check) => check.id === id))) {
     throw new Error("Browser evidence must state which action and error-recovery checks ran or were inapplicable.");
   }
-  if (report.screenshots.length < surfaceIds.length * widths.length) throw new Error("Browser evidence is missing surface screenshots.");
+  if (report.screenshots.length < surfaceIds.length * widths.length * 2) throw new Error("Browser evidence is missing surface screenshots.");
 }
 
 interface NativeBrowserDependencies {
@@ -112,7 +112,7 @@ export async function validateNativeAppInBrowser(scaffoldPath: string, spec: Tal
     }
     await writeFile(reportPath, JSON.stringify(report, null, 2));
     check.status = "passed";
-    check.details = `${spec.surfaces.length} native surface(s) at 390, 480, 768 and 1440 px; dark mode, block rendering, chart marks and accessible data, navigation and applicable fixture action/error recovery checks. App service behavior is unverified.`;
+    check.details = `${spec.surfaces.length} native surface(s) at 390, 480, 768 and 1440 px; dark and light modes, embedded and standalone presentation, block rendering, chart marks and accessible data, navigation and applicable fixture action/error recovery checks. App service behavior is unverified.`;
   } catch (error) {
     check.details = error instanceof Error ? error.message.slice(0, 1600) : "Native browser validation failed";
   }

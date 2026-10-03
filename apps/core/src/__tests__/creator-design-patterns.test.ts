@@ -71,6 +71,15 @@ describe("Talome composition discovery", () => {
     expect(charts.examples[0].spec.surfaces[0].blocks[0].variant).toBe("bar");
     expect(charts.rules.join(" ")).toContain("0.01 is 1%");
     expect(pack.summary.files).toContain("chart-contract.json");
+    expect(pack.summary.files).toContain("desktop-contract.md");
+    const foundations = JSON.parse(pack.documents["design-foundations.json"]);
+    const snapshots = await loadTalomeReferenceSnapshots();
+    for (const file of ["globals.css", "button.tsx", "search-field.tsx", "desktop-app-toolbar.tsx", "source-list.tsx", "native-app-runtime.tsx", "native-app-blocks.tsx"]) {
+      const snapshot = snapshots.find((reference) => reference.relativePath.endsWith(file));
+      expect(snapshot?.content.length).toBeGreaterThan(0);
+      expect(foundations.find((reference: { path: string; sha256: string }) => reference.path === snapshot?.relativePath)?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    }
+
     expect(pack.summary.version).toBe(`app-creation:${pack.summary.hash}`);
   });
 });

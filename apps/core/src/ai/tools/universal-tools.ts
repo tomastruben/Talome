@@ -78,6 +78,18 @@ export function resolveAppConnection(appId: string): {
   return { baseUrl: baseUrl.replace(/\/$/, ""), apiKey, auth };
 }
 
+/** Preserve explicit credentials; resolve managed creations from their current installation. */
+export async function resolveAppApiConnection(appId: string) {
+  const configured = resolveAppConnection(appId);
+  if (!("error" in configured) || Object.hasOwn(APP_REGISTRY, appId.toLowerCase())) return configured;
+  const { resolveGeneratedAppUrl } = await import("../../app-specs/generated-connection.js");
+  const resolved = await resolveGeneratedAppUrl(appId.toLowerCase());
+  if ("error" in resolved) return { error: resolved.error, hint: "Check the app's installation and published web port, or configure its URL in Settings." };
+  const apiKey = getSetting(`${appId.toLowerCase()}_api_key`) || getSetting(`${appId.toLowerCase()}_token`);
+  const auth: AuthStyle = apiKey ? { type: "x-api-key", header: "X-Api-Key", value: apiKey } : { type: "none" };
+  return { baseUrl: resolved.baseUrl, apiKey, auth };
+}
+
 export function buildHeaders(auth: AuthStyle): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (auth.type === "x-api-key" || auth.type === "bearer" || auth.type === "mediabrowser") {
@@ -115,7 +127,7 @@ export async function executeAppApiRequest({
   body,
   timeoutMs = 8_000,
 }: AppApiRequest) {
-  const conn = resolveAppConnection(appId);
+  const conn = await resolveAppApiConnection(appId);
   if ("error" in conn) return { success: false as const, error: conn.error, hint: conn.hint };
 
   const url = buildUrl(conn.baseUrl, path, conn.auth);
@@ -200,7 +212,7 @@ After calling: Present discovered endpoints as a list. Highlight the health/stat
     additionalPaths: z.array(z.string()).default([]).describe("Extra paths to probe beyond the defaults"),
   }),
   execute: async ({ appId, additionalPaths }) => {
-    const conn = resolveAppConnection(appId);
+    const conn = await resolveAppApiConnection(appId);
     if ("error" in conn) return { success: false, error: conn.error, hint: conn.hint };
 
     const headers = buildHeaders(conn.auth);
@@ -282,7 +294,7 @@ After calling: Report whether the connection succeeded. If it failed, suggest ch
     targetAppId: z.string().describe("Target app to connect to"),
   }),
   execute: async ({ sourceAppId, targetAppId }) => {
-    const targetConn = resolveAppConnection(targetAppId);
+    const targetConn = await resolveAppApiConnection(targetAppId);
     if ("error" in targetConn) {
       return { success: false, error: targetConn.error, hint: targetConn.hint };
     }
@@ -370,10 +382,10 @@ After calling: Report what was configured and verify the connection. If the wiri
     const sourceLower = sourceAppId.toLowerCase();
     const targetLower = targetAppId.toLowerCase();
 
-    const sourceConn = resolveAppConnection(sourceLower);
+    const sourceConn = await resolveAppApiConnection(sourceLower);
     if ("error" in sourceConn) return { success: false, error: sourceConn.error, hint: sourceConn.hint };
 
-    const targetConn = resolveAppConnection(targetLower);
+    const targetConn = await resolveAppApiConnection(targetLower);
     if ("error" in targetConn) return { success: false, error: targetConn.error, hint: targetConn.hint };
 
     const sourceCaps = sourceConn.capabilities;

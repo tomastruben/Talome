@@ -299,7 +299,7 @@ export default function SharePage() {
           aria-label={allSelected ? "Deselect all" : "Select all"}
           title={allSelected ? "Deselect all" : "Select all"}
           onClick={allSelected ? selectNone : selectAll}
-          className="h-8 px-2 text-muted-foreground hover:text-foreground phone-touch:h-11"
+          className={cn("h-8 px-2 text-muted-foreground hover:text-foreground phone-touch:h-11", embedded && "ml-auto")}
         >
           {embedded ? <HugeiconsIcon icon={CheckmarkCircle01Icon} size={16} aria-hidden /> : allSelected ? "Deselect all" : "Select all"}
         </Button>
@@ -313,7 +313,7 @@ export default function SharePage() {
           busyLabel={embedded ? "Preparing…" : "Preparing the share package…"}
           disabled={effectiveSelection.size === 0}
           // On a phone it wraps under the count and spans the row
-          className={cn("ml-auto min-w-0 px-4 phone-touch:h-11", !embedded && "@max-sm:w-full")}
+          className={cn("min-w-0 px-4 phone-touch:h-11", !embedded && "ml-auto @max-sm:w-full")}
           aria-label={shareCode ? "Prepare again" : "Prepare share package"}
         >
           {embedded ? "Prepare" : shareCode ? "Prepare again" : "Prepare share package"}

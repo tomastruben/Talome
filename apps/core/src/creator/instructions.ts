@@ -12,6 +12,15 @@ const REPO_ROOT = resolve(CORE_ROOT, "../..");
 const PROMPTS_DIR = resolve(CORE_ROOT, "prompts", "app-creation");
 
 const TALOME_REFERENCE_FILES = [
+  ...[
+    ["Theme tokens", "apps/dashboard/src/app/globals.css"],
+    ["Shared buttons", "apps/dashboard/src/components/ui/button.tsx"],
+    ["Shared search", "apps/dashboard/src/components/ui/search-field.tsx"],
+    ["Desktop toolbar", "apps/dashboard/src/components/desktop/desktop-app-toolbar.tsx"],
+    ["Desktop sidebar", "apps/dashboard/src/components/ui/source-list.tsx"],
+    ["Native app renderer", "apps/dashboard/src/components/native-app/native-app-runtime.tsx"],
+    ["Native blocks", "apps/dashboard/src/components/native-app/native-app-blocks.tsx"],
+  ].map(([title, path]) => ({ title, reason: "Current Talome design system and desktop composition contract", path: resolve(REPO_ROOT, path) })),
   {
     title: "Cursor Rules",
     reason: "Project-wide design and component conventions",
@@ -66,7 +75,12 @@ export async function loadInstructionPack(): Promise<InstructionPack> {
   documents["pattern-catalog.md"] = renderDesignPatternGuide();
   documents["pattern-catalog.json"] = JSON.stringify(searchDesignPatterns(), null, 2);
   documents["chart-contract.json"] = JSON.stringify(nativeChartGuide(), null, 2);
-  files.push("pattern-catalog.md", "pattern-catalog.json", "chart-contract.json");
+  // Bind the pack to the actual UI foundations as well as written guidance.
+  documents["design-foundations.json"] = JSON.stringify((await loadTalomeReferenceSnapshots()).map((reference) => ({
+    path: reference.relativePath,
+    sha256: createHash("sha256").update(reference.content).digest("hex"),
+  })), null, 2);
+  files.push("pattern-catalog.md", "pattern-catalog.json", "chart-contract.json", "design-foundations.json");
   files.sort();
 
   const combined = files.map((file) => `# ${file}\n${documents[file]}`).join("\n\n");

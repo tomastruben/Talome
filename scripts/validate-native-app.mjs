@@ -160,23 +160,30 @@ try {
   const load = async () => {
     await page.goto(`${origin}/__native-validation`, { waitUntil: "domcontentloaded" });
     const frame = page.frameLocator("iframe");
-    await expect(frame.getByRole("heading", { name: spec.name, exact: true })).toBeVisible();
+    await expect(frame.locator(`[data-native-app=${JSON.stringify(spec.appId)}]`)).toBeVisible();
     await expect(frame.locator('[data-slot="skeleton"]')).toHaveCount(0);
     return frame;
+  };
+  const selectSurface = async (frame, surface) => {
+    if (spec.surfaces.length < 2) return;
+    const row = frame.getByRole("button", { name: surface.title, exact: true });
+    if (await row.count() && await row.first().isVisible()) {
+      await row.first().click();
+      await expect(row.first()).toHaveAttribute("aria-current", "page");
+      await row.first().press("Tab");
+    } else {
+      await frame.getByRole("button", { name: /^Change view:/ }).click();
+      const item = frame.getByRole("menuitemradio", { name: surface.title, exact: true });
+      await item.focus();
+      await item.press("Enter");
+    }
+    await expect(frame.locator(`[data-native-surface=${JSON.stringify(surface.id)}]`)).toBeVisible();
   };
   for (const viewport of [{ width: 390, height: 844 }, { width: 480, height: 800 }, { width: 768, height: 1024 }, { width: 1440, height: 1000 }]) {
     await page.setViewportSize(viewport);
     const frame = await load();
     for (const [index, surface] of spec.surfaces.entries()) {
-      if (spec.surfaces.length > 1) {
-        const tab = frame.getByRole("tab", { name: surface.title, exact: true });
-        await tab.click();
-        await expect(tab).toHaveAttribute("aria-selected", "true");
-        await tab.focus();
-        await tab.press("ArrowRight");
-        await expect(frame.getByRole("tab", { name: spec.surfaces[(index + 1) % spec.surfaces.length].title, exact: true })).toBeFocused();
-        await tab.click();
-      }
+      await selectSurface(frame, surface);
       const body = frame.locator("body");
       const nativeSurface = frame.locator(`[data-native-surface=${JSON.stringify(surface.id)}]`);
       await expect(nativeSurface).toBeVisible();
@@ -251,14 +258,14 @@ try {
       const screenshot = `${viewport.width}-${index}-${surface.id.replace(/[^a-zA-Z0-9_-]/g, "-")}.png`;
       await page.screenshot({ path: join(outputDir, screenshot), fullPage: true });
       report.screenshots.push(screenshot);
-      check(`surface:${viewport.width}:${surface.id}`, "Real native renderer: visible content, dark theme, no document overflow; surface tabs respond to pointer and keyboard.");
+      check(`surface:${viewport.width}:${surface.id}`, "Real native renderer: visible content, dark theme, no document overflow; desktop surface navigation responds to pointer and keyboard.");
     }
   }
   // Exercise a rendered action entirely against the intercepted fixture service.
   let exercisedAction = false;
   const frame = page.frameLocator("iframe");
   for (const surface of spec.surfaces) {
-    if (spec.surfaces.length > 1) await frame.getByRole("tab", { name: surface.title, exact: true }).click();
+    await selectSurface(frame, surface);
     const referenced = [surface.primaryActionId, ...surface.blocks.flatMap((block) => block.actionIds ?? [block.actionId, block.reviewActionId, block.footerActionId])].filter(Boolean);
     const action = spec.actions.find((candidate) => referenced.includes(candidate.id) && !("destructive" in candidate && candidate.destructive));
     if (!action) continue;
@@ -276,7 +283,7 @@ try {
       if (action.confirmation) await frame.getByRole("dialog").getByRole("button", { name: action.label, exact: true }).click();
       await expect.poll(() => actions.length).toBe(1);
       expect(actions[0]).toEqual({ id: action.id, method: "POST", body: { confirmed: Boolean(action.confirmation), values: {} } });
-      await expect(frame.getByRole("button", { name: /Working…/ }).first()).toBeDisabled();
+      await expect(frame.getByRole("button", { name: /working/i }).first()).toBeDisabled();
       releaseAction();
       if (action.kind === "assistant") {
         await expect.poll(() => page.evaluate(() => window.handoffs.length)).toBeGreaterThan(0);
@@ -297,7 +304,7 @@ try {
   if (destructive.length) {
     let cancelled = false;
     for (const surface of spec.surfaces) {
-      if (spec.surfaces.length > 1) await frame.getByRole("tab", { name: surface.title, exact: true }).click();
+      await selectSurface(frame, surface);
       const references = [surface.primaryActionId, ...surface.blocks.flatMap((block) => block.actionIds ?? [block.actionId, block.reviewActionId, block.footerActionId])].filter(Boolean);
       const action = destructive.find((candidate) => references.includes(candidate.id) && candidate.confirmation && !candidate.input?.some((field) => field.required));
       if (!action) continue;
@@ -331,7 +338,7 @@ try {
     state = "empty";
     const emptyFrame = await load();
     for (const surface of spec.surfaces) {
-      if (spec.surfaces.length > 1) await emptyFrame.getByRole("tab", { name: surface.title, exact: true }).click();
+      await selectSurface(emptyFrame, surface);
       for (const block of surface.blocks.filter((block) => block.component === "time-series" && spec.dataSources.some((source) => source.id === block.dataSource && source.kind !== "static"))) {
         const chart = emptyFrame.locator(`[data-native-surface=${JSON.stringify(surface.id)}] [data-native-block=${JSON.stringify(block.id)}] [data-native-chart]`);
         await expect(chart).toContainText("No observations yet.");
@@ -343,6 +350,29 @@ try {
     check("data:error-recovery", "All sources are static; request failure and retry states are not applicable.", "skipped");
     check("data:empty", "Static sources retain the exact contract values; alternate source responses are not applicable.", "skipped");
   }
+  state = "populated";
+  await page.evaluate(() => localStorage.setItem("theme", "light"));
+  for (const width of [390, 480, 768, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const lightFrame = await load();
+    for (const surface of spec.surfaces) {
+      await selectSurface(lightFrame, surface);
+      await expect(lightFrame.locator("html")).not.toHaveClass(/dark/);
+      const geometry = await lightFrame.locator("body").evaluate(() => ({ width: innerWidth, content: document.documentElement.scrollWidth }));
+      if (geometry.content > geometry.width + 2) throw new Error(`Light surface ${surface.id} overflows at ${width}px.`);
+      const screenshot = `light-${width}-${surface.id.replace(/[^a-zA-Z0-9_-]/g, "-")}.png`;
+      await page.screenshot({ path: join(outputDir, screenshot), fullPage: true });
+      report.screenshots.push(screenshot);
+      check(`light:${width}:${surface.id}`, "Light native surface and desktop navigation visible without document overflow; contrast quality remains separately unverified.");
+    }
+  }
+  await page.goto(`${origin}/dashboard/native-apps/user-apps/${encodeURIComponent(spec.appId)}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: spec.name, exact: true })).toBeVisible();
+  for (const surface of spec.surfaces) {
+    if (spec.surfaces.length > 1) await page.getByRole("tab", { name: surface.title, exact: true }).click();
+    await expect(page.locator(`[data-native-surface=${JSON.stringify(surface.id)}]`)).toBeVisible();
+  }
+  check("presentation:standalone", "Standalone heading and tab navigation work independently of embedded presentation.");
   const externalBefore = blockedExternal;
   const externalWasBlocked = await page.evaluate(async () => {
     try { await fetch("https://example.invalid/talome-validation-network-probe"); return false; }
