@@ -420,20 +420,6 @@ function AppsPageContent() {
             ]} />
           )}
 
-          {embeddedFrame && (
-            <Button
-              data-toolbar-secondary=""
-              variant="outline"
-              size="icon-sm"
-              className="ml-auto shrink-0 pointer-coarse:size-11"
-              asChild
-            >
-              <Link href={CREATE_APP_HREF} aria-label="Create app" title="Create an app with the Assistant">
-                <HugeiconsIcon icon={Add01Icon} size={14} aria-hidden="true" />
-              </Link>
-            </Button>
-          )}
-
           <SearchField
             containerClassName={cn("ml-auto flex-1 @xl:max-w-64", embeddedFrame ? "min-w-0" : "min-w-40")}
             className="pointer-coarse:h-11"
@@ -442,6 +428,20 @@ function AppsPageContent() {
             value={search}
             onChange={(e) => changeSearch(e.target.value)}
           />
+
+          {embeddedFrame && (
+            <Button
+              data-toolbar-secondary=""
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 pointer-coarse:size-11"
+              asChild
+            >
+              <Link href={CREATE_APP_HREF} aria-label="Create app" title="Create an app with the Assistant">
+                <HugeiconsIcon icon={Add01Icon} size={14} aria-hidden="true" />
+              </Link>
+            </Button>
+          )}
         </div>
 
         {/* ── Category pills — "All" pinned, the rest scroll ── */}
