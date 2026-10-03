@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, type ComponentProps, useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationFrame, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import type { ChatStatus } from "ai";
 import useSWR from "swr";
@@ -17,9 +17,10 @@ import { unlockAudio } from "@/lib/audio-session";
 import { DesktopLink } from "@/components/desktop/desktop-link";
 import { IconSwap } from "@/components/ui/micro";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsEmbeddedFrame } from "@/hooks/use-desktop-mode";
 import { cn } from "@/lib/utils";
-import { DURATION, TRAVEL, enter, exit } from "@/lib/motion";
+import { DURATION, enter, exit } from "@/lib/motion";
 
 export interface LastAssistant {
   id: string;
@@ -110,12 +111,36 @@ interface StageProps {
 
 /** Share of the gap to the live voice level the orb closes each frame: smoothing, not a spring. */
 const LEVEL_SMOOTHING = 0.25;
-const VOICE_CONTROL = "h-12 rounded-full border-border bg-muted/30 px-4 shadow-none hover:bg-muted/60 dark:border-border dark:bg-muted/30 dark:hover:bg-muted/60 [&_svg]:size-5";
+const VOICE_CONTROL = "size-12 rounded-full bg-muted/30 p-0 text-muted-foreground shadow-none hover:bg-muted/60 hover:text-foreground dark:hover:bg-muted/60 [&_svg]:size-5";
+
+function VoiceControl({ label, children, className, ...props }: ComponentProps<typeof Button> & { label: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button {...props} variant="ghost" size="icon" aria-label={label} className={cn(VOICE_CONTROL, className)}>{children}</Button>
+      </TooltipTrigger>
+      <TooltipContent className="z-[1400]" side="top">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Ignore brief activity flips, while errors and user controls remain immediate. */
+function useSettledVoiceStatus(orb: OrbState, label: string, urgent: boolean) {
+  const [settled, setSettled] = useState({ orb, label });
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled({ orb, label }), urgent ? 0 : 600);
+    return () => clearTimeout(timer);
+  }, [orb, label, urgent]);
+  return urgent ? { orb, label } : settled;
+}
 
 function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel, onOrbTap, onRetry, onClose, transcript, muted, onToggleMute, muteDisabled, onResumePlayback }: StageProps) {
   const [showTranscript, setShowTranscript] = useState(true);
   const reduceMotion = useReducedMotion();
   const { resolvedTheme } = useTheme();
+  const urgent = Boolean(onRetry || muteDisabled || muted || label.includes("unavailable"));
+  const showStatusTitle = Boolean(onRetry || muteDisabled || label.includes("unavailable"));
+  const shown = useSettledVoiceStatus(muted && orb === "listening" ? "breathing" : orb, label, urgent);
   // The orb swells with the voice level, eased toward it frame by frame. It
   // tracks live data, so it is not a spring (CLAUDE.md: DRAG_SETTLE_SPRING only)
   // and it stays still under reduced motion.
@@ -152,25 +177,24 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
         aria-label={orbLabel}
         className={cn("relative flex shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-foreground/40", transcript && showTranscript ? "size-24" : "size-40")}
       >
-        <motion.span style={{ scale }} className="flex">
-          <ThinkingOrb state={orb} size={64} aria-hidden />
+        <motion.span style={{ scale }} className="relative grid size-16 place-items-center">
+          <AnimatePresence initial={false}>
+            <motion.span
+              key={shown.orb}
+              className="absolute inset-0"
+              initial={reduceMotion ? false : { opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1, transition: reduceMotion ? { duration: 0 } : enter(DURATION.base) }}
+              exit={{ opacity: 0, transition: reduceMotion ? { duration: 0 } : enter(DURATION.fast) }}
+            >
+              <ThinkingOrb state={shown.orb} theme={resolvedTheme === "light" ? "light" : "dark"} size={64} aria-hidden />
+            </motion.span>
+          </AnimatePresence>
         </motion.span>
       </button>
 
       <div className="relative flex shrink-0 max-w-md flex-col items-center gap-2 text-center">
-        {/* Status swaps in place: the old line lifts away as the new one rises */}
-        <AnimatePresence mode="popLayout" initial={false}>
-          <motion.p
-            key={label}
-            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: TRAVEL.lift, filter: "blur(2px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)", transition: reduceMotion ? { duration: DURATION.exitFast } : enter(DURATION.fast) }}
-            exit={reduceMotion ? { opacity: 0, transition: { duration: DURATION.exitFast } } : { opacity: 0, y: -TRAVEL.lift, filter: "blur(2px)", transition: exit(DURATION.exitFast) }}
-            className="text-lg font-medium"
-            aria-live="polite"
-          >
-            {label}
-          </motion.p>
-        </AnimatePresence>
+        <p className="text-lg font-medium" role={showStatusTitle ? "status" : undefined}>{showStatusTitle ? label : "Talome"}</p>
+        {!showStatusTitle && <span className="sr-only" role="status">{shown.label}</span>}
         <p className="text-sm text-muted-foreground">{caption}</p>
         {onRetry && <div className="flex flex-wrap justify-center gap-2">
           <Button variant="outline" onClick={onRetry}>Try microphone again</Button>
@@ -181,23 +205,23 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
       {transcript && showTranscript && transcript}
 
       <div className="relative flex shrink-0 flex-col items-center gap-3">
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          {onToggleMute && <Button variant="outline" className={cn(VOICE_CONTROL, "min-w-32", muted && "bg-muted dark:bg-muted")} disabled={muteDisabled} aria-pressed={muted} onClick={onToggleMute}>
-            <IconSwap active={muted ? "b" : "a"} a={<HugeiconsIcon icon={Mic01Icon} size={20} />} b={<HugeiconsIcon icon={MicOff01Icon} size={20} />} />
-            {muted ? "Unmute mic" : "Mute mic"}
-          </Button>}
-          {transcript && <Button variant="outline" className={cn(VOICE_CONTROL, "min-w-40")} aria-pressed={showTranscript} onClick={() => setShowTranscript((shown) => !shown)}>
-            <IconSwap active={showTranscript ? "a" : "b"} a={<HugeiconsIcon icon={ViewOffSlashIcon} size={20} />} b={<HugeiconsIcon icon={ViewIcon} size={20} />} />
-            {showTranscript ? "Hide transcript" : "Show transcript"}
-          </Button>}
+        <TooltipProvider>
+        <div className="flex items-center justify-center gap-3">
+          {onToggleMute && <VoiceControl label={muted ? "Unmute mic" : "Mute mic"} className={muted ? "bg-muted text-foreground" : undefined} disabled={muteDisabled} aria-pressed={muted} onClick={onToggleMute}>
+            <IconSwap active={muted ? "b" : "a"} a={<HugeiconsIcon icon={Mic01Icon} size={20} strokeWidth={1.5} />} b={<HugeiconsIcon icon={MicOff01Icon} size={20} strokeWidth={1.5} />} />
+          </VoiceControl>}
+          {transcript && <VoiceControl label={showTranscript ? "Hide transcript" : "Show transcript"} aria-pressed={showTranscript} onClick={() => setShowTranscript((shown) => !shown)}>
+            <IconSwap active={showTranscript ? "a" : "b"} a={<HugeiconsIcon icon={ViewOffSlashIcon} size={20} strokeWidth={1.5} />} b={<HugeiconsIcon icon={ViewIcon} size={20} strokeWidth={1.5} />} />
+          </VoiceControl>}
 
-          {onResumePlayback && <Button variant="outline" className={VOICE_CONTROL} onClick={onResumePlayback}>
-            <HugeiconsIcon icon={VolumeHighIcon} size={20} /> Enable audio
-          </Button>}
-          <Button variant="outline" className={VOICE_CONTROL} onClick={onClose} aria-label="End voice conversation">
-            <HugeiconsIcon icon={Cancel01Icon} size={20} /> End
-          </Button>
+          {onResumePlayback && <VoiceControl label="Enable audio" onClick={onResumePlayback}>
+            <HugeiconsIcon icon={VolumeHighIcon} size={20} strokeWidth={1.5} />
+          </VoiceControl>}
+          <VoiceControl label="End voice conversation" onClick={onClose}>
+            <HugeiconsIcon icon={Cancel01Icon} size={20} strokeWidth={1.5} />
+          </VoiceControl>
         </div>
+        </TooltipProvider>
         {/* A quiet hint: where the voice goes, or why voice is unavailable */}
         {footnote && <p className="text-xs text-dim-foreground">{footnote}</p>}
       </div>

@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   voice: vi.fn(), live: vi.fn(), start: vi.fn(async () => undefined),
@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("swr", () => ({ default: () => ({ data: { live: mocks.liveEnabled ? { model: "live" } : null } }) }));
 vi.mock("next-themes", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
-vi.mock("thinking-orbs", () => ({ ThinkingOrb: () => null }));
+vi.mock("thinking-orbs", () => ({ ThinkingOrb: ({ state }: { state: string }) => <span data-testid="voice-orb" data-state={state} /> }));
 vi.mock("voice-glow", () => ({ VoiceBeam: () => null }));
 vi.mock("@/hooks/use-voice-input", () => ({ useVoiceInput: mocks.voice }));
 vi.mock("@/hooks/use-live-voice", () => ({ useLiveVoice: mocks.live }));
@@ -26,6 +26,7 @@ function voiceState(engine: "server" | null, error: string | null = null) {
 }
 
 describe("voice conversation startup", () => {
+  afterEach(() => vi.useRealTimers());
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.liveEnabled = false;
@@ -107,7 +108,32 @@ describe("voice conversation startup", () => {
     expect(screen.getByText("A complete reply")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Mute mic" }));
     expect(toggleMute).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Mute mic" }).textContent).toBe("");
+    expect(screen.getAllByRole("button", { name: "End voice conversation" }).at(-1)?.textContent).toBe("");
     expect(mocks.stop).not.toHaveBeenCalled();
+  });
+
+  it("keeps Talome steady and ignores brief activity flips before transitioning the orb", () => {
+    vi.useFakeTimers();
+    mocks.liveEnabled = true;
+    const live = { state: "live", activity: "listening", error: null, muted: false,
+      userLevel: level, agentLevel: level, start: mocks.start, stop: mocks.stop };
+    mocks.live.mockReturnValue(live);
+    const page = render(<VoiceMode {...props} />);
+    mocks.live.mockReturnValue({ ...live, activity: "speaking" });
+    page.rerender(<VoiceMode {...props} />);
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.getByTestId("voice-orb")).toHaveAttribute("data-state", "listening");
+    mocks.live.mockReturnValue(live);
+    page.rerender(<VoiceMode {...props} />);
+    act(() => vi.advanceTimersByTime(700));
+    expect(screen.getByTestId("voice-orb")).toHaveAttribute("data-state", "listening");
+    mocks.live.mockReturnValue({ ...live, activity: "speaking" });
+    page.rerender(<VoiceMode {...props} />);
+    act(() => vi.advanceTimersByTime(600));
+    expect(screen.getAllByTestId("voice-orb").some(el => el.dataset.state === "composing")).toBe(true);
+    expect(screen.getByText("Talome", { selector: "p" })).toBeInTheDocument();
+    page.unmount();
   });
 
   it("offers audio recovery without ending the conversation", () => {
