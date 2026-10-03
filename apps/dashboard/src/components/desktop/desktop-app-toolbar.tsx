@@ -21,18 +21,18 @@ import { cn } from "@/lib/utils";
  * controls' layout. In classic mode it renders in place with only the page's
  * own classes.
  */
-export function DesktopAppToolbar({ windowTitle, className, ...props }: ComponentProps<"div"> & { windowTitle?: string }) {
+export function DesktopAppToolbar({ windowTitle, detached = false, className, ...props }: ComponentProps<"div"> & { windowTitle?: string; detached?: boolean }) {
   const embedded = useIsEmbeddedFrame();
   const slot = useAtomValue(windowToolbarSlotAtom);
   const setPageTitle = useSetAtom(pageTitleAtom);
 
   useEffect(() => {
-    if (!embedded || windowTitle === undefined) return;
+    if (!embedded || detached || windowTitle === undefined) return;
     setPageTitle(windowTitle);
     return () => setPageTitle(null);
-  }, [embedded, windowTitle, setPageTitle]);
+  }, [embedded, detached, windowTitle, setPageTitle]);
 
-  if (!embedded) return <div data-app-toolbar="" className={className} {...props} />;
+  if (!embedded || detached) return <div data-app-toolbar="" className={className} {...props} />;
 
   const toolbar = (
     <div

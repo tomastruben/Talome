@@ -11,6 +11,7 @@ import {
   DESKTOP_OPEN_ROUTE_MESSAGE,
   dashboardRouteFromHref,
   isSameDashboardApp,
+  desktopRouteBelongsToWindow,
   desktopRouteFromEvent,
   desktopRouteFromMessage,
   requestDesktopNavigation,
@@ -22,6 +23,16 @@ afterEach(() => {
 });
 
 describe("desktop navigation", () => {
+  it("opens file previews separately while sibling navigation stays in the preview", () => {
+    const files = "http://localhost/dashboard/files?path=/books";
+    const preview = "http://localhost/dashboard/files/preview?path=/books/cover.jpg";
+    expect(isSameDashboardApp(preview, files)).toBe(false);
+    expect(isSameDashboardApp(files, preview)).toBe(false);
+    expect(isSameDashboardApp("/dashboard/files/preview?path=/books/next.jpg", preview)).toBe(true);
+    expect(desktopRouteBelongsToWindow("/dashboard/files?path=/books", "/dashboard/files/preview?path=/books/cover.jpg")).toBe(false);
+    expect(desktopRouteBelongsToWindow("/dashboard/files/preview?path=/books/next.jpg", "/dashboard/files/preview?path=/books/cover.jpg")).toBe(true);
+  });
+
   it("treats each generated native app as a separate desktop destination", () => {
     const current = "http://localhost/dashboard/native-apps/user-apps/stopwatch";
     expect(isSameDashboardApp("/dashboard/native-apps/user-apps/stopwatch?view=history", current)).toBe(true);

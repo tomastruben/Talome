@@ -45,6 +45,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   HugeiconsIcon,
+  FileAttachmentIcon,
   StartUp02Icon,
   Home01Icon,
   HardDriveIcon,
@@ -489,6 +490,19 @@ function appDefinitionFromDashboardRoute(
 
   const parsed = new URL(normalized, "http://talome.local");
   if (parsed.pathname === "/dashboard") return undefined;
+  if (parsed.pathname === "/dashboard/files/preview") {
+    const path = parsed.searchParams.get("path");
+    if (!path) return undefined;
+    return {
+      id: `file-preview:${path}`,
+      title: path.split("/").pop() || "File preview",
+      url: normalized,
+      icon: FileAttachmentIcon,
+      permission: "files",
+      minimum: { width: 440, height: 340 },
+    };
+  }
+
 
   if (parsed.pathname === "/dashboard/native-apps" || parsed.pathname.startsWith("/dashboard/native-apps/")) {
     const key = nativeDashboardAppKey(normalized);
@@ -594,6 +608,9 @@ function resolveAppDefinition(appId: string, url: string, title?: string) {
   }
 
   const dashboardApp = appDefinitionFromDashboardRoute(url);
+  if (appId.startsWith("file-preview:") && dashboardApp?.id.startsWith("file-preview:")) {
+    return { ...dashboardApp, id: appId };
+  }
   if (dashboardApp?.id === appId) return dashboardApp;
   // Migrate windows saved by the old generic native-apps route fallback.
   if (appId === "native-apps" && nativeDashboardAppKey(url)) return dashboardApp;
