@@ -37,10 +37,10 @@ function TokenRow({
 }) {
   const expired = isExpired(token.expiresAt);
   return (
-    <SettingsRow className="flex-wrap @lg:flex-nowrap gap-y-2 items-start">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <p className="text-sm font-medium truncate">{token.name}</p>
+    <SettingsRow className="flex-col @lg:flex-row gap-3 items-start">
+      <div className="w-full @lg:w-auto @lg:flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <p className="text-sm font-medium break-words min-w-0">{token.name}</p>
           {token.legacy && (
             <Badge variant="outline" className="text-status-warning border-status-warning/30">
               Legacy full access
@@ -58,14 +58,15 @@ function TokenRow({
           {!expired && ` · ${formatExpiry(token.expiresAt)}`}
         </p>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={onEdit}>
+      <div className="ml-auto flex items-center gap-1 shrink-0">
+        <Button size="sm" variant="ghost" className="pointer-coarse:h-11" aria-label={`${token.legacy ? "Restrict" : "Edit"} ${token.name}'s access`} onClick={onEdit}>
           {token.legacy ? "Restrict" : "Edit"}
         </Button>
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 text-xs text-status-critical hover:text-status-critical"
+          className="pointer-coarse:h-11 text-status-critical hover:text-status-critical"
+          aria-label={`Revoke ${token.name}'s access`}
           onClick={onRevoke}
         >
           Revoke…
