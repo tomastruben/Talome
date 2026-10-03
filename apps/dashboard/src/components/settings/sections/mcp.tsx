@@ -122,18 +122,17 @@ export function McpSection() {
 
       {/* Connection */}
       <SettingsGroup>
-        <SettingsRow className="flex-wrap gap-y-2">
-          <div className="flex-1 min-w-0">
+        <SettingsRow className="flex-col items-stretch gap-3">
+          <div className="min-w-0">
             <p className="text-sm font-medium">Server URL</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              The address you opened Talome on, so it works over HTTPS, custom domains and Tailscale. On your
-              local network, agents can also use port 4000 on the server directly.
+              Use this address to connect an AI client to Talome over HTTPS or Tailscale.
             </p>
           </div>
-          <div className="flex items-start gap-2 w-full @lg:w-auto">
-            <span className="flex-1 @lg:flex-none text-xs font-mono text-muted-foreground bg-muted/40 px-2.5 py-1.5 rounded-lg truncate max-w-60 @lg:max-w-none">
+          <div className="flex min-w-0 items-center gap-2">
+            <code className="min-w-0 flex-1 break-all rounded-lg bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
               {serverUrl}
-            </span>
+            </code>
             <CopyButton value={serverUrl} label="Copy MCP server URL" size="sm" className="h-7 text-xs shrink-0" />
           </div>
         </SettingsRow>
