@@ -2722,6 +2722,10 @@ html[data-embedded-frame] body {
     .tm-window-sidebar:not(:empty) + .tm-window-content > .tm-window-unified-toolbar:has([data-compact-toolbar]) {
       padding-inline: var(--window-pad);
     }
+    /* The compact row owns the gutter; don't add it again inside its heading. */
+    .tm-window-sidebar:not(:empty) + .tm-window-content > .tm-window-unified-toolbar:has([data-compact-toolbar]) .tm-window-toolbar-heading {
+      padding-inline-start: 0;
+    }
   }
 }
 .search-field-toggle, .search-field-close {
