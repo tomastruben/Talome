@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSetAtom } from "jotai";
+import { pageTitleAtom } from "@/atoms/page-title";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -57,6 +59,12 @@ export function QuickLookContent({ container, standalone = false, port, onClose 
   const close = onClose;
   const embedded = useIsEmbeddedFrame();
   const name = containerDisplayName(container);
+  const setPageTitle = useSetAtom(pageTitleAtom);
+  useEffect(() => {
+    if (!standalone || !embedded) return;
+    setPageTitle(name);
+    return () => setPageTitle(null);
+  }, [standalone, embedded, name, setPageTitle]);
 
   const tcpPorts = container.ports
     .filter((p) => p.protocol === "tcp" && p.host > 0)
@@ -94,9 +102,9 @@ export function QuickLookContent({ container, standalone = false, port, onClose 
   return (
     <div className="flex flex-col h-full">
       {/* ── Header bar ─────────────────────────────────────────────────────── */}
-      <DesktopAppToolbar detached={!standalone} windowTitle={standalone ? name : undefined} className="flex h-12 min-w-0 items-center gap-2 px-4 border-b border-border shrink-0">
+      {(!standalone || !!activeUrl || tcpPorts.length > 1) && <DesktopAppToolbar detached={!standalone} windowTitle={standalone ? name : undefined} className="flex h-12 min-w-0 items-center gap-2 px-4 border-b border-border shrink-0">
         {/* Status + name */}
-        <span className="relative flex size-1.5 shrink-0">
+        {!(standalone && embedded) && <span className="relative flex size-1.5 shrink-0">
           {isRunning && (
             <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-status-healthy/60 opacity-75" />
           )}
@@ -106,7 +114,7 @@ export function QuickLookContent({ container, standalone = false, port, onClose 
               isRunning ? "bg-status-healthy" : "bg-muted-foreground/30"
             )}
           />
-        </span>
+        </span>}
         {!(standalone && embedded) && <span className="font-medium text-sm text-muted-foreground truncate">{name}</span>}
         {!standalone && <span className="text-xs text-muted-foreground font-mono truncate hidden sm:block">
           {container.image}
@@ -140,7 +148,7 @@ export function QuickLookContent({ container, standalone = false, port, onClose 
             <HugeiconsIcon icon={Cancel01Icon} size={14} />
           </Button>}
         </div>
-      </DesktopAppToolbar>
+      </DesktopAppToolbar>}
 
       {/* ── Preview area ──────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 relative overflow-hidden bg-background">
