@@ -23,8 +23,8 @@ const toastMock = vi.hoisted(() => Object.assign(vi.fn(() => "toast-1"), { dismi
 vi.mock("sonner", () => ({ toast: toastMock }));
 vi.mock("swr", () => ({ default: () => ({ data: undefined }) }));
 vi.mock("thinking-orbs", () => ({ ThinkingOrb: () => null }));
-vi.mock("@/components/ai-elements/chat-input-bar", () => ({ ChatInputBar: () => <div data-testid="composer" /> }));
-vi.mock("@/components/assistant/voice-mode", () => ({ VoiceMode: () => null }));
+vi.mock("@/components/ai-elements/chat-input-bar", () => ({ ChatInputBar: ({ onVoiceMode }: { onVoiceMode: () => void }) => <button data-testid="composer" onClick={onVoiceMode}>Start voice conversation</button> }));
+vi.mock("@/components/assistant/voice-mode", () => ({ VoiceMode: ({ open, onClose }: { open: boolean; onClose: () => void }) => open ? <div role="dialog" aria-label="Voice conversation"><button onClick={onClose}>End voice conversation</button></div> : null }));
 vi.mock("@/components/assistant/assistant-model-selector", () => ({ AssistantModelSelector: () => null }));
 vi.mock("@/components/chat/chat-message", () => ({
   ChatMessage: ({ message }: { message: { parts: { type: string; text?: string }[] } }) => (
@@ -130,6 +130,16 @@ afterEach(() => {
 });
 
 describe("the Assistant's chat sidebar", () => {
+  it("removes the chat sidebar during voice mode and restores it on exit", () => {
+    renderWindow();
+    expect(screen.getByRole("navigation", { name: "Chats" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start voice conversation" }));
+    expect(screen.getByRole("dialog", { name: "Voice conversation" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Chats" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "End voice conversation" }));
+    expect(screen.getByRole("navigation", { name: "Chats" })).toBeInTheDocument();
+  });
+
   it("shows the full title on hover and a muted time (or the bot's platform) that tells similar chats apart", () => {
     const { sidebar } = renderWindow();
     const rows = within(sidebar());

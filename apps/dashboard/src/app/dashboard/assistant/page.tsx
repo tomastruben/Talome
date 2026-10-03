@@ -962,7 +962,7 @@ export default function AssistantPage() {
   );
 
   return (
-    <WindowSidebarLayout sidebar={sidebar}>
+    <WindowSidebarLayout sidebar={voiceOpen ? null : sidebar}>
     {/* Outside the container below: it is a fixed full-screen overlay, and a
         size container is the containing block for fixed descendants */}
     <VoiceMode
