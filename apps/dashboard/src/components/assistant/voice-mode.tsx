@@ -192,15 +192,15 @@ function VoiceStage({ level, processing, orb, label, caption, footnote, orbLabel
         </motion.span>
       </button>
 
-      <div className="relative flex shrink-0 max-w-md flex-col items-center gap-2 text-center">
-        <p className="text-lg font-medium" role={showStatusTitle ? "status" : undefined}>{showStatusTitle ? label : "Talome"}</p>
-        {!showStatusTitle && <span className="sr-only" role="status">{shown.label}</span>}
-        <p className="text-sm text-muted-foreground">{caption}</p>
+      {!showStatusTitle && <span className="sr-only" role="status">{shown.label}</span>}
+      {(showStatusTitle || caption) && <div className="relative flex shrink-0 max-w-md flex-col items-center gap-2 text-center">
+        {showStatusTitle && <p className="text-lg font-medium" role="status">{label}</p>}
+        {caption && <p className="text-sm text-muted-foreground">{caption}</p>}
         {onRetry && <div className="flex flex-wrap justify-center gap-2">
           <Button variant="outline" onClick={onRetry}>Try microphone again</Button>
           <Button variant="ghost" asChild><DesktopLink href="/dashboard/settings/voice-diagnostics">Voice diagnostics</DesktopLink></Button>
         </div>}
-      </div>
+      </div>}
 
       {transcript && showTranscript && transcript}
 
@@ -288,7 +288,7 @@ function LiveSession({ onClose, onSend, status, lastAssistant, history }: VoiceM
   const label = live.state === "connecting" ? "Connecting…" : live.error || live.state === "ended" ? "Voice ended" : live.muted && live.activity === "listening" ? "Microphone muted" : LIVE_LABEL[live.activity];
   const caption = live.error
     ?? (live.playbackBlocked ? "Audio playback is paused. Tap Enable audio to hear Talome." : null)
-    ?? (live.state === "live" ? "Just talk — interrupt any time." : "");
+    ?? "";
   const retry = () => {
     unlockAudio();
     stop();
@@ -434,7 +434,7 @@ function ClassicSession({ onClose, onSend, status, lastAssistant }: VoiceModePro
       processing={phase === "transcribing" || phase === "thinking"}
       orb={PHASE_ORB[phase]}
       label={voice.error ? "Microphone unavailable" : !engine ? "Voice unavailable" : voice.status === "starting" ? "Starting microphone…" : PHASE_LABEL[phase]}
-      caption={voice.error || transcript || (engine && phase === "listening" ? "Say something — I'll answer when you pause." : "")}
+      caption={voice.error || transcript || ""}
       footnote={
         voice.engine === "browser"
           ? "Using this browser's speech recognition"

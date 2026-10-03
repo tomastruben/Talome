@@ -113,7 +113,7 @@ describe("voice conversation startup", () => {
     expect(mocks.stop).not.toHaveBeenCalled();
   });
 
-  it("keeps Talome steady and ignores brief activity flips before transitioning the orb", () => {
+  it("keeps normal conversation free of status headings and ignores brief activity flips", () => {
     vi.useFakeTimers();
     mocks.liveEnabled = true;
     const live = { state: "live", activity: "listening", error: null, muted: false,
@@ -132,7 +132,8 @@ describe("voice conversation startup", () => {
     page.rerender(<VoiceMode {...props} />);
     act(() => vi.advanceTimersByTime(600));
     expect(screen.getAllByTestId("voice-orb").some(el => el.dataset.state === "composing")).toBe(true);
-    expect(screen.getByText("Talome", { selector: "p" })).toBeInTheDocument();
+    expect(screen.queryByText("Talome", { selector: "p" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Just talk — interrupt any time.")).not.toBeInTheDocument();
     page.unmount();
   });
 
