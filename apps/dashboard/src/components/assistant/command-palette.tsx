@@ -404,15 +404,16 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
         open={open}
         onOpenChange={handleOpenChange}
         showCloseButton={false}
+        commandMode={mode !== "chat"}
+        className="rounded-2xl border-border/60 [&_[data-slot=command]]:rounded-none [&_[cmdk-item]]:rounded-xl"
         title={mode === "chat" ? "Quick question" : "Command Palette"}
         description={mode === "chat" ? "Ask Talome a quick question or continue in the Assistant app." : undefined}
         onEscapeKeyDown={voiceOpen ? (event) => { event.preventDefault(); setVoiceOpen(false); } : undefined}
       >
         {mode === "chat" ? (
           // ── Chat mode ──────────────────────────────────────────────────────
-          // This is a quick, ephemeral exchange — palette height matches search mode.
-          // For sustained conversation with full history, use the Assistant page.
-          <div className="quick-assistant-panel relative flex flex-col motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150">
+          // Share the Assistant composer and voice stage; expand with the saved conversation.
+          <div data-expanded={hasMessages || voiceOpen} className="quick-assistant-panel relative flex flex-col motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150">
             {/* Chat header — same height as CommandInput (h-12) */}
             <div className="flex h-12 items-center gap-1 px-2 border-b border-border shrink-0">
               <Button
@@ -486,13 +487,14 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
               </div>
             ) : (
               <div className="flex-1 flex items-center justify-center py-8">
-                <div className="w-full px-3.5">
+                <div className="flex w-full flex-col items-center gap-4 px-6">
                   {error ? (
                     <AssistantChatError error={error} provider={activeProvider} onDismiss={clearError} />
                   ) : (
-                    <p className="text-xs text-center text-muted-foreground">
-                      Ask anything about your server
-                    </p>
+                    <>
+                      <ThinkingOrb state="breathing" size={32} aria-hidden />
+                      <p className="text-sm text-center text-muted-foreground">How can I help?</p>
+                    </>
                   )}
                 </div>
               </div>

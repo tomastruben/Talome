@@ -3194,4 +3194,13 @@ html[data-embedded-frame] body {
 }
 
 /* Enough room for a quick exchange and the shared voice transcript on small screens. */
-.quick-assistant-panel { height: min(32rem, calc(100svh - 4rem)); }
+.quick-assistant-panel {
+  height: min(20rem, calc(100svh - 4rem));
+  transition: height 180ms ease-out;
+}
+.quick-assistant-panel[data-expanded="true"] {
+  height: min(32rem, calc(100svh - 4rem));
+}
+@media (prefers-reduced-motion: reduce) {
+  .quick-assistant-panel { transition: none; }
+}
