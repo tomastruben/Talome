@@ -1,11 +1,13 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AppNotification } from "@/hooks/use-notifications";
 import type { HealthState } from "@/hooks/use-is-online";
 
 const UNCHECKED = new Date(0).toISOString();
 const CHECKED = "2026-09-30T12:00:00.000Z";
 
 const state = vi.hoisted(() => ({
+  notifications: [] as AppNotification[],
   health: null as unknown as HealthState,
   stats: undefined as { uptime: number; hostname: string } | undefined,
 }));
@@ -16,7 +18,7 @@ vi.mock("@/hooks/use-is-online", async (importOriginal) => {
 });
 vi.mock("@/hooks/use-system-stats", () => ({ useSystemStats: () => ({ stats: state.stats }) }));
 vi.mock("@/hooks/use-user", () => ({ useUser: () => ({ user: { username: "owner" } }) }));
-vi.mock("@/hooks/use-notifications", () => ({ useNotifications: () => ({ notifications: [] }) }));
+vi.mock("@/hooks/use-notifications", () => ({ useNotifications: () => ({ notifications: state.notifications }) }));
 
 import { ClockWidget, clockFooterStatus } from "@/components/widgets/clock-widget";
 
@@ -49,6 +51,19 @@ describe("clock widget footer health", () => {
 describe("ClockWidget", () => {
   beforeEach(() => {
     state.stats = { uptime: UP_5H, hostname: "nas" };
+    state.notifications = [];
+  });
+
+  it("opens the Assistant with a submitted incident question, rather than a palette draft", async () => {
+    state.health = health({});
+    state.notifications = [{ id: "incident", title: "Disk usage high", body: "Disk is at 90%", type: "warning", sourceId: "disk", createdAt: new Date().toISOString() } as AppNotification];
+    render(<ClockWidget />);
+    const link = await screen.findByRole("link", { name: "Ask Talome about recent alert: Disk usage high" });
+    const url = new URL(link.getAttribute("href")!, "http://localhost");
+    expect(url.pathname).toBe("/dashboard/assistant");
+    expect(url.searchParams.get("prompt")).toContain("Disk usage high");
+    expect(url.searchParams.get("prompt")).toContain("Ask before making changes");
+    expect(url.searchParams.get("from")).toBe("/dashboard/desktop");
   });
 
   it("shows a green dot beside the uptime when core is healthy", () => {

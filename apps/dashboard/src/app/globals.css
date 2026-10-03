@@ -3192,3 +3192,6 @@ html[data-embedded-frame] body {
   .composer-dictation-wave path:nth-child(2n),
   .composer-conversation-button:hover svg { transform: none; }
 }
+
+/* Enough room for a quick exchange and the shared voice transcript on small screens. */
+.quick-assistant-panel { height: min(32rem, calc(100svh - 4rem)); }

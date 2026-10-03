@@ -517,10 +517,12 @@ export default function AssistantPage() {
 
   // Auto-submit ?prompt=, store ?from= origin, and restore ?c= conversation
   const promptSubmittedRef = useRef(false);
+  const incomingPromptRef = useRef<string | null>(null);
   useEffect(() => {
     if (promptSubmittedRef.current) return;
     const params = new URLSearchParams(window.location.search);
-    const prompt = params.get("prompt");
+    incomingPromptRef.current ??= params.get("prompt");
+    const prompt = incomingPromptRef.current;
     const from = params.get("from");
     const conversationId = params.get("c");
 
@@ -537,8 +539,13 @@ export default function AssistantPage() {
     }
 
     if (!prompt && !from) return;
-    if (prompt && messages.length > 0) return;
     if (prompt && !modelReady) return;
+    // A widget question starts its own saved conversation, even when the
+    // classic shell already has an active quick exchange.
+    if (prompt && (messages.length > 0 || activeId)) {
+      startNew();
+      return;
+    }
 
     if (prompt) promptSubmittedRef.current = true;
 
@@ -554,13 +561,14 @@ export default function AssistantPage() {
 
     if (prompt) handleSubmit(prompt);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelReady]);
+  }, [modelReady, messages.length, activeId]);
 
   // A conversation state update can complete after Next's URL replacement and
   // restore the previous search string. Re-assert removal after the first
   // message/active conversation is committed so refresh can never replay it.
   useEffect(() => {
     if (!activeId && messages.length === 0) return;
+    if (incomingPromptRef.current && !promptSubmittedRef.current) return;
     const params = new URLSearchParams(window.location.search);
     if (!params.has("prompt") && !params.has("from")) return;
     params.delete("prompt");

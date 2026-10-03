@@ -10,7 +10,7 @@ import { useSystemStats } from "@/hooks/use-system-stats";
 import { useUser } from "@/hooks/use-user";
 import { useNotifications } from "@/hooks/use-notifications";
 import { Button } from "@/components/ui/button";
-import { openPalette } from "@/lib/palette";
+import { DesktopLink } from "@/components/desktop/desktop-link";
 import { welcomeIncident, incidentExplanationPrompt } from "@/lib/welcome-incidents";
 import { cn } from "@/lib/utils";
 import { Widget, WidgetHeader } from "./widget";
@@ -134,16 +134,18 @@ export function ClockWidget({ compact = false }: { compact?: boolean }) {
         {incident ? (
           <Button
             variant="ghost"
-            onClick={() => openPalette({ mode: "chat", prefill: incidentExplanationPrompt(incident.notification) })}
+            asChild
             className="h-auto min-w-0 justify-start gap-2 rounded-sm p-0 text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
             aria-label={`Ask Talome about recent alert: ${incident.notification.title}`}
             title={`${incident.notification.title}${incident.more ? ` · ${incident.more} other recent alerts` : ""}. Ask Talome to explain.`}
           >
-            <span className={cn("size-1.5 shrink-0 rounded-full", incident.notification.type === "critical" ? "bg-status-critical" : "bg-status-warning")} aria-hidden />
-            <span className="min-w-0 truncate">
-              {compact ? "Recent activity" : incident.notification.title}
-            </span>
-            <span className="ml-auto shrink-0">Ask Talome</span>
+            <DesktopLink href={`/dashboard/assistant?prompt=${encodeURIComponent(incidentExplanationPrompt(incident.notification))}&from=${encodeURIComponent("/dashboard/desktop")}`}>
+              <span className={cn("size-1.5 shrink-0 rounded-full", incident.notification.type === "critical" ? "bg-status-critical" : "bg-status-warning")} aria-hidden />
+              <span className="min-w-0 truncate">
+                {compact ? "Recent activity" : incident.notification.title}
+              </span>
+              <span className="ml-auto shrink-0">Ask Talome</span>
+            </DesktopLink>
           </Button>
         ) : null}
       </div>

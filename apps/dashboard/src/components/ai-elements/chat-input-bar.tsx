@@ -97,6 +97,8 @@ function AttachmentPreviewList() {
 // ── Shared input bar ────────────────────────────────────────────────────────
 
 export interface ChatInputBarProps {
+  initialInput?: string;
+  autoFocus?: boolean;
   status: ChatStatus;
   onSubmit: (message: { text: string; files: FileUIPart[] }) => void | Promise<void>;
   onStop?: () => void;
@@ -114,6 +116,8 @@ export interface ChatInputBarProps {
 }
 
 export function ChatInputBar({
+  initialInput,
+  autoFocus,
   status,
   onSubmit,
   onStop,
@@ -178,7 +182,7 @@ export function ChatInputBar({
     <div className="@container/composer relative shrink-0 pb-3 pt-2">
       <div className={`${maxWidth} mx-auto w-full px-4 @md/composer:px-6`}>
         {/* Provider lifts the text so dictation can write into the composer */}
-        <PromptInputProvider>
+        <PromptInputProvider key={initialInput} initialInput={initialInput}>
         <VoiceBeam
           active={glowOn}
           level={readLevel}
@@ -197,7 +201,7 @@ export function ChatInputBar({
           onSubmit={handleSubmit}
         >
           <AttachmentPreviewList />
-          <PromptInputTextarea placeholder={placeholder} inputMode={inputMode} />
+          <PromptInputTextarea placeholder={placeholder} inputMode={inputMode} autoFocus={autoFocus} />
           <PromptInputFooter>
             <PromptInputTools>
               <PromptInputActionMenu>

@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useAtom } from "jotai";
 import { terminalOpenAtom, terminalCommandAtom } from "@/atoms/terminal";
 import { useRouter } from "next/navigation";
@@ -32,14 +32,17 @@ import {
   AudioBook01Icon,
   Download01Icon,
   Tick01Icon,
-  StopIcon,
-  ArrowUp01Icon,
 } from "@/components/icons";
 const loadToPng = () => import("html-to-image").then((m) => m.toPng);
 import { useBugHunt } from "@/components/bug-hunt/bug-hunt-context";
 import { useBugContext } from "@/hooks/use-bug-context";
 import { useAssistant } from "./assistant-context";
 import { AssistantChatError } from "./chat-error";
+import { ChatInputBar } from "@/components/ai-elements/chat-input-bar";
+import { VoiceMode } from "./voice-mode";
+import { pendingApprovalRequest } from "@/lib/agent-activity";
+import { humanToolName } from "@/components/trust/format";
+import type { ChatStatus, FileUIPart } from "ai";
 import { useServiceStacks } from "@/hooks/use-service-stacks";
 import { useInstalledApps } from "@/hooks/use-installed-apps";
 import { useUnifiedSearch } from "@/hooks/use-unified-search";
@@ -132,101 +135,6 @@ function extractLaunchable(stacks: ServiceStack[]): LaunchableService[] {
   return result;
 }
 
-// ── Chat input ────────────────────────────────────────────────────────────────
-
-function ChatInput({
-  onSubmit,
-  disabled,
-  isStreaming,
-  onStop,
-  prefill,
-}: {
-  onSubmit: (text: string) => void;
-  disabled?: boolean;
-  isStreaming?: boolean;
-  onStop?: () => void;
-  prefill?: string;
-}) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    if (prefill && textareaRef.current) {
-      textareaRef.current.value = prefill;
-      textareaRef.current.dispatchEvent(new Event("input", { bubbles: true }));
-      textareaRef.current.focus();
-    }
-  }, [prefill]);
-
-  // Auto-focus when mounted
-  useEffect(() => {
-    if (!prefill) {
-      setTimeout(() => textareaRef.current?.focus(), 50);
-    }
-  }, [prefill]);
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      const val = e.currentTarget.value.trim();
-      if (val) {
-        onSubmit(val);
-        e.currentTarget.value = "";
-        e.currentTarget.style.height = "auto";
-      }
-    }
-  };
-
-  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const el = e.currentTarget;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  };
-
-  const handleButtonClick = () => {
-    if (isStreaming && onStop) { onStop(); return; }
-    const val = textareaRef.current?.value.trim();
-    if (val) {
-      onSubmit(val);
-      textareaRef.current!.value = "";
-      textareaRef.current!.style.height = "auto";
-    }
-  };
-
-  return (
-    <div className="flex items-end gap-2 px-3 py-2.5 border-t border-border/60">
-      <textarea
-        ref={textareaRef}
-        rows={1}
-        placeholder="Ask Talome anything…"
-        disabled={disabled}
-        onKeyDown={handleKeyDown}
-        onChange={handleInput}
-        className="flex-1 resize-none bg-transparent text-lg md:text-sm placeholder:text-muted-foreground focus:outline-none min-h-[24px] max-h-[160px] leading-relaxed disabled:opacity-40"
-      />
-      <button
-        type="button"
-        onClick={handleButtonClick}
-        aria-label={isStreaming ? "Stop" : "Send"}
-        disabled={!isStreaming && disabled}
-        className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-full transition-colors mb-px",
-          isStreaming
-            ? "bg-foreground text-background hover:bg-foreground/80"
-            : "bg-foreground text-background hover:bg-foreground/80 disabled:opacity-30 disabled:pointer-events-none"
-        )}
-      >
-        {isStreaming ? (
-          <HugeiconsIcon icon={StopIcon} size={12} aria-hidden="true" />
-        ) : disabled ? (
-          <Spinner className="size-3.5" />
-        ) : (
-          <HugeiconsIcon icon={ArrowUp01Icon} size={14} strokeWidth={2} aria-hidden="true" />
-        )}
-      </button>
-    </div>
-  );
-}
-
 // ── Service Quick Look ────────────────────────────────────────────────────────
 // (Moved to /components/quick-look/quick-look.tsx — a full-viewport modal
 //  accessible from anywhere: palette, services page, home dashboard widget.)
@@ -256,6 +164,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
   const [open, setOpen] = useState(() => initialRequest !== null);
   const [mode, setMode] = useState<PaletteMode>(() => initialRequest?.mode ?? "search");
   const [query, setQuery] = useState("");
+  const [voiceOpen, setVoiceOpen] = useState(false);
   const [chatPrefill, setChatPrefill] = useState<string | undefined>(
     () => (initialRequest?.mode === "chat" ? initialRequest.prefill : undefined),
   );
@@ -278,6 +187,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
   const { captureContext } = useBugContext();
   const {
     handleSubmit,
+    activeId,
     startNew,
     messages,
     status,
@@ -296,6 +206,20 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
   const isStreaming = status === "streaming";
   const hasMessages = messages.length > 0;
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const lastAssistant = useMemo(() => {
+    const message = [...messages].reverse().find((message) => message.role === "assistant");
+    if (!message) return null;
+    const waiting = pendingApprovalRequest(message);
+    return {
+      id: message.id,
+      text: message.parts.map((part) => part.type === "text" ? part.text : "").join("").trim(),
+      pendingApproval: waiting ? humanToolName(waiting.tool) : undefined,
+    };
+  }, [messages]);
+  const voiceHistory = useCallback(() => messages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => ({ role: message.role as "user" | "assistant", content: message.parts.map((part) => part.type === "text" ? part.text : "").join("").trim().slice(0, 2000) }))
+    .filter((message) => message.content.length > 0), [messages]);
 
   // Auto-scroll chat to bottom when messages change
   useEffect(() => {
@@ -362,6 +286,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
   const handleOpenChange = useCallback((v: boolean) => {
     setOpen(v);
     if (!v) {
+      setVoiceOpen(false);
       setQuery("");
       setMode("search");
       setChatPrefill(undefined);
@@ -435,9 +360,9 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
   );
 
   const onChatSubmit = useCallback(
-    async (text: string) => {
+    async (text: string, files: FileUIPart[] = []) => {
       setChatPrefill(undefined);
-      await handleSubmit(text, `Current page: ${pathname}`);
+      await handleSubmit(text, `Current page: ${pathname}`, files);
     },
     [handleSubmit, pathname]
   );
@@ -454,8 +379,10 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
   }, [startNew]);
 
   const openFullScreen = useCallback(() => {
-    navigate(`/dashboard/assistant?from=${encodeURIComponent(pathname)}`);
-  }, [navigate, pathname]);
+    const params = new URLSearchParams({ from: pathname });
+    if (activeId) params.set("c", activeId);
+    navigate(`/dashboard/assistant?${params}`);
+  }, [navigate, pathname, activeId]);
 
   // Fallback to assistant on Enter with no matching nav
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
@@ -477,12 +404,15 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
         open={open}
         onOpenChange={handleOpenChange}
         showCloseButton={false}
+        title={mode === "chat" ? "Quick question" : "Command Palette"}
+        description={mode === "chat" ? "Ask Talome a quick question or continue in the Assistant app." : undefined}
+        onEscapeKeyDown={voiceOpen ? (event) => { event.preventDefault(); setVoiceOpen(false); } : undefined}
       >
         {mode === "chat" ? (
           // ── Chat mode ──────────────────────────────────────────────────────
           // This is a quick, ephemeral exchange — palette height matches search mode.
           // For sustained conversation with full history, use the Assistant page.
-          <div className="flex flex-col" style={{ maxHeight: "min(420px, calc(100svh - 8rem))" }}>
+          <div className="quick-assistant-panel relative flex flex-col motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150">
             {/* Chat header — same height as CommandInput (h-12) */}
             <div className="flex h-12 items-center gap-1 px-2 border-b border-border shrink-0">
               <Button
@@ -500,7 +430,7 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
                 className="text-dim-foreground shrink-0"
               />
               <span className="flex-1 text-sm text-muted-foreground pl-0.5">
-                {hasMessages ? "Assistant" : "Ask anything"}
+                {hasMessages ? "Assistant" : "Quick question"}
               </span>
               {hasMessages && (
                 <Button
@@ -519,8 +449,8 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
                 size="icon"
                 className="size-7 text-dim-foreground hover:text-foreground"
                 onClick={openFullScreen}
-                title="Open in full screen"
-                aria-label="Open in full screen"
+                title="Continue in Assistant"
+                aria-label="Continue in Assistant"
               >
                 <HugeiconsIcon icon={ExpandIcon} size={13} />
               </Button>
@@ -568,13 +498,22 @@ export function CommandPalette({ initialRequest = null }: { initialRequest?: Pal
               </div>
             )}
 
-            {/* Input */}
-            <ChatInput
-              onSubmit={onChatSubmit}
-              disabled={status === "submitted"}
-              isStreaming={isStreaming}
+            <ChatInputBar
+              status={status as ChatStatus}
+              onSubmit={({ text, files }) => onChatSubmit(text, files)}
               onStop={stop}
-              prefill={chatPrefill}
+              initialInput={chatPrefill}
+              autoFocus
+              maxWidth="max-w-none"
+              onVoiceMode={() => setVoiceOpen(true)}
+            />
+            <VoiceMode
+              open={voiceOpen}
+              onClose={() => setVoiceOpen(false)}
+              onSend={(text) => void onChatSubmit(text)}
+              status={status as ChatStatus}
+              lastAssistant={lastAssistant}
+              history={voiceHistory}
             />
           </div>
         ) : mode === "media-detail" && mediaDetail ? (
