@@ -138,7 +138,7 @@ function SessionRow({
       <ContextMenuTrigger asChild>
         <div className="group/terminal-session relative">
           <SourceListItem
-            className="pr-16 pointer-coarse:pr-16"
+            className="pr-16 pointer-coarse:pr-24"
             icon={icon}
             label={session.name}
             active={active}
@@ -160,7 +160,7 @@ function SessionRow({
           <RenameTerminalSession name={session.name} onRename={(name) => onRename(session.id, name)}
             open={renaming} onOpenChange={setRenaming} accessibleLabel={`Rename ${session.name}`}
             disabled={!canRename || !listed}
-            className={`absolute right-8 top-1/2 size-6 -translate-y-1/2 rounded-full p-0 transition-opacity duration-150 ease-out pointer-coarse:opacity-100 group-hover/terminal-session:opacity-100 group-focus-within/terminal-session:opacity-100 ${active ? "opacity-100" : "opacity-0"}`} />
+            className={`absolute right-8 top-1/2 size-6 -translate-y-1/2 rounded-full p-0 transition-opacity duration-150 ease-out pointer-coarse:right-11 pointer-coarse:size-11 pointer-coarse:opacity-100 group-hover/terminal-session:opacity-100 group-focus-within/terminal-session:opacity-100 ${active ? "opacity-100" : "opacity-0"}`} />
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="rounded-xl">
